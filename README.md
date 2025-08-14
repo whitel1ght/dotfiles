@@ -9,6 +9,7 @@ Personal configuration files for macOS development tools.
 ├── tmux/           # tmux configuration
 ├── aerospace/      # AeroSpace window manager config
 ├── ghostty/        # Ghostty terminal config
+├── Brewfile        # Homebrew package list
 └── install.sh      # Symlink setup script
 ```
 
@@ -27,6 +28,7 @@ Personal configuration files for macOS development tools.
 
 The script will:
 - Create symlinks from config files to their expected system locations
+- Install all Homebrew packages from the Brewfile
 - Backup existing files with `.backup` extension
 - Create necessary directories if they don't exist
 
@@ -42,6 +44,19 @@ The script will:
 2. Add your config file(s) to that directory
 3. Update `install.sh` to include the new symlink
 4. Run `./install.sh` to create the symlink
+
+## Homebrew Package Management
+
+The `Brewfile` contains all your installed Homebrew packages:
+- **Formulae**: Command-line tools and libraries
+- **Casks**: GUI applications 
+- **Mac App Store apps**: Apps installed via `mas`
+- **Taps**: Third-party repositories
+
+To update the Brewfile after installing new packages:
+```bash
+brew bundle dump --describe --force
+```
 
 ## Usage
 
