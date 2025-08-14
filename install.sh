@@ -61,17 +61,8 @@ if [ -d "$DOTFILES_DIR/nvim" ]; then
     create_symlink "$DOTFILES_DIR/nvim" "$HOME/.config/nvim"
 fi
 
-# Install Homebrew packages if Brewfile exists
-if [ -f "$DOTFILES_DIR/Brewfile" ]; then
-    log_info "Installing Homebrew packages from Brewfile..."
-    if command -v brew >/dev/null 2>&1; then
-        cd "$DOTFILES_DIR"
-        brew bundle install
-        log_info "Homebrew packages installed successfully"
-    else
-        log_warn "Homebrew not found. Install Homebrew first: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
-    fi
-fi
+# Optional: Install Homebrew packages
+log_info "To install Homebrew packages, run: ./brew-install.sh"
 
 log_info "Dotfiles installation complete!"
 log_info "You may need to restart applications to pick up the new configurations."

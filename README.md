@@ -11,7 +11,8 @@ Personal configuration files for macOS development tools.
 ├── ghostty/        # Ghostty terminal config
 ├── nvim/           # Neovim configuration
 ├── Brewfile        # Homebrew package list
-└── install.sh      # Symlink setup script
+├── install.sh      # Symlink setup script
+└── brew-install.sh # Homebrew package installer
 ```
 
 ## Installation
@@ -27,11 +28,19 @@ Personal configuration files for macOS development tools.
    ./install.sh
    ```
 
-The script will:
+3. (Optional) Install Homebrew packages:
+   ```bash
+   ./brew-install.sh
+   ```
+
+The install script will:
 - Create symlinks from config files to their expected system locations
-- Install all Homebrew packages from the Brewfile
 - Backup existing files with `.backup` extension
 - Create necessary directories if they don't exist
+
+The brew script will:
+- Install all Homebrew packages from the Brewfile
+- Provide helpful error messages if Homebrew isn't installed
 
 ## Config File Locations
 
