@@ -1,0 +1,20 @@
+# Private/sensitive configurations
+# Copy this file to ~/.zshrc.local and customize with your private settings
+
+# Server configurations
+export CLOUD=your.server.ip.here
+
+# Proxy settings (if needed)
+export HTTP_PROXY=http://127.0.0.1:2080
+export HTTPS_PROXY=http://127.0.0.1:2080
+export http_proxy=http://127.0.0.1:2080
+
+# Personal server aliases
+alias pull_notes="rsync -chavzP -e 'ssh -p 10001' username@server.ip:/path/to/notes $HOME"
+alias push_notes="rsync -urv -e 'ssh -p 10001' --progress ~/notes username@server.ip:/path/to/notes"
+
+# Personal project paths
+export PYTHON_UTILS="$HOME/projects/scripts"
+export PATH="$PATH:$PYTHON_UTILS"
+
+# Add any other private environment variables, aliases, or configurations here

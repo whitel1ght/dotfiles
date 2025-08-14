@@ -10,9 +10,11 @@ Personal configuration files for macOS development tools.
 ├── aerospace/      # AeroSpace window manager config
 ├── ghostty/        # Ghostty terminal config
 ├── nvim/           # Neovim configuration
+├── zsh/            # Zsh configuration (.zshrc, .zprofile, .p10k.zsh)
 ├── Brewfile        # Homebrew package list
 ├── install.sh      # Symlink setup script
-└── brew-install.sh # Homebrew package installer
+├── brew-install.sh # Homebrew package installer
+└── zsh-setup.sh    # Oh My Zsh and Powerlevel10k installer
 ```
 
 ## Installation
@@ -28,7 +30,12 @@ Personal configuration files for macOS development tools.
    ./install.sh
    ```
 
-3. (Optional) Install Homebrew packages:
+3. (Optional) Set up Zsh with Oh My Zsh and Powerlevel10k:
+   ```bash
+   ./zsh-setup.sh
+   ```
+
+4. (Optional) Install Homebrew packages:
    ```bash
    ./brew-install.sh
    ```
@@ -37,6 +44,11 @@ The install script will:
 - Create symlinks from config files to their expected system locations
 - Backup existing files with `.backup` extension
 - Create necessary directories if they don't exist
+
+The zsh setup script will:
+- Install Oh My Zsh framework
+- Install Powerlevel10k theme
+- Copy existing Powerlevel10k configuration if found
 
 The brew script will:
 - Install all Homebrew packages from the Brewfile
@@ -48,6 +60,7 @@ The brew script will:
 - **Aerospace**: `~/.config/aerospace/aerospace.toml`
 - **Ghostty**: `~/.config/ghostty/config`
 - **Neovim**: `~/.config/nvim/`
+- **Zsh**: `~/.zshrc`, `~/.zprofile`, `~/.p10k.zsh`
 
 ## Adding New Configs
 
@@ -68,6 +81,15 @@ To update the Brewfile after installing new packages:
 ```bash
 brew bundle dump --describe --force
 ```
+
+## Private/Sensitive Configurations
+
+For sensitive information (API keys, server credentials, etc.), use the private config system:
+
+1. Copy the example file: `cp zsh/.zshrc.local.example ~/.zshrc.local`
+2. Edit `~/.zshrc.local` with your private settings
+3. The main `.zshrc` will automatically source this file
+4. `.zshrc.local` is gitignored and won't be committed
 
 ## Usage
 

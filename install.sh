@@ -61,6 +61,19 @@ if [ -d "$DOTFILES_DIR/nvim" ]; then
     create_symlink "$DOTFILES_DIR/nvim" "$HOME/.config/nvim"
 fi
 
+# Zsh configuration
+if [ -f "$DOTFILES_DIR/zsh/.zshrc" ]; then
+    create_symlink "$DOTFILES_DIR/zsh/.zshrc" "$HOME/.zshrc"
+fi
+
+if [ -f "$DOTFILES_DIR/zsh/.zprofile" ]; then
+    create_symlink "$DOTFILES_DIR/zsh/.zprofile" "$HOME/.zprofile"
+fi
+
+if [ -f "$DOTFILES_DIR/zsh/.p10k.zsh" ]; then
+    create_symlink "$DOTFILES_DIR/zsh/.p10k.zsh" "$HOME/.p10k.zsh"
+fi
+
 # Optional: Install Homebrew packages
 log_info "To install Homebrew packages, run: ./brew-install.sh"
 
