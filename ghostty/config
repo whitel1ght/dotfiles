@@ -1,0 +1,19 @@
+font-size = 17
+macos-titlebar-style = hidden
+macos-option-as-alt = true
+theme = tokyonight-storm
+window-padding-x = 10
+window-padding-y = 10, 0
+window-padding-balance = true
+
+keybind = super+p=text::Telescope find_files\n
+keybind = super+s=text::w\n
+keybind = super+w=text::Wiki\n
+keybind = super+f=text::Telescope live_grep\n
+keybind = super+/=text:gcc\x1b
+
+keybind = super+k=text::lua TopWin()\n
+keybind = super+l=text::lua RightWin()\n
+keybind = super+h=text::lua LeftWin()\n
+keybind = super+j=text::lua BottomWin()\n
+keybind = shift+enter=text:\n
