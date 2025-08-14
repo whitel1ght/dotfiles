@@ -9,6 +9,7 @@ Personal configuration files for macOS development tools.
 ├── tmux/           # tmux configuration
 ├── aerospace/      # AeroSpace window manager config
 ├── ghostty/        # Ghostty terminal config
+├── nvim/           # Neovim configuration
 ├── Brewfile        # Homebrew package list
 └── install.sh      # Symlink setup script
 ```
@@ -35,8 +36,9 @@ The script will:
 ## Config File Locations
 
 - **tmux**: `~/.tmux.conf`
-- **Aerospace**: `~/.config/aerospace/aerospace.toml`  
+- **Aerospace**: `~/.config/aerospace/aerospace.toml`
 - **Ghostty**: `~/.config/ghostty/config`
+- **Neovim**: `~/.config/nvim/`
 
 ## Adding New Configs
 
@@ -49,7 +51,7 @@ The script will:
 
 The `Brewfile` contains all your installed Homebrew packages:
 - **Formulae**: Command-line tools and libraries
-- **Casks**: GUI applications 
+- **Casks**: GUI applications
 - **Mac App Store apps**: Apps installed via `mas`
 - **Taps**: Third-party repositories
 

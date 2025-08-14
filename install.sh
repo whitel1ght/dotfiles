@@ -56,6 +56,11 @@ if [ -f "$DOTFILES_DIR/ghostty/config" ]; then
     create_symlink "$DOTFILES_DIR/ghostty/config" "$HOME/.config/ghostty/config"
 fi
 
+# Neovim configuration
+if [ -d "$DOTFILES_DIR/nvim" ]; then
+    create_symlink "$DOTFILES_DIR/nvim" "$HOME/.config/nvim"
+fi
+
 # Install Homebrew packages if Brewfile exists
 if [ -f "$DOTFILES_DIR/Brewfile" ]; then
     log_info "Installing Homebrew packages from Brewfile..."

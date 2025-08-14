@@ -1,0 +1,5 @@
+-- require('git-worktree').setup()
+-- require('telescope').load_extension('git_worktree')
+--
+-- vim.keymap.set ('n', '<leader>gw', function() require('telescope').extensions.git_worktree.git_worktrees() end)
+-- vim.keymap.set ('n', '<leader>gwt', function() require('telescope').extensions.git_worktree.create_git_worktree() end)
