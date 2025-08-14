@@ -1,0 +1,11 @@
+# Private git configuration
+# Copy this to ~/.gitconfig.local and customize
+
+[user]
+	name = Your Name
+	email = your.email@example.com
+
+[commit]
+	template = /path/to/your/commit/template
+
+# Add any other personal git settings here

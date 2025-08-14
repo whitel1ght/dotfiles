@@ -74,6 +74,19 @@ if [ -f "$DOTFILES_DIR/zsh/.p10k.zsh" ]; then
     create_symlink "$DOTFILES_DIR/zsh/.p10k.zsh" "$HOME/.p10k.zsh"
 fi
 
+# Git configuration
+if [ -f "$DOTFILES_DIR/git/.gitconfig" ]; then
+    create_symlink "$DOTFILES_DIR/git/.gitconfig" "$HOME/.gitconfig"
+fi
+
+if [ -f "$DOTFILES_DIR/git/.gitignore_global" ]; then
+    create_symlink "$DOTFILES_DIR/git/.gitignore_global" "$HOME/.gitignore_global"
+fi
+
+if [ -f "$DOTFILES_DIR/git/config/git/ignore" ]; then
+    create_symlink "$DOTFILES_DIR/git/config/git/ignore" "$HOME/.config/git/ignore"
+fi
+
 # Optional: Install Homebrew packages
 log_info "To install Homebrew packages, run: ./brew-install.sh"
 

@@ -1,0 +1,30 @@
+[user]
+	# Set your personal info in ~/.gitconfig.local
+	# name = Your Name
+	# email = your.email@example.com
+
+[alias]
+	co = checkout
+	br = branch
+	ci = commit
+	st = status
+	merges = log --oneline --decorate --graph --all --merges
+
+[core]
+	excludesfile = ~/.gitignore_global
+	pager = delta
+
+[difftool "sourcetree"]
+	cmd = opendiff \"$LOCAL\" \"$REMOTE\"
+	path = 
+
+[mergetool "sourcetree"]
+	cmd = /Applications/Sourcetree.app/Contents/Resources/opendiff-w.sh \"$LOCAL\" \"$REMOTE\" -ancestor \"$BASE\" -merge \"$MERGED\"
+	trustExitCode = true
+
+[delta]
+	side-by-side = true
+
+# Include private git configuration
+[include]
+	path = ~/.gitconfig.local

@@ -1,5 +1,6 @@
 # Private/sensitive configuration files
 .zshrc.local
+.gitconfig.local
 **/private/
 **/.env
 **/.env.local
