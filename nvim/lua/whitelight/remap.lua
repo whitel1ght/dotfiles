@@ -25,7 +25,7 @@ keymap.set('', '<C-d>', '<C-d>zz')
 keymap.set('', '<C-u>', '<C-u>zz')
 
 -- window navigation
-vim.keymap.set('n', '<leader>ww', [[<cmd>only<cr>]]) -- close all windows except current one
+-- vim.keymap.set('n', '<leader>ww', [[<cmd>only<cr>]]) -- close all windows except current one
 
 -- resize windows
 keymap.set("n", "<Up>", [[<cmd>horizontal resize +5<cr>]]) -- make the window biger vertically

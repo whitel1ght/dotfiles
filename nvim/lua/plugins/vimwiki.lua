@@ -11,6 +11,7 @@ return {
       }
     }
     vim.g.wiki_root = '$HOME'..'/wiki'
+    vim.g.vimwiki_folding = 'syntax'
     vim.g.vimwiki_markdown_link_ext = 1
   end
 }

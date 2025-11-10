@@ -79,7 +79,7 @@ return {
       -- volar (Vue Language Server) configuration
       require('lspconfig').volar.setup({
         capabilities = capabilities,
-        filetypes = { 'vue', 'javascript', 'typescript', 'javascriptreact', 'typescriptreact' },
+        filetypes = { 'vue' },
         settings = {
           vue = {
             complete = {
@@ -91,6 +91,9 @@ return {
           },
           typescript = {
             tsdk = vim.fn.stdpath("data") .. "/mason/packages/typescript-language-server/node_modules/typescript/lib",
+          },
+          javascript = {
+            validate = true,
           },
         },
         on_attach = function(client, bufnr)
