@@ -96,3 +96,4 @@ source "$HOME/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
 # Load private/local configurations (API keys, server configs, etc.)
 [[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
 
+export PATH="$HOME/.local/bin:$PATH"

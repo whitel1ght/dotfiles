@@ -1,11 +1,33 @@
 return {
+  { 'neovim/nvim-lspconfig' },
   {
-    'neovim/nvim-lspconfig',
+    'mason-org/mason.nvim',
+    config = function()
+      require('mason').setup({})
+    end,
+  },
+  {
+    'mason-org/mason-lspconfig.nvim',
     dependencies = {
-      'williamboman/mason.nvim',
-      "williamboman/mason-lspconfig.nvim",
+      'mason-org/mason.nvim',
+      'neovim/nvim-lspconfig',
     },
     config = function()
+      require('mason-lspconfig').setup({
+        ensure_installed = {
+          'lua_ls',
+          'ts_ls',
+          'cssls',
+          'html',
+          'jsonls',
+          'eslint',
+          'vue_ls',
+          'ruby_lsp',
+          'elixirls'
+        },
+        automatic_enable = false,
+      })
+
       local border = {
         {"🭽", "FloatBorder"},
         {"▔", "FloatBorder"},
@@ -17,14 +39,13 @@ return {
         {"▏", "FloatBorder"},
       }
 
-      -- Path to Volar's node_modules for the TypeScript plugin
-      local volar_language_server_path = vim.fn.stdpath('data') .. "/mason/packages/vue-language-server/node_modules/@vue/language-server"
+      -- Path to Vue TypeScript plugin for ts_ls integration
+      local vue_typescript_plugin_path = vim.fn.stdpath('data') .. "/mason/packages/vue-language-server/node_modules/@vue/typescript-plugin"
 
       local vue_typescript_plugin = {
         name = '@vue/typescript-plugin',
-        location = volar_language_server_path,
+        location = vue_typescript_plugin_path,
         languages = { 'vue' },
-        configNamespace = 'typescript',
       }
 
       -- Define capabilities for nvim-cmp if it's available
@@ -63,23 +84,25 @@ return {
       end
 
       -- ts_ls (TypeScript Language Server) configuration
-      require('lspconfig').ts_ls.setup({
+      -- Adds 'vue' to filetypes so ts_ls attaches to .vue files (required for vue_ls v3 hybrid mode)
+      vim.lsp.config('ts_ls', {
         capabilities = capabilities,
         filetypes = { 'javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'vue' },
-        tsdk = vim.fn.stdpath("data") .. "/mason/packages/typescript-language-server/node_modules/typescript/lib",
         init_options = {
           plugins = {
             vue_typescript_plugin,
           },
         },
         on_attach = lsp_attach,
-        root_dir = require('lspconfig.util').root_pattern('tsconfig.json', 'jsconfig.json', 'package.json', '.git'),
+        root_markers = { 'tsconfig.json', 'jsconfig.json', 'package.json', '.git' },
       })
+      vim.lsp.enable('ts_ls')
 
-      -- volar (Vue Language Server) configuration
-      require('lspconfig').volar.setup({
+      -- Vue Language Server v3 configuration (hybrid mode)
+      -- The critical on_init handler that bridges vue_ls <-> ts_ls is provided by
+      -- nvim-lspconfig's lsp/vue_ls.lua and merged automatically via vim.lsp.config()
+      vim.lsp.config('vue_ls', {
         capabilities = capabilities,
-        filetypes = { 'vue' },
         settings = {
           vue = {
             complete = {
@@ -89,39 +112,39 @@ return {
               },
             },
           },
-          typescript = {
-            tsdk = vim.fn.stdpath("data") .. "/mason/packages/typescript-language-server/node_modules/typescript/lib",
-          },
-          javascript = {
-            validate = true,
-          },
         },
-        on_attach = function(client, bufnr)
-          lsp_attach(client, bufnr)
-        end,
-        root_dir = require('lspconfig.util').root_pattern('tsconfig.json', 'jsconfig.json', 'package.json', '.git'),
+        on_attach = lsp_attach,
+        root_markers = { 'tsconfig.json', 'jsconfig.json', 'package.json', '.git' },
       })
+      vim.lsp.enable('vue_ls')
 
       -- Other server configurations
-      require('lspconfig').eslint.setup({
+      vim.lsp.config('eslint', {
         capabilities = capabilities,
         on_attach = lsp_attach,
       })
-      require('lspconfig').jsonls.setup({
+      vim.lsp.enable('eslint')
+
+      vim.lsp.config('jsonls', {
         capabilities = capabilities,
         on_attach = lsp_attach,
       })
-      require('lspconfig').cssls.setup({
+      vim.lsp.enable('jsonls')
+
+      vim.lsp.config('cssls', {
         capabilities = capabilities,
         on_attach = lsp_attach,
       })
-      require('lspconfig').html.setup({
+      vim.lsp.enable('cssls')
+
+      vim.lsp.config('html', {
         capabilities = capabilities,
         on_attach = lsp_attach,
       })
+      vim.lsp.enable('html')
 
       -- lua_ls configuration
-      require('lspconfig').lua_ls.setup({
+      vim.lsp.config('lua_ls', {
         capabilities = capabilities,
         settings = {
           Lua = {
@@ -153,67 +176,36 @@ return {
             },
           },
         },
-        on_attach = function(client, bufnr)
-          lsp_attach(client, bufnr)
-        end,
+        on_attach = lsp_attach,
       })
+      vim.lsp.enable('lua_ls')
 
-      require('lspconfig').ruby_lsp.setup({
+      vim.lsp.config('ruby_lsp', {
         capabilities = capabilities,
         on_attach = lsp_attach,
       })
+      vim.lsp.enable('ruby_lsp')
 
       -- Elixir LS configuration
-      require('lspconfig').elixirls.setup({
+      vim.lsp.config('elixirls', {
         capabilities = capabilities,
         cmd = { vim.fn.stdpath("data") .. "/mason/packages/elixir-ls/language_server.sh" },
         settings = {
           elixirLS = {
-            -- I choose to disable dialyzer for now, I can enable it as needed
             dialyzerEnabled = false,
-            -- I also choose to turn off the auto dep fetching feature.
-            -- It often get things wrong and I'd rather do it manually
             fetchDeps = false,
             enableTestLenses = false,
             suggestSpecs = false,
           }
         },
-        on_attach = function(client, bufnr)
-          lsp_attach(client, bufnr)
-
-          -- Optional: Disable formatting if you prefer to use a dedicated formatter
-          -- client.server_capabilities.documentFormattingProvider = false
-          -- client.server_capabilities.documentRangeFormattingProvider = false
-        end,
-        root_dir = require('lspconfig.util').root_pattern('mix.exs', '.git'),
+        on_attach = lsp_attach,
+        root_markers = { 'mix.exs', '.git' },
       })
-
-    end
-  },
-  {
-    'williamboman/mason-lspconfig.nvim',
-    dependencies = { 'williamboman/mason.nvim' },
-    config = function ()
-      require('mason').setup({})
-      require('mason-lspconfig').setup({
-        ensure_installed = {
-          'lua_ls',
-          'ts_ls',
-          'cssls',
-          'html',
-          'jsonls',
-          'eslint',
-          'vue_ls',
-          'ruby_lsp',
-          'elixirls'
-        },
-        automatic_enable = false,
-        automatic_installation = true,
-      })
+      vim.lsp.enable('elixirls')
     end
   },
   {
     'WhoIsSethDaniel/mason-tool-installer.nvim',
-    dependencies = { 'williamboman/mason.nvim' },
+    dependencies = { 'mason-org/mason.nvim' },
   },
 }

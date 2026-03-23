@@ -1,5 +1,10 @@
 local cmp = require'cmp'
 
+-- Disable cmp for vimwiki
+cmp.setup.filetype('vimwiki', {
+  enabled = false
+})
+
 cmp.setup({
   mapping = {
     ['<C-n>'] = cmp.mapping.select_next_item({ behavior = cmp.SelectBehavior.Insert }),
