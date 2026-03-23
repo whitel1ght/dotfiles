@@ -58,4 +58,16 @@ vim.api.nvim_create_autocmd("CursorMovedI", {
 	end,
 })
 
--- vim.api.nvim_create_autocmd({ ""}, opts)
+-- auto-populate vimwiki diary entries with date and template
+vim.api.nvim_create_autocmd("BufNewFile", {
+	group = vim.api.nvim_create_augroup("vimwiki_diary_template", { clear = true }),
+	pattern = { "*/wiki/diary/????-??-??.md" },
+	callback = function()
+		local date = vim.fn.system("date"):gsub("\n$", "")
+		local template_path = vim.fn.expand("~/wiki/diary/template.md")
+		local lines = { date, "" }
+		local template = vim.fn.readfile(template_path)
+		vim.list_extend(lines, template)
+		vim.api.nvim_buf_set_lines(0, 0, -1, false, lines)
+	end,
+})
