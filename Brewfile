@@ -144,8 +144,12 @@ brew "bufbuild/buf/buf"
 # Task runner / simpler Make alternative written in Go
 brew "go-task/tap/go-task"
 brew "opencode-ai/tap/opencode"
+# Tool for creating locally-trusted development certificates
+brew "mkcert"
+# Deep clean and optimize your Mac
+brew "mole"
 # AeroSpace is an i3-like tiling window manager for macOS
-cask "aerospace"
+cask "nikitabobko/tap/aerospace"
 cask "font-3270-nerd-font"
 cask "font-agave-nerd-font"
 cask "font-anonymice-nerd-font"
@@ -184,7 +188,7 @@ cask "font-monofur-nerd-font"
 cask "font-monoid-nerd-font"
 cask "font-mononoki-nerd-font"
 cask "font-noto-nerd-font"
-cask "font-open-dyslexic-nerd-font"
+cask "font-opendyslexic-nerd-font"
 cask "font-overpass-nerd-font"
 cask "font-profont-nerd-font"
 cask "font-proggy-clean-tt-nerd-font"
@@ -199,14 +203,13 @@ cask "font-ubuntu-nerd-font"
 cask "font-victor-mono-nerd-font"
 # Open-source keystroke visualiser
 cask "keycastr"
-mas "AdBlock", id: 1402042596
-mas "AdGuard for Safari", id: 1440147259
+# A custom version of Firefox, focused on privacy, security and freedom
+cask "librewolf"
 mas "Harvest", id: 506189836
 mas "Numbers", id: 409203825
-mas "Pocket", id: 568494494
 mas "Quiver", id: 866773894
 mas "SimpleMind", id: 439654198
 mas "Slack", id: 803453959
 mas "Telegram", id: 747648890
-mas "Typist", id: 415166115
 mas "Xcode", id: 497799835
+cargo "cross"
