@@ -28,17 +28,6 @@ return {
         automatic_enable = false,
       })
 
-      local border = {
-        {"🭽", "FloatBorder"},
-        {"▔", "FloatBorder"},
-        {"🭾", "FloatBorder"},
-        {"▕", "FloatBorder"},
-        {"🭿", "FloatBorder"},
-        {" ", "FloatBorder"},
-        {"🭼", "FloatBorder"},
-        {"▏", "FloatBorder"},
-      }
-
       -- Path to Vue TypeScript plugin for ts_ls integration
       local vue_typescript_plugin_path = vim.fn.stdpath('data') .. "/mason/packages/vue-language-server/node_modules/@vue/typescript-plugin"
 
@@ -57,30 +46,15 @@ return {
       -- Common on_attach function for LSP clients
       local lsp_attach = function(client, bufnr)
         local opts = {buffer = bufnr}
-        vim.keymap.set('n', 'K', '<cmd>lua vim.lsp.buf.hover()<cr>', opts)
+        vim.keymap.set('n', 'K', function() vim.lsp.buf.hover({ border = 'rounded' }) end, opts)
         vim.keymap.set('n', 'gd', '<cmd>lua vim.lsp.buf.definition()<cr>', opts)
         vim.keymap.set('n', 'gD', '<cmd>lua vim.lsp.buf.declaration()<cr>', opts)
         vim.keymap.set('n', 'go', '<cmd>lua vim.lsp.buf.type_definition()<cr>', opts)
         vim.keymap.set('n', 'gr', '<cmd>lua vim.lsp.buf.references()<cr>', opts)
-        vim.keymap.set('n', 'gs', '<cmd>lua vim.lsp.buf.signature_help()<cr>', opts)
+        vim.keymap.set('n', 'gs', function() vim.lsp.buf.signature_help({ border = 'rounded' }) end, opts)
         vim.keymap.set('n', '<F2>', '<cmd>lua vim.lsp.buf.rename()<cr>', opts)
         vim.keymap.set({'n', 'x'}, '<F3>', '<cmd>lua vim.lsp.buf.format({async = true})<cr>', opts)
         vim.keymap.set('n', '<F4>', '<cmd>lua vim.lsp.buf.code_action()<cr>', opts)
-      end
-
-      -- Directly set global LSP handlers with border options
-      local default_hover_handler = vim.lsp.handlers.hover
-      vim.lsp.handlers["textDocument/hover"] = function(err, result, ctx, config)
-        config = config or {}
-        config.border = border
-        return default_hover_handler(err, result, ctx, config)
-      end
-
-      local default_signature_help_handler = vim.lsp.handlers.signature_help
-      vim.lsp.handlers["textDocument/signatureHelp"] = function(err, result, ctx, config)
-        config = config or {}
-        config.border = border
-        return default_signature_help_handler(err, result, ctx, config)
       end
 
       -- ts_ls (TypeScript Language Server) configuration
