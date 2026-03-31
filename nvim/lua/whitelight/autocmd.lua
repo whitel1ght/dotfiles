@@ -24,6 +24,15 @@ vim.api.nvim_create_autocmd("BufRead", {
 	end,
 })
 
+-- detect Jinja2/Flask templates as htmldjango
+vim.api.nvim_create_autocmd({ "BufRead", "BufNewFile" }, {
+	group = vim.api.nvim_create_augroup("jinja_ft", { clear = true }),
+	pattern = { "*/templates/*.html" },
+	callback = function()
+		vim.bo.filetype = "htmldjango"
+	end,
+})
+
 -- ide like highlight when stopping cursor
 vim.api.nvim_create_autocmd("CursorMoved", {
 	group = vim.api.nvim_create_augroup("LspReferenceHighlight", { clear = true }),

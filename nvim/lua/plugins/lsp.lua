@@ -23,7 +23,9 @@ return {
           'eslint',
           'vue_ls',
           'ruby_lsp',
-          'elixirls'
+          'elixirls',
+          'pyright',
+          'jinja_lsp'
         },
         automatic_enable = false,
       })
@@ -176,6 +178,36 @@ return {
         root_markers = { 'mix.exs', '.git' },
       })
       vim.lsp.enable('elixirls')
+
+      -- Pyright (Python LSP)
+      vim.lsp.config('pyright', {
+        capabilities = capabilities,
+        settings = {
+          python = {
+            analysis = {
+              typeCheckingMode = 'basic',
+              autoSearchPaths = true,
+              useLibraryCodeForTypes = true,
+            },
+          },
+        },
+        on_attach = lsp_attach,
+        root_markers = { 'pyrightconfig.json', 'pyproject.toml', 'setup.py', 'requirements.txt', '.git' },
+      })
+      vim.lsp.enable('pyright')
+
+      -- Jinja LSP (for Flask/Jinja2 templates)
+      vim.lsp.config('jinja_lsp', {
+        capabilities = capabilities,
+        on_attach = lsp_attach,
+        filetypes = { 'jinja', 'htmldjango' },
+        init_options = {
+          templates = './ecfx_admin/templates',
+          backend = { './ecfx_admin' },
+          lang = 'python',
+        },
+      })
+      vim.lsp.enable('jinja_lsp')
     end
   },
   {
