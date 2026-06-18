@@ -49,6 +49,15 @@ grep='grep --color=auto --exclude-dir={.bzr,CVS,.git,.hg,.svn}'
 # Architecture-specific
 alias io="arch -x86_64 io"
 
+# gitlab-mr-status — open-MR status report + change notifications
+# (https://gitlab.com tool living in ~/projects/gitlab-mr-status)
+export MRS_DIR="$HOME/projects/gitlab-mr-status"
+alias mrs="$MRS_DIR/bin/mr-status.py"           # regenerate the report once
+alias mrsw="$MRS_DIR/bin/mr-status.py --watch"  # watch & refresh on interval
+alias mrsd="$MRS_DIR/bin/mr-status.py --diff"   # print JSON change-list
+alias mrsn="$MRS_DIR/bin/mr-notify.py"          # diff + desktop notifications
+alias mrso="open $MRS_DIR/mr-status.md"         # open the report
+
 # -----------------------------------------------------------------------------
 # PATH CONFIGURATION
 # -----------------------------------------------------------------------------
