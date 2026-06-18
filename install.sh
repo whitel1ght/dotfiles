@@ -70,6 +70,10 @@ if [ -f "$DOTFILES_DIR/zsh/.zprofile" ]; then
     create_symlink "$DOTFILES_DIR/zsh/.zprofile" "$HOME/.zprofile"
 fi
 
+if [ -f "$DOTFILES_DIR/zsh/.zshenv" ]; then
+    create_symlink "$DOTFILES_DIR/zsh/.zshenv" "$HOME/.zshenv"
+fi
+
 if [ -f "$DOTFILES_DIR/zsh/.p10k.zsh" ]; then
     create_symlink "$DOTFILES_DIR/zsh/.p10k.zsh" "$HOME/.p10k.zsh"
 fi
