@@ -4,10 +4,31 @@
 # Server configurations
 export CLOUD=your.server.ip.here
 
-# Proxy settings (if needed)
-export HTTP_PROXY=http://127.0.0.1:2080
-export HTTPS_PROXY=http://127.0.0.1:2080
-export http_proxy=http://127.0.0.1:2080
+# Proxy toggle (if needed) — e.g. a local proxy like nekoray on 127.0.0.1:2080.
+# Use functions instead of static exports so you can flip the proxy off when
+# using a VPN (OpenVPN/WireGuard). Otherwise CLI/JVM traffic keeps getting sent
+# to the proxy port and hangs/refuses once the proxy app is closed.
+# Run `proxyoff` before bringing up a VPN, `proxyon` to restore.
+proxyon() {
+  export HTTP_PROXY=http://127.0.0.1:2080
+  export HTTPS_PROXY=http://127.0.0.1:2080
+  export http_proxy=http://127.0.0.1:2080
+  export https_proxy=http://127.0.0.1:2080
+  # Bypass for local services so JDBC/Redis/curl-to-localhost don't get proxied.
+  # NO_PROXY covers most CLIs; JVMs ignore it, so JAVA_TOOL_OPTIONS is the
+  # equivalent (note the `|` separator).
+  export NO_PROXY="localhost,127.0.0.1,::1"
+  export no_proxy="localhost,127.0.0.1,::1"
+  export JAVA_TOOL_OPTIONS="-Dhttp.nonProxyHosts=localhost|127.0.0.1 -DsocksNonProxyHosts=localhost|127.0.0.1"
+  echo "proxy ON"
+}
+proxyoff() {
+  unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy
+  unset NO_PROXY no_proxy JAVA_TOOL_OPTIONS
+  echo "proxy OFF (use this before a VPN)"
+}
+# Default ON for new shells. Comment out to default OFF.
+proxyon >/dev/null
 
 # Personal server aliases
 alias pull_notes="rsync -chavzP -e 'ssh -p 10001' username@server.ip:/path/to/notes $HOME"
