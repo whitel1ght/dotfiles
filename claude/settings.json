@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Read(//Users/dmitry/projects/**)",
+      "Edit(//Users/dmitry/projects/**)"
+    ],
+    "deny": [
+      "Bash(sudo *)",
+      "Bash(sudo:*)",
+      "Bash(su *)",
+      "Bash(su:*)",
+      "Bash(doas *)",
+      "Bash(doas:*)"
+    ],
+    "additionalDirectories": [
+      "/Users/dmitry/projects"
+    ]
+  },
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true
+  },
+  "alwaysThinkingEnabled": false,
+  "effortLevel": "xhigh",
+  "tui": "fullscreen",
+  "editorMode": "vim",
+  "skipWorkflowUsageWarning": true
+}

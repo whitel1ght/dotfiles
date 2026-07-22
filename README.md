@@ -11,6 +11,7 @@ Personal configuration files for macOS development tools.
 ├── ghostty/        # Ghostty terminal config
 ├── nvim/           # Neovim configuration
 ├── zsh/            # Zsh configuration (.zshrc, .zprofile, .p10k.zsh)
+├── claude/         # Claude Code: personal skills, agents, settings, CLAUDE.md
 ├── Brewfile        # Homebrew package list
 ├── install.sh      # Symlink setup script
 ├── brew-install.sh # Homebrew package installer
@@ -61,6 +62,55 @@ The brew script will:
 - **Ghostty**: `~/.config/ghostty/config`
 - **Neovim**: `~/.config/nvim/`
 - **Zsh**: `~/.zshrc`, `~/.zprofile`, `~/.p10k.zsh`
+- **Claude Code**: `~/.claude/CLAUDE.md`, `~/.claude/settings.json`, and per-item
+  links inside `~/.claude/skills/` and `~/.claude/agents/`
+
+## Claude Code
+
+Personal Claude Code components live in `claude/`:
+
+```
+claude/
+├── skills/         # personal skills (one directory per skill)
+├── agents/         # personal subagent definitions
+├── settings.json   # global Claude Code settings
+└── CLAUDE.md       # global personal instructions
+```
+
+`settings.json` and `CLAUDE.md` are symlinked as whole files. **Skills and agents
+are linked per item**, not as whole directories — this is deliberate. The work
+repo [`claude-components`](https://gitlab.com/ecfx/claude-components) symlinks all
+of `~/.claude/skills` and `~/.claude/agents` to itself, so linking the directories
+here would clobber it. Linking each skill individually lets personal and work
+components share one directory:
+
+```
+~/.claude/skills/           <- claude-components (whole directory)
+├── commit-msg/             (work)
+├── mr-review/              (work)
+└── ecfx-daily-commits/  -> ~/projects/dotfiles/claude/skills/ecfx-daily-commits
+```
+
+### Adding a personal skill
+
+1. `mkdir -p claude/skills/my-skill` and add a `SKILL.md` with YAML frontmatter
+   (`name` and `description` are required — without them the skill is silently
+   undiscoverable).
+2. Run `./install.sh`.
+
+Both the symlink and the ignore-list entry (below) are handled automatically.
+
+### Interaction with claude-components
+
+Because personal skills are linked *into* a directory that claude-components owns,
+they appear inside that repo's working tree. `install.sh` keeps a managed block in
+`claude-components/.git/info/exclude` listing them, so they stay out of its
+`git status`. That file is local-only and never committed, so it affects nobody
+else. Override the location with `CLAUDE_COMPONENTS_DIR` if you clone it elsewhere.
+
+Order doesn't matter: run either repo's setup script first. If `claude-components`
+later replaces the `~/.claude/skills` symlink, re-run `./install.sh` to restore the
+personal links.
 
 ## Adding New Configs
 
