@@ -20,15 +20,60 @@
 
 set -euo pipefail
 
+# Signals that a Claude Code turn is in flight, taken from its live status line:
+#   ✽ Inferring… (37s · ↓ 2.0k tokens)
+#   ✻ Bloviating… (2m 37s · ↓ 1.7k tokens)          <- minutes appear past 60s
+#   ✻ Cerebrating… (12s · ↑ 3.2k tokens · esc to interrupt)
+# The dependable, output-safe markers are the elapsed-time timer that only the
+# running status line shows — "(<N>s · … tokens)" or "(<N>m <N>s · … tokens)" —
+# and the interrupt hint. Bare words ("Working") are avoided; they collide with
+# ordinary output such as "working tree clean". The leading "([0-9]+[ms]" matches
+# both the seconds-only and minutes-and-seconds forms of the timer.
+#
+# NOTE: unlike pane identification (which is version-independent), this DOES read
+# Claude's status-line wording, so a future UI change could require updating it.
+# It degrades gracefully: if the wording changes, identification and `--all` keep
+# working — only the busy *filter* would need a new pattern here.
+# (Defined up here because the --preview subcommand below uses it and exits early.)
+BUSY_RE='esc to interrupt|\([0-9]+[ms][^)]*·[^)]*tokens'
+
 # Hidden subcommand: render a live preview of a window's pane content. Called by
 # fzf's --preview for the highlighted row (the argument is a "session:window",
 # possibly with a trailing " (here)" tag to strip). Must run before the rest of
 # the setup so it stays cheap and side-effect-free.
+#
+# A raw pane tail is mostly Claude's UI chrome (the input box, the "-- INSERT --"
+# footer, horizontal rules, "new task? /clear" and "recap:" hints). We strip that
+# so the preview shows the actual conversation — Claude's last message, which is
+# what tells you what the session is about — with the live status line surfaced
+# on top when the turn is in flight.
 if [ "${1:-}" = "--preview" ]; then
     loc="${2:-}"
     loc="${loc% (here)}"
     [ -n "$loc" ] || exit 0
-    tmux capture-pane -p -t "$loc" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 40
+
+    snap="$(tmux capture-pane -p -t "$loc" 2>/dev/null)" || exit 0
+
+    # grep exits non-zero when nothing matches, which would trip set -e/pipefail;
+    # a small wrapper swallows that so an empty match is not treated as an error.
+    g() { grep "$@" || true; }
+
+    # If a turn is running, show its status line first as a header.
+    status="$(printf '%s\n' "$snap" | g -iE "$BUSY_RE" | tail -n1 \
+              | sed 's/^[[:space:]]*//')"
+    if [ -n "$status" ]; then
+        printf '  %s\n  %s\n\n' "$status" '────────────────────────'
+    fi
+
+    # Strip UI chrome, then show the tail of what remains (the conversation body).
+    printf '%s\n' "$snap" \
+        | g -vE '^[[:space:]]*─{3,}[[:space:]]*$' \
+        | g -vE '^[[:space:]]*❯[[:space:]]*$' \
+        | g -vE '^\s*-- INSERT --|for agents\s*$|/rc\s*$' \
+        | g -vE 'new task\? /clear to save' \
+        | g -viE "$BUSY_RE" \
+        | g -vE '^[[:space:]]*$' \
+        | tail -n 60
     exit 0
 fi
 
@@ -58,22 +103,6 @@ fi
 
 # Absolute path to this script, so fzf's --preview can re-invoke it.
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
-
-# Signals that a Claude Code turn is in flight, taken from its live status line:
-#   ✽ Inferring… (37s · ↓ 2.0k tokens)
-#   ✻ Bloviating… (2m 37s · ↓ 1.7k tokens)          <- minutes appear past 60s
-#   ✻ Cerebrating… (12s · ↑ 3.2k tokens · esc to interrupt)
-# The dependable, output-safe markers are the elapsed-time timer that only the
-# running status line shows — "(<N>s · … tokens)" or "(<N>m <N>s · … tokens)" —
-# and the interrupt hint. Bare words ("Working") are avoided; they collide with
-# ordinary output such as "working tree clean". The leading "([0-9]+[ms]" matches
-# both the seconds-only and minutes-and-seconds forms of the timer.
-#
-# NOTE: unlike pane identification (which is version-independent), this DOES read
-# Claude's status-line wording, so a future UI change could require updating it.
-# It degrades gracefully: if the wording changes, identification and `--all` keep
-# working — only the busy *filter* would need a new pattern here.
-BUSY_RE='esc to interrupt|\([0-9]+[ms][^)]*·[^)]*tokens'
 
 # Emit "session:window" for every pane that is a Claude Code session.
 #
