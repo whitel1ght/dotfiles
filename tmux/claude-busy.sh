@@ -252,11 +252,13 @@ title="Busy Claude sessions"
 [ "$SCOPE" = "all" ] && title="Claude sessions"
 
 # Responsive preview placement: a side-by-side preview needs width. Below a
-# threshold, stack it on top so both the list and the preview stay readable;
-# very narrow terminals hide it entirely. Width comes from the terminal columns.
+# threshold, stack it BELOW the list (not above) so the list stays anchored at
+# the top and only the area beneath it appears/disappears — otherwise showing
+# and hiding the preview between recap and no-recap rows makes the list jump.
+# Very narrow terminals hide it entirely. Width comes from the terminal columns.
 cols="$(tput cols 2>/dev/null || echo 80)"
 if   [ "$cols" -ge 120 ]; then preview_win='right,50%,border-left,wrap'
-elif [ "$cols" -ge 80  ]; then preview_win='up,45%,border-bottom,wrap'
+elif [ "$cols" -ge 80  ]; then preview_win='down,45%,border-top,wrap'
 else                           preview_win='hidden'
 fi
 
