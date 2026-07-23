@@ -20,6 +20,18 @@
 
 set -euo pipefail
 
+# Hidden subcommand: render a live preview of a window's pane content. Called by
+# fzf's --preview for the highlighted row (the argument is a "session:window",
+# possibly with a trailing " (here)" tag to strip). Must run before the rest of
+# the setup so it stays cheap and side-effect-free.
+if [ "${1:-}" = "--preview" ]; then
+    loc="${2:-}"
+    loc="${loc% (here)}"
+    [ -n "$loc" ] || exit 0
+    tmux capture-pane -p -t "$loc" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 40
+    exit 0
+fi
+
 MODE="pick"     # pick | list | print
 SCOPE="busy"    # busy | all
 
@@ -43,6 +55,9 @@ if [ -z "${TMUX:-}" ] && ! tmux info >/dev/null 2>&1; then
     echo "no tmux server running" >&2
     exit 1
 fi
+
+# Absolute path to this script, so fzf's --preview can re-invoke it.
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
 # Signals that a Claude Code turn is in flight, taken from its live status line:
 #   ✽ Inferring… (37s · ↓ 2.0k tokens)
@@ -123,20 +138,29 @@ select_windows() {
     done < <(claude_panes)
 }
 
-# Build a human-friendly picker line: "session:window  ⟨window name⟩  last output line".
-# The window we were invoked from (passed as $1) is tagged so it's obvious in the
-# list; selecting it is a no-op that just closes the popup.
+# Build each picker row as TAB-separated columns for fzf:
+#   1: raw "session:window" (hidden; used for selection + as the preview argument)
+#   2: status icon  — ● busy, ○ idle
+#   3: location, padded to align (+ " (here)" for the current window)
+#   4: window name (Claude names the window after the task, so this is the useful
+#      label; the live pane content is shown in the preview pane instead of inline)
+# The window we were invoked from (passed as $1) is tagged "(here)"; selecting it
+# is a no-op that just closes the popup.
 annotate() {
-    local self="$1" loc name tail marker
+    local self="$1" loc name snap icon here_tag label
     while IFS= read -r loc; do
         [ -n "$loc" ] || continue
         name="$(tmux display-message -p -t "$loc" '#{window_name}' 2>/dev/null || echo '?')"
-        # Last non-empty visible line gives a hint of what it's doing.
-        tail="$(tmux capture-pane -p -t "$loc" 2>/dev/null \
-                | grep -v '^[[:space:]]*$' | tail -n1 | cut -c1-60)"
-        marker=""
-        [ "$loc" = "$self" ] && marker=" (here)"
-        printf '%s\t%s\t%s\n' "$loc$marker" "$name" "$tail"
+        snap="$(tmux capture-pane -p -t "$loc" 2>/dev/null || true)"
+        if printf '%s\n' "$snap" | grep -qiE "$BUSY_RE"; then
+            icon='●'
+        else
+            icon='○'
+        fi
+        here_tag=""
+        [ "$loc" = "$self" ] && here_tag=' (here)'
+        label="$loc$here_tag"
+        printf '%s\t%s\t%-18s\t%s\n' "$loc$here_tag" "$icon" "$label" "$name"
     done
 }
 
@@ -164,12 +188,30 @@ fi
 
 # Show every busy window, including the current one. Plain fzf (not fzf-tmux):
 # the caller runs us inside a `tmux popup`, which already provides the overlay.
-# annotate tags the current window with " (here)"; strip that back off the pick.
+#
+# Column layout from annotate (tab-separated):
+#   f1 = raw "session:window" (hidden; used for selection + preview arg)
+#   f2 = icon  f3 = location  f4 = window name
+# --with-nth=2.. shows only the display columns; f1 is what we read back.
+title="Busy Claude sessions"
+[ "$SCOPE" = "all" ] && title="Claude sessions"
+
 choice="$(printf '%s\n' "$windows" | annotate "$here" \
-    | fzf --with-nth=1,2,3 --delimiter='\t' \
-        --prompt='claude> ' \
-        --header='Enter: switch  Esc: cancel' \
-        --no-sort --cycle \
+    | fzf --delimiter='\t' \
+        --with-nth='2..' \
+        --nth='3,4' \
+        --no-sort --cycle --no-multi \
+        --layout=reverse \
+        --info=inline \
+        --border=rounded --border-label=" $title " --border-label-pos=3 \
+        --padding=0,1 --margin=1,2 \
+        --prompt='search: ' \
+        --pointer='▎' --marker='●' \
+        --header='enter: jump    esc: cancel    ● busy  ○ idle' --header-first \
+        --preview="$SELF --preview {1}" \
+        --preview-window='right,54%,border-left,wrap' \
+        --preview-label=' live view ' \
+        --color='fg:-1,bg:-1,hl:6,fg+:15,bg+:-1,hl+:14,border:8,label:7,prompt:6,pointer:5,header:8,info:8,preview-border:8' \
     | cut -f1 | sed 's/ (here)$//')"
 
 [ -n "$choice" ] || exit 0
