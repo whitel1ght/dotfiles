@@ -37,44 +37,68 @@ set -euo pipefail
 # (Defined up here because the --preview subcommand below uses it and exits early.)
 BUSY_RE='esc to interrupt|\([0-9]+[ms][^)]*·[^)]*tokens'
 
-# Hidden subcommand: render a live preview of a window's pane content. Called by
-# fzf's --preview for the highlighted row (the argument is a "session:window",
-# possibly with a trailing " (here)" tag to strip). Must run before the rest of
-# the setup so it stays cheap and side-effect-free.
-#
-# A raw pane tail is mostly Claude's UI chrome (the input box, the "-- INSERT --"
-# footer, horizontal rules, "new task? /clear" and "recap:" hints). We strip that
-# so the preview shows the actual conversation — Claude's last message, which is
-# what tells you what the session is about — with the live status line surfaced
-# on top when the turn is in flight.
+# Extract a window's session recap: the "* recap:" one-liner Claude Code prints
+# to summarize what the session is about. It is the single most useful thing to
+# show in the preview — better than the window name or raw pane content. The
+# recap can wrap onto indented continuation lines, so we grab from the recap
+# marker until the next unindented line or the input chrome, and drop the marker
+# and the "(disable recaps in /config)" trailer. Prints nothing if there is none.
+window_recap() {
+    local loc="$1"
+    # Anchor on Claude's actual recap marker "<glyph> recap:" at the start of a
+    # line, so we don't match the literal word "recap:" appearing elsewhere in
+    # content. The "※" glyph is passed in as an awk variable (matching it via
+    # byte escapes is unreliable in BSD awk). The recap's first line is
+    # "<glyph> recap: <text>"; continuation lines are indented. Grab from the
+    # recap line until a blank line, a horizontal rule, or the input chrome.
+    tmux capture-pane -p -t "$loc" 2>/dev/null | awk -v m='※' '
+        !grab && index($0, m " recap:") { grab=1 }
+        grab {
+            if (started && ($0 ~ /^[[:space:]]*$/ || $0 ~ /-- INSERT --/ \
+                || $0 ~ /new task\? \/clear/)) exit
+            line=$0
+            sub(/^[^:]*recap:[[:space:]]*/, "", line)   # drop "… recap:" prefix
+            gsub(/\(disable recaps in \/config\)/, "", line)  # drop the trailer
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+            if (line != "" && line !~ /^[-─]+$/) { print line; started=1 }
+        }
+    '
+}
+
+# Hidden subcommand: render the preview for a highlighted row. Argument is a
+# "session:window" (possibly with a trailing " (here)" tag). Must run before the
+# rest of setup so it stays cheap and side-effect-free.
 if [ "${1:-}" = "--preview" ]; then
     loc="${2:-}"
     loc="${loc% (here)}"
     [ -n "$loc" ] || exit 0
 
-    snap="$(tmux capture-pane -p -t "$loc" 2>/dev/null)" || exit 0
+    g() { grep "$@" || true; }  # tolerate no-match under set -e/pipefail
 
-    # grep exits non-zero when nothing matches, which would trip set -e/pipefail;
-    # a small wrapper swallows that so an empty match is not treated as an error.
-    g() { grep "$@" || true; }
+    # Show ONLY the session recap — Claude's own one-line summary — which is far
+    # more useful than the window name or a raw pane tail. If there is no recap,
+    # print nothing; the picker then hides the preview pane (a raw tail is noise).
+    recap="$(window_recap "$loc")"
+    [ -n "$recap" ] || exit 0
 
-    # If a turn is running, show its status line first as a header.
-    status="$(printf '%s\n' "$snap" | g -iE "$BUSY_RE" | tail -n1 \
-              | sed 's/^[[:space:]]*//')"
-    if [ -n "$status" ]; then
-        printf '  %s\n  %s\n\n' "$status" '────────────────────────'
-    fi
+    # Prefix with the live status line when a turn is in flight.
+    status="$(tmux capture-pane -p -t "$loc" 2>/dev/null \
+              | g -iE "$BUSY_RE" | tail -n1 | sed 's/^[[:space:]]*//')"
+    [ -n "$status" ] && printf '  %s\n\n' "$status"
 
-    # Strip UI chrome, then show the tail of what remains (the conversation body).
-    printf '%s\n' "$snap" \
-        | g -vE '^[[:space:]]*─{3,}[[:space:]]*$' \
-        | g -vE '^[[:space:]]*❯[[:space:]]*$' \
-        | g -vE '^\s*-- INSERT --|for agents\s*$|/rc\s*$' \
-        | g -vE 'new task\? /clear to save' \
-        | g -viE "$BUSY_RE" \
-        | g -vE '^[[:space:]]*$' \
-        | tail -n 60
+    printf '%s\n' "$recap"
     exit 0
+fi
+
+# Hidden subcommand: exit 0 if the window has a recap, 1 otherwise. fzf's focus
+# binding uses this to show the preview pane only for rows that have something
+# worth previewing, and hide it (a bare blank pane is noise) for those that don't.
+if [ "${1:-}" = "--has-recap" ]; then
+    loc="${2:-}"
+    loc="${loc% (here)}"
+    [ -n "$loc" ] || exit 1
+    [ -n "$(window_recap "$loc")" ]
+    exit $?
 fi
 
 MODE="pick"     # pick | list | print
@@ -236,6 +260,16 @@ elif [ "$cols" -ge 80  ]; then preview_win='up,45%,border-bottom,wrap'
 else                           preview_win='hidden'
 fi
 
+# Per-row preview visibility: on every focus change, show the preview in the
+# responsive layout only when the highlighted window actually has a recap;
+# otherwise hide it, so rows with nothing to show don't leave a blank pane.
+# ctrl-/ still toggles it manually. On very narrow terminals it stays hidden.
+if [ "$preview_win" = "hidden" ]; then
+    focus_bind='focus:hide-preview'
+else
+    focus_bind="focus:transform:[ \"\$($SELF --has-recap {1}; echo \$?)\" = 0 ] && echo 'change-preview-window($preview_win)' || echo 'hide-preview'"
+fi
+
 choice="$(printf '%s\n' "$windows" | annotate "$here" \
     | fzf --delimiter='\t' \
         --with-nth='2..' \
@@ -250,8 +284,9 @@ choice="$(printf '%s\n' "$windows" | annotate "$here" \
         --header='enter jump · esc cancel · ● busy ○ idle · ctrl-/ preview' --header-first \
         --preview="$SELF --preview {1}" \
         --preview-window="$preview_win" \
-        --preview-label=' live view ' \
+        --preview-label=' recap ' \
         --bind='ctrl-/:toggle-preview' \
+        --bind="$focus_bind" \
         --color='fg:-1,bg:-1,hl:6,fg+:15,bg+:-1,hl+:14,border:8,label:7,prompt:6,pointer:5,header:8,info:8,preview-border:8' \
     | cut -f1 | sed 's/ (here)$//')"
 
