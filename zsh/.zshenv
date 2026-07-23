@@ -8,3 +8,7 @@
 # Appended so it composes with any no_proxy injected by launchd/NekoBox.
 export NO_PROXY="${NO_PROXY:+$NO_PROXY,}gitlab.com,.gitlab.com"
 export no_proxy="${no_proxy:+$no_proxy,}gitlab.com,.gitlab.com"
+
+# Source machine-local secrets (NOT in this repo) if present — e.g. JIRA_EMAIL /
+# JIRA_API_TOKEN for mrglass. Keeps tokens out of version control.
+[ -f "$HOME/.config/mrglass/secrets.env" ] && source "$HOME/.config/mrglass/secrets.env"

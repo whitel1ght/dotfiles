@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
 #
-# claude-busy.sh — find tmux windows running Claude Code that are actively working,
-# and (by default) let you fuzzy-pick one to jump to.
+# claude-picker.sh — an fzf picker over tmux windows running Claude Code; jump to
+# the one you choose. Shows a per-row preview of each session's recap.
 #
-# "Working" is inferred from each pane's visible content: while Claude is running a
-# turn it renders a status line ("esc to interrupt", a spinner, token/elapsed
-# counters). A pane parked at the prompt shows none of these, so it's treated as idle.
+# Windows are identified by process (a "claude" process in the pane's subtree),
+# not by version string, so it survives Claude updates. "Busy" — a turn in flight
+# — is inferred from the live status line (the "(<N>s · … tokens)" timer or the
+# "esc to interrupt" hint); a pane parked at the prompt is treated as idle.
 #
 # Usage:
-#   claude-busy.sh            # fzf picker of busy Claude windows; switches to the pick
-#   claude-busy.sh --list     # just print busy windows (one "session:window" per line)
-#   claude-busy.sh --all      # picker over ALL Claude windows, busy or not
-#   claude-busy.sh --print    # picker, but print the choice instead of switching
+#   claude-picker.sh            # fzf picker of BUSY Claude windows; jump to the pick
+#   claude-picker.sh --all      # picker over ALL Claude windows, busy or not
+#   claude-picker.sh --list     # just print the windows (one "session:window" per line)
+#   claude-picker.sh --print    # picker, but print the choice instead of switching
 #
-# Intended to be driven from a tmux key binding (see .tmux.conf), but works standalone.
-# The binding runs this inside `tmux popup`, passing the invoking client as
-# CALLER_CLIENT so we switch the right client (switch-client from within a popup
-# would otherwise target the popup's own client).
+# Intended to be driven from a tmux key binding (see .tmux.conf), but works
+# standalone. The binding runs it inside `tmux popup`; the script reads the
+# invoking client via #{client_name} at runtime so switch-client targets the
+# right terminal rather than the popup's own client.
 
 set -euo pipefail
 
