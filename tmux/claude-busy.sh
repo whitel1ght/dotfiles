@@ -187,7 +187,9 @@ if [ -z "$windows" ]; then
 fi
 
 # Show every busy window, including the current one. Plain fzf (not fzf-tmux):
-# the caller runs us inside a `tmux popup`, which already provides the overlay.
+# the caller runs us inside a `tmux popup`, which already frames the overlay — so
+# fzf itself uses no outer border (avoids a double frame), only a thin separator
+# line on the preview.
 #
 # Column layout from annotate (tab-separated):
 #   f1 = raw "session:window" (hidden; used for selection + preview arg)
@@ -196,6 +198,15 @@ fi
 title="Busy Claude sessions"
 [ "$SCOPE" = "all" ] && title="Claude sessions"
 
+# Responsive preview placement: a side-by-side preview needs width. Below a
+# threshold, stack it on top so both the list and the preview stay readable;
+# very narrow terminals hide it entirely. Width comes from the terminal columns.
+cols="$(tput cols 2>/dev/null || echo 80)"
+if   [ "$cols" -ge 120 ]; then preview_win='right,50%,border-left,wrap'
+elif [ "$cols" -ge 80  ]; then preview_win='up,45%,border-bottom,wrap'
+else                           preview_win='hidden'
+fi
+
 choice="$(printf '%s\n' "$windows" | annotate "$here" \
     | fzf --delimiter='\t' \
         --with-nth='2..' \
@@ -203,14 +214,15 @@ choice="$(printf '%s\n' "$windows" | annotate "$here" \
         --no-sort --cycle --no-multi \
         --layout=reverse \
         --info=inline \
-        --border=rounded --border-label=" $title " --border-label-pos=3 \
-        --padding=0,1 --margin=1,2 \
-        --prompt='search: ' \
+        --border=none \
+        --padding=0 --margin=0 \
+        --prompt="$title  ›  " \
         --pointer='▎' --marker='●' \
-        --header='enter: jump    esc: cancel    ● busy  ○ idle' --header-first \
+        --header='enter jump · esc cancel · ● busy ○ idle · ctrl-/ preview' --header-first \
         --preview="$SELF --preview {1}" \
-        --preview-window='right,54%,border-left,wrap' \
+        --preview-window="$preview_win" \
         --preview-label=' live view ' \
+        --bind='ctrl-/:toggle-preview' \
         --color='fg:-1,bg:-1,hl:6,fg+:15,bg+:-1,hl+:14,border:8,label:7,prompt:6,pointer:5,header:8,info:8,preview-border:8' \
     | cut -f1 | sed 's/ (here)$//')"
 
