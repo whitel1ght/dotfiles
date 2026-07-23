@@ -53,18 +53,57 @@ fi
 # and the interrupt hint. Bare words ("Working") are avoided; they collide with
 # ordinary output such as "working tree clean". The leading "([0-9]+[ms]" matches
 # both the seconds-only and minutes-and-seconds forms of the timer.
+#
+# NOTE: unlike pane identification (which is version-independent), this DOES read
+# Claude's status-line wording, so a future UI change could require updating it.
+# It degrades gracefully: if the wording changes, identification and `--all` keep
+# working — only the busy *filter* would need a new pattern here.
 BUSY_RE='esc to interrupt|\([0-9]+[ms][^)]*·[^)]*tokens'
 
-# Emit "session:window" for every pane that is a Claude Code session. Claude Code
-# reports its version as the pane's process name (e.g. "2.1.218"), so the reliable
-# selector is a version-string command — NOT "claude"/"node", which both miss the
-# real sessions and false-match unrelated node processes. "claude" is kept as a
-# fallback in case a build reports the binary name instead.
+# Emit "session:window" for every pane that is a Claude Code session.
+#
+# Identification is version-independent: a pane is Claude if its process subtree
+# contains a process named "claude" (the binary). We deliberately do NOT match
+# the version string Claude reports as its command name (e.g. "2.1.218") — that
+# changes on every update — nor the pane title glyph, which is an animated
+# spinner while a turn runs and so is not a stable marker.
+#
+# The check uses a SINGLE `ps` snapshot walked in awk, not a per-pane `pgrep -P`.
+# That matters for correctness as much as speed: Claude spawns short-lived
+# children, so per-pane pgrep calls race against a moving process tree and
+# intermittently miss the "claude" child. One consistent snapshot does not.
+#
+# awk walks, for each pane_pid, its descendants and reports whether any is
+# "claude"; the shell then maps the matching pids back to "session:window".
 claude_panes() {
-    tmux list-panes -a \
-        -F '#{session_name}:#{window_index}	#{pane_current_command}' \
-        | grep -iE '	([0-9]+\.[0-9]+\.[0-9]+|claude)$' \
-        | cut -f1 \
+    # pane_pid -> "session:window" map, tab-separated.
+    local map
+    map="$(tmux list-panes -a -F '#{pane_pid}	#{session_name}:#{window_index}')"
+
+    # One ps snapshot; awk marks each root pid whose subtree contains "claude".
+    printf '%s\n' "$map" | awk '
+        NR==FNR { loc[$1]=$2; next }           # first pass: the tmux map
+        { comm[$1]=$3; ppid[$1]=$2 }           # second pass: ps snapshot
+        END {
+            for (root in loc) {
+                # BFS over descendants of this pane_pid
+                delete seen; qn=0; q[qn++]=root; hit=0
+                for (i=0; i<qn; i++) {
+                    cur=q[i]
+                    for (pid in ppid) {
+                        if (ppid[pid]==cur && !(pid in seen)) {
+                            seen[pid]=1; q[qn++]=pid
+                            # comm may be a bare name ("claude") or a full path
+                            # ("/Users/.../claude"); match the basename either way.
+                            c=comm[pid]; sub(/^.*\//, "", c)
+                            if (c=="claude") hit=1
+                        }
+                    }
+                }
+                if (hit) print loc[root]
+            }
+        }
+    ' - <(ps -ax -o pid=,ppid=,comm=) \
         | sort -u
 }
 
