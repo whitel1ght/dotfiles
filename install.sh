@@ -99,11 +99,6 @@ if [ -f "$DOTFILES_DIR/tmux/.tmux.conf" ]; then
     create_symlink "$DOTFILES_DIR/tmux/.tmux.conf" "$HOME/.tmux.conf"
 fi
 
-# tmux helper scripts (referenced from .tmux.conf as ~/.tmux.conf.d/<name>)
-if [ -f "$DOTFILES_DIR/tmux/claude-picker.sh" ]; then
-    create_symlink "$DOTFILES_DIR/tmux/claude-picker.sh" "$HOME/.tmux.conf.d/claude-picker.sh"
-fi
-
 # Aerospace configuration
 if [ -f "$DOTFILES_DIR/aerospace/aerospace.toml" ]; then
     create_symlink "$DOTFILES_DIR/aerospace/aerospace.toml" "$HOME/.config/aerospace/aerospace.toml"

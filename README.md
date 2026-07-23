@@ -67,43 +67,17 @@ The brew script will:
 
 ## tmux
 
-The prefix is remapped to backtick (`` ` ``). Beyond the base config, `tmux/`
-ships a helper for finding Claude Code sessions across your windows:
+The prefix is remapped to backtick (`` ` ``). Plugins are managed with
+[TPM](https://github.com/tmux-plugins/tpm); install them with `` ` `` + <kbd>I</kbd>.
 
-**`claude-picker.sh`** — pops an `fzf` picker of tmux windows running Claude Code
-and jumps to the one you choose.
+Declared plugins:
 
-- **Version-independent detection.** A window counts as Claude if its pane's
-  process subtree contains a `claude` process — not by matching a version string,
-  so it keeps working across Claude updates.
-- **Busy vs idle.** Windows with a turn in flight are marked `●` (busy), the rest
-  `○` (idle), detected from the live status line (the `(37s · … tokens)` timer or
-  the `esc to interrupt` hint). The current window is tagged `(here)`; selecting
-  it just closes the popup.
-- **Recap preview.** For each window, the preview pane shows that session's
-  `recap:` line — Claude's own one-line summary of what it's working on, which is
-  far more useful than the window name. Windows without a recap show no preview
-  (rather than a noisy pane tail). The preview sits below the list so it doesn't
-  shift the rows as you navigate; `ctrl-/` toggles it, and it lays out
-  side-by-side on wide terminals.
-
-Key bindings (after the `` ` `` prefix):
-
-| Keys | Action |
-|------|--------|
-| `` ` `` `j` | Pick a **busy** Claude window and jump to it (mnemonic: jump) |
-| `` ` `` `a` | Pick from **all** Claude windows, busy or not |
-
-Run it standalone too:
-
-```bash
-~/.tmux.conf.d/claude-picker.sh            # fzf picker of busy Claude windows
-~/.tmux.conf.d/claude-picker.sh --all      # picker over all Claude windows
-~/.tmux.conf.d/claude-picker.sh --list     # print the windows, no picker
-```
-
-Requires `fzf` and `tmux` (both in the `Brewfile`). The
-`~/.tmux.conf.d/claude-picker.sh` symlink is created by `install.sh`.
+- [`tmux-resurrect`](https://github.com/tmux-plugins/tmux-resurrect) — save/restore
+  sessions.
+- [`tmux-claude-picker`](https://github.com/whitel1ght/tmux-claude-picker) — an
+  `fzf` picker for jumping between Claude Code sessions across windows, with a
+  recap preview. Bindings (after the `` ` `` prefix): `` ` `` `j` = busy Claude
+  windows, `` ` `` `a` = all Claude windows. Requires `fzf` (in the `Brewfile`).
 
 ## Claude Code
 
