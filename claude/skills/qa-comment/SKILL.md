@@ -1,83 +1,72 @@
 ---
 name: qa-comment
-description: Use when the user wants a QA handoff comment for a branch or MR — e.g. "write a QA comment", "what should QA test", "qa comment for this branch", "prepare this for QA". Investigates the branch diff, works out affected areas and regression risk, writes a Jira-ready Markdown comment and copies it to the clipboard.
+description: Use when the user wants a QA handoff comment for work done in this session — e.g. "write a QA comment", "what should QA test", "qa comment for this", "prepare this for QA". Writes a Jira-ready Markdown comment from the session's own implementation context and copies it to the clipboard.
 ---
 
 # QA Comment
 
 ## Overview
 
-Turn a branch into a comment a tester can act on without reading the diff: what
-changed, where to click, and what might have broken somewhere else.
+Write the QA handoff for work done **in this conversation**, and put it on the
+clipboard ready to paste into a Jira comment.
 
-The output goes on the clipboard ready to paste into a Jira comment box.
+**Source the comment from what you already know, not from a fresh `git diff`.**
+By the time this is invoked you have context no diff contains: why each change
+was made, which decisions were deliberate, what you verified in the browser and
+what you did not, which edge cases you already ruled out, which findings came
+from review, and what broke along the way and got fixed. That is the material
+QA actually needs. Re-deriving from the diff throws it away and produces a
+worse comment.
+
+Use git only to fill gaps — the branch name, a commit count, a file you touched
+early and want to re-check. Never as the starting point.
 
 ## Procedure
 
-### 1. Gather the facts
+### 1. Recall the work
 
-```bash
-~/.claude/skills/qa-comment/analyse.sh            # vs origin/master
-~/.claude/skills/qa-comment/analyse.sh develop    # vs another base
-```
+Before writing, answer these from the session:
 
-Read the whole output before writing anything. It gives you the commits, files
-grouped by type, CSS selectors touched, Python definitions changed, every
-user-facing string that changed, routes in the changed files, and the test
-result.
+- What was the user-visible problem, and what does the fix change for someone
+  using the app?
+- Which pages did you actually load and check? Which did you not?
+- What did you deliberately **not** change, and why? (Out-of-scope findings,
+  pre-existing issues, things review raised and you rejected with reasoning.)
+- What surprised you? A defect found mid-implementation, a false assumption
+  caught by a measurement, a review finding you had to verify — those are
+  exactly where a regression hides.
+- What is already known-broken and unrelated? Every one you name is a bug
+  report QA does not file and you do not triage.
 
-### 2. Work out the real blast radius
+If the session covered several tickets, ask which one the comment is for rather
+than merging them.
 
-**This is the part the script cannot do, and the part that makes the comment
-worth reading.** The file list is not the affected-area list.
+### 2. Work out the blast radius
 
-Trace each change outward:
+**The file list is not the affected-area list.** You know from building it
+whether a change was local or shared:
 
-- **A stylesheet** reaches every page loading it. Grep the changed selectors —
-  a rule scoped to a shared class can touch pages nobody edited. Do not assume
-  the file list bounds it.
-- **A base class or shared template** reaches every subclass or child. Find
-  them rather than listing the parent.
-- **A shared macro or partial** reaches every template importing it.
-- **A route the framework generates** may not be in any nav menu. Confirm URLs
-  rather than inferring them from decorators.
-- **A widened condition** (an `if` that now matches more) affects records that
-  never took that path before, which is where silent regressions live.
+- A stylesheet or shared macro reaches every page that loads it
+- A base class reaches every subclass
+- A widened condition affects records that never took that path before
+- A framework-generated route may exist without appearing in any nav menu
 
-Verify in the browser or with a quick script where you reasonably can. A URL you
-have not loaded is a guess; say so rather than putting a guess in front of QA.
+Where you already verified reach during the session, say so and give the number.
+Where you did not, say that instead of guessing.
 
-### 3. Decide what QA should actually do
+### 3. Write the comment
 
-Each test case names a **URL**, an **action**, and an **observable result**.
-"Check the firm page works" is not a test case. "Save a firm with ECFX Track
-ticked → expect a green success message, not amber" is.
-
-Prioritise by consequence, not by how much code changed:
-
-- **P1** — data can be lost or corrupted, money moves, an irreversible action,
-  a previously-broken thing now claimed fixed
-- **P2** — visible behaviour a user depends on
-- **P3** — cosmetic, or a refactor expected to change nothing
-
-For a refactor, say **"expect no visible change"** explicitly and ask them to
-raise anything that differs. That turns a vague look-over into a real check.
-
-### 4. Write the comment
-
-Markdown, because Jira Cloud's editor converts it on paste. Keep it short enough
-to read in full — a tester who skims a wall of text tests nothing.
-
-Structure:
+Markdown — Jira Cloud's editor converts it on paste. Keep it short enough to be
+read in full; a tester who skims a wall of text tests nothing.
 
 ```markdown
 ## <TICKET>: <one line on what changed and why it matters>
 
-**Branch:** `<branch>` · **Base:** `<base>` · **Commits:** <n>
+**Branch:** `<branch>` · **Commits:** <n>
 
 ### What changed
-<2–4 sentences in plain language. Name the user-visible effect, not the
-implementation. A tester should understand this without opening the code.>
+<2–4 sentences in plain language. The user-visible effect, not the
+implementation. A tester should follow this without opening the code.>
 
 ### Where to test
 | Page | URL | What to check |
@@ -87,54 +76,65 @@ implementation. A tester should understand this without opening the code.>
 ### Test cases
 **P1 — <area>**
 1. <action> → <expected observable result>
-2. <action> → <expected observable result>
 
 **P2 — <area>**
-3. ...
+2. ...
 
 ### Regression risk
 - **<area>** — <why this could break, what to look at>
 
 ### Not part of this change
-- <known issue QA will otherwise report as new>
+- <known issue QA would otherwise report as new>
 
 ### Notes
-- Tests: <result, or "not run — say which">
-- <anything QA needs: data setup, feature flags, an env that must be seeded>
+- Tests: <result, or "not run">
+- <data setup, feature flags, anything QA needs before starting>
 ```
 
-Drop any section that would be empty. An empty "Regression risk" heading is
-noise; no regression risk at all is worth one line saying so.
+Drop any section that would be empty.
 
-### 5. Copy it to the clipboard
+Priority is by consequence, not by how much code changed:
 
-Write the comment to a file, then:
+- **P1** — data loss or corruption, money moves, an irreversible action, or a
+  previously-broken thing now claimed fixed
+- **P2** — visible behaviour a user depends on
+- **P3** — cosmetic, or a refactor expected to change nothing
+
+Each test case names a **URL**, an **action** and an **observable result**.
+"Check the firm page works" is not a test case. "Save a firm with ECFX Track
+ticked → expect a green success message, not amber" is.
+
+For a refactor, say **"expect no visible change"** explicitly and ask QA to
+raise anything that differs. That turns a vague look-over into a real check.
+
+### 4. Copy it to the clipboard
 
 ```bash
-pbcopy < /tmp/qa-comment.md          # macOS
+pbcopy < /tmp/qa-comment.md
 ```
 
-Confirm with the character count and tell the user it is on the clipboard.
-Also print the comment in the chat so they can read it without pasting.
+Print the comment in the chat as well, and confirm the character count. The
+user should be able to read it without pasting anywhere.
 
 ## Rules
 
 - **Write for someone who did not write the code.** No class names, file paths
-  or function names in the test cases. QA clicks a UI; give them the UI.
-- **Never invent a URL.** Confirm it, or mark it clearly, e.g.
+  or function names in the test cases — QA clicks a UI, so give them the UI.
+- **Never invent a URL.** Use one you loaded this session, or mark it clearly:
   `/firm/edit/?id=<FIRM_ID>` with a note to substitute a real id.
 - **State what you did not verify.** "Not tested locally — no seed data for a
   firm with ECFX Retrieve" is useful. Silence is not.
-- **List known-not-this-branch issues.** Every one you name is a bug report QA
-  does not have to file and you do not have to triage.
-- **Say when nothing should change.** For refactors this is the whole test.
+- **Point QA at what you nearly got wrong.** If a measurement corrected you, or
+  review caught something, that area deserves an explicit test case — it is
+  where a second pair of eyes pays off most.
 - **No emoji, no exclamation marks.** This goes in a shared ticket.
 
 ## Notes
 
-- The script's route section does not resolve blueprint prefixes — treat those
-  as hints and confirm real URLs.
-- If the repo has no test runner the script says so; report that rather than
-  implying the branch is green.
-- Works in any git repo, not just this one. Non-Python repos simply get fewer
-  populated sections.
+- If invoked in a fresh session with no implementation context, say so and ask
+  the user to point at the branch — then read the diff and commit messages
+  first. That is the degraded path, not the intended one.
+- Markdown is deliberate: it renders in Jira Cloud's editor, and degrades to
+  readable plain text if pasted into an older wiki-markup box. Wiki markup
+  pasted into a Markdown box does not degrade — it renders as literal `h3.`
+  and `||`.
