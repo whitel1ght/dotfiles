@@ -1,6 +1,6 @@
 ---
 name: handle-ticket
-description: Drive a Jira ticket from "handed to me" to "reviewed MR pushed" — multi-agent investigation and brainstorming, a single approach gate, a feature branch off master, multi-agent implementation, the project's own checks, a draft MR, then a multi-agent review whose findings are evaluated and fixed locally instead of posted. Use when the user says "handle ticket ECFX-15234", "handle this ticket", "take this ticket", "work this ticket end-to-end", or pastes ticket text with a number and asks you to do it.
+description: Drive a Jira ticket from "handed to me" to "reviewed MR pushed" — multi-agent investigation and brainstorming, a single approach gate, a feature branch off master, multi-agent implementation, the project's own checks, full browser verification of dashboard/admin UI changes via the Chrome extension, a draft MR, then a multi-agent review whose findings are evaluated and fixed locally instead of posted. Use when the user says "handle ticket ECFX-15234", "handle this ticket", "take this ticket", "work this ticket end-to-end", or pastes ticket text with a number and asks you to do it.
 ---
 
 # Handle Ticket
@@ -16,13 +16,15 @@ read ticket → multi-agent investigate + brainstorm → [ask only if genuinely 
                               ↓
       branch off master → multi-agent implement → project checks
                               ↓
+        🌐 browser test (dashboard/admin) — up to 3 fix rounds
+                              ↓
                       draft MR, pushed
                               ↓
         /mr-review-multi-agent  ── findings NOT posted ──┐
                               ↓                          │
       superpowers:receiving-code-review evaluates them ──┘
                               ↓
-        fix what survives → checks → push → undraft
+     fix what survives → checks → 🌐 re-verify → push → undraft
                               ↓
                            report
 ```
@@ -275,9 +277,105 @@ the wall-clock. Run the broader suite only if the change is cross-cutting.
 you did not touch, verify it fails on master too; if it does, note it as
 pre-existing and continue. If it doesn't, you broke it — fix it.
 
-## Phase 6 — Draft MR
+## Phase 6 — Test in the browser (dashboard / admin only)
 
-Commit, push, open as **draft**. Draft matters: the review cycle in Phase 7 is
+**Applies when the change touches a UI a human uses** — `ecfx-dashboard` (Vue)
+or `ecfx-admin` (Flask/Jinja). Skip entirely for backend-only work and say so
+in the report; do not fabricate a browser pass that didn't happen.
+
+Unit tests prove functions behave. They do not prove the feature *works*. A
+component can pass every test and still render blank, throw in the console,
+break the layout, or wire the button to nothing. This phase closes that gap
+before an MR exists.
+
+**Assume the app is already running locally.** This skill does not start dev
+servers.
+
+| App | URL | Notes |
+|---|---|---|
+| `ecfx-dashboard` | `http://localhost:4000` | Vite (`npm run dev` → `dev.sh`) |
+| `ecfx-admin` | `http://localhost:5000` | Flask; often `:5001` because macOS AirPlay squats on 5000. Use **`localhost`, never `127.0.0.1`** — the admin app's session/auth depends on it. |
+
+Confirm it's up before testing. If it isn't, say which app and URL you expected
+and ask the user to start it rather than guessing at ports or launching it
+yourself:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:4000
+```
+
+### 6a. Load the browser tools
+
+Invoke the `claude-in-chrome` skill first, then load every tool you need in
+**one** `ToolSearch` call — one call per tool wastes a round-trip each:
+
+```
+ToolSearch "select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__computer,mcp__claude-in-chrome__read_page,mcp__claude-in-chrome__form_input,mcp__claude-in-chrome__read_console_messages,mcp__claude-in-chrome__tabs_close_mcp"
+```
+
+Call `tabs_context_mcp` before anything else, then **open a new tab** for the
+test. Never hijack a tab the user is working in, and never reuse a tab id from
+an earlier session.
+
+### 6b. Derive the test plan from the acceptance criteria
+
+Write the plan down before touching the browser — from the ticket's acceptance
+criteria and the approach you got approved at the gate, not from what the code
+happens to do. A plan derived from the implementation only proves the code does
+what it does.
+
+Each step is a **URL**, an **action**, and an **observable result**. "Check the
+page works" is not a test step. "Save with the date range cleared → expect an
+inline validation message, not a 500" is.
+
+### 6c. Test it completely
+
+Cover all five. Partial coverage is where UI bugs survive:
+
+1. **Happy path** — every acceptance criterion, end to end, as a user does it.
+2. **Empty / loading / error states** — no data, slow response, failed request.
+   These are the states nobody builds and everybody hits.
+3. **Validation and boundaries** — blank required fields, wrong types,
+   over-long input, out-of-range dates, special characters.
+4. **Console clean** — read console messages after each significant
+   interaction. Filter to cut noise:
+   ```
+   read_console_messages (pattern: "error|warn|Uncaught|Failed")
+   ```
+   **New errors are failures**, even when the UI looks right. Distinguish new
+   from pre-existing — check the same page on `master` if unsure.
+5. **Adjacent regression** — the flows nearest the change. A shared component,
+   a modified store, or a touched stylesheet reaches further than the diff
+   suggests.
+
+Capture a screenshot of each key state — the working feature, and each error or
+empty state you exercised. Screenshots are the evidence for the report.
+
+**Do not trigger native dialogs** (`alert`, `confirm`, `prompt`). They block the
+extension and kill the session. If a flow requires one — a delete confirmation,
+typically — warn the user before proceeding.
+
+### 6d. When it doesn't work
+
+A browser failure is ordinary unfinished work, not a reason to stop. Diagnose
+it, fix it, re-run the Phase 5 checks, and re-test — **up to 3 rounds.**
+
+Fix the actual cause. A change that makes the symptom disappear without
+explaining it is not a fix, and the console usually names the real problem.
+
+If it's still broken after 3 rounds, **stop and report** with the failing step,
+the console output, and the screenshots. Grinding a fourth round on an approach
+that isn't working wastes time the user could spend redirecting you. If a round
+reveals the *approved approach* is wrong — not the implementation, the approach
+— stop immediately and say so; that's a gate decision, not a bug fix.
+
+Close the tab when you're done.
+
+---
+
+## Phase 7 — Draft MR
+
+Commit, push, open as **draft**. Draft matters: the review cycle in Phase 8 is
 still going to push commits, and human reviewers should not be pinged into a
 moving target.
 
@@ -308,9 +406,9 @@ glab mr create --draft \
   --yes
 ```
 
-Capture the MR IID and URL from the output — Phase 7 needs both.
+Capture the MR IID and URL from the output — Phase 8 needs both.
 
-## Phase 7 — Multi-agent review, findings **not** posted
+## Phase 8 — Multi-agent review, findings **not** posted
 
 Invoke `/mr-review-multi-agent` against the MR you just opened.
 
@@ -339,7 +437,7 @@ glab mr view <iid> --comments | head -40
 If a review comment did land on the MR, delete it and say so in the final
 report — don't leave it sitting there.
 
-## Phase 8 — Evaluate the findings
+## Phase 9 — Evaluate the findings
 
 Load `superpowers:receiving-code-review` and apply it to the returned findings.
 Its rules govern here: verify before implementing, no performative agreement,
@@ -373,9 +471,17 @@ If a finding is unclear enough that you can't tell what it's asking for, don't
 guess at it and don't half-implement — ask the user about that one item while
 proceeding with the rest.
 
-## Phase 9 — Re-check, push, undraft
+## Phase 10 — Re-check, re-verify, push, undraft
 
-Re-run the Phase 5 checks in full. Then:
+Re-run the Phase 5 checks in full.
+
+**Then re-verify in the browser** if Phase 6 applied. Review fixes touch real
+code and can break a working UI — a passing unit test does not prove the screen
+still renders. Re-run the affected flows from the Phase 6 plan (not the whole
+plan) plus a console check, and re-test any flow a finding touched directly.
+The same 3-round cap applies.
+
+Then:
 
 ```bash
 git add <files>
@@ -400,7 +506,7 @@ curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
 Look the transition ID up — never hardcode it. If the credentials are dead,
 say so and let the user move the ticket.
 
-## Phase 10 — Report
+## Phase 11 — Report
 
 One compact summary in chat. No files, no artifacts.
 
@@ -410,6 +516,8 @@ One compact summary in chat. No files, no artifacts.
 **Changed:** <2–3 lines, plain language>
 **Files:** <n> files, +<a>/−<b>
 **Checks:** <what ran, and the result>
+**Browser:** <flows verified + states covered, and the console result — or
+"n/a, backend-only". Note anything you could not reach and why.>
 
 **Review:** <n> findings — <x> fixed, <y> rejected, <z> deferred
 - REJECTED `F3` — <finding> → <why it's wrong here, citing file:line>
@@ -426,7 +534,7 @@ report.
 
 ## Anti-patterns
 
-- **Reviewing your own work with yourself.** Phases 1 and 7 need *other*
+- **Reviewing your own work with yourself.** Phases 1 and 8 need *other*
   agents. Reading your own diff again is not review.
 - **Letting `/mr-review-multi-agent` post.** Its default is to post; you are
   overriding that. Verify it obeyed rather than assuming.
@@ -440,6 +548,17 @@ report.
 - **Spawning implementation agents on coupled work.** Agents that cannot see
   each other's edits will clobber a shared file. Split only what genuinely
   decomposes.
+- **Calling a UI change done because the tests pass.** Tests prove functions
+  behave; they do not prove the feature works. If a human uses it, open it in
+  the browser.
+- **Testing only the happy path.** Empty, error and validation states are where
+  UI bugs live, precisely because nobody exercises them.
+- **Ignoring console errors because the page looks fine.** A new console error
+  is a failure. Check it against `master` before dismissing it as pre-existing.
+- **Starting the dev server yourself.** This skill assumes the app is already
+  running. Ask rather than guessing at ports or launching processes.
+- **Skipping the browser re-verify after review fixes.** Those fixes are real
+  code changes and can break a UI that worked ten minutes ago.
 - **`git add -A`.** Stage the files you meant to change.
 - **Scope creep on the way past.** Adjacent problems become follow-up tickets,
   not extra commits.
@@ -447,8 +566,10 @@ report.
 ## Companion skills
 
 - `/fix-jira-bug` — the reproduction-first sibling for ECFX bugs with EMLs.
-- `/mr-review-multi-agent` — Phase 7 (invoked with posting suppressed).
-- `superpowers:receiving-code-review` — Phase 8.
+- `/mr-review-multi-agent` — Phase 8 (invoked with posting suppressed).
+- `superpowers:receiving-code-review` — Phase 9.
 - `/frontend-panel`, `/python-panel` — richer specialist panels for Phase 1.
-- `/commit-msg`, `/mr-description` — Phase 6.
-- `/qa-comment` — after the MR is ready, for the QA handoff.
+- `/commit-msg`, `/mr-description` — Phase 7.
+- `claude-in-chrome` — Phase 6, browser automation against the running app.
+- `/qa-comment` — after the MR is ready, for the QA handoff. The Phase 6 test
+  plan and screenshots feed it directly.
