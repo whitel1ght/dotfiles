@@ -208,10 +208,25 @@ return {
         },
       })
       vim.lsp.enable('jinja_lsp')
+
+      -- Elm language server
+      vim.lsp.config('elmls', {
+        capabilities = capabilities,
+        on_attach = lsp_attach,
+        root_markers = { 'elm.json', '.git' },
+      })
+      vim.lsp.enable('elmls')
     end
   },
   {
     'WhoIsSethDaniel/mason-tool-installer.nvim',
     dependencies = { 'mason-org/mason.nvim' },
+    config = function()
+      -- Mason package name, not the lspconfig name ('elmls'), which
+      -- mason-lspconfig's ensure_installed does not resolve.
+      require('mason-tool-installer').setup({
+        ensure_installed = { 'elm-language-server' },
+      })
+    end,
   },
 }
