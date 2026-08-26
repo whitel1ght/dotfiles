@@ -99,6 +99,13 @@ if [ -f "$DOTFILES_DIR/tmux/.tmux.conf" ]; then
     create_symlink "$DOTFILES_DIR/tmux/.tmux.conf" "$HOME/.tmux.conf"
 fi
 
+# tmux helper scripts. .tmux.conf refers to these by an absolute path under
+# ~/.local/bin (already on PATH) rather than by name: tmux runs bindings through
+# a bare `sh`, which does not necessarily inherit the interactive shell's PATH.
+if [ -f "$DOTFILES_DIR/tmux/scripts/tmux-open-path" ]; then
+    create_symlink "$DOTFILES_DIR/tmux/scripts/tmux-open-path" "$HOME/.local/bin/tmux-open-path"
+fi
+
 # Aerospace configuration
 if [ -f "$DOTFILES_DIR/aerospace/aerospace.toml" ]; then
     create_symlink "$DOTFILES_DIR/aerospace/aerospace.toml" "$HOME/.config/aerospace/aerospace.toml"

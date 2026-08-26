@@ -57,7 +57,7 @@ The brew script will:
 
 ## Config File Locations
 
-- **tmux**: `~/.tmux.conf`, and helper scripts in `~/.tmux.conf.d/`
+- **tmux**: `~/.tmux.conf`, and helper scripts in `~/.local/bin/`
 - **Aerospace**: `~/.config/aerospace/aerospace.toml`
 - **Ghostty**: `~/.config/ghostty/config`
 - **Neovim**: `~/.config/nvim/`
@@ -78,6 +78,31 @@ Declared plugins:
   `fzf` picker for jumping between Claude Code sessions across windows, with a
   recap preview. Bindings (after the `` ` `` prefix): `` ` `` `j` = busy Claude
   windows, `` ` `` `a` = all Claude windows. Requires `fzf` (in the `Brewfile`).
+
+### Opening a file path from a pane
+
+`` ` `` + <kbd>o</kbd> opens an `fzf` popup listing every file path visible in
+the current pane, newest first, and opens the one you pick in `nvim` in a new
+window — jumping to the right line for `path:line` references. It replaces
+tmux's built-in prefix-`o` (`select-pane`), which fuzzmux's `C-p` picker already
+supersedes; `M-o` is not available because AeroSpace binds every `alt-<letter>`
+to a workspace.
+
+It exists for Claude Code, which prints paths to files it has just created.
+Clicking one in Ghostty hands it to macOS `open`, which means Finder and a
+detour through "Open With"; Ghostty has no run-a-command-on-click hook for links
+(`link` reports `error.NotImplemented` as of 1.3.1), so a keystroke is the way.
+
+Because Claude Code runs on the alternate screen, where tmux keeps no scrollback
+at all, the visible rows are all `capture-pane` can offer. So for panes in a
+project that has Claude Code transcripts (`~/.claude/projects/<slug>/*.jsonl`),
+the recently modified ones are read too — that recovers paths which have already
+scrolled away.
+
+Candidates are filtered by whether they exist on disk, which is what keeps the
+list clean. Paths containing spaces are not detected. Run
+`tmux-open-path --list <pane-id>` to see what would be offered without the
+picker.
 
 ## Claude Code
 
