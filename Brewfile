@@ -90,6 +90,7 @@ brew "python@3.10"
 brew "itstool"
 # Image manipulation library
 brew "jpeg"
+# Lightweight and flexible command-line JSON processor
 brew "jq"
 # Simple terminal UI for git commands
 brew "lazygit"
