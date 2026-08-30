@@ -1,0 +1,15 @@
+{
+  "sources": {
+    "mattpocock": {
+      "repo": "https://github.com/mattpocock/skills.git",
+      "ref": "main",
+      "resolved": "a97b873866675db1084216f49dec798070377603",
+      "fetchedAt": "2026-08-30T09:24:57Z",
+      "license": "LICENSE",
+      "skills": {
+        "grilling": "skills/productivity/grilling",
+        "wayfinder": "skills/engineering/wayfinder"
+      }
+    }
+  }
+}
