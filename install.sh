@@ -109,6 +109,19 @@ if [ -f "$DOTFILES_DIR/ghostty/config" ]; then
     create_symlink "$DOTFILES_DIR/ghostty/config" "$HOME/.config/ghostty/config"
 fi
 
+# Superfile configuration
+# Config and runtime state (logs, pinned.json, bundled themes) share one
+# directory, so link the two config files rather than the directory itself.
+SUPERFILE_DIR="$HOME/Library/Application Support/superfile"
+
+if [ -f "$DOTFILES_DIR/superfile/config.toml" ]; then
+    create_symlink "$DOTFILES_DIR/superfile/config.toml" "$SUPERFILE_DIR/config.toml"
+fi
+
+if [ -f "$DOTFILES_DIR/superfile/hotkeys.toml" ]; then
+    create_symlink "$DOTFILES_DIR/superfile/hotkeys.toml" "$SUPERFILE_DIR/hotkeys.toml"
+fi
+
 # Neovim configuration
 if [ -d "$DOTFILES_DIR/nvim" ]; then
     create_symlink "$DOTFILES_DIR/nvim" "$HOME/.config/nvim"

@@ -30,6 +30,8 @@ brew "giflib"
 brew "aspell"
 # Protocol definitions and daemon for D-Bus at-spi
 brew "at-spi2-core"
+# Clone of cat(1) with syntax highlighting and Git integration
+brew "bat"
 # Console Matrix
 brew "cmatrix"
 # Apjanke's fork of the classic cowsay project
@@ -44,6 +46,8 @@ brew "libssh2"
 brew "curl"
 # Functional metaprogramming aware language built on Erlang VM
 brew "elixir"
+# Perl lib for reading and writing EXIF metadata
+brew "exiftool"
 # Modern, maintained replacement for ls
 brew "eza"
 # Simple, fast and user-friendly alternative to find
@@ -128,6 +132,8 @@ brew "ripgrep"
 brew "ruby"
 # Safe, concurrent, practical language
 brew "rust"
+# Modern and pretty fancy file manager for the terminal
+brew "superfile"
 # ISO/Edinburgh-style Prolog interpreter
 brew "swi-prolog"
 # Tool Command Language

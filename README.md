@@ -9,6 +9,7 @@ Personal configuration files for macOS development tools.
 ├── tmux/           # tmux configuration + helper scripts
 ├── aerospace/      # AeroSpace window manager config
 ├── ghostty/        # Ghostty terminal config
+├── superfile/      # superfile terminal file manager config
 ├── nvim/           # Neovim configuration
 ├── zsh/            # Zsh configuration (.zshrc, .zprofile, .p10k.zsh)
 ├── claude/         # Claude Code: personal skills, agents, settings, CLAUDE.md
@@ -62,6 +63,8 @@ The brew script will:
 - **tmux**: `~/.tmux.conf`, and helper scripts in `~/.local/bin/`
 - **Aerospace**: `~/.config/aerospace/aerospace.toml`
 - **Ghostty**: `~/.config/ghostty/config`
+- **superfile**: `~/Library/Application Support/superfile/config.toml` and
+  `hotkeys.toml`
 - **Neovim**: `~/.config/nvim/`
 - **Zsh**: `~/.zshrc`, `~/.zprofile`, `~/.p10k.zsh`
 - **Claude Code**: `~/.claude/CLAUDE.md`, `~/.claude/settings.json`, and per-item
@@ -124,6 +127,32 @@ pane and opens your pick in `nvim` — provided by the same
 which documents how it works. It replaces tmux's built-in prefix-`o`
 (`select-pane`), which fuzzmux's `C-p` picker already supersedes; `M-o` is not
 available because AeroSpace binds every `alt-<letter>` to a workspace.
+
+## superfile
+
+[superfile](https://superfile.dev) (`spf`) is the terminal file manager. On macOS
+its config lives at `~/Library/Application Support/superfile/` — not XDG — and
+that directory doubles as its data directory, holding `superfile.log`,
+`pinned.json`, version markers and the bundled themes. `install.sh` therefore
+links `config.toml` and `hotkeys.toml` individually rather than the directory.
+
+Settings that differ from the stock defaults:
+
+- `transparent_background = true` — superfile paints no background of its own, so
+  Ghostty's shows through. The bundled `tokyonight` theme is the *Night* variant
+  (`#1a1b26`) while Ghostty runs *Storm* (`#24283b`), so picking the theme alone
+  would still mismatch; letting the terminal supply the background also keeps the
+  two in step through any future retheme. Nothing is lost — that theme's
+  selected-item backgrounds equal its panel background, so selection is signalled
+  by foreground colour either way.
+- `cd_on_quit = true` — on its own this only makes superfile *print* its last
+  directory. The `spf()` wrapper in `zsh/.zshrc` runs `spf --print-last-dir` and
+  `cd`s to the result.
+- `zoxide_support = true` — <kbd>z</kbd> opens a zoxide jump prompt.
+- `code_previewer = "bat"` and `metadata = true` — require `bat` and `exiftool`
+  respectively (both in the `Brewfile`).
+- `editor` and `dir_editor` pinned to `nvim` rather than relying on `$EDITOR`,
+  which this shell config does not set.
 
 ## Claude Code
 

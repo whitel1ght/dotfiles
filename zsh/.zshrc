@@ -93,6 +93,16 @@ export SDKMAN_DIR="$HOME/.sdkman"
 # Zoxide (better cd)
 eval "$(zoxide init zsh)"
 
+# Superfile (spf) — cd_on_quit only makes superfile print its last directory;
+# the shell has to act on it. `command` stops the function recursing into itself.
+spf() {
+  local dir
+  dir="$(command spf --print-last-dir "$@")" || return
+  if [[ -n "$dir" ]]; then
+    cd "$dir"
+  fi
+}
+
 # Syntax highlighting
 source "$HOME/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
 
