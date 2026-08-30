@@ -3,8 +3,8 @@
     "mattpocock": {
       "repo": "https://github.com/mattpocock/skills.git",
       "ref": "main",
-      "resolved": "a97b873866675db1084216f49dec798070377603",
-      "fetchedAt": "2026-08-30T09:24:57Z",
+      "resolved": "6654f6b60cd9d5be8b54c6fafe44346dabeb3b76",
+      "fetchedAt": "2026-08-30T10:10:33Z",
       "license": "LICENSE",
       "skills": {
         "grilling": "skills/productivity/grilling",
