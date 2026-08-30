@@ -87,10 +87,63 @@ validate_manifest() {
     return 0
 }
 
+# Echo the SHA a ref points at, without cloning.
+resolve_ref() {
+    local repo="$1" ref="${2:-HEAD}" out sha
+    out="$(git ls-remote "$repo" "$ref" 2>/dev/null)" || return 1
+    sha="$(printf '%s\n' "$out" | head -n1 | cut -f1)"
+    if [ ${#sha} -ne 40 ]; then return 1; fi
+    printf '%s\n' "$sha"
+}
+
+locked_sha() {
+    [ -f "$LOCKFILE" ] || return 0
+    jq -r --arg n "$1" '.sources[$n].resolved // ""' "$LOCKFILE" 2>/dev/null
+}
+
+locked_skills() {
+    [ -f "$LOCKFILE" ] || return 0
+    jq -r --arg n "$1" '.sources[$n].skills // {} | .[]' "$LOCKFILE" 2>/dev/null
+}
+
+# A source is current only if the sha matches, the wrapper exists, and the
+# requested skill set is unchanged — otherwise a manifest edit would be ignored.
+source_is_current() {
+    local name="$1" sha="$2" want have
+    [ "$(locked_sha "$name")" = "$sha" ] || return 1
+    [ -d "$VENDOR_DIR/$name/skills" ] || return 1
+    want="$(source_skills "$name" | sort)"
+    have="$(locked_skills "$name" | sort)"
+    [ "$want" = "$have" ]
+}
+
 main() {
     require_jq || return 1
     validate_manifest || return 1
-    log_info "Manifest valid"
+
+    local failed=0 name repo ref sha
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        repo="$(source_field "$name" repo)"
+        ref="$(source_field "$name" ref)"
+        [ -n "$ref" ] || ref="HEAD"
+
+        sha="$(resolve_ref "$repo" "$ref")"
+        if [ -z "$sha" ]; then
+            log_warn "$name: cannot reach $repo at $ref — keeping committed copy"
+            failed=1
+            continue
+        fi
+
+        if source_is_current "$name" "$sha"; then
+            log_info "$name: up to date (${sha:0:7})"
+            continue
+        fi
+
+        log_info "$name: syncing to ${sha:0:7}"
+    done <<< "$(source_names)"
+
+    [ "$failed" -eq 0 ] || return 2
     return 0
 }
 

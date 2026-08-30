@@ -87,5 +87,31 @@ JSON
 assert_fails 1 "empty skills list is a hard error" -- run_sync
 
 echo
+echo "== Task 2: ref resolution and skip =="
+
+new_sandbox
+write_manifest "$(cat <<JSON
+{ "sources": [ { "name": "fix", "repo": "$UPSTREAM_URL", "ref": "HEAD",
+  "skills": [ "skills/productivity/grilling" ] } ] }
+JSON
+)"
+EXPECTED_SHA="$(git -C "$UPSTREAM" rev-parse HEAD)"
+ACTUAL_SHA="$(VENDOR_ROOT="$ROOT/dotfiles" bash -c \
+    "source '$SYNC' >/dev/null 2>&1; resolve_ref '$UPSTREAM_URL' HEAD" 2>/dev/null)"
+assert_eq "$EXPECTED_SHA" "$ACTUAL_SHA" "resolve_ref returns upstream HEAD sha"
+
+# Pre-seed a lockfile at the current sha; sync must report a skip.
+mkdir -p "$ROOT/dotfiles/vendor/fix/skills/grilling"
+touch "$ROOT/dotfiles/vendor/fix/skills/grilling/SKILL.md"
+cat > "$ROOT/dotfiles/vendor.lock.json" <<JSON
+{ "sources": { "fix": { "repo": "$UPSTREAM_URL", "ref": "HEAD",
+  "resolved": "$EXPECTED_SHA", "fetchedAt": "2026-01-01T00:00:00Z",
+  "license": "LICENSE",
+  "skills": { "grilling": "skills/productivity/grilling" } } } }
+JSON
+OUT="$(run_sync 2>&1)"
+assert_contains "$OUT" "up to date" "unchanged sha is skipped"
+
+echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
