@@ -156,6 +156,13 @@ Settings that differ from the stock defaults:
   across pinned and disks. Set `sidebar_width = 0` to drop the panel entirely.
 - `code_previewer = "bat"` and `metadata = true` — require `bat` and `exiftool`
   respectively (both in the `Brewfile`).
+- `poppler` is in the `Brewfile` for PDF preview: superfile shells out to
+  `pdftoppm` to render page 1 to a thumbnail, then draws it through the image
+  preview pipeline. That pipeline only works outside tmux — `isKittyCapable()`
+  matches `$TERM_PROGRAM` against a hardcoded allowlist, and tmux reports itself
+  rather than Ghostty, so no Kitty graphics are emitted at all
+  ([#1169](https://github.com/yorukot/superfile/issues/1169)). Same limitation
+  applies to image and `ffmpeg` video previews.
 - `editor` and `dir_editor` pinned to `nvim` rather than relying on `$EDITOR`,
   which this shell config does not set.
 

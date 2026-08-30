@@ -118,6 +118,8 @@ brew "nghttp2"
 brew "nginx"
 # Manage multiple Node.js versions
 brew "nvm"
+# PDF rendering library (based on the xpdf-3.0 code base)
+brew "poppler"
 # Object-relational database system
 brew "postgresql@14"
 # Protocol buffers (Google's data interchange format)
