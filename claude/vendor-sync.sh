@@ -87,11 +87,30 @@ validate_manifest() {
     return 0
 }
 
-# Echo the SHA a ref points at, without cloning.
+# Echo the commit SHA a ref points at, without cloning.
+#
+# Two traps a bare `git ls-remote "$repo" "$ref"` falls into:
+#   - its pattern tail-matches whole path components, so `main` also matches
+#     refs/heads/changeset-release/main — and the bot branch sorts first;
+#   - an annotated tag's own line carries the *tag object* id, and the peeled
+#     `refs/tags/<t>^{}` line never matches the pattern, so pinning a tag would
+#     record a non-commit id.
+# Asking for the three fully qualified names and choosing between them fixes
+# both. HEAD is neither a head nor a tag, so it is looked up on its own.
 resolve_ref() {
     local repo="$1" ref="${2:-HEAD}" out sha
-    out="$(git ls-remote "$repo" "$ref" 2>/dev/null)" || return 1
-    sha="$(printf '%s\n' "$out" | head -n1 | cut -f1)"
+    if [ "$ref" = "HEAD" ]; then
+        out="$(git ls-remote "$repo" HEAD 2>/dev/null)" || return 1
+        sha="$(printf '%s\n' "$out" | awk '$2=="HEAD" { print $1; exit }')"
+    else
+        out="$(git ls-remote "$repo" \
+            "refs/heads/$ref" "refs/tags/$ref" "refs/tags/$ref^{}" 2>/dev/null)" || return 1
+        sha="$(printf '%s\n' "$out" | awk -v r="$ref" '
+            $2=="refs/tags/" r "^{}" { tagc=$1 }
+            $2=="refs/tags/" r       { tag=$1 }
+            $2=="refs/heads/" r      { br=$1 }
+            END { if (tagc!="") print tagc; else if (tag!="") print tag; else print br }')"
+    fi
     if [ ${#sha} -ne 40 ]; then return 1; fi
     printf '%s\n' "$sha"
 }
