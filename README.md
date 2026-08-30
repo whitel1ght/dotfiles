@@ -101,6 +101,35 @@ claude/
 └── CLAUDE.md       # global personal instructions
 ```
 
+### Vendored third-party skills
+
+`claude/vendor/` holds skills cherry-picked from other people's repos. Each
+subdirectory is one upstream author, packaged as a Claude Code *skills-dir
+plugin* — so its skills load namespaced (`mattpocock:grilling`) and can never
+collide with the bare names in `claude/skills/`.
+
+Declare what you want in `claude/vendor.json`:
+
+```json
+{ "sources": [ { "name": "mattpocock",
+                 "repo": "https://github.com/mattpocock/skills.git",
+                 "ref": "main",
+                 "skills": ["skills/productivity/grilling"] } ] }
+```
+
+`./install.sh` re-syncs every source on each run and `install.sh` links the
+wrappers into `~/.claude/skills/`. Skip the network with
+`SKILLS_SYNC=0 ./install.sh`.
+
+Updates are applied to the working tree but **never committed**, so
+`git diff claude/vendor/` always shows exactly what upstream changed — review it
+before committing. `claude/vendor.lock.json` records the exact commit vendored.
+
+Contents of `claude/vendor/*/skills/` are byte-exact upstream copies and are
+destroyed on the next sync. To modify one, copy it into `claude/skills/`.
+
+Requires `jq`. Run `./claude/vendor-sync.test.sh` to test the sync itself.
+
 `settings.json` and `CLAUDE.md` are symlinked as whole files. **Skills and agents
 are linked per item**, not as whole directories — this is deliberate. The work
 repo [`claude-components`](https://gitlab.com/ecfx/claude-components) symlinks all

@@ -151,6 +151,7 @@ sync_git_exclude() {
     local host_repo="$1"
     local subdir="$2"
     local source_dir="$3"
+    local mode="${4:-replace}"
 
     [ -d "$host_repo/.git" ] || return 0
     [ -d "$source_dir" ] || return 0
@@ -165,16 +166,24 @@ sync_git_exclude() {
     # Drop any previous block, then append a freshly generated one.
     local tmp
     tmp="$(mktemp)"
-    awk -v b="$begin" -v e="$end" '
-        $0 == b { skip = 1 }
-        !skip   { print }
-        $0 == e { skip = 0 }
-    ' "$exclude_file" > "$tmp"
+    if [ "$mode" = "append" ]; then
+        # Keep the existing block; strip only its terminator so we can extend it.
+        # -xF: the marker contains regex-significant characters.
+        grep -vxF "$end" "$exclude_file" > "$tmp"
+    else
+        awk -v b="$begin" -v e="$end" '
+            $0 == b { skip = 1 }
+            !skip   { print }
+            $0 == e { skip = 0 }
+        ' "$exclude_file" > "$tmp"
+    fi
 
     {
-        echo "$begin"
-        echo "# Managed by ~/projects/dotfiles/install.sh — do not edit by hand."
-        echo "# Personal skills/agents symlinked in from ~/projects/dotfiles/claude/."
+        if [ "$mode" != "append" ]; then
+            echo "$begin"
+            echo "# Managed by ~/projects/dotfiles/install.sh — do not edit by hand."
+            echo "# Personal skills/agents symlinked in from ~/projects/dotfiles/claude/."
+        fi
         local entry name
         for entry in "$source_dir"/*; do
             [ -e "$entry" ] || continue
@@ -200,11 +209,27 @@ if [ -d "$DOTFILES_DIR/claude/agents" ]; then
     link_dir_contents "$DOTFILES_DIR/claude/agents" "$HOME/.claude/agents"
 fi
 
+# Refresh vendored third-party skills, then link each wrapper. Each wrapper is a
+# skills-dir plugin, so its skills are namespaced and cannot collide with the
+# bare names in claude/skills/. Guarded because install.sh runs under `set -e`:
+# a failed sync must fall back to the committed copies, not abort the install.
+if [ "${SKILLS_SYNC:-1}" != "0" ] && [ -x "$DOTFILES_DIR/claude/vendor-sync.sh" ]; then
+    "$DOTFILES_DIR/claude/vendor-sync.sh" || log_warn "Vendor sync failed — using committed copies"
+    if command -v claude >/dev/null 2>&1; then
+        claude plugin marketplace update || log_warn "Marketplace update failed"
+    fi
+fi
+
+if [ -d "$DOTFILES_DIR/claude/vendor" ]; then
+    link_dir_contents "$DOTFILES_DIR/claude/vendor" "$HOME/.claude/skills"
+fi
+
 # If claude-components is checked out, keep its local exclude list current so
 # our symlinks inside its skills/ and agents/ dirs stay out of its git status.
 CLAUDE_COMPONENTS_DIR="${CLAUDE_COMPONENTS_DIR:-$HOME/projects/claude-components}"
 if [ -d "$CLAUDE_COMPONENTS_DIR/.git" ]; then
     sync_git_exclude "$CLAUDE_COMPONENTS_DIR" "skills" "$DOTFILES_DIR/claude/skills"
+    sync_git_exclude "$CLAUDE_COMPONENTS_DIR" "skills" "$DOTFILES_DIR/claude/vendor" append
 fi
 
 if [ -f "$DOTFILES_DIR/claude/CLAUDE.md" ]; then

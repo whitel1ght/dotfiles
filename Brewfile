@@ -90,6 +90,7 @@ brew "python@3.10"
 brew "itstool"
 # Image manipulation library
 brew "jpeg"
+brew "jq"
 # Simple terminal UI for git commands
 brew "lazygit"
 # Next-gen compiler infrastructure
