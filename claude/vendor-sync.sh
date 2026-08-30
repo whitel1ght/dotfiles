@@ -216,6 +216,10 @@ install_source() {
 detected_license() {
     local stage="$1" f
     for f in LICENSE LICENSE.md COPYING; do
+        # `-f` and `cp` both follow links, so an upstream LICENSE symlinked to a
+        # host path would copy that host file's content into this public repo.
+        # Same exposure the skills/ tree refuses; here just look past it.
+        [ -L "$stage/$f" ] && continue
         [ -f "$stage/$f" ] && { printf '%s\n' "$f"; return 0; }
     done
     printf '\n'

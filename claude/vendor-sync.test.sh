@@ -384,6 +384,23 @@ assert_eq "no" "$(is_file "$ROOT/dotfiles/vendor/fix/UPSTREAM-LICENSE")" \
 assert_lacks "$(cat "$ROOT/dotfiles/vendor/fix/README.md")" "UPSTREAM-LICENSE" \
     "README drops the licence pointer when upstream ships no licence"
 
+# `cp` dereferences, so a LICENSE symlinked to a host path would copy that
+# host file's content into this public repo. Look past it instead.
+new_sandbox
+printf 'HOST SECRET\n' > "$ROOT/secret.txt"
+rm -f "$UPSTREAM/LICENSE" && ln -s "$ROOT/secret.txt" "$UPSTREAM/LICENSE"
+git -C "$UPSTREAM" add -A && git -C "$UPSTREAM" commit -qm "symlink the licence"
+write_manifest "$(cat <<JSON
+{ "sources": [ { "name": "fix", "repo": "$UPSTREAM_URL", "ref": "HEAD",
+  "skills": [ "skills/productivity/grilling" ] } ] }
+JSON
+)"
+run_sync >/dev/null 2>&1
+assert_eq "no" "$(exists "$ROOT/dotfiles/vendor/fix/UPSTREAM-LICENSE")" \
+    "a symlinked upstream LICENSE is not dereferenced into the wrapper"
+assert_eq "" "$(jq -r '.sources.fix.license' "$ROOT/dotfiles/vendor.lock.json")" \
+    "lockfile records no licence when the upstream one is a symlink"
+
 echo
 echo "== Task 5: prune and failure semantics =="
 
