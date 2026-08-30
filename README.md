@@ -149,6 +149,11 @@ Settings that differ from the stock defaults:
   directory. The `spf()` wrapper in `zsh/.zshrc` runs `spf --print-last-dir` and
   `cd`s to the result.
 - `zoxide_support = true` — <kbd>z</kbd> opens a zoxide jump prompt.
+- `sidebar_sections = ["pinned", "disks"]` — drops the XDG home shortcuts, which
+  are noise on a machine where the work lives in `~/projects`, and puts pinned
+  first. What remains is opt-in: pin a folder with <kbd>P</kbd>, and <kbd>s</kbd>
+  focuses the sidebar, which also reveals an undocumented search bar that filters
+  across pinned and disks. Set `sidebar_width = 0` to drop the panel entirely.
 - `code_previewer = "bat"` and `metadata = true` — require `bat` and `exiftool`
   respectively (both in the `Brewfile`).
 - `editor` and `dir_editor` pinned to `nvim` rather than relying on `$EDITOR`,
