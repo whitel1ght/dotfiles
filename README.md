@@ -117,6 +117,9 @@ Declare what you want in `claude/vendor.json`:
                  "skills": ["skills/productivity/grilling"] } ] }
 ```
 
+`ref` takes a branch or tag name — not a raw commit SHA. It defaults to `HEAD`,
+the remote's default branch; pin a tag to freeze one source.
+
 `./install.sh` re-syncs every source on each run and `install.sh` links the
 wrappers into `~/.claude/skills/`. Skip the network with
 `SKILLS_SYNC=0 ./install.sh`.
