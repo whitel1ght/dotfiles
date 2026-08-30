@@ -174,6 +174,70 @@ detected_license() {
     printf '\n'
 }
 
+write_plugin_manifest() {
+    local name="$1" sha="$2"; shift 2
+    local dir="$VENDOR_DIR/$name/.claude-plugin"
+    local paths_json p
+    mkdir -p "$dir" || return 1
+
+    paths_json="$(for p in "$@"; do printf '%s\n' "./skills/$(basename "$p")"; done \
+        | jq -R . | jq -s .)"
+
+    jq -n \
+        --arg name "$name" \
+        --arg version "0.0.0+${sha:0:7}" \
+        --arg desc "$GENERATED_NOTE Vendored skills for $name." \
+        --argjson skills "$paths_json" \
+        '{ "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+           name: $name, version: $version, description: $desc, skills: $skills }' \
+        > "$dir/plugin.json"
+}
+
+write_readme() {
+    local name="$1" repo="$2" ref="$3" sha="$4" license="$5"; shift 5
+    local p
+    {
+        echo "# Vendored skills: $name"
+        echo
+        echo "$GENERATED_NOTE"
+        echo
+        echo "| Field | Value |"
+        echo "| --- | --- |"
+        echo "| Source | \`$repo\` |"
+        echo "| Ref | \`$ref\` |"
+        echo "| Commit | \`$sha\` |"
+        echo "| Licence | ${license:-unknown} (see \`UPSTREAM-LICENSE\`) |"
+        echo
+        echo "## Skills"
+        echo
+        for p in "$@"; do
+            echo "- \`$(basename "$p")\` — upstream \`$p\`"
+        done
+        echo
+        echo "Contents of \`skills/\` are byte-exact copies of upstream."
+        echo "To modify one, copy it into \`claude/skills/\` instead — edits here"
+        echo "are destroyed on the next sync."
+    } > "$VENDOR_DIR/$name/README.md"
+}
+
+update_lock() {
+    local name="$1" repo="$2" ref="$3" sha="$4" license="$5"; shift 5
+    local skills_json p tmp
+    [ -f "$LOCKFILE" ] || echo '{"sources":{}}' > "$LOCKFILE"
+
+    skills_json="$(for p in "$@"; do
+        jq -n --arg k "$(basename "$p")" --arg v "$p" '{($k): $v}'
+    done | jq -s 'add // {}')"
+
+    tmp="$(mktemp)"
+    jq --arg n "$name" --arg repo "$repo" --arg ref "$ref" --arg sha "$sha" \
+       --arg lic "$license" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       --argjson skills "$skills_json" \
+       '.sources[$n] = { repo: $repo, ref: $ref, resolved: $sha,
+                         fetchedAt: $at, license: $lic, skills: $skills }' \
+       "$LOCKFILE" > "$tmp" && mv "$tmp" "$LOCKFILE"
+}
+
 main() {
     require_jq || return 1
     validate_manifest || return 1
@@ -223,6 +287,11 @@ main() {
             continue
         fi
 
+        local lic
+        lic="$(detected_license "$tmp/src")"
+        write_plugin_manifest "$name" "$sha" "${paths[@]}"
+        write_readme "$name" "$repo" "$ref" "$sha" "$lic" "${paths[@]}"
+        update_lock "$name" "$repo" "$ref" "$sha" "$lic" "${paths[@]}"
         log_info "$name: vendored ${#paths[@]} skill(s)"
         rm -rf "$tmp"
     done <<< "$(source_names)"

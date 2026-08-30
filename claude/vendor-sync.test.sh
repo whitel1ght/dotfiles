@@ -173,5 +173,45 @@ assert_eq "yes" \
     "failed source leaves wayfinder intact (guards wholesale replacement staging)"
 
 echo
+echo "== Task 4: generated artefacts =="
+
+new_sandbox
+write_manifest "$(cat <<JSON
+{ "sources": [ { "name": "fix", "repo": "$UPSTREAM_URL", "ref": "HEAD",
+  "skills": [ "skills/productivity/grilling", "skills/engineering/wayfinder" ] } ] }
+JSON
+)"
+run_sync >/dev/null 2>&1
+PJ="$ROOT/dotfiles/vendor/fix/.claude-plugin/plugin.json"
+assert_eq "fix" "$(jq -r .name "$PJ")" "plugin.json name is the source name"
+assert_eq "./skills/grilling ./skills/wayfinder" \
+    "$(jq -r '.skills | sort | join(" ")' "$PJ")" \
+    "plugin.json lists exactly the manifest skills"
+assert_eq "yes" \
+    "$([ -f "$ROOT/dotfiles/vendor/fix/UPSTREAM-LICENSE" ] && echo yes || echo no)" \
+    "upstream licence is copied for attribution"
+assert_contains "$(cat "$ROOT/dotfiles/vendor/fix/README.md")" \
+    "do not edit by hand" "generated README carries the managed-file note"
+
+SHA="$(git -C "$UPSTREAM" rev-parse HEAD)"
+LOCK="$ROOT/dotfiles/vendor.lock.json"
+assert_eq "$SHA" "$(jq -r '.sources.fix.resolved' "$LOCK")" "lockfile records the sha"
+assert_eq "LICENSE" "$(jq -r '.sources.fix.license' "$LOCK")" "lockfile records the licence file"
+assert_eq "skills/productivity/grilling" \
+    "$(jq -r '.sources.fix.skills.grilling' "$LOCK")" \
+    "lockfile maps basename to upstream path"
+
+# Dropping a skill from the manifest must re-sync despite an unchanged sha.
+write_manifest "$(cat <<JSON
+{ "sources": [ { "name": "fix", "repo": "$UPSTREAM_URL", "ref": "HEAD",
+  "skills": [ "skills/productivity/grilling" ] } ] }
+JSON
+)"
+run_sync >/dev/null 2>&1
+assert_eq "no" \
+    "$([ -d "$ROOT/dotfiles/vendor/fix/skills/wayfinder" ] && echo yes || echo no)" \
+    "removing a skill from the manifest removes it from the wrapper"
+
+echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
