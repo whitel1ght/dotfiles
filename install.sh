@@ -239,6 +239,13 @@ if [ -f "$DOTFILES_DIR/claude/CLAUDE.md" ]; then
 fi
 
 
+# Disable the macOS media analysis daemons. Guarded like the vendor sync above:
+# install.sh runs under `set -e`, and a launchctl failure must not abort the
+# remaining setup. Set MACOS_DAEMONS=0 to keep stock macOS behaviour.
+if [ "${MACOS_DAEMONS:-1}" != "0" ] && [ -x "$DOTFILES_DIR/macos-daemons.sh" ]; then
+    "$DOTFILES_DIR/macos-daemons.sh" disable || log_warn "Daemon disable failed"
+fi
+
 # Optional: Install Homebrew packages
 log_info "To install Homebrew packages, run: ./brew-install.sh"
 

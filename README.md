@@ -12,10 +12,11 @@ Personal configuration files for macOS development tools.
 ├── nvim/           # Neovim configuration
 ├── zsh/            # Zsh configuration (.zshrc, .zprofile, .p10k.zsh)
 ├── claude/         # Claude Code: personal skills, agents, settings, CLAUDE.md
-├── Brewfile        # Homebrew package list
-├── install.sh      # Symlink setup script
-├── brew-install.sh # Homebrew package installer
-└── zsh-setup.sh    # Oh My Zsh and Powerlevel10k installer
+├── Brewfile          # Homebrew package list
+├── install.sh        # Symlink setup script
+├── brew-install.sh   # Homebrew package installer
+├── macos-daemons.sh  # Toggle the macOS media analysis daemons
+└── zsh-setup.sh      # Oh My Zsh and Powerlevel10k installer
 ```
 
 ## Installation
@@ -45,6 +46,7 @@ The install script will:
 - Create symlinks from config files to their expected system locations
 - Backup existing files with `.backup` extension
 - Create necessary directories if they don't exist
+- Disable the macOS media analysis daemons (see [macOS daemons](#macos-daemons))
 
 The zsh setup script will:
 - Install Oh My Zsh framework
@@ -64,6 +66,40 @@ The brew script will:
 - **Zsh**: `~/.zshrc`, `~/.zprofile`, `~/.p10k.zsh`
 - **Claude Code**: `~/.claude/CLAUDE.md`, `~/.claude/settings.json`, and per-item
   links inside `~/.claude/skills/` and `~/.claude/agents/`
+
+## macOS daemons
+
+`macos-daemons.sh` toggles the two on-device media analysis agents,
+`com.apple.mediaanalysisd` and `com.apple.photoanalysisd`. `install.sh` runs
+`disable` on every run, so a fresh machine ends up with them off.
+
+```bash
+./macos-daemons.sh          # disable (default)
+./macos-daemons.sh enable   # restore stock behaviour
+./macos-daemons.sh status   # report current state
+```
+
+Skip it during install with `MACOS_DAEMONS=0 ./install.sh`.
+
+These daemons scan the Photos library for faces, scenes, OCR and Visual Look Up.
+On macOS 15 `mediaanalysisd` also leaks compiled Neural Engine model bundles into
+`~/Library/Containers/com.apple.mediaanalysisd/` — tens of gigabytes of duplicate
+`*.tmp.<pid>.bundle` directories.
+
+Two things to know:
+
+- Disabling also kills **HomeKit Secure Video** analysis and **Live Text**, which
+  share the same XPC services, along with Photos People, Memories and
+  content-based search.
+- macOS updates frequently reset launchd's override database, so the daemons come
+  back silently. Re-run `./macos-daemons.sh status` after upgrading.
+
+Both are user LaunchAgents, so no `sudo` is needed and the setting survives
+reboots. SIP blocks `launchctl bootout`, so an already-running instance keeps
+going until it idles out or you reboot — the script says so when it happens.
+
+Run `./macos-daemons.test.sh` to test the script; it stubs `launchctl` and never
+touches real daemons.
 
 ## tmux
 
