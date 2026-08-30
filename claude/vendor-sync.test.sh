@@ -1,0 +1,91 @@
+#!/bin/bash
+# Tests for vendor-sync.sh. No network: fixtures are local git repos.
+set -uo pipefail
+
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SYNC="$TEST_DIR/vendor-sync.sh"
+PASS=0
+FAIL=0
+
+pass() { PASS=$((PASS + 1)); echo "  ok   - $1"; }
+fail() { FAIL=$((FAIL + 1)); echo "  FAIL - $1"; echo "         $2"; }
+
+assert_eq() {
+    local expected="$1" actual="$2" label="$3"
+    if [ "$expected" = "$actual" ]; then pass "$label"
+    else fail "$label" "expected [$expected] got [$actual]"; fi
+}
+
+assert_contains() {
+    local haystack="$1" needle="$2" label="$3"
+    case "$haystack" in
+        *"$needle"*) pass "$label" ;;
+        *) fail "$label" "[$needle] not found in [$haystack]" ;;
+    esac
+}
+
+# assert_fails <expected-exit> <label> -- <cmd...>
+assert_fails() {
+    local expected="$1" label="$2"; shift 3
+    local out rc
+    out="$("$@" 2>&1)"; rc=$?
+    if [ "$rc" = "$expected" ]; then pass "$label"
+    else fail "$label" "expected exit $expected got $rc; output: $out"; fi
+}
+
+# Build a fixture upstream repo with two skills and a LICENSE.
+# uploadpack.allowAnySHA1InWant is required so the sync can fetch a bare SHA.
+make_fixture_repo() {
+    local dir="$1"
+    mkdir -p "$dir/skills/productivity/grilling" "$dir/skills/engineering/wayfinder"
+    printf -- '---\nname: grilling\ndescription: Fixture grilling skill.\n---\n# grilling\n' \
+        > "$dir/skills/productivity/grilling/SKILL.md"
+    printf -- '---\nname: wayfinder\ndescription: Fixture wayfinder skill.\n---\n# wayfinder\n' \
+        > "$dir/skills/engineering/wayfinder/SKILL.md"
+    printf 'MIT License\n' > "$dir/LICENSE"
+    git -C "$dir" init -q
+    git -C "$dir" config user.email test@example.com
+    git -C "$dir" config user.name Test
+    git -C "$dir" config uploadpack.allowAnySHA1InWant true
+    git -C "$dir" add -A
+    git -C "$dir" commit -qm "fixture"
+}
+
+# Fresh sandbox for one test case. Sets ROOT, UPSTREAM, and UPSTREAM_URL.
+new_sandbox() {
+    ROOT="$(mktemp -d)"
+    UPSTREAM="$ROOT/upstream"
+    # file:// forces the git transport so --depth is honoured.
+    UPSTREAM_URL="file://$UPSTREAM"
+    make_fixture_repo "$UPSTREAM"
+    mkdir -p "$ROOT/dotfiles"
+}
+
+write_manifest() { printf '%s\n' "$1" > "$ROOT/dotfiles/vendor.json"; }
+
+run_sync() { VENDOR_ROOT="$ROOT/dotfiles" bash "$SYNC" "$@"; }
+
+echo "== Task 1: manifest validation =="
+
+new_sandbox
+write_manifest '{ not json'
+assert_fails 1 "malformed manifest is a hard error" -- run_sync
+
+new_sandbox
+write_manifest "$(cat <<JSON
+{ "sources": [ { "name": "dup", "repo": "$UPSTREAM_URL", "skills": [
+  "skills/productivity/grilling", "skills/engineering/grilling" ] } ] }
+JSON
+)"
+assert_fails 1 "basename collision within a source is a hard error" -- run_sync
+
+new_sandbox
+write_manifest "$(cat <<JSON
+{ "sources": [ { "name": "fix", "repo": "$UPSTREAM_URL", "skills": [] } ] }
+JSON
+)"
+assert_fails 1 "empty skills list is a hard error" -- run_sync
+
+echo
+echo "passed: $PASS  failed: $FAIL"
+[ "$FAIL" -eq 0 ]
