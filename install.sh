@@ -169,7 +169,9 @@ sync_git_exclude() {
     if [ "$mode" = "append" ]; then
         # Keep the existing block; strip only its terminator so we can extend it.
         # -xF: the marker contains regex-significant characters.
-        grep -vxF "$end" "$exclude_file" > "$tmp"
+        # `|| :`: with no prior block grep matches nothing and exits 1, which
+        # would abort install.sh under `set -e` before the remaining links run.
+        grep -vxF "$end" "$exclude_file" > "$tmp" || :
     else
         awk -v b="$begin" -v e="$end" '
             $0 == b { skip = 1 }
