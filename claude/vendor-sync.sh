@@ -117,6 +117,63 @@ source_is_current() {
     [ "$want" = "$have" ]
 }
 
+# Shallow, sparse, pinned to a sha. Also grabs root licence files for
+# attribution. Requires the remote to allow fetching a bare sha (GitHub,
+# GitLab, and local fixtures with uploadpack.allowAnySHA1InWant do).
+fetch_source() {
+    local repo="$1" sha="$2" dest="$3"; shift 3
+    git init -q "$dest" || return 1
+    git -C "$dest" remote add origin "$repo" || return 1
+    git -C "$dest" sparse-checkout set --no-cone "$@" '/LICENSE*' '/COPYING*' || return 1
+    git -C "$dest" fetch -q --depth 1 origin "$sha" || return 1
+    git -C "$dest" checkout -q FETCH_HEAD || return 1
+    return 0
+}
+
+# Replace the wrapper's skills/ wholesale so upstream deletions propagate.
+# Staged in a sibling directory first, so a validation failure never leaves a
+# half-written tree.
+install_source() {
+    local name="$1" stage="$2"; shift 2
+    local wrapper="$VENDOR_DIR/$name"
+    local staged="$wrapper/.skills.staged"
+    local p base
+
+    rm -rf "$staged"
+    mkdir -p "$staged" || return 1
+
+    for p in "$@"; do
+        if [ ! -f "$stage/$p/SKILL.md" ]; then
+            log_error "$name: no SKILL.md at '$p'"
+            rm -rf "$staged"
+            return 1
+        fi
+        base="$(basename "$p")"
+        cp -R "$stage/$p" "$staged/$base" || { rm -rf "$staged"; return 1; }
+    done
+
+    rm -rf "$wrapper/skills"
+    mv "$staged" "$wrapper/skills" || return 1
+
+    if [ -f "$stage/LICENSE" ]; then
+        cp "$stage/LICENSE" "$wrapper/UPSTREAM-LICENSE"
+    elif [ -f "$stage/LICENSE.md" ]; then
+        cp "$stage/LICENSE.md" "$wrapper/UPSTREAM-LICENSE"
+    elif [ -f "$stage/COPYING" ]; then
+        cp "$stage/COPYING" "$wrapper/UPSTREAM-LICENSE"
+    fi
+    return 0
+}
+
+# Name of the upstream licence file found, or empty.
+detected_license() {
+    local stage="$1" f
+    for f in LICENSE LICENSE.md COPYING; do
+        [ -f "$stage/$f" ] && { printf '%s\n' "$f"; return 0; }
+    done
+    printf '\n'
+}
+
 main() {
     require_jq || return 1
     validate_manifest || return 1
@@ -141,6 +198,33 @@ main() {
         fi
 
         log_info "$name: syncing to ${sha:0:7}"
+
+        local tmp p
+        local -a paths
+        tmp="$(mktemp -d)"
+        # No `mapfile` here: macOS /bin/bash is 3.2, which predates it.
+        paths=()
+        while IFS= read -r p; do
+            [ -n "$p" ] && paths+=("$p")
+        done <<< "$(source_skills "$name")"
+
+        if ! fetch_source "$repo" "$sha" "$tmp/src" "${paths[@]}"; then
+            log_warn "$name: fetch failed — keeping committed copy"
+            rm -rf "$tmp"
+            failed=1
+            continue
+        fi
+
+        mkdir -p "$VENDOR_DIR/$name"
+        if ! install_source "$name" "$tmp/src" "${paths[@]}"; then
+            log_warn "$name: install failed — keeping committed copy"
+            rm -rf "$tmp"
+            failed=1
+            continue
+        fi
+
+        log_info "$name: vendored ${#paths[@]} skill(s)"
+        rm -rf "$tmp"
     done <<< "$(source_names)"
 
     [ "$failed" -eq 0 ] || return 2

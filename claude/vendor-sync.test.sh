@@ -113,5 +113,58 @@ OUT="$(run_sync 2>&1)"
 assert_contains "$OUT" "up to date" "unchanged sha is skipped"
 
 echo
+echo "== Task 3: fetch and replace =="
+
+new_sandbox
+write_manifest "$(cat <<JSON
+{ "sources": [ { "name": "fix", "repo": "$UPSTREAM_URL", "ref": "HEAD",
+  "skills": [ "skills/productivity/grilling", "skills/engineering/wayfinder" ] } ] }
+JSON
+)"
+run_sync >/dev/null 2>&1
+assert_eq "yes" \
+    "$([ -f "$ROOT/dotfiles/vendor/fix/skills/grilling/SKILL.md" ] && echo yes || echo no)" \
+    "fresh fetch places grilling at its basename"
+assert_eq "yes" \
+    "$([ -f "$ROOT/dotfiles/vendor/fix/skills/wayfinder/SKILL.md" ] && echo yes || echo no)" \
+    "fresh fetch places wayfinder at its basename"
+assert_contains "$(cat "$ROOT/dotfiles/vendor/fix/skills/grilling/SKILL.md")" \
+    "name: grilling" "vendored SKILL.md is byte-exact upstream content"
+
+# Upstream deletes a file inside a vendored skill; sync must propagate it.
+echo "extra" > "$UPSTREAM/skills/productivity/grilling/EXTRA.md"
+git -C "$UPSTREAM" add -A && git -C "$UPSTREAM" commit -qm "add extra"
+run_sync >/dev/null 2>&1
+assert_eq "yes" \
+    "$([ -f "$ROOT/dotfiles/vendor/fix/skills/grilling/EXTRA.md" ] && echo yes || echo no)" \
+    "added upstream file appears"
+git -C "$UPSTREAM" rm -q "skills/productivity/grilling/EXTRA.md"
+git -C "$UPSTREAM" commit -qm "remove extra"
+run_sync >/dev/null 2>&1
+assert_eq "no" \
+    "$([ -f "$ROOT/dotfiles/vendor/fix/skills/grilling/EXTRA.md" ] && echo yes || echo no)" \
+    "deleted upstream file is removed (wholesale replacement)"
+
+# A path with no SKILL.md must abort that source and leave prior content intact.
+new_sandbox
+write_manifest "$(cat <<JSON
+{ "sources": [ { "name": "fix", "repo": "$UPSTREAM_URL", "ref": "HEAD",
+  "skills": [ "skills/productivity/grilling" ] } ] }
+JSON
+)"
+run_sync >/dev/null 2>&1
+mkdir -p "$UPSTREAM/skills/broken" && echo hi > "$UPSTREAM/skills/broken/notes.md"
+git -C "$UPSTREAM" add -A && git -C "$UPSTREAM" commit -qm "add broken"
+write_manifest "$(cat <<JSON
+{ "sources": [ { "name": "fix", "repo": "$UPSTREAM_URL", "ref": "HEAD",
+  "skills": [ "skills/productivity/grilling", "skills/broken" ] } ] }
+JSON
+)"
+assert_fails 2 "path without SKILL.md fails the source" -- run_sync
+assert_eq "yes" \
+    "$([ -f "$ROOT/dotfiles/vendor/fix/skills/grilling/SKILL.md" ] && echo yes || echo no)" \
+    "failed source leaves previous content intact"
+
+echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
