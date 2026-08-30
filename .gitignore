@@ -17,3 +17,7 @@ Thumbs.db
 .superpowers/
 # local design/plan docs — not published
 docs/superpowers/
+
+# Claude Code writes machine-specific state here (skillOverrides, autoMode
+# environment notes) — not portable, and not for a public repo.
+claude/settings.json

@@ -211,9 +211,6 @@ if [ -f "$DOTFILES_DIR/claude/CLAUDE.md" ]; then
     create_symlink "$DOTFILES_DIR/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
 fi
 
-if [ -f "$DOTFILES_DIR/claude/settings.json" ]; then
-    create_symlink "$DOTFILES_DIR/claude/settings.json" "$HOME/.claude/settings.json"
-fi
 
 # Optional: Install Homebrew packages
 log_info "To install Homebrew packages, run: ./brew-install.sh"
