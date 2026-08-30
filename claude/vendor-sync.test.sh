@@ -146,13 +146,17 @@ assert_eq "no" \
     "deleted upstream file is removed (wholesale replacement)"
 
 # A path with no SKILL.md must abort that source and leave prior content intact.
+# We seed a previously-vendored skill not in the failing manifest to guard
+# that an unsafe wipe-first variant would lose it, thus guarding the
+# staging-before-swap property regardless of path order.
 new_sandbox
 write_manifest "$(cat <<JSON
 { "sources": [ { "name": "fix", "repo": "$UPSTREAM_URL", "ref": "HEAD",
-  "skills": [ "skills/productivity/grilling" ] } ] }
+  "skills": [ "skills/productivity/grilling", "skills/engineering/wayfinder" ] } ] }
 JSON
 )"
 run_sync >/dev/null 2>&1
+# Now remove wayfinder from the manifest but add a broken path.
 mkdir -p "$UPSTREAM/skills/broken" && echo hi > "$UPSTREAM/skills/broken/notes.md"
 git -C "$UPSTREAM" add -A && git -C "$UPSTREAM" commit -qm "add broken"
 write_manifest "$(cat <<JSON
@@ -163,7 +167,10 @@ JSON
 assert_fails 2 "path without SKILL.md fails the source" -- run_sync
 assert_eq "yes" \
     "$([ -f "$ROOT/dotfiles/vendor/fix/skills/grilling/SKILL.md" ] && echo yes || echo no)" \
-    "failed source leaves previous content intact"
+    "failed source leaves grilling intact"
+assert_eq "yes" \
+    "$([ -f "$ROOT/dotfiles/vendor/fix/skills/wayfinder/SKILL.md" ] && echo yes || echo no)" \
+    "failed source leaves wayfinder intact (guards wholesale replacement staging)"
 
 echo
 echo "passed: $PASS  failed: $FAIL"
