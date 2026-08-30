@@ -57,8 +57,15 @@ validate_manifest() {
 
     while IFS= read -r name; do
         [ -n "$name" ] || continue
+        # A source name is also a directory name and a plugin name, so keep it
+        # to [A-Za-z0-9][A-Za-z0-9._-]* — that rules out `/`, `.`, `..`, and
+        # names starting with `-` that would be read as options downstream.
         case "$name" in
-            */*|.|..) log_error "Invalid source name: $name"; return 1 ;;
+            [A-Za-z0-9]*) ;;
+            *) log_error "Invalid source name: $name"; return 1 ;;
+        esac
+        case "$name" in
+            *[!A-Za-z0-9._-]*) log_error "Invalid source name: $name"; return 1 ;;
         esac
 
         repo="$(source_field "$name" repo)"
@@ -125,12 +132,14 @@ locked_skills() {
     jq -r --arg n "$1" '.sources[$n].skills // {} | .[]' "$LOCKFILE" 2>/dev/null
 }
 
-# A source is current only if the sha matches, the wrapper exists, and the
-# requested skill set is unchanged — otherwise a manifest edit would be ignored.
+# A source is current only if the sha matches, the wrapper is loadable, and the
+# requested skill set is unchanged — otherwise a manifest edit would be ignored,
+# and a wrapper whose generated metadata went missing would never be repaired.
 source_is_current() {
     local name="$1" sha="$2" want have
     [ "$(locked_sha "$name")" = "$sha" ] || return 1
     [ -d "$VENDOR_DIR/$name/skills" ] || return 1
+    [ -f "$VENDOR_DIR/$name/.claude-plugin/plugin.json" ] || return 1
     want="$(source_skills "$name" | sort)"
     have="$(locked_skills "$name" | sort)"
     [ "$want" = "$have" ]
@@ -149,6 +158,15 @@ fetch_source() {
     return 0
 }
 
+# Drop the staging directory, and the wrapper too when this was a first-ever
+# sync that never produced content — an empty wrapper survives prune (the source
+# is still in the manifest) and install.sh would symlink it into ~/.claude/skills/.
+abandon_staged() {
+    rm -rf "$1/.skills.staged"
+    rmdir "$1" 2>/dev/null
+    return 0
+}
+
 # Replace the wrapper's skills/ wholesale so upstream deletions propagate.
 # Staged in a sibling directory first, so a validation failure never leaves a
 # half-written tree.
@@ -156,30 +174,40 @@ install_source() {
     local name="$1" stage="$2"; shift 2
     local wrapper="$VENDOR_DIR/$name"
     local staged="$wrapper/.skills.staged"
-    local p base
+    local p base lic
 
+    mkdir -p "$wrapper" || return 1
     rm -rf "$staged"
-    mkdir -p "$staged" || return 1
+    mkdir -p "$staged" || { abandon_staged "$wrapper"; return 1; }
 
     for p in "$@"; do
         if [ ! -f "$stage/$p/SKILL.md" ]; then
             log_error "$name: no SKILL.md at '$p'"
-            rm -rf "$staged"
+            abandon_staged "$wrapper"
+            return 1
+        fi
+        # Byte-exactness forbids rewriting a fetched tree, not refusing one.
+        # `cp -R` copies links verbatim, so a hostile upstream could commit
+        # skills/x -> /etc/passwd into this public repo. Refuse the source.
+        if [ -n "$(find "$stage/$p" \! -type d \! -type f -print -quit)" ]; then
+            log_error "$name: '$p' contains a symlink or special file"
+            abandon_staged "$wrapper"
             return 1
         fi
         base="$(basename "$p")"
-        cp -R "$stage/$p" "$staged/$base" || { rm -rf "$staged"; return 1; }
+        cp -R "$stage/$p" "$staged/$base" || { abandon_staged "$wrapper"; return 1; }
     done
 
     rm -rf "$wrapper/skills"
-    mv "$staged" "$wrapper/skills" || return 1
+    mv "$staged" "$wrapper/skills" || { abandon_staged "$wrapper"; return 1; }
 
-    if [ -f "$stage/LICENSE" ]; then
-        cp "$stage/LICENSE" "$wrapper/UPSTREAM-LICENSE"
-    elif [ -f "$stage/LICENSE.md" ]; then
-        cp "$stage/LICENSE.md" "$wrapper/UPSTREAM-LICENSE"
-    elif [ -f "$stage/COPYING" ]; then
-        cp "$stage/COPYING" "$wrapper/UPSTREAM-LICENSE"
+    # Wholesale replacement covers skills/ only, so a licence dropped upstream
+    # would otherwise leave a stale copy the README no longer points at.
+    lic="$(detected_license "$stage")"
+    if [ -n "$lic" ]; then
+        cp "$stage/$lic" "$wrapper/UPSTREAM-LICENSE" || return 1
+    else
+        rm -f "$wrapper/UPSTREAM-LICENSE"
     fi
     return 0
 }
@@ -225,7 +253,11 @@ write_readme() {
         echo "| Source | \`$repo\` |"
         echo "| Ref | \`$ref\` |"
         echo "| Commit | \`$sha\` |"
-        echo "| Licence | ${license:-unknown} (see \`UPSTREAM-LICENSE\`) |"
+        if [ -n "$license" ]; then
+            echo "| Licence | $license (see \`UPSTREAM-LICENSE\`) |"
+        else
+            echo "| Licence | unknown (upstream ships none) |"
+        fi
         echo
         echo "## Skills"
         echo
@@ -248,13 +280,26 @@ update_lock() {
         jq -n --arg k "$(basename "$p")" --arg v "$p" '{($k): $v}'
     done | jq -s 'add // {}')"
 
+    # mktemp makes the file 0600 and mv preserves that; the lockfile is a
+    # committed, world-readable sibling of every other file here.
     tmp="$(mktemp)"
     jq --arg n "$name" --arg repo "$repo" --arg ref "$ref" --arg sha "$sha" \
        --arg lic "$license" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
        --argjson skills "$skills_json" \
        '.sources[$n] = { repo: $repo, ref: $ref, resolved: $sha,
                          fetchedAt: $at, license: $lic, skills: $skills }' \
-       "$LOCKFILE" > "$tmp" && mv "$tmp" "$LOCKFILE"
+       "$LOCKFILE" > "$tmp" && chmod 644 "$tmp" && mv "$tmp" "$LOCKFILE"
+}
+
+# The wrapper's generated metadata. A partial write leaves a wrapper Claude Code
+# cannot load, so any failure must fail the source instead of being recorded as
+# a success in the lockfile.
+write_artefacts() {
+    local name="$1" repo="$2" ref="$3" sha="$4" license="$5"; shift 5
+    write_plugin_manifest "$name" "$sha" "$@" || return 1
+    write_readme "$name" "$repo" "$ref" "$sha" "$license" "$@" || return 1
+    update_lock "$name" "$repo" "$ref" "$sha" "$license" "$@" || return 1
+    return 0
 }
 
 # Remove wrappers and lock entries no longer named in the manifest, so
@@ -266,7 +311,8 @@ prune_removed() {
     [ -d "$VENDOR_DIR" ] && for entry in "$VENDOR_DIR"/*; do
         [ -d "$entry" ] || continue
         name="$(basename "$entry")"
-        if ! printf '%s\n' "$names" | grep -qx "$name"; then
+        # -xF and `--`: the name is data, not a pattern and not an option.
+        if ! printf '%s\n' "$names" | grep -qxF -- "$name"; then
             log_info "$name: pruning (no longer in manifest)"
             rm -rf "$entry"
         fi
@@ -276,7 +322,7 @@ prune_removed() {
     tmp="$(mktemp)"
     jq --argjson keep "$(printf '%s\n' "$names" | jq -R . | jq -s .)" \
        '.sources |= with_entries(select(.key as $k | $keep | index($k)))' \
-       "$LOCKFILE" > "$tmp" && mv "$tmp" "$LOCKFILE"
+       "$LOCKFILE" > "$tmp" && chmod 644 "$tmp" && mv "$tmp" "$LOCKFILE"
 }
 
 main() {
@@ -313,15 +359,15 @@ main() {
             [ -n "$p" ] && paths+=("$p")
         done <<< "$(source_skills "$name")"
 
-        if ! fetch_source "$repo" "$sha" "$tmp/src" "${paths[@]}"; then
+        # ${paths[@]+…}: bash 3.2 treats an empty array as unset under `set -u`.
+        if ! fetch_source "$repo" "$sha" "$tmp/src" ${paths[@]+"${paths[@]}"}; then
             log_warn "$name: fetch failed — keeping committed copy"
             rm -rf "$tmp"
             failed=1
             continue
         fi
 
-        mkdir -p "$VENDOR_DIR/$name"
-        if ! install_source "$name" "$tmp/src" "${paths[@]}"; then
+        if ! install_source "$name" "$tmp/src" ${paths[@]+"${paths[@]}"}; then
             log_warn "$name: install failed — keeping committed copy"
             rm -rf "$tmp"
             failed=1
@@ -330,9 +376,12 @@ main() {
 
         local lic
         lic="$(detected_license "$tmp/src")"
-        write_plugin_manifest "$name" "$sha" "${paths[@]}"
-        write_readme "$name" "$repo" "$ref" "$sha" "$lic" "${paths[@]}"
-        update_lock "$name" "$repo" "$ref" "$sha" "$lic" "${paths[@]}"
+        if ! write_artefacts "$name" "$repo" "$ref" "$sha" "$lic" ${paths[@]+"${paths[@]}"}; then
+            log_warn "$name: could not write the generated wrapper metadata"
+            rm -rf "$tmp"
+            failed=1
+            continue
+        fi
         log_info "$name: vendored ${#paths[@]} skill(s)"
         rm -rf "$tmp"
     done <<< "$(source_names)"
