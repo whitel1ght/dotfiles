@@ -238,6 +238,28 @@ update_lock() {
        "$LOCKFILE" > "$tmp" && mv "$tmp" "$LOCKFILE"
 }
 
+# Remove wrappers and lock entries no longer named in the manifest, so
+# deleting a manifest entry uninstalls the skill.
+prune_removed() {
+    local names entry name tmp
+    names="$(source_names)"
+
+    [ -d "$VENDOR_DIR" ] && for entry in "$VENDOR_DIR"/*; do
+        [ -d "$entry" ] || continue
+        name="$(basename "$entry")"
+        if ! printf '%s\n' "$names" | grep -qx "$name"; then
+            log_info "$name: pruning (no longer in manifest)"
+            rm -rf "$entry"
+        fi
+    done
+
+    [ -f "$LOCKFILE" ] || return 0
+    tmp="$(mktemp)"
+    jq --argjson keep "$(printf '%s\n' "$names" | jq -R . | jq -s .)" \
+       '.sources |= with_entries(select(.key as $k | $keep | index($k)))' \
+       "$LOCKFILE" > "$tmp" && mv "$tmp" "$LOCKFILE"
+}
+
 main() {
     require_jq || return 1
     validate_manifest || return 1
@@ -296,6 +318,7 @@ main() {
         rm -rf "$tmp"
     done <<< "$(source_names)"
 
+    prune_removed
     [ "$failed" -eq 0 ] || return 2
     return 0
 }

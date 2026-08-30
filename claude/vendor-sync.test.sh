@@ -213,5 +213,52 @@ assert_eq "no" \
     "removing a skill from the manifest removes it from the wrapper"
 
 echo
+echo "== Task 5: prune and failure semantics =="
+
+new_sandbox
+write_manifest "$(cat <<JSON
+{ "sources": [
+  { "name": "keep", "repo": "$UPSTREAM_URL", "ref": "HEAD",
+    "skills": [ "skills/productivity/grilling" ] },
+  { "name": "drop", "repo": "$UPSTREAM_URL", "ref": "HEAD",
+    "skills": [ "skills/engineering/wayfinder" ] } ] }
+JSON
+)"
+run_sync >/dev/null 2>&1
+assert_eq "yes" "$([ -d "$ROOT/dotfiles/vendor/drop" ] && echo yes || echo no)" \
+    "both wrappers created"
+
+write_manifest "$(cat <<JSON
+{ "sources": [ { "name": "keep", "repo": "$UPSTREAM_URL", "ref": "HEAD",
+  "skills": [ "skills/productivity/grilling" ] } ] }
+JSON
+)"
+run_sync >/dev/null 2>&1
+assert_eq "no" "$([ -d "$ROOT/dotfiles/vendor/drop" ] && echo yes || echo no)" \
+    "removed source is pruned from vendor/"
+assert_eq "yes" "$([ -d "$ROOT/dotfiles/vendor/keep" ] && echo yes || echo no)" \
+    "remaining source survives prune"
+assert_eq "null" "$(jq -r '.sources.drop // "null"' "$ROOT/dotfiles/vendor.lock.json")" \
+    "removed source is pruned from the lockfile"
+
+# Unreachable remote: keep the tree, exit 2, do not prune.
+new_sandbox
+write_manifest "$(cat <<JSON
+{ "sources": [ { "name": "fix", "repo": "$UPSTREAM_URL", "ref": "HEAD",
+  "skills": [ "skills/productivity/grilling" ] } ] }
+JSON
+)"
+run_sync >/dev/null 2>&1
+write_manifest "$(cat <<JSON
+{ "sources": [ { "name": "fix", "repo": "file:///nonexistent/repo.git", "ref": "HEAD",
+  "skills": [ "skills/productivity/grilling" ] } ] }
+JSON
+)"
+assert_fails 2 "unreachable remote exits 2" -- run_sync
+assert_eq "yes" \
+    "$([ -f "$ROOT/dotfiles/vendor/fix/skills/grilling/SKILL.md" ] && echo yes || echo no)" \
+    "unreachable remote leaves committed copy intact"
+
+echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
