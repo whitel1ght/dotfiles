@@ -13,10 +13,13 @@ Personal configuration files for macOS development tools.
 ├── nvim/           # Neovim configuration
 ├── zsh/            # Zsh configuration (.zshrc, .zprofile, .p10k.zsh)
 ├── claude/         # Claude Code: personal skills, agents, settings, CLAUDE.md
+├── epy/            # epy ebook reader config + vertical padding patch
+├── bin/            # Helper executables linked into ~/.local/bin
 ├── Brewfile          # Homebrew package list
 ├── install.sh        # Symlink setup script
 ├── brew-install.sh   # Homebrew package installer
 ├── macos-daemons.sh  # Toggle the macOS media analysis daemons
+├── epy-setup.sh      # epy reader installer + padding patch
 └── zsh-setup.sh      # Oh My Zsh and Powerlevel10k installer
 ```
 
@@ -48,6 +51,7 @@ The install script will:
 - Backup existing files with `.backup` extension
 - Create necessary directories if they don't exist
 - Disable the macOS media analysis daemons (see [macOS daemons](#macos-daemons))
+- Install the epy ebook reader and apply its padding patch (see [epy](#epy))
 
 The zsh setup script will:
 - Install Oh My Zsh framework
@@ -69,6 +73,7 @@ The brew script will:
 - **Zsh**: `~/.zshrc`, `~/.zprofile`, `~/.p10k.zsh`
 - **Claude Code**: `~/.claude/CLAUDE.md`, `~/.claude/settings.json`, and per-item
   links inside `~/.claude/skills/` and `~/.claude/agents/`
+- **epy**: `~/.config/epy/configuration.json`, and `macdict` in `~/.local/bin/`
 
 ## macOS daemons
 
@@ -103,6 +108,65 @@ going until it idles out or you reboot — the script says so when it happens.
 
 Run `./macos-daemons.test.sh` to test the script; it stubs `launchctl` and never
 touches real daemons.
+
+## epy
+
+[epy](https://github.com/wustho/epy) is a terminal ebook reader. `install.sh`
+runs `epy-setup.sh`, which installs it and patches in vertical padding.
+
+```bash
+./epy-setup.sh            # install + patch (default)
+./epy-setup.sh status     # version, patch state, macdict on PATH
+```
+
+Skip it during install with `EPY_SETUP=0 ./install.sh`.
+
+### Why it needs a setup script
+
+Two things the Brewfile cannot express:
+
+- **epy is a pipx app pinned to Python 3.12.** The last release (2023.6.11)
+  imports `imghdr`, removed from the stdlib in 3.13. Left to itself pipx picks
+  the newest Python on the machine and the install import-errors on first run.
+  The interpreter is resolved through `brew --prefix python@3.12`, so it works
+  on both Apple Silicon and Intel prefixes.
+- **epy has no vertical padding setting.** `epy/vertical-padding.patch` adds
+  `Setting.VerticalPadding` (default 1) and reworks the page geometry to match.
+  `pipx upgrade` replaces site-packages wholesale, so the patch is re-applied on
+  every run rather than applied once; re-run `./epy-setup.sh` after an upgrade.
+
+The patch is pinned to epy 2023.6.11. If upstream ever ships a release it will
+stop matching, and the script says so and stops instead of half-applying it.
+Regenerate it against the new sources at that point.
+
+### Vertical padding
+
+Text is drawn flush against the top row by default. `VerticalPadding` reserves
+that many blank rows above the text and below it:
+
+```json
+{ "Setting": { "VerticalPadding": 1 } }
+```
+
+Set it to `0` for stock behaviour. The patch touches paging as well as drawing
+because epy sizes page jumps separately from what it draws — pad only the draw
+and every page turn quietly repeats a line at the boundary.
+
+### Define Word
+
+`bin/macdict` backs epy's `d` (Define Word) key, printing entries from the
+macOS built-in dictionaries. It talks to `DCSCopyTextDefinition` through
+`ctypes`, so it runs on stock system Python with no venv, no pip and no network.
+
+It never writes to stderr, including on a miss: epy treats any stderr output as
+a failure and shows that instead of the definition.
+
+`configuration.json` sets `DictionaryClient` to the bare name `macdict` rather
+than an absolute path — epy resolves it with `shutil.which`, and `.zshrc`
+already puts `~/.local/bin` on PATH.
+
+Run `./epy-setup.test.sh` to test the setup script; it stubs `pipx` and `brew`
+and patches a throwaway copy of the sources.
 
 ## tmux
 

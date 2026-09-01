@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""Print a word's definition from the macOS built-in dictionaries.
+
+Written for epy's DictionaryClient hook. epy runs `macdict <word>` through the
+shell and renders stdout in a scrollable pane, but treats ANY stderr output as
+a failure and shows that instead of the definition -- so nothing here writes to
+stderr, and a miss is an ordinary message on stdout.
+
+Uses ctypes rather than pyobjc so it runs on stock system Python: no venv, no
+pip, no network. DCSCopyTextDefinition reads whichever dictionaries are active
+in Dictionary.app (New Oxford American Dictionary by default).
+"""
+
+import ctypes
+import ctypes.util
+import re
+import sys
+
+# NOAD runs an entry together on one line. text_win wraps each line but keeps
+# the breaks we give it, so splitting on these turns a dense block into a
+# readable entry.
+SECTIONS = (
+    "ORIGIN|DERIVATIVES|PHRASES|PHRASAL VERBS|USAGE|"
+    "PRONUNCIATION|COMPARE|PLURAL|ABBREVIATION"
+)
+PARTS_OF_SPEECH = (
+    "noun|verb|adjective|adverb|pronoun|preposition|conjunction|"
+    "interjection|abbreviation|prefix|suffix|exclamation|determiner"
+)
+
+kCFStringEncodingUTF8 = 0x08000100
+
+
+class CFRange(ctypes.Structure):
+    _fields_ = [("location", ctypes.c_long), ("length", ctypes.c_long)]
+
+
+def _load_frameworks():
+    core_foundation = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreFoundation"))
+    core_services = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreServices"))
+
+    core_foundation.CFStringCreateWithCString.restype = ctypes.c_void_p
+    core_foundation.CFStringCreateWithCString.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_uint32,
+    ]
+    core_foundation.CFStringGetLength.restype = ctypes.c_long
+    core_foundation.CFStringGetLength.argtypes = [ctypes.c_void_p]
+    core_foundation.CFStringGetCString.restype = ctypes.c_bool
+    core_foundation.CFStringGetCString.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_long,
+        ctypes.c_uint32,
+    ]
+    core_foundation.CFRelease.argtypes = [ctypes.c_void_p]
+
+    core_services.DCSCopyTextDefinition.restype = ctypes.c_void_p
+    core_services.DCSCopyTextDefinition.argtypes = [ctypes.c_void_p, ctypes.c_void_p, CFRange]
+
+    return core_foundation, core_services
+
+
+def look_up(word):
+    """Return the definition text, or None if the dictionaries have no entry."""
+    core_foundation, core_services = _load_frameworks()
+
+    term = core_foundation.CFStringCreateWithCString(
+        None, word.encode("utf-8"), kCFStringEncodingUTF8
+    )
+    if not term:
+        return None
+
+    try:
+        found = core_services.DCSCopyTextDefinition(None, term, CFRange(0, len(word)))
+        if not found:
+            return None
+        try:
+            # CFStringGetCStringPtr returns NULL for these strings, so copy into
+            # a buffer. Worst case UTF-8 is 4 bytes per UTF-16 unit, plus a NUL.
+            size = (core_foundation.CFStringGetLength(found) * 4) + 1
+            buffer = ctypes.create_string_buffer(size)
+            if not core_foundation.CFStringGetCString(
+                found, buffer, size, kCFStringEncodingUTF8
+            ):
+                return None
+            return buffer.value.decode("utf-8")
+        finally:
+            core_foundation.CFRelease(found)
+    finally:
+        core_foundation.CFRelease(term)
+
+
+def format_entry(text):
+    text = re.sub(r"\s*\|\s*(%s)\b" % SECTIONS, r"\n\n\1", text)
+    text = re.sub(r"(?<!^)\b(%s)\b(?=\s)" % SECTIONS, r"\n\n\1", text)
+    text = re.sub(r"(?<!\n)\s*•\s*", r"\n  • ", text)
+    text = re.sub(r"(?<!\n)\s+\b(%s)\b(?=\s)" % PARTS_OF_SPEECH, r"\n\n\1", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def main():
+    word = " ".join(sys.argv[1:]).strip()
+    if not word:
+        print("Usage: macdict <word>")
+        return
+
+    try:
+        definition = look_up(word)
+    except Exception as exc:  # noqa: BLE001 - a traceback on stderr breaks epy
+        print("Dictionary lookup failed: %s" % exc)
+        return
+
+    if not definition:
+        print('No definition found for "%s".' % word)
+        return
+
+    print(format_entry(definition))
+
+
+if __name__ == "__main__":
+    main()

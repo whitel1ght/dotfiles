@@ -252,6 +252,27 @@ if [ -f "$DOTFILES_DIR/claude/CLAUDE.md" ]; then
 fi
 
 
+# epy ebook reader
+# Only configuration.json is linked: states.db lives in the same directory and
+# holds reading positions, which are machine-local. Same split as superfile.
+if [ -f "$DOTFILES_DIR/epy/configuration.json" ]; then
+    create_symlink "$DOTFILES_DIR/epy/configuration.json" "$HOME/.config/epy/configuration.json"
+fi
+
+# macdict backs epy's "Define Word"; reaches the macOS dictionaries via ctypes,
+# so it needs no venv or third-party package.
+if [ -f "$DOTFILES_DIR/bin/macdict" ]; then
+    create_symlink "$DOTFILES_DIR/bin/macdict" "$HOME/.local/bin/macdict"
+fi
+
+# Install epy via pipx and re-apply the vertical padding patch. Guarded like
+# the vendor sync above: install.sh runs under `set -e`, and a pipx or patch
+# failure must not abort the remaining setup. Set EPY_SETUP=0 to skip.
+if [ "${EPY_SETUP:-1}" != "0" ] && [ -x "$DOTFILES_DIR/epy-setup.sh" ]; then
+    "$DOTFILES_DIR/epy-setup.sh" install || log_warn "epy setup failed"
+fi
+
+
 # Disable the macOS media analysis daemons. Guarded like the vendor sync above:
 # install.sh runs under `set -e`, and a launchctl failure must not abort the
 # remaining setup. Set MACOS_DAEMONS=0 to keep stock macOS behaviour.

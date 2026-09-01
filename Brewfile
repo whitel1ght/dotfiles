@@ -118,6 +118,8 @@ brew "nghttp2"
 brew "nginx"
 # Manage multiple Node.js versions
 brew "nvm"
+# Execute binaries from Python packages in isolated environments
+brew "pipx"
 # PDF rendering library (based on the xpdf-3.0 code base)
 brew "poppler"
 # Object-relational database system
@@ -126,6 +128,8 @@ brew "postgresql@14"
 brew "protobuf"
 # Interpreted, interactive, object-oriented programming language
 brew "python@3.11"
+# Interpreted, interactive, object-oriented programming language
+brew "python@3.12"
 # Interpreted, interactive, object-oriented programming language
 brew "python@3.9"
 # Search tool like grep and The Silver Searcher

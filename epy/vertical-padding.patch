@@ -1,0 +1,382 @@
+--- a/epy_reader/settings.py	2026-09-01 16:40:47
++++ b/epy_reader/settings.py	2026-09-01 16:40:54
+@@ -48,6 +48,8 @@
+     LightColorFG: int = 238
+     LightColorBG: int = 253
+     SeamlessBetweenChapters: bool = False
++    # Blank rows kept above the text and between the text and the status line.
++    VerticalPadding: int = 1
+     PreferredTTSEngine: Optional[str] = None
+     TTSEngineArgs: List[str] = field(default_factory=list)
+ 
+--- a/epy_reader/board.py	2026-09-01 16:40:47
++++ b/epy_reader/board.py	2026-09-01 16:41:42
+@@ -24,6 +24,7 @@
+         textwidth: int = 80,
+         default_style: Tuple[InlineStyle, ...] = tuple(),
+         spread: int = 1,
++        vertical_padding: int = 0,
+     ):
+         self.screen = screen
+         self.screen_rows, self.screen_cols = self.screen.getmaxyx()
+@@ -34,6 +35,7 @@
+         self.default_style: Tuple[InlineStyle, ...] = default_style
+         self.temporary_style: Tuple[InlineStyle, ...] = ()
+         self.spread = spread
++        self.vertical_padding = vertical_padding
+ 
+         if self.spread == 2:
+             self.x = DoubleSpreadPadding.LEFT.value
+@@ -41,6 +43,15 @@
+                 DoubleSpreadPadding.LEFT.value + self.textwidth + DoubleSpreadPadding.MIDDLE.value
+             )
+ 
++    def text_height(self, bottom_padding: int = 0) -> int:
++        """Rows available for text, after the status line and padding.
++
++        Single source of truth for page geometry: Reader sizes its page jumps
++        from this too, so a page turn advances by exactly what was drawn. Keep
++        them derived from one place or paging silently skips a line.
++        """
++        return self.screen_rows - bottom_padding - (2 * self.vertical_padding)
++
+     def feed_temporary_style(self, styles: Optional[Tuple[InlineStyle, ...]] = None) -> None:
+         """Reset styling if `styles` is None"""
+         self.temporary_style = styles if styles else ()
+@@ -48,17 +59,15 @@
+     def render_styles(
+         self, row: int, styles: Tuple[InlineStyle, ...] = (), bottom_padding: int = 0
+     ) -> None:
++        height = self.text_height(bottom_padding)
+         for i in styles:
+-            if i.row in range(row, row + self.screen_rows - bottom_padding):
++            if i.row in range(row, row + height):
+                 self.chgat(row, i.row, i.col, i.n_letters, self.screen.getbkgd() | i.attr)
+ 
+-            if self.spread == 2 and i.row in range(
+-                row + self.screen_rows - bottom_padding,
+-                row + 2 * (self.screen_rows - bottom_padding),
+-            ):
++            if self.spread == 2 and i.row in range(row + height, row + 2 * height):
+                 self.chgat(
+                     row,
+-                    i.row - (self.screen_rows - bottom_padding),
++                    i.row - height,
+                     -self.x + self.x_alt + i.col,
+                     i.n_letters,
+                     self.screen.getbkgd() | i.attr,
+@@ -74,10 +83,11 @@
+         return self.screen.getbkgd()
+ 
+     def chgat(self, row: int, y: int, x: int, n: int, attr: int) -> None:
+-        self.screen.chgat(y - row, self.x + x, n, attr)
++        self.screen.chgat(y - row + self.vertical_padding, self.x + x, n, attr)
+ 
+     def write(self, row: int, bottom_padding: int = 0) -> None:
+-        for n_row in range(min(self.screen_rows - bottom_padding, self.total_lines - row)):
++        height = self.text_height(bottom_padding)
++        for n_row in range(min(height, self.total_lines - row)):
+             text_line = self.text[row + n_row]
+ 
+             # NOTE: A bug with python itself: https://bugs.python.org/issue8243
+@@ -89,22 +99,22 @@
+             # Since the exception is raised "after the character is printed"
+             # then it seems to be safe to catch it.
+             try:
+-                self.screen.addstr(n_row, self.x, text_line)
++                self.screen.addstr(n_row + self.vertical_padding, self.x, text_line)
+             except curses.error:
+                 pass
+ 
+-            if (
+-                self.spread == 2
+-                and row + self.screen_rows - bottom_padding + n_row < self.total_lines
+-            ):
+-                text_line = self.text[row + self.screen_rows - bottom_padding + n_row]
++            if self.spread == 2 and row + height + n_row < self.total_lines:
++                text_line = self.text[row + height + n_row]
+                 # TODO: clean this up
+                 if re.search("\\[IMG:[0-9]+\\]", text_line):
+                     self.screen.addstr(
+-                        n_row, self.x_alt, text_line.center(self.textwidth), curses.A_BOLD
++                        n_row + self.vertical_padding,
++                        self.x_alt,
++                        text_line.center(self.textwidth),
++                        curses.A_BOLD,
+                     )
+                 else:
+-                    self.screen.addstr(n_row, self.x_alt, text_line)
++                    self.screen.addstr(n_row + self.vertical_padding, self.x_alt, text_line)
+ 
+         self.render_styles(row, self.default_style, bottom_padding)
+         self.render_styles(row, self.temporary_style, bottom_padding)
+@@ -118,26 +128,24 @@
+         bottom_padding: int = 0,
+     ) -> None:
+         assert n > 0
+-        for n_row in range(min(self.screen_rows - bottom_padding, self.total_lines - row)):
++        height = self.text_height(bottom_padding)
++        for n_row in range(min(height, self.total_lines - row)):
+             text_line = self.text[row + n_row]
+             if direction == Direction.FORWARD:
+                 # self.screen.addnstr(n_row, self.x + self.textwidth - n, self.text[row+n_row], n)
+                 # `+ " " * (self.textwidth - len(self.text[row + n_row]))` is workaround to
+                 # to prevent curses trace because not calling screen.clear()
+                 self.screen.addnstr(
+-                    n_row,
++                    n_row + self.vertical_padding,
+                     self.x + self.textwidth - n,
+                     text_line + " " * (self.textwidth - len(text_line)),
+                     n,
+                 )
+ 
+-                if (
+-                    self.spread == 2
+-                    and row + self.screen_rows - bottom_padding + n_row < self.total_lines
+-                ):
+-                    text_line_alt = self.text[row + n_row + self.screen_rows - bottom_padding]
++                if self.spread == 2 and row + height + n_row < self.total_lines:
++                    text_line_alt = self.text[row + n_row + height]
+                     self.screen.addnstr(
+-                        n_row,
++                        n_row + self.vertical_padding,
+                         self.x_alt + self.textwidth - n,
+                         text_line_alt + " " * (self.textwidth - len(text_line_alt)),
+                         n,
+@@ -145,15 +153,14 @@
+ 
+             else:
+                 if text_line[self.textwidth - n :]:
+-                    self.screen.addnstr(n_row, self.x, text_line[self.textwidth - n :], n)
++                    self.screen.addnstr(
++                        n_row + self.vertical_padding, self.x, text_line[self.textwidth - n :], n
++                    )
+ 
+-                if (
+-                    self.spread == 2
+-                    and row + self.screen_rows - bottom_padding + n_row < self.total_lines
+-                ):
+-                    text_line_alt = self.text[row + n_row + self.screen_rows - bottom_padding]
++                if self.spread == 2 and row + height + n_row < self.total_lines:
++                    text_line_alt = self.text[row + n_row + height]
+                     self.screen.addnstr(
+-                        n_row,
++                        n_row + self.vertical_padding,
+                         self.x_alt,
+                         text_line_alt[self.textwidth - n :],
+                         n,
+--- a/epy_reader/reader.py	2026-09-01 16:40:47
++++ b/epy_reader/reader.py	2026-09-01 16:50:34
+@@ -63,6 +63,10 @@
+         self.keymap_user_dict = config.keymap_user_dict
+ 
+         self.seamless = self.setting.SeamlessBetweenChapters
++        # Blank rows above the text and between the text and the status line.
++        # Clamped: a padding wide enough to leave no room for text would make
++        # page_height() zero or negative and stall paging entirely.
++        self.vertical_padding = max(0, self.setting.VerticalPadding)
+ 
+         # keys that will make
+         # windows exit and return the said key
+@@ -181,6 +185,16 @@
+                     letters_per_content[: reading_state.row + (self.screen_rows * self.spread) - 1]
+                 )
+             ) / self.letters_count.all
++
++    def page_height(self, rows: int, bottom_padding: int = 0) -> int:
++        """Text rows on one page. Mirrors InfiniBoard.text_height().
++
++        Page jumps must match what the board actually drew, or every turn
++        skips (or repeats) a line at the boundary. The default matches the
++        reading view, which draws with bottom_padding=0; the search view
++        draws with 1 and passes it explicitly.
++        """
++        return max(1, rows - bottom_padding - (2 * self.vertical_padding))
+ 
+     @property
+     def screen_rows(self) -> int:
+@@ -610,21 +624,25 @@
+             elif s == Key(curses.KEY_RESIZE):
+                 return Key(curses.KEY_RESIZE)
+ 
++            # This view draws with bottom_padding=1, so its page is one row
++            # shorter than the reading view's.
++            search_page = self.page_height(rows, 1)
++
+             # if reading_state.row + rows - 1 > pad.chunks[pad.find_chunkidx(reading_state.row)]:
+             #     reading_state = dataclasses.replace(
+             #         reading_state, row=pad.chunks[pad.find_chunkidx(reading_state.row)] + 1
+             #     )
+ 
+             while found[sidx][0] not in list(
+-                range(reading_state.row, reading_state.row + (rows - 1) * self.spread)
++                range(reading_state.row, reading_state.row + search_page * self.spread)
+             ):
+                 if found[sidx][0] > reading_state.row:
+                     reading_state = dataclasses.replace(
+-                        reading_state, row=reading_state.row + ((rows - 1) * self.spread)
++                        reading_state, row=reading_state.row + (search_page * self.spread)
+                     )
+                 else:
+                     reading_state = dataclasses.replace(
+-                        reading_state, row=reading_state.row - ((rows - 1) * self.spread)
++                        reading_state, row=reading_state.row - (search_page * self.spread)
+                     )
+                     if reading_state.row < 0:
+                         reading_state = dataclasses.replace(reading_state, row=0)
+@@ -809,6 +827,10 @@
+ 
+         k = self.keymap.RegexSearch[0] if self.search_data else NoUpdate()
+         rows, cols = self.screen.getmaxyx()
++        # Text rows on one page. Every jump below is sized from this rather
++        # than `rows`, so paging advances by exactly what the board drew.
++        # Safe to compute once: each resize path returns and restarts read().
++        page = self.page_height(rows)
+ 
+         mincols_doublespr = (
+             DoubleSpreadPadding.LEFT.value
+@@ -849,7 +871,7 @@
+ 
+         totlines = len(text_structure.text_lines)
+ 
+-        if reading_state.row < 0 and totlines <= rows * self.spread:
++        if reading_state.row < 0 and totlines <= page * self.spread:
+             reading_state = dataclasses.replace(reading_state, row=0)
+         elif reading_state.rel_pctg is not None:
+             reading_state = dataclasses.replace(
+@@ -864,6 +886,7 @@
+             textwidth=reading_state.textwidth,
+             default_style=text_structure.formatting,
+             spread=self.spread,
++            vertical_padding=self.vertical_padding,
+         )
+ 
+         letters_per_content: List[int] = []
+@@ -912,7 +935,7 @@
+                     elif k in self.keymap.TTSToggle and self.tts_support:
+                         tospeak = ""
+                         for i in text_structure.text_lines[
+-                            reading_state.row : reading_state.row + (rows * self.spread)
++                            reading_state.row : reading_state.row + (page * self.spread)
+                         ]:
+                             if re.match(r"^\s*$", i) is not None:
+                                 tospeak += "\n. \n"
+@@ -920,7 +943,7 @@
+                                 tospeak += i + " "
+                         k = self.speaking(tospeak)
+                         if (
+-                            totlines - reading_state.row <= rows
++                            totlines - reading_state.row <= page
+                             and reading_state.content_index == len(contents) - 1
+                         ):
+                             self.is_speaking = False
+@@ -957,7 +980,7 @@
+                             return ReadingState(
+                                 content_index=reading_state.content_index - 1,
+                                 textwidth=reading_state.textwidth,
+-                                row=-rows,
++                                row=-page,
+                             )
+                         else:
+                             reading_state = dataclasses.replace(reading_state, row=0)
+@@ -973,19 +996,19 @@
+                             return ReadingState(
+                                 content_index=reading_state.content_index - 1,
+                                 textwidth=reading_state.textwidth,
+-                                row=rows
++                                row=page
+                                 * self.spread
+                                 * (
+                                     len(text_structure_content_before.text_lines)
+-                                    // (rows * self.spread)
++                                    // (page * self.spread)
+                                 ),
+                             )
+                         else:
+-                            if reading_state.row >= rows * self.spread * count:
++                            if reading_state.row >= page * self.spread * count:
+                                 self.page_animation = Direction.BACKWARD
+                                 reading_state = dataclasses.replace(
+                                     reading_state,
+-                                    row=reading_state.row - (rows * self.spread * count),
++                                    row=reading_state.row - (page * self.spread * count),
+                                 )
+                             else:
+                                 reading_state = dataclasses.replace(reading_state, row=0)
+@@ -995,13 +1018,13 @@
+                             k = self.keymap.PageDown[0]
+                             continue
+                         if count > 1:
+-                            checkpoint_row = reading_state.row + rows - 1
+-                        if reading_state.row + count <= totlines - rows:
++                            checkpoint_row = reading_state.row + page - 1
++                        if reading_state.row + count <= totlines - page:
+                             reading_state = dataclasses.replace(
+                                 reading_state, row=reading_state.row + count
+                             )
+                         elif (
+-                            reading_state.row >= totlines - rows
++                            reading_state.row >= totlines - page
+                             and reading_state.content_index != len(contents) - 1
+                         ):
+                             self.page_animation = Direction.FORWARD
+@@ -1012,10 +1035,10 @@
+                             )
+ 
+                     elif k in self.keymap.PageDown:
+-                        if totlines - reading_state.row > rows * self.spread:
++                        if totlines - reading_state.row > page * self.spread:
+                             self.page_animation = Direction.FORWARD
+                             reading_state = dataclasses.replace(
+-                                reading_state, row=reading_state.row + (rows * self.spread)
++                                reading_state, row=reading_state.row + (page * self.spread)
+                             )
+                         elif reading_state.content_index != len(contents) - 1:
+                             self.page_animation = Direction.FORWARD
+@@ -1103,13 +1126,13 @@
+                         )
+                         try:
+                             if (
+-                                text_structure.section_rows[toc_entries[ntoc + 1].section] - rows  # type: ignore
++                                text_structure.section_rows[toc_entries[ntoc + 1].section] - page  # type: ignore
+                                 >= 0
+                             ):
+                                 reading_state = dataclasses.replace(
+                                     reading_state,
+                                     row=text_structure.section_rows[toc_entries[ntoc + 1].section]  # type: ignore
+-                                    - rows,
++                                    - page,
+                                 )
+                             else:
+                                 reading_state = dataclasses.replace(
+@@ -1118,7 +1141,7 @@
+                                 )
+                         except (KeyError, IndexError):
+                             reading_state = dataclasses.replace(
+-                                reading_state, row=pgend(totlines, rows)
++                                reading_state, row=pgend(totlines, page)
+                             )
+ 
+                     elif k in self.keymap.TableOfContents:
+@@ -1240,7 +1263,7 @@
+                     elif k in self.keymap.OpenImage and self.image_viewer:
+                         imgs_in_screen = list(
+                             set(
+-                                range(reading_state.row, reading_state.row + rows * self.spread + 1)
++                                range(reading_state.row, reading_state.row + page * self.spread + 1)
+                             )
+                             & set(text_structure.image_maps.keys())
+                         )
+@@ -1258,10 +1281,10 @@
+                             i = 0
+                             while p not in self.keymap.Quit and p not in self.keymap.Follow:
+                                 self.screen.move(
+-                                    imgs_rel_to_row[i] % rows,
++                                    imgs_rel_to_row[i] % page + self.vertical_padding,
+                                     (
+                                         x
+-                                        if imgs_rel_to_row[i] // rows == 0
++                                        if imgs_rel_to_row[i] // page == 0
+                                         else cols
+                                         - DoubleSpreadPadding.RIGHT.value
+                                         - reading_state.textwidth
