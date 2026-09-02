@@ -345,20 +345,11 @@ Edit files directly in this repository - changes will be reflected immediately i
 
 ## Proxy routing
 
-Traffic routing lives entirely in `proxy/`. sing-box runs as a root
-LaunchDaemon owning a TUN interface, so routing happens at the network layer
-and **no application holds proxy settings** — no `HTTP_PROXY`, no `NO_PROXY`,
-no per-tool config.
-
-| File | Purpose |
-|---|---|
-| `proxy/proxy-domains.txt` | Domains routed through the VPS. **This is the file you edit.** |
-| `proxy/config.template.json` | sing-box config; secrets substituted at render time |
-| `proxy/render.py` | Renders template + domains + secrets into the runtime config |
-| `proxy/local.singbox.plist` | LaunchDaemon |
-| `~/.config/sing-box/secrets.env` | Server address and credentials — never in git |
-
-Everything not listed in `proxy-domains.txt` goes **direct**.
+Selective routing through a VPS: a short list of domains goes through the
+tunnel, everything else goes direct. sing-box runs as a root LaunchDaemon
+owning a TUN interface, so the decision happens at the network layer and **no
+application holds proxy settings** — no `HTTP_PROXY`, no `NO_PROXY`, no
+per-tool config.
 
 ```bash
 proxyctl status     # daemon state, current default route, egress IP
@@ -368,16 +359,12 @@ proxyctl direct     # back to default-direct
 proxyctl logs       # tail /var/log/sing-box.log
 ```
 
-`proxyctl all` is the escape hatch: when a site is blocked and you don't yet
-know which of its domains to add, flip everything through the proxy, carry on,
-and add the proper rule later.
+To route a new domain, add its apex to
+[`proxy/proxy-domains.txt`](proxy/proxy-domains.txt) and run `proxyctl reload`.
+Credentials live in `~/.config/sing-box/secrets.env` and never enter this repo
+— [`proxy/secrets.env.example`](proxy/secrets.env.example) documents where each
+value comes from.
 
-### Gotchas
-
-- **Only one TUN client at a time.** Running Happ (or any other TUN VPN)
-  alongside sing-box means whichever connected last owns the default route, and
-  the other silently does nothing. Disconnecting Happ's *window* is not enough —
-  its network extension must be disconnected.
-- **The server's Xray-core is pinned to v26.6.27.** Releases from v26.7.0
-  break REALITY for every non-Xray client, sing-box included. Do not update it
-  without re-testing.
+**How it all works** — routing model, the DNS/route invariant, render pipeline,
+daemon lifecycle, first run on a new machine, and troubleshooting:
+[`proxy/README.md`](proxy/README.md).
