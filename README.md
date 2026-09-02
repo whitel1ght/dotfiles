@@ -14,6 +14,7 @@ Personal configuration files for macOS development tools.
 ├── zsh/            # Zsh configuration (.zshrc, .zprofile, .p10k.zsh)
 ├── claude/         # Claude Code: personal skills, agents, settings, CLAUDE.md
 ├── epy/            # epy ebook reader config + vertical padding patch
+├── proxy/          # sing-box TUN routing: domain list, config template, daemon
 ├── bin/            # Helper executables linked into ~/.local/bin
 ├── Brewfile          # Homebrew package list
 ├── install.sh        # Symlink setup script
@@ -341,3 +342,42 @@ For sensitive information (API keys, server credentials, etc.), use the private 
 ## Usage
 
 Edit files directly in this repository - changes will be reflected immediately in the symlinked locations.
+
+## Proxy routing
+
+Traffic routing lives entirely in `proxy/`. sing-box runs as a root
+LaunchDaemon owning a TUN interface, so routing happens at the network layer
+and **no application holds proxy settings** — no `HTTP_PROXY`, no `NO_PROXY`,
+no per-tool config.
+
+| File | Purpose |
+|---|---|
+| `proxy/proxy-domains.txt` | Domains routed through the VPS. **This is the file you edit.** |
+| `proxy/config.template.json` | sing-box config; secrets substituted at render time |
+| `proxy/render.py` | Renders template + domains + secrets into the runtime config |
+| `proxy/local.singbox.plist` | LaunchDaemon |
+| `~/.config/sing-box/secrets.env` | Server address and credentials — never in git |
+
+Everything not listed in `proxy-domains.txt` goes **direct**.
+
+```bash
+proxyctl status     # daemon state, current default route, egress IP
+proxyctl reload     # apply changes to proxy-domains.txt
+proxyctl all        # temporarily route EVERYTHING through the VPS
+proxyctl direct     # back to default-direct
+proxyctl logs       # tail /var/log/sing-box.log
+```
+
+`proxyctl all` is the escape hatch: when a site is blocked and you don't yet
+know which of its domains to add, flip everything through the proxy, carry on,
+and add the proper rule later.
+
+### Gotchas
+
+- **Only one TUN client at a time.** Running Happ (or any other TUN VPN)
+  alongside sing-box means whichever connected last owns the default route, and
+  the other silently does nothing. Disconnecting Happ's *window* is not enough —
+  its network extension must be disconnected.
+- **The server's Xray-core is pinned to v26.6.27.** Releases from v26.7.0
+  break REALITY for every non-Xray client, sing-box included. Do not update it
+  without re-testing.

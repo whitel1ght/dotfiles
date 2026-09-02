@@ -280,6 +280,45 @@ if [ "${MACOS_DAEMONS:-1}" != "0" ] && [ -x "$DOTFILES_DIR/macos-daemons.sh" ]; 
     "$DOTFILES_DIR/macos-daemons.sh" disable || log_warn "Daemon disable failed"
 fi
 
+# --- Proxy routing (sing-box TUN) -----------------------------------------
+# All routing rules live in proxy/proxy-domains.txt; secrets stay in
+# ~/.config/sing-box/secrets.env and never enter this repo. Guarded like the
+# vendor sync above: install.sh runs under `set -e`, and an unconfigured proxy
+# must not abort the remaining setup. Set PROXY_SETUP=0 to skip.
+setup_proxy() {
+    local secrets="$HOME/.config/sing-box/secrets.env"
+    local plist="/Library/LaunchDaemons/local.singbox.plist"
+
+    create_symlink "$DOTFILES_DIR/bin/proxyctl" "$HOME/.local/bin/proxyctl"
+
+    if ! command -v sing-box >/dev/null 2>&1; then
+        log_warn "sing-box not installed - run: brew install sing-box"
+        return 0
+    fi
+
+    if [ ! -f "$secrets" ]; then
+        mkdir -p "$(dirname "$secrets")"
+        cp "$DOTFILES_DIR/proxy/secrets.env.example" "$secrets"
+        chmod 600 "$secrets"
+        log_warn "Created $secrets - fill it in, then run: proxyctl on"
+        return 0
+    fi
+
+    if [ ! -f "$plist" ]; then
+        log_warn "LaunchDaemon not installed yet. Run:"
+        log_warn "  sudo install -m 644 -o root -g wheel \\"
+        log_warn "    $DOTFILES_DIR/proxy/local.singbox.plist $plist"
+        log_warn "  then: proxyctl on"
+        return 0
+    fi
+
+    log_info "Proxy configured - run 'proxyctl status' to check"
+}
+
+if [ "${PROXY_SETUP:-1}" != "0" ]; then
+    setup_proxy || log_warn "Proxy setup incomplete"
+fi
+
 # Optional: Install Homebrew packages
 log_info "To install Homebrew packages, run: ./brew-install.sh"
 

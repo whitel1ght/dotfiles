@@ -175,3 +175,4 @@ mas "Slack", id: 803453959
 mas "Telegram", id: 747648890
 mas "Xcode", id: 497799835
 cargo "cross"
+brew "sing-box"
