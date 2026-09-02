@@ -1,0 +1,56 @@
+{
+  "log": { "level": "warn", "timestamp": true },
+  "dns": {
+    "servers": [
+      { "type": "https", "tag": "dns-proxy", "server": "8.8.8.8", "detour": "proxy" },
+      { "type": "local", "tag": "dns-local" }
+    ],
+    "rules": [
+      { "domain_suffix": "__PROXY_DOMAINS__", "server": "dns-proxy" }
+    ],
+    "final": "dns-local",
+    "strategy": "prefer_ipv4"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [ "172.19.0.1/30" ],
+      "auto_route": true,
+      "strict_route": true,
+      "stack": "gvisor"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "proxy",
+      "server": "__VLESS_SERVER__",
+      "server_port": __VLESS_PORT__,
+      "uuid": "__VLESS_UUID__",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "__VLESS_SNI__",
+        "utls": { "enabled": true, "fingerprint": "chrome" },
+        "reality": { "enabled": true, "public_key": "__VLESS_PBK__", "short_id": "__VLESS_SID__" }
+      }
+    },
+    { "type": "direct", "tag": "direct" },
+    { "type": "selector", "tag": "final-out", "outbounds": [ "direct", "proxy" ], "default": "direct" }
+  ],
+  "route": {
+    "rules": [
+      { "action": "sniff" },
+      { "protocol": "dns", "action": "hijack-dns" },
+      { "ip_is_private": true, "outbound": "direct" },
+      { "domain_suffix": "__PROXY_DOMAINS__", "outbound": "proxy" }
+    ],
+    "final": "final-out",
+    "auto_detect_interface": true,
+    "default_domain_resolver": { "server": "dns-local" }
+  },
+  "experimental": {
+    "clash_api": { "external_controller": "127.0.0.1:9090" }
+  }
+}

@@ -1,0 +1,21 @@
+# Domains routed through the VPS. Everything else goes direct.
+# One domain suffix per line. Subdomains match automatically.
+# Edit this file, then run: proxyctl reload
+
+# Anthropic / Claude
+anthropic.com
+claude.ai
+claudeusercontent.com
+
+# Google Gemini
+generativelanguage.googleapis.com
+gemini.google.com
+ai.google.dev
+
+# YouTube
+youtube.com
+youtu.be
+googlevideo.com
+ytimg.com
+youtubei.googleapis.com
+yt3.ggpht.com
