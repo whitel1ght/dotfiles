@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Control the sing-box TUN proxy.
+#
+# Routing lives in dotfiles/proxy/. Edit proxy-domains.txt, then `proxyctl reload`.
+# Secrets live in ~/.config/sing-box/secrets.env and never enter git.
+set -euo pipefail
+
+DOTFILES="${DOTFILES:-$HOME/projects/dotfiles}"
+PROXY_DIR="$DOTFILES/proxy"
+SECRETS="$HOME/.config/sing-box/secrets.env"
+RUNTIME_DIR="/usr/local/etc/sing-box"
+RUNTIME_CFG="$RUNTIME_DIR/config.json"
+PLIST="/Library/LaunchDaemons/local.singbox.plist"
+LABEL="local.singbox"
+API="http://127.0.0.1:9090"
+LOG="/var/log/sing-box.log"
+
+die() { echo "proxyctl: $*" >&2; exit 1; }
+
+render() {
+  [ -f "$SECRETS" ] || die "missing $SECRETS (copy proxy/secrets.env.example)"
+  local tmp; tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' RETURN
+  "$PROXY_DIR/render.py" "$PROXY_DIR/config.template.json" \
+    "$PROXY_DIR/proxy-domains.txt" "$SECRETS" "$tmp"
+  sing-box check -c "$tmp" || die "rendered config is invalid; not installing"
+  sudo mkdir -p "$RUNTIME_DIR"
+  sudo install -m 600 -o root -g wheel "$tmp" "$RUNTIME_CFG"
+}
+
+# Flip the default-route selector without restarting the daemon.
+selector() {
+  curl -fsS -X PUT -H 'Content-Type: application/json' \
+    -d "{\"name\":\"$1\"}" "$API/proxies/final-out" >/dev/null \
+    || die "control API unreachable — is the daemon running?"
+  echo "default route -> $1"
+}
+
+current_route() {
+  curl -fsS --max-time 3 "$API/proxies/final-out" 2>/dev/null \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("now","unknown"))' 2>/dev/null \
+    || echo "unknown"
+}
+
+case "${1:-status}" in
+  on)
+    render
+    sudo launchctl bootstrap system "$PLIST" 2>/dev/null \
+      || sudo launchctl kickstart -k "system/$LABEL"
+    echo "proxy on"
+    ;;
+  off)
+    sudo launchctl bootout "system/$LABEL" 2>/dev/null || true
+    echo "proxy off"
+    ;;
+  reload)
+    render
+    sudo launchctl kickstart -k "system/$LABEL"
+    echo "reloaded ($(grep -cvE '^\s*(#|$)' "$PROXY_DIR/proxy-domains.txt") proxied domains)"
+    ;;
+  logs)   sudo tail -f "$LOG" ;;
+  all)    selector proxy ;;
+  direct) selector direct ;;
+  status)
+    if sudo launchctl print "system/$LABEL" >/dev/null 2>&1; then
+      echo "daemon        : running"
+      echo "default route : $(current_route)"
+      echo -n "egress        : "
+      curl -s --max-time 8 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null \
+        | sed -n 's/^ip=//p' || echo "unreachable"
+    else
+      echo "daemon        : stopped"
+    fi
+    ;;
+  *)
+    echo "usage: proxyctl {on|off|status|reload|logs|all|direct}" >&2
+    exit 1
+    ;;
+esac
