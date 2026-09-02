@@ -41,10 +41,18 @@ def main(template, domains, secrets, out):
     for key in REQUIRED:
         raw = raw.replace(f"__{key}__", env[key])
 
-    if "__" in raw.replace("__PROXY_DOMAINS__", ""):
+    for marker in ("__PROXY_EXACT__", "__PROXY_SUFFIX__"):
+        if marker not in raw:
+            sys.exit(f"template is missing {marker}")
+    if "__" in raw.replace("__PROXY_EXACT__", "").replace("__PROXY_SUFFIX__", ""):
         sys.exit("unsubstituted placeholder remains in template")
 
-    cfg = json.loads(raw.replace('"__PROXY_DOMAINS__"', json.dumps(doms)))
+    # domain_suffix is a plain string-suffix match, so a bare "youtube.com"
+    # would also match "fake-youtube.com". Match the apex exactly and
+    # subdomains via a leading dot instead.
+    raw = raw.replace('"__PROXY_EXACT__"', json.dumps(doms))
+    raw = raw.replace('"__PROXY_SUFFIX__"', json.dumps(["." + d for d in doms]))
+    cfg = json.loads(raw)
     pathlib.Path(out).write_text(json.dumps(cfg, indent=2) + "\n")
     print(f"rendered {out} ({len(doms)} proxied domains)")
 

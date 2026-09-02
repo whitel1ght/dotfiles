@@ -1,18 +1,31 @@
 # Domains routed through the VPS. Everything else goes direct.
-# One domain suffix per line. Subdomains match automatically.
+#
+# One apex domain per line. The renderer matches the apex exactly AND all of
+# its subdomains, so "anthropic.com" covers "api.anthropic.com" but does not
+# accidentally match "notanthropic.com".
+#
 # Edit this file, then run: proxyctl reload
 
-# Anthropic / Claude
+# --- Anthropic / Claude Code ---------------------------------------------
+# api.anthropic.com, a-api., a-cdn., mcp-proxy., docs.
 anthropic.com
+# auth, downloads.claude.ai, assets., preview.
 claude.ai
+# code.claude.com, platform., releases., mcp., status., support.
+claude.com
+# artifact content
 claudeusercontent.com
 
-# Google Gemini
+# --- Google Gemini / gemini-cli ------------------------------------------
+# CODE_ASSIST_ENDPOINT — the OAuth/free-tier path gemini-cli uses by default
+cloudcode-pa.googleapis.com
+# the API-key path
 generativelanguage.googleapis.com
 gemini.google.com
+aistudio.google.com
 ai.google.dev
 
-# YouTube
+# --- YouTube --------------------------------------------------------------
 youtube.com
 youtu.be
 googlevideo.com
