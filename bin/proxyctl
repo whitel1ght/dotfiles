@@ -62,7 +62,9 @@ case "${1:-status}" in
   all)    selector proxy ;;
   direct) selector direct ;;
   status)
-    if sudo launchctl print "system/$LABEL" >/dev/null 2>&1; then
+    # Deliberately sudo-free: `sudo launchctl print` fails silently in a
+    # non-interactive shell and reports a running daemon as stopped.
+    if pgrep -f "sing-box run -c $RUNTIME_CFG" >/dev/null 2>&1; then
       echo "daemon        : running"
       echo "default route : $(current_route)"
       echo -n "egress        : "
