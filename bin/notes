@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Sync ~/wiki with the notes copy on the server.
+#
+#   notes pull            bring changes down (never overwrites a newer local file)
+#   notes push            send changes up   (never overwrites a newer remote file)
+#   notes status          dry run: what each direction would change
+#   notes pull --force    overwrite local files with the server's, newer or not
+#
+# Server details come from the environment so this file carries none. Set them
+# in ~/.zshrc.local, which is gitignored — see zsh/.zshrc.local.example:
+#
+#   NOTES_HOST (defaults to $CLOUD), NOTES_USER, NOTES_PORT, NOTES_REMOTE_DIR
+#
+# Both directions use --update by default. That asymmetry used to be missing:
+# pull would replace a local file with the server's copy whenever they differed,
+# newer or not. ~/wiki now holds machine-rebuild.kdbx and the vault scripts, so
+# an ordinary pull could silently undo a vault-sync. --force still allows it,
+# but only deliberately and after confirmation.
+set -euo pipefail
+
+HOST="${NOTES_HOST:-${CLOUD:-}}"
+USER_REMOTE="${NOTES_USER:-}"
+PORT="${NOTES_PORT:-22}"
+REMOTE_DIR="${NOTES_REMOTE_DIR:-}"
+LOCAL_DIR="${NOTES_LOCAL_DIR:-$HOME/wiki}"
+
+die() { echo "notes: $*" >&2; exit 1; }
+
+missing=()
+[ -n "$HOST" ]        || missing+=("NOTES_HOST (or CLOUD)")
+[ -n "$USER_REMOTE" ] || missing+=("NOTES_USER")
+[ -n "$REMOTE_DIR" ]  || missing+=("NOTES_REMOTE_DIR")
+if [ ${#missing[@]} -gt 0 ]; then
+  die "unset: ${missing[*]}
+     Set them in ~/.zshrc.local — see dotfiles/zsh/.zshrc.local.example."
+fi
+
+[ -d "$LOCAL_DIR" ] || die "$LOCAL_DIR does not exist"
+
+NAME="$(basename "$LOCAL_DIR")"
+LOCAL_PARENT="$(dirname "$LOCAL_DIR")"
+REMOTE="$USER_REMOTE@$HOST:${REMOTE_DIR%/}"
+SSH=(-e "ssh -p $PORT")
+
+case "${1:-status}" in
+  pull)
+    if [ "${2:-}" = "--force" ]; then
+      echo "This overwrites files in $LOCAL_DIR with the server's copies,"
+      echo "including any that are newer here — machine-rebuild.kdbx among them."
+      read -r -p 'Type yes to continue: ' reply
+      [ "$reply" = "yes" ] || die "aborted"
+      rsync -chavzP "${SSH[@]}" "$REMOTE/$NAME" "$LOCAL_PARENT/"
+    else
+      rsync -chavzP --update "${SSH[@]}" "$REMOTE/$NAME" "$LOCAL_PARENT/"
+    fi
+    ;;
+  push)
+    rsync -uhavz --progress "${SSH[@]}" "$LOCAL_DIR" "$REMOTE/"
+    ;;
+  status)
+    echo "── pull would change ──"
+    rsync -nai --update "${SSH[@]}" "$REMOTE/$NAME" "$LOCAL_PARENT/" | sed 's/^/  /' || true
+    echo "── push would change ──"
+    rsync -nai --update "${SSH[@]}" "$LOCAL_DIR" "$REMOTE/" | sed 's/^/  /' || true
+    ;;
+  *)
+    echo "usage: notes {pull|push|status} [--force]" >&2; exit 1 ;;
+esac

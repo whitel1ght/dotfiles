@@ -15,9 +15,15 @@ export CLOUD=your.server.ip.here
 # setting — which makes it expensive to diagnose. If you find such exports in
 # an existing ~/.zshrc.local, delete them.
 
+# Wiki sync — consumed by dotfiles/bin/notes (`pull_notes` / `push_notes`).
+# NOTES_HOST falls back to $CLOUD above, so it is usually left unset.
+export NOTES_USER=your-remote-username
+export NOTES_PORT=22
+export NOTES_REMOTE_DIR=/home/your-remote-username   # the PARENT of the wiki dir
+# export NOTES_LOCAL_DIR="$HOME/wiki"                # default; override if moved
+
 # Personal server aliases
-alias pull_notes="rsync -chavzP -e 'ssh -p <port>' username@server.ip:/path/to/notes $HOME"
-alias push_notes="rsync -urv -e 'ssh -p <port>' --progress ~/notes username@server.ip:/path/to/notes"
+# (pull_notes / push_notes are defined in .zshrc and call bin/notes)
 
 # Personal project paths
 export PYTHON_UTILS="$HOME/projects/scripts"

@@ -43,6 +43,11 @@ alias yesterday='git log --all --pretty=format:"*%h - %s" --after="$(date -v -1d
 # File listing
 alias eza='eza -1 --icons'
 
+# Wiki sync. The server details live in ~/.zshrc.local; bin/notes reads them
+# from the environment so none of them appear in this public repo.
+alias pull_notes='notes pull'
+alias push_notes='notes push'
+
 # Better grep
 grep='grep --color=auto --exclude-dir={.bzr,CVS,.git,.hg,.svn}'
 
