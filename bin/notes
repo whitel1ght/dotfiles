@@ -3,6 +3,8 @@
 #
 #   notes pull            bring changes down (never overwrites a newer local file)
 #   notes push            send changes up   (never overwrites a newer remote file)
+#   notes push --delete   also remove server files you deleted locally, after
+#                         listing them, confirming, and snapshotting the remote
 #   notes status          dry run: what each direction would change
 #   notes pull --force    overwrite local files with the server's, newer or not
 #
@@ -55,7 +57,32 @@ case "${1:-status}" in
     fi
     ;;
   push)
-    rsync -uhavz --progress "${SSH[@]}" "$LOCAL_DIR" "$REMOTE/"
+    if [ "${2:-}" = "--delete" ]; then
+      [ -t 0 ] || die "--delete needs a terminal to confirm"
+      # while-read rather than mapfile: macOS ships bash 3.2, and a freshly
+      # restored machine may not have Homebrew's bash yet.
+      doomed=()
+      while IFS= read -r line; do doomed+=("$line"); done < <(
+        rsync -nai --delete "${SSH[@]}" "$LOCAL_DIR" "$REMOTE/" | sed -n 's/^\*deleting *//p')
+      if [ ${#doomed[@]} -eq 0 ]; then
+        echo "Nothing to delete on the server."
+      else
+        echo "These ${#doomed[@]} file(s) exist on the server but not locally."
+        echo "Propagating the deletion removes them there. There is no undo."
+        printf '  %s\n' "${doomed[@]}"
+        echo
+        read -r -p 'Type delete to confirm: ' reply
+        [ "$reply" = "delete" ] || die "aborted"
+        # Snapshot before removing anything; one per day is enough.
+        local_snap="$(basename "$LOCAL_DIR").bak-$(date +%Y%m%d)"
+        ssh -p "$PORT" "$USER_REMOTE@$HOST" \
+          "cd ${REMOTE_DIR%/} && [ -e '$local_snap' ] || cp -a '$(basename "$LOCAL_DIR")' '$local_snap'" \
+          && echo "server snapshot: ${REMOTE_DIR%/}/$local_snap"
+      fi
+      rsync -uhavz --delete --progress "${SSH[@]}" "$LOCAL_DIR" "$REMOTE/"
+    else
+      rsync -uhavz --progress "${SSH[@]}" "$LOCAL_DIR" "$REMOTE/"
+    fi
     ;;
   status)
     echo "── pull would change ──"
@@ -64,5 +91,5 @@ case "${1:-status}" in
     rsync -nai --update "${SSH[@]}" "$LOCAL_DIR" "$REMOTE/" | sed 's/^/  /' || true
     ;;
   *)
-    echo "usage: notes {pull|push|status} [--force]" >&2; exit 1 ;;
+    echo "usage: notes {pull|push|status} [--force|--delete]" >&2; exit 1 ;;
 esac
