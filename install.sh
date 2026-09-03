@@ -319,6 +319,33 @@ if [ "${PROXY_SETUP:-1}" != "0" ]; then
     setup_proxy || log_warn "Proxy setup incomplete"
 fi
 
+# --- ECFX tooling (private repo) -------------------------------------------
+# The ecfx-* helper scripts live in a separate private repo because they carry
+# employer infrastructure detail that does not belong in a public one. Guarded
+# like the proxy setup above: install.sh runs under `set -e`, and an absent
+# repo (a machine that does no ECFX work) must not abort the remaining setup.
+# Set ECFX_TOOLING=0 to skip.
+setup_ecfx_tooling() {
+    local tooling="$HOME/projects/ecfx-tooling"
+
+    if [ ! -d "$tooling/bin" ]; then
+        log_warn "ecfx-tooling not present - skipping. To set it up:"
+        log_warn "  git clone git@github.com:whitel1ght/ecfx-tooling.git $tooling"
+        log_warn "  then re-run this script"
+        return 0
+    fi
+
+    local script
+    for script in "$tooling"/bin/*; do
+        [ -f "$script" ] || continue
+        create_symlink "$script" "$HOME/.local/bin/$(basename "$script")"
+    done
+}
+
+if [ "${ECFX_TOOLING:-1}" != "0" ]; then
+    setup_ecfx_tooling || log_warn "ECFX tooling setup incomplete"
+fi
+
 # Optional: Install Homebrew packages
 log_info "To install Homebrew packages, run: ./brew-install.sh"
 
