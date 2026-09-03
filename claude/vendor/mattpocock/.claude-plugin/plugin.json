@@ -4,7 +4,6 @@
   "version": "0.0.0+6654f6b",
   "description": "Managed by claude/vendor-sync.sh — do not edit by hand. Vendored skills for mattpocock.",
   "skills": [
-    "./skills/grilling",
-    "./skills/wayfinder"
+    "./skills/teach"
   ]
 }

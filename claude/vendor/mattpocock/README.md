@@ -11,8 +11,7 @@ Managed by claude/vendor-sync.sh — do not edit by hand.
 
 ## Skills
 
-- `grilling` — upstream `skills/productivity/grilling`
-- `wayfinder` — upstream `skills/engineering/wayfinder`
+- `teach` — upstream `skills/productivity/teach`
 
 Contents of `skills/` are byte-exact copies of upstream.
 To modify one, copy it into `claude/skills/` instead — edits here

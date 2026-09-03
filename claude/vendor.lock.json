@@ -4,11 +4,10 @@
       "repo": "https://github.com/mattpocock/skills.git",
       "ref": "main",
       "resolved": "6654f6b60cd9d5be8b54c6fafe44346dabeb3b76",
-      "fetchedAt": "2026-08-30T10:10:33Z",
+      "fetchedAt": "2026-09-03T20:19:05Z",
       "license": "LICENSE",
       "skills": {
-        "grilling": "skills/productivity/grilling",
-        "wayfinder": "skills/engineering/wayfinder"
+        "teach": "skills/productivity/teach"
       }
     }
   }
