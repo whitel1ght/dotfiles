@@ -265,6 +265,13 @@ if [ -f "$DOTFILES_DIR/bin/macdict" ]; then
     create_symlink "$DOTFILES_DIR/bin/macdict" "$HOME/.local/bin/macdict"
 fi
 
+# vault-check warns from .zshrc when the machine-rebuild vault is behind the
+# files it mirrors. It reads the managed-file list from ~/wiki/vault-lib.sh and
+# is a silent no-op without it, so a machine with no wiki never sees it.
+if [ -f "$DOTFILES_DIR/bin/vault-check" ]; then
+    create_symlink "$DOTFILES_DIR/bin/vault-check" "$HOME/.local/bin/vault-check"
+fi
+
 # Install epy via pipx and re-apply the vertical padding patch. Guarded like
 # the vendor sync above: install.sh runs under `set -e`, and a pipx or patch
 # failure must not abort the remaining setup. Set EPY_SETUP=0 to skip.

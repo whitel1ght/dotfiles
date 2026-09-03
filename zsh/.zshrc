@@ -116,3 +116,8 @@ source "$HOME/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
 [[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
 
 export PATH="$HOME/.local/bin:$PATH"
+
+# Warn if the machine-rebuild vault is behind the files it mirrors. Compares
+# mtimes only — never opens the vault, so no passphrase and no measurable cost.
+# Silent unless something drifted, and silent entirely without ~/wiki.
+command -v vault-check >/dev/null 2>&1 && vault-check
