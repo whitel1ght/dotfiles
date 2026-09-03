@@ -278,6 +278,11 @@ if [ -f "$DOTFILES_DIR/bin/notes" ]; then
     create_symlink "$DOTFILES_DIR/bin/notes" "$HOME/.local/bin/notes"
 fi
 
+# tmux-prune closes idle tmux windows; bound to prefix+X in tmux/.tmux.conf.
+if [ -f "$DOTFILES_DIR/bin/tmux-prune" ]; then
+    create_symlink "$DOTFILES_DIR/bin/tmux-prune" "$HOME/.local/bin/tmux-prune"
+fi
+
 # Install epy via pipx and re-apply the vertical padding patch. Guarded like
 # the vendor sync above: install.sh runs under `set -e`, and a pipx or patch
 # failure must not abort the remaining setup. Set EPY_SETUP=0 to skip.

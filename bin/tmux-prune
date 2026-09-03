@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Close tmux windows sitting idle at a shell prompt.
+#
+#   tmux-prune             current session
+#   tmux-prune -a          every session
+#   tmux-prune -t <name>   a named session, without switching to it
+#   tmux-prune -n          dry run, print what would go
+#
+# A window is idle when EVERY pane in it is running a shell. The test is an
+# allowlist of shells rather than a blocklist of programs, because a blocklist
+# gets this wrong: Claude Code reports its version as the process name
+# (pane_current_command=2.1.258), so anything unrecognised must count as busy.
+#
+# Never closes the window you are in, and never closes a session's last window —
+# tmux destroys a session when its final window goes, and pruning idle windows
+# should not be able to take a session with it.
+set -euo pipefail
+
+SHELLS='^(zsh|bash|sh|fish|ksh|dash|tcsh|csh)$'
+all=0 dry=0 want_session=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -a) all=1 ;;
+    -n) dry=1 ;;
+    -t) shift; want_session="${1:-}"; [ -n "$want_session" ] || { echo "tmux-prune: -t needs a session name" >&2; exit 1; } ;;
+    -h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "tmux-prune: unknown option $1" >&2; exit 1 ;;
+  esac
+  shift
+done
+
+tmux info >/dev/null 2>&1 || { echo "tmux-prune: no tmux server running" >&2; exit 1; }
+
+current_session="${want_session:-$(tmux display-message -p '#{session_name}')}"
+if [ -n "$want_session" ]; then
+  tmux has-session -t "$want_session" 2>/dev/null || { echo "tmux-prune: no session '$want_session'" >&2; exit 1; }
+fi
+current_window_id="$(tmux display-message -p '#{window_id}')"
+
+# Collect window_id as well as the index. renumber-windows is commonly on, so
+# killing one window renumbers those after it and any index captured up front
+# goes stale mid-loop. Ids are stable for a window's lifetime; kill by id and
+# use the index only for display.
+targets=$(
+  tmux list-panes -a -F '#{session_name}|#{window_index}|#{window_id}|#{pane_current_command}' \
+  | awk -F'|' -v shells="$SHELLS" '
+      { k=$1"|"$2"|"$3; total[k]++; if ($4 ~ shells) idle[k]++ }
+      END { for (k in total) if (idle[k]==total[k]) print k }' \
+  | sort -t'|' -k1,1 -k2,2n
+)
+
+# how many windows each session has, so the last one can be spared
+declare_counts=$(tmux list-windows -a -F '#{session_name}' | sort | uniq -c)
+count_for() { echo "$declare_counts" | awk -v s="$1" '$2==s {print $1}'; }
+
+killed=0 skipped=0
+while IFS='|' read -r session window wid; do
+  [ -n "${session:-}" ] || continue
+  [ "$all" -eq 1 ] || [ "$session" = "$current_session" ] || continue
+  target="$session:$window"
+
+  if [ "$wid" = "$current_window_id" ]; then
+    [ "$dry" -eq 1 ] && echo "  skip $target (current window)"; skipped=$((skipped+1)); continue
+  fi
+  if [ "$(count_for "$session")" -le 1 ]; then
+    [ "$dry" -eq 1 ] && echo "  skip $target (session's only window)"; skipped=$((skipped+1)); continue
+  fi
+
+  if [ "$dry" -eq 1 ]; then
+    echo "  kill $target"
+  else
+    if ! tmux kill-window -t "$wid" 2>/dev/null; then
+      echo "tmux-prune: could not close $target ($wid), skipping" >&2
+      skipped=$((skipped+1)); continue
+    fi
+    # that session now has one window fewer
+    declare_counts=$(tmux list-windows -a -F '#{session_name}' | sort | uniq -c)
+  fi
+  killed=$((killed+1))
+done <<< "$targets"
+
+if [ "$dry" -eq 1 ]; then
+  echo "would close $killed, skip $skipped"
+else
+  msg="pruned $killed idle window(s)"
+  [ "$skipped" -gt 0 ] && msg="$msg, skipped $skipped"
+  tmux display-message "$msg"
+  echo "$msg"
+fi
