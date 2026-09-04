@@ -111,7 +111,18 @@ source <(fzf --zsh)
 # The explicit excludes are for directories git tracks or ignores per-repo but
 # that are never what you are reaching for.
 export FZF_DEFAULT_COMMAND='fd --type f --hidden --follow --exclude .git --exclude node_modules --exclude build --exclude target'
-export FZF_DEFAULT_OPTS="--height 60% --layout reverse --border --bind 'ctrl-/:toggle-preview'"
+# TokyoNight Storm, to match ghostty's theme. bg and gutter are -1 (terminal
+# default) rather than #24283b so the terminal's own background shows through.
+export FZF_DEFAULT_OPTS="--height 60% --layout reverse --border
+  --bind 'ctrl-/:toggle-preview'
+  --color=bg:-1,gutter:-1,bg+:#292e42,fg:#c0caf5,fg+:#c0caf5
+  --color=hl:#7aa2f7,hl+:#7dcfff,query:#c0caf5,prompt:#7dcfff
+  --color=pointer:#bb9af7,marker:#9ece6a,spinner:#bb9af7
+  --color=info:#565f89,header:#7aa2f7,border:#565f89"
+
+# bat ships no TokyoNight theme; base16 renders through the terminal's own 16
+# colours, which ghostty has already set to TokyoNight Storm.
+export BAT_THEME="base16"
 
 # Ctrl-T reuses the same walker so the two agree on what a file is.
 export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
@@ -138,6 +149,10 @@ export FZF_ALT_C_OPTS="--preview 'eza -1 --icons --color=always {}'"
 # from the plugins array above.
 zstyle ':completion:*' menu no                     # required: fzf-tab replaces the menu
 zstyle ':completion:*:descriptions' format '[%d]'  # group headers fzf-tab renders
+# macOS sets LSCOLORS (BSD format); zsh's list-colors needs the GNU LS_COLORS,
+# so without this the completion list is uncoloured. vivid generates it in the
+# same theme as the terminal. Warm cost is ~0ms.
+command -v vivid >/dev/null 2>&1 && export LS_COLORS="$(vivid generate tokyonight-storm)"
 zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
 
 # Per-context previews. $realpath is the candidate as a path, $word as text.
@@ -146,12 +161,19 @@ zstyle ':fzf-tab:complete:__zoxide_z:*' fzf-preview 'eza -1 --icons --color=alwa
 zstyle ':fzf-tab:complete:(nvim|vim|vi|bat|cat|less):*' fzf-preview 'bat -n --color=always $realpath'
 zstyle ':fzf-tab:complete:git-(checkout|switch|rebase|merge|log|show):*' \
   fzf-preview 'git log --oneline --graph --color=always $word | head -40'
-zstyle ':fzf-tab:complete:git-(add|diff|restore):*' fzf-preview 'git diff --color=always -- $word'
+# `git add` mostly offers untracked paths, and `git diff` prints nothing for
+# those — so fall back to the file's contents, and list directories.
+zstyle ':fzf-tab:complete:git-(add|stage|restore|rm):*' fzf-preview \
+  'if [[ -d $realpath ]]; then eza -1 --icons --color=always -- $realpath;
+   else d=$(git diff --color=always -- $realpath);
+     [[ -n $d ]] && print -r -- $d || bat -n --color=always -- $realpath; fi'
 zstyle ':fzf-tab:complete:(kill|ps):argument-rest' fzf-preview 'ps -p $word -o comm=,args='
 
 # < and > move between completion groups (local vs remote branches, say).
 zstyle ':fzf-tab:*' switch-group '<' '>'
-zstyle ':fzf-tab:*' fzf-flags --height=60% --layout=reverse --border
+# Without this fzf-tab ignores FZF_DEFAULT_OPTS entirely (its default is "no"),
+# and the popup would keep fzf's stock colours while everything else is themed.
+zstyle ':fzf-tab:*' use-fzf-default-opts yes
 
 # Superfile (spf) — cd_on_quit only makes superfile print its last directory;
 # the shell has to act on it. `command` stops the function recursing into itself.

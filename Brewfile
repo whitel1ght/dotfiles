@@ -148,6 +148,8 @@ brew "tcl-tk"
 brew "tlrc"
 # Terminal multiplexer
 brew "tmux"
+# Generator for LS_COLORS with support for multiple color themes
+brew "vivid"
 # Feature-rich command-line audio/video downloader
 brew "yt-dlp"
 # Shell extension to navigate your filesystem faster
