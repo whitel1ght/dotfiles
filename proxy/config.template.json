@@ -6,6 +6,7 @@
       { "type": "local", "tag": "dns-local" }
     ],
     "rules": [
+      { "domain": "__BLOCK_EXACT__", "domain_suffix": "__BLOCK_SUFFIX__", "action": "reject" },
       { "domain": "__PROXY_EXACT__", "domain_suffix": "__PROXY_SUFFIX__", "server": "dns-proxy" }
     ],
     "final": "dns-local",
@@ -44,6 +45,7 @@
       { "action": "sniff" },
       { "protocol": "dns", "action": "hijack-dns" },
       { "ip_is_private": true, "outbound": "direct" },
+      { "domain": "__BLOCK_EXACT__", "domain_suffix": "__BLOCK_SUFFIX__", "action": "reject" },
       { "domain": "__PROXY_EXACT__", "domain_suffix": "__PROXY_SUFFIX__", "outbound": "proxy" }
     ],
     "final": "final-out",

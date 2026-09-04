@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Render the sing-box config from template + domain list + secrets.
+"""Render the sing-box config from template + domain lists + secrets.
 
-The proxied-domain list is injected into BOTH the DNS rules and the route
-rules. If those two ever diverge, proxied traffic is tunnelled while its DNS
-is resolved locally — a silent leak returning poisoned or geo-wrong answers.
+Each domain list is injected into BOTH the DNS rules and the route rules. If
+those two ever diverge, proxied traffic is tunnelled while its DNS is resolved
+locally — a silent leak returning poisoned or geo-wrong answers — and a blocked
+domain still resolves before its connection is refused.
 """
 import json
 import pathlib
 import sys
 
 REQUIRED = ("VLESS_SERVER", "VLESS_PORT", "VLESS_UUID", "VLESS_SNI", "VLESS_PBK", "VLESS_SID")
+MARKERS = ("__PROXY_EXACT__", "__PROXY_SUFFIX__", "__BLOCK_EXACT__", "__BLOCK_SUFFIX__")
 
 
 def load_domains(path):
@@ -27,10 +29,29 @@ def load_secrets(path):
     return env
 
 
-def main(template, domains, secrets, out):
+def drop_reject_rules(cfg):
+    """Remove the block rules entirely when nothing is blocked.
+
+    An empty blocklist is legitimate, unlike an empty proxy list. Leaving
+    "domain": [] behind would match nothing but read as though blocking were
+    configured.
+    """
+    for section in (cfg["dns"], cfg["route"]):
+        section["rules"] = [r for r in section["rules"] if r.get("action") != "reject"]
+
+
+def main(template, domains, block_domains, secrets, out):
     doms = load_domains(domains)
     if not doms:
         sys.exit(f"refusing to render: no domains in {domains} (would route everything direct)")
+
+    blocked = load_domains(block_domains)
+
+    # Blocking is checked first, so an overlap silently disables a domain the
+    # proxy list says to tunnel. That is never intentional.
+    overlap = sorted(set(doms) & set(blocked))
+    if overlap:
+        sys.exit(f"domain in both {domains} and {block_domains}: {', '.join(overlap)}")
 
     env = load_secrets(secrets)
     missing = [k for k in REQUIRED if not env.get(k)]
@@ -41,10 +62,13 @@ def main(template, domains, secrets, out):
     for key in REQUIRED:
         raw = raw.replace(f"__{key}__", env[key])
 
-    for marker in ("__PROXY_EXACT__", "__PROXY_SUFFIX__"):
+    for marker in MARKERS:
         if marker not in raw:
             sys.exit(f"template is missing {marker}")
-    if "__" in raw.replace("__PROXY_EXACT__", "").replace("__PROXY_SUFFIX__", ""):
+    stripped = raw
+    for marker in MARKERS:
+        stripped = stripped.replace(marker, "")
+    if "__" in stripped:
         sys.exit("unsubstituted placeholder remains in template")
 
     # domain_suffix is a plain string-suffix match, so a bare "youtube.com"
@@ -52,12 +76,18 @@ def main(template, domains, secrets, out):
     # subdomains via a leading dot instead.
     raw = raw.replace('"__PROXY_EXACT__"', json.dumps(doms))
     raw = raw.replace('"__PROXY_SUFFIX__"', json.dumps(["." + d for d in doms]))
+    raw = raw.replace('"__BLOCK_EXACT__"', json.dumps(blocked))
+    raw = raw.replace('"__BLOCK_SUFFIX__"', json.dumps(["." + d for d in blocked]))
     cfg = json.loads(raw)
+
+    if not blocked:
+        drop_reject_rules(cfg)
+
     pathlib.Path(out).write_text(json.dumps(cfg, indent=2) + "\n")
-    print(f"rendered {out} ({len(doms)} proxied domains)")
+    print(f"rendered {out} ({len(doms)} proxied, {len(blocked)} blocked)")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 5:
-        sys.exit("usage: render.py <template> <domains> <secrets> <out>")
+    if len(sys.argv) != 6:
+        sys.exit("usage: render.py <template> <domains> <block-domains> <secrets> <out>")
     main(*sys.argv[1:])

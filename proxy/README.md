@@ -44,18 +44,25 @@ Route rules are evaluated in order; the first match wins.
                  3. ip_is_private? ──yes──▶ direct   (LAN, localhost, Docker)
                           │no
                           ▼
-                 4. domain in proxy-domains.txt? ──yes──▶ proxy  ▶ VPS
+                 4. domain in block-domains.txt? ──yes──▶ reject (connection refused)
                           │no
                           ▼
-                 5. final: the "final-out" selector ──▶ direct (default)
+                 5. domain in proxy-domains.txt? ──yes──▶ proxy  ▶ VPS
+                          │no
+                          ▼
+                 6. final: the "final-out" selector ──▶ direct (default)
 ```
 
-Two details that matter:
+Three details that matter:
 
 - **Step 1 has to come first.** Without sniffing, sing-box only sees a
   destination IP, and a domain rule can never match. Every domain-based
   decision in this config depends on it.
-- **Step 4 sends matched traffic straight to `proxy`, bypassing the selector.**
+- **Step 4 comes before step 5 on purpose.** First match wins, so a domain in
+  both lists would be tunnelled rather than blocked if the order were
+  reversed. `render.py` refuses to render an overlap at all, but the ordering
+  is what makes blocking authoritative.
+- **Step 5 sends matched traffic straight to `proxy`, bypassing the selector.**
   So the escape hatch below only changes what happens to *unmatched* traffic —
   the listed domains are proxied either way.
 
@@ -63,10 +70,12 @@ Two details that matter:
 
 This is the single most important non-obvious property of the config.
 
-The domain list is injected in **two** places:
+Each domain list is injected in **two** places:
 
-- `dns.rules` — resolve these domains via DoH through the tunnel (`dns-proxy`)
-- `route.rules` — route these domains through the tunnel (`proxy`)
+- `dns.rules` — resolve these domains via DoH through the tunnel (`dns-proxy`),
+  or refuse to resolve them at all if they are blocked
+- `route.rules` — route these domains through the tunnel (`proxy`), or reject
+  the connection if they are blocked
 
 Everything else resolves through the system resolver (`dns-local`) and routes
 direct.
@@ -77,15 +86,20 @@ local network returns — poisoned, geo-wrong, or simply the wrong CDN edge. The
 tunnel then faithfully carries traffic to a bad address. Nothing logs an error;
 the site is just broken in a way that looks like the proxy's fault.
 
-`render.py` exists to make that divergence impossible: both lists come from a
-single read of `proxy-domains.txt`. Do not hand-write either one.
+The same argument applies to blocking, less dangerously but just as untidily:
+a domain rejected at the route but still resolved at DNS wastes a lookup and
+fails later than it should. So blocking is injected in both places too.
+
+`render.py` exists to make that divergence impossible: every rule comes from a
+single read of `proxy-domains.txt` and `block-domains.txt`. Do not hand-write
+any of them.
 
 ## Exact vs suffix matching
 
 sing-box's `domain_suffix` is a **plain string suffix match**, not a
 domain-aware one. A bare `youtube.com` would also match `fake-youtube.com`.
 
-So each entry in `proxy-domains.txt` is expanded into two rules:
+So each entry in either list is expanded into two forms:
 
 | Entry | Becomes | Matches |
 |---|---|---|
@@ -93,7 +107,7 @@ So each entry in `proxy-domains.txt` is expanded into two rules:
 | | `domain_suffix: ".youtube.com"` | `www.`, `m.`, any subdomain |
 
 The leading dot is what makes the suffix safe. Write apex domains only in
-`proxy-domains.txt` — the renderer handles both forms.
+either list — the renderer handles both forms.
 
 ## The render pipeline
 
@@ -101,7 +115,8 @@ The running config is **generated**. Nothing is hand-edited in place.
 
 ```
 proxy/config.template.json   ──┐
-proxy/proxy-domains.txt      ──┼──▶ render.py ──▶ sing-box check ──▶ install
+proxy/proxy-domains.txt      ──┤
+proxy/block-domains.txt      ──┼──▶ render.py ──▶ sing-box check ──▶ install
 ~/.config/sing-box/secrets.env ┘                        │              -m 600
                                                         │           root:wheel
                                      invalid? ◀─────────┘              │
@@ -113,7 +128,8 @@ proxy/proxy-domains.txt      ──┼──▶ render.py ──▶ sing-box che
 
 | Guard | Why |
 |---|---|
-| domain list is empty | would silently route everything direct |
+| proxy domain list is empty | would silently route everything direct (an empty *block* list is fine — its rules are dropped instead) |
+| a domain is in both lists | blocking wins on first match, silently disabling a domain the proxy list says to tunnel |
 | a required secret is missing or blank | would render a structurally valid config that cannot connect |
 | a `__PLACEHOLDER__` marker is missing from the template | template drifted from the renderer |
 | any `__…__` remains after substitution | a value silently failed to substitute |
@@ -121,6 +137,11 @@ proxy/proxy-domains.txt      ──┼──▶ render.py ──▶ sing-box che
 Then `proxyctl` runs `sing-box check` on the result and installs it **only if
 it passes**, mode `600`, owned by `root:wheel`. A bad edit therefore cannot
 take down a working daemon — the previous config stays in place.
+
+Run `./proxy/render.test.sh` to test the renderer. It renders against the real
+`config.template.json` with throwaway domain lists and secrets, so template and
+renderer cannot drift apart unnoticed; nothing is installed and the daemon is
+never touched.
 
 ## The daemon
 
@@ -157,7 +178,7 @@ restarts, so it cannot silently become the permanent state.
 proxyctl status     # daemon state, current default route, egress IP
 proxyctl on         # render, install, start
 proxyctl off        # stop
-proxyctl reload     # re-render and restart — run after editing proxy-domains.txt
+proxyctl reload     # re-render and restart — run after editing either domain list
 proxyctl all        # route everything through the VPS
 proxyctl direct     # back to default-direct
 proxyctl logs       # tail /var/log/sing-box.log
@@ -166,6 +187,16 @@ proxyctl logs       # tail /var/log/sing-box.log
 **To route a new domain:** add its apex to `proxy/proxy-domains.txt`, then
 `proxyctl reload`. Commit the change — the list is the routing policy, and it
 belongs in git.
+
+**To block a domain:** add its apex to `proxy/block-domains.txt`, then
+`proxyctl reload`. Both lists use the same apex-plus-subdomains matching, so
+one `reddit.com` line covers `old.reddit.com` and `www.reddit.com` — but not
+`redd.it`, which is a separate registrable domain and needs its own line.
+
+Blocking is enforced by the daemon, so `proxyctl off` lifts it. That is a
+deliberate trade for keeping every domain decision in one versioned place; if
+you want a block that survives the daemon being stopped, `/etc/hosts` is the
+tool for it.
 
 **To check where you're going out from:** `proxyctl status` prints the egress
 IP. If it shows your ISP, unmatched traffic is going direct, which is correct
