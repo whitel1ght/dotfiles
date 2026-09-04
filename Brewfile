@@ -167,6 +167,8 @@ cask "nikitabobko/tap/aerospace"
 cask "keycastr"
 # A custom version of Firefox, focused on privacy, security and freedom
 cask "librewolf"
+# Clipboard manager
+cask "maccy"
 mas "Harvest", id: 506189836
 mas "Numbers", id: 409203825
 mas "Quiver", id: 866773894
