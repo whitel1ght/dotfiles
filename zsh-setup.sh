@@ -45,6 +45,34 @@ else
     log_info "Powerlevel10k theme already installed"
 fi
 
+# Install fzf-tab. It must live under custom/plugins because .zshrc loads it
+# through the oh-my-zsh plugins array, which is what puts it after compinit and
+# ahead of zsh-autosuggestions.
+if [ ! -d "$HOME/.oh-my-zsh/custom/plugins/fzf-tab" ]; then
+    log_info "Installing fzf-tab..."
+    git clone --depth=1 https://github.com/Aloxaf/fzf-tab.git "$HOME/.oh-my-zsh/custom/plugins/fzf-tab"
+    log_info "✅ fzf-tab installed"
+else
+    log_info "fzf-tab already installed"
+fi
+
+# Generate completions for tools that ship a generator rather than a static
+# _file. fzf-tab renders whatever zsh's completion system knows, so without
+# these `kubectl <TAB>` and `docker <TAB>` produce nothing. They are generated
+# rather than committed: the output is tied to the installed binary version.
+COMPDIR="$HOME/.oh-my-zsh/cache/completions"   # already on fpath via oh-my-zsh
+mkdir -p "$COMPDIR"
+for tool in kubectl docker; do
+    if command -v "$tool" >/dev/null 2>&1; then
+        "$tool" completion zsh > "$COMPDIR/_$tool"
+        log_info "✅ generated $tool completion"
+    else
+        log_warn "$tool not installed, skipping its completion"
+    fi
+done
+# compinit caches what it found; drop the dump so the new files are picked up.
+rm -f "$HOME/.zcompdump"*
+
 # Check if .p10k.zsh exists and copy it
 if [ -f "$HOME/.p10k.zsh" ]; then
     log_info "Found existing Powerlevel10k configuration"

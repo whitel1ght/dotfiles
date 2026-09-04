@@ -19,8 +19,10 @@ ZSH_THEME="powerlevel10k/powerlevel10k"
 setopt autocd autopushd
 ENABLE_CORRECTION="true"
 
-# Plugins
-plugins=(git zsh-autosuggestions brew sudo)
+# Plugins. Order matters: oh-my-zsh adds these to fpath, runs compinit, then
+# sources them in array order. fzf-tab has to be sourced after compinit but
+# before anything that wraps widgets, so it sits ahead of zsh-autosuggestions.
+plugins=(git fzf-tab zsh-autosuggestions brew sudo)
 
 source $ZSH/oh-my-zsh.sh
 
@@ -97,6 +99,59 @@ export SDKMAN_DIR="$HOME/.sdkman"
 # -----------------------------------------------------------------------------
 # Zoxide (better cd)
 eval "$(zoxide init zsh)"
+
+# -----------------------------------------------------------------------------
+# FZF
+# -----------------------------------------------------------------------------
+# Ctrl-R fuzzy history, Ctrl-T insert a file path at the cursor, Alt-C cd into
+# a subdirectory. Needs fzf >= 0.48 for `fzf --zsh`.
+source <(fzf --zsh)
+
+# fd honours .gitignore, so generated trees stay out without being listed here.
+# The explicit excludes are for directories git tracks or ignores per-repo but
+# that are never what you are reaching for.
+export FZF_DEFAULT_COMMAND='fd --type f --hidden --follow --exclude .git --exclude node_modules --exclude build --exclude target'
+export FZF_DEFAULT_OPTS="--height 60% --layout reverse --border --bind 'ctrl-/:toggle-preview'"
+
+# Ctrl-T reuses the same walker so the two agree on what a file is.
+export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
+export FZF_CTRL_T_OPTS="--preview 'bat -n --color=always {}'"
+
+# Ctrl-R: preview is hidden until ctrl-/ because most history lines fit on one
+# line; it earns its keep on the long ones. ctrl-y yanks without running.
+export FZF_CTRL_R_OPTS="--preview 'echo {}' --preview-window up:3:hidden:wrap
+  --bind 'ctrl-y:execute-silent(echo -n {2..} | pbcopy)+abort'
+  --header 'ctrl-y copy | ctrl-/ preview'"
+
+# Alt-C descends into a subdirectory of the current one. zoxide is the
+# complement, not a duplicate: `z` jumps to directories already visited, from
+# anywhere; Alt-C walks into ones you have never been to.
+export FZF_ALT_C_COMMAND='fd --type d --hidden --follow --exclude .git --exclude node_modules'
+export FZF_ALT_C_OPTS="--preview 'eza -1 --icons --color=always {}'"
+
+# -----------------------------------------------------------------------------
+# FZF-TAB
+# -----------------------------------------------------------------------------
+# fzf-tab does not complete anything itself — it renders zsh's own completion
+# results through fzf. So every completion definition already installed (git,
+# kubectl, glab, gh, brew, docker) becomes a searchable list for free. Loaded
+# from the plugins array above.
+zstyle ':completion:*' menu no                     # required: fzf-tab replaces the menu
+zstyle ':completion:*:descriptions' format '[%d]'  # group headers fzf-tab renders
+zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
+
+# Per-context previews. $realpath is the candidate as a path, $word as text.
+zstyle ':fzf-tab:complete:cd:*' fzf-preview 'eza -1 --icons --color=always $realpath'
+zstyle ':fzf-tab:complete:__zoxide_z:*' fzf-preview 'eza -1 --icons --color=always $realpath'
+zstyle ':fzf-tab:complete:(nvim|vim|vi|bat|cat|less):*' fzf-preview 'bat -n --color=always $realpath'
+zstyle ':fzf-tab:complete:git-(checkout|switch|rebase|merge|log|show):*' \
+  fzf-preview 'git log --oneline --graph --color=always $word | head -40'
+zstyle ':fzf-tab:complete:git-(add|diff|restore):*' fzf-preview 'git diff --color=always -- $word'
+zstyle ':fzf-tab:complete:(kill|ps):argument-rest' fzf-preview 'ps -p $word -o comm=,args='
+
+# < and > move between completion groups (local vs remote branches, say).
+zstyle ':fzf-tab:*' switch-group '<' '>'
+zstyle ':fzf-tab:*' fzf-flags --height=60% --layout=reverse --border
 
 # Superfile (spf) — cd_on_quit only makes superfile print its last directory;
 # the shell has to act on it. `command` stops the function recursing into itself.
