@@ -65,6 +65,13 @@ mkdir -p "$COMPDIR"
 for tool in kubectl docker; do
     if command -v "$tool" >/dev/null 2>&1; then
         "$tool" completion zsh > "$COMPDIR/_$tool"
+        # Cobra completions ask the running server for candidate names. kubectl
+        # against an unreachable cluster does not give up: measured still
+        # running after 90s, which freezes the shell on TAB whenever the proxy
+        # is routing direct. Cap that call — see deadline() in .zshenv.
+        sed -i '' \
+          's|out=$(eval ${requestComp} 2>/dev/null)|out=$(eval "deadline 5 ${requestComp}" 2>/dev/null)|' \
+          "$COMPDIR/_$tool"
         log_info "✅ generated $tool completion"
     else
         log_warn "$tool not installed, skipping its completion"

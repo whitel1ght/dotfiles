@@ -169,6 +169,23 @@ zstyle ':fzf-tab:complete:git-(add|stage|restore|rm):*' fzf-preview \
      [[ -n $d ]] && print -r -- $d || bat -n --color=always -- $realpath; fi'
 zstyle ':fzf-tab:complete:(kill|ps):argument-rest' fzf-preview 'ps -p $word -o comm=,args='
 
+# kubectl: $words carries the whole command line, so the resource type can be
+# read off it and defaults to pod for verbs that imply one (logs, exec). Capped
+# by `deadline` because kubectl blocks on connection setup, not just requests —
+# without it a preview against an unreachable cluster hangs the pane, which is
+# the normal state whenever the proxy is routing direct.
+zstyle ':fzf-tab:complete:kubectl:*' fzf-preview \
+  'deadline 2 kubectl describe \
+     ${${words[(r)(po|pod|pods|deploy|deployment|deployments|svc|service|services|no|node|nodes|ns|namespace|namespaces|cm|configmap|configmaps|secret|secrets|job|jobs|cronjob|cronjobs|ing|ingress|sts|statefulset|statefulsets)]}:-pod} \
+     $word 2>/dev/null | head -80'
+
+# docker inspect covers containers and images alike, so one rule serves every
+# subcommand. Config.Env is dropped: it is usually the longest section and
+# routinely carries credentials, which have no business on screen in a
+# completion popup. No deadline — this is a local socket, measured at ~70ms.
+zstyle ':fzf-tab:complete:docker:*' fzf-preview \
+  'docker inspect $word 2>/dev/null | jq -C "del(.[].Config.Env)" 2>/dev/null | head -60'
+
 # < and > move between completion groups (local vs remote branches, say).
 zstyle ':fzf-tab:*' switch-group '<' '>'
 # Without this fzf-tab ignores FZF_DEFAULT_OPTS entirely (its default is "no"),
