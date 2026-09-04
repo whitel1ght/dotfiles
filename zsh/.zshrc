@@ -172,10 +172,17 @@ zstyle ':fzf-tab:complete:(kill|ps):argument-rest' fzf-preview 'ps -p $word -o c
 # kubectl: $words carries the whole command line, so the resource type can be
 # read off it and defaults to pod for verbs that imply one (logs, exec). Capped
 # by `deadline` because kubectl blocks on connection setup, not just requests —
-# without it a preview against an unreachable cluster hangs the pane, which is
-# the normal state whenever the proxy is routing direct.
+# without it a preview against an unreachable cluster hangs the pane.
+#
+# The preview starts hidden, which is the point. `kubectl describe` against
+# this cluster measures 3.3-4.3s, essentially all of it connection setup, so a
+# live preview would stall every arrow-key move for seconds. fzf does not run
+# the command while the window is hidden, so navigation stays instant and
+# ctrl-/ fetches details only for the pod actually being considered. The
+# deadline is 8s rather than 2s because 2s never completes a real describe.
+zstyle ':fzf-tab:complete:kubectl:*' fzf-flags --preview-window=hidden
 zstyle ':fzf-tab:complete:kubectl:*' fzf-preview \
-  'deadline 2 kubectl describe \
+  'deadline 8 kubectl describe \
      ${${words[(r)(po|pod|pods|deploy|deployment|deployments|svc|service|services|no|node|nodes|ns|namespace|namespaces|cm|configmap|configmaps|secret|secrets|job|jobs|cronjob|cronjobs|ing|ingress|sts|statefulset|statefulsets)]}:-pod} \
      $word 2>/dev/null | head -80'
 
