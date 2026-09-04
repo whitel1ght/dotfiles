@@ -1,0 +1,16 @@
+# Domains that stay blocked for everything except the feed reader.
+#
+# Every domain listed here MUST also appear in block-domains.txt — this file
+# does not block anything, it only carves an exception out of an existing
+# block. A domain here that is not blocked there does nothing at all, so the
+# renderer refuses that rather than letting it look like it works.
+#
+# The exception is matched on process name, so the site is readable through
+# newsboat and unreachable from a browser. That is the whole point: keep the
+# thing that made the site a time sink, drop the part that made it useful.
+#
+# Same apex-plus-subdomains matching as the other two lists.
+#
+# Edit this file, then run: proxyctl reload
+
+reddit.com

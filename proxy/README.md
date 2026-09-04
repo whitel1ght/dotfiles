@@ -44,25 +44,33 @@ Route rules are evaluated in order; the first match wins.
                  3. ip_is_private? ──yes──▶ direct   (LAN, localhost, Docker)
                           │no
                           ▼
-                 4. domain in block-domains.txt? ──yes──▶ reject (connection refused)
+                 4. reader-domains.txt AND process is newsboat?
+                          │              └──yes──▶ direct (the exception)
                           │no
                           ▼
-                 5. domain in proxy-domains.txt? ──yes──▶ proxy  ▶ VPS
+                 5. domain in block-domains.txt? ──yes──▶ reject (connection refused)
                           │no
                           ▼
-                 6. final: the "final-out" selector ──▶ direct (default)
+                 6. domain in proxy-domains.txt? ──yes──▶ proxy  ▶ VPS
+                          │no
+                          ▼
+                 7. final: the "final-out" selector ──▶ direct (default)
 ```
 
-Three details that matter:
+Four details that matter:
 
 - **Step 1 has to come first.** Without sniffing, sing-box only sees a
   destination IP, and a domain rule can never match. Every domain-based
   decision in this config depends on it.
-- **Step 4 comes before step 5 on purpose.** First match wins, so a domain in
+- **Step 4 comes before step 5 on purpose.** The exception has to be reachable
+  before the block it is an exception to. It is narrow by construction: it
+  matches on process name, so the domain stays rejected for a browser and
+  every other process.
+- **Step 5 comes before step 6 on purpose.** First match wins, so a domain in
   both lists would be tunnelled rather than blocked if the order were
   reversed. `render.py` refuses to render an overlap at all, but the ordering
   is what makes blocking authoritative.
-- **Step 5 sends matched traffic straight to `proxy`, bypassing the selector.**
+- **Step 6 sends matched traffic straight to `proxy`, bypassing the selector.**
   So the escape hatch below only changes what happens to *unmatched* traffic —
   the listed domains are proxied either way.
 
@@ -116,7 +124,8 @@ The running config is **generated**. Nothing is hand-edited in place.
 ```
 proxy/config.template.json   ──┐
 proxy/proxy-domains.txt      ──┤
-proxy/block-domains.txt      ──┼──▶ render.py ──▶ sing-box check ──▶ install
+proxy/block-domains.txt      ──┤
+proxy/reader-domains.txt     ──┼──▶ render.py ──▶ sing-box check ──▶ install
 ~/.config/sing-box/secrets.env ┘                        │              -m 600
                                                         │           root:wheel
                                      invalid? ◀─────────┘              │
@@ -130,6 +139,7 @@ proxy/block-domains.txt      ──┼──▶ render.py ──▶ sing-box che
 |---|---|
 | proxy domain list is empty | would silently route everything direct (an empty *block* list is fine — its rules are dropped instead) |
 | a domain is in both lists | blocking wins on first match, silently disabling a domain the proxy list says to tunnel |
+| a reader domain is not blocked | the exception excepts nothing, so the entry does nothing at all |
 | a required secret is missing or blank | would render a structurally valid config that cannot connect |
 | a `__PLACEHOLDER__` marker is missing from the template | template drifted from the renderer |
 | any `__…__` remains after substitution | a value silently failed to substitute |
@@ -187,6 +197,12 @@ proxyctl logs       # tail /var/log/sing-box.log
 **To route a new domain:** add its apex to `proxy/proxy-domains.txt`, then
 `proxyctl reload`. Commit the change — the list is the routing policy, and it
 belongs in git.
+
+**To make a blocked site readable in newsboat only:** add its apex to
+`proxy/reader-domains.txt` as well as `block-domains.txt`, then `proxyctl
+reload`. The exception matches on process name, so the site loads in the feed
+reader and stays refused everywhere else — including when newsboat's `o` key
+tries to hand a link to the browser. That failure is the feature.
 
 **To block a domain:** add its apex to `proxy/block-domains.txt`, then
 `proxyctl reload`. Both lists use the same apex-plus-subdomains matching, so

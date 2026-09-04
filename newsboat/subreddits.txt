@@ -1,0 +1,35 @@
+# Reddit communities to follow, one per line. This is the list to edit.
+#
+#   <subreddit> [extra-tag...]
+#
+# The name only — no r/ prefix, no URL. `newsboat-urls` turns each line into
+# a weekly-top feed, which is the point: the week's best posts as a digest,
+# not the firehose. Change SORT/PERIOD in bin/newsboat-urls to alter that.
+#
+# reddit.com is blocked at the proxy for every process except newsboat (see
+# proxy/reader-domains.txt), so these fetch here and stay unreachable in a
+# browser. Opening a post with `o` will fail by design.
+#
+# Edit, then run: newsboat-urls
+
+# --- Computing & terminal -------------------------------------------------
+neovim computing
+commandline computing
+unixporn computing
+rust computing
+golang computing
+
+# --- AI tooling -----------------------------------------------------------
+LocalLLaMA ai
+ClaudeAI ai
+
+# --- Art ------------------------------------------------------------------
+learnart art
+ArtFundamentals art
+SketchDaily art
+
+# --- Media ----------------------------------------------------------------
+metroidvania media
+roguelikes media
+manga media
+manhwa media

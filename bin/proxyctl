@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Control the sing-box TUN proxy.
 #
-# Routing lives in dotfiles/proxy/. Edit proxy-domains.txt (tunnelled) or
-# block-domains.txt (rejected), then `proxyctl reload`.
+# Routing lives in dotfiles/proxy/. Edit proxy-domains.txt (tunnelled),
+# block-domains.txt (rejected) or reader-domains.txt (blocked except for the
+# feed reader), then `proxyctl reload`.
 # Secrets live in ~/.config/sing-box/secrets.env and never enter git.
 set -euo pipefail
 
@@ -23,7 +24,8 @@ render() {
   local tmp; tmp="$(mktemp)"
   trap 'rm -f "$tmp"' RETURN
   "$PROXY_DIR/render.py" "$PROXY_DIR/config.template.json" \
-    "$PROXY_DIR/proxy-domains.txt" "$PROXY_DIR/block-domains.txt" "$SECRETS" "$tmp"
+    "$PROXY_DIR/proxy-domains.txt" "$PROXY_DIR/block-domains.txt" \
+    "$PROXY_DIR/reader-domains.txt" "$SECRETS" "$tmp"
   sing-box check -c "$tmp" || die "rendered config is invalid; not installing"
   sudo mkdir -p "$RUNTIME_DIR"
   sudo install -m 600 -o root -g wheel "$tmp" "$RUNTIME_CFG"

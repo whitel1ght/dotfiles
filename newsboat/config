@@ -1,0 +1,76 @@
+# newsboat configuration.
+#
+# The urls file is NOT here — it is generated into ~/.config/newsboat/urls by
+# bin/newsboat-urls from feeds.txt and subreddits.txt. Only this file is
+# symlinked from the repo.
+
+# --- Fetching ---------------------------------------------------------------
+# No auto-reload. Reading is a thing I choose to do, not something that
+# interrupts me — the entire reason for using a reader instead of the sites.
+auto-reload no
+reload-threads 8
+download-retries 2
+download-timeout 20
+
+# Keep a bounded history. 200 items per feed is well past what a weekly digest
+# produces, and stops the cache growing without limit.
+max-items 200
+cleanup-on-quit yes
+
+# --- Reading ----------------------------------------------------------------
+show-read-feeds no
+show-read-articles no
+goto-next-feed yes
+confirm-mark-feed-read no
+mark-as-read-on-hover no
+text-width 100
+datetime-format "%Y-%m-%d %H:%M"
+
+articlelist-format "%4i %f %D  %?T?|%-17T| ?%t"
+feedlist-format    "%4i %n %11u %t"
+
+# --- Browser ----------------------------------------------------------------
+# `o` opens the current item here. For reddit this fails on purpose: the domain
+# is blocked at the proxy for every process except newsboat, so the article is
+# readable in this reader and the site is not reachable in a browser.
+# See proxy/reader-domains.txt.
+browser "open %u"
+
+# --- Keys -------------------------------------------------------------------
+# nvim muscle memory. j/k/g/G are newsboat defaults; the rest are not.
+bind-key j down
+bind-key k up
+bind-key J next-feed
+bind-key K prev-feed
+bind-key g home
+bind-key G end
+bind-key l open
+bind-key h quit
+bind-key n next-unread
+bind-key N prev-unread
+bind-key ^D pagedown
+bind-key ^U pageup
+bind-key / open-search
+bind-key r reload
+bind-key R reload-all
+bind-key a toggle-article-read
+bind-key A mark-feed-read
+bind-key ^R mark-all-feeds-read
+
+# --- Colours ----------------------------------------------------------------
+# TokyoNight Storm, matching ghostty. Backgrounds stay default so the
+# terminal's own background (and wallpaper) shows through.
+color background          default default
+color listnormal          default default
+color listnormal_unread   color111 default bold
+color listfocus           color234 color111
+color listfocus_unread    color234 color111 bold
+color info                color111 color234 bold
+color article             default default
+color hint-key            color150 default bold
+color hint-description    default default
+color hint-separator      color245 default
+
+highlight article "^(Feed|Title|Author|Link|Date):.*$" color245 default
+highlight article "https?://[^ ]+"                     color117 default underline
+highlight article "\\[[0-9]+\\]"                       color150 default bold

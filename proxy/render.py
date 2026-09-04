@@ -11,7 +11,11 @@ import pathlib
 import sys
 
 REQUIRED = ("VLESS_SERVER", "VLESS_PORT", "VLESS_UUID", "VLESS_SNI", "VLESS_PBK", "VLESS_SID")
-MARKERS = ("__PROXY_EXACT__", "__PROXY_SUFFIX__", "__BLOCK_EXACT__", "__BLOCK_SUFFIX__")
+MARKERS = (
+    "__PROXY_EXACT__", "__PROXY_SUFFIX__",
+    "__BLOCK_EXACT__", "__BLOCK_SUFFIX__",
+    "__READER_EXACT__", "__READER_SUFFIX__",
+)
 
 
 def load_domains(path):
@@ -29,18 +33,18 @@ def load_secrets(path):
     return env
 
 
-def drop_reject_rules(cfg):
-    """Remove the block rules entirely when nothing is blocked.
+def drop_rules(cfg, predicate):
+    """Remove matching rules from both rule sets.
 
-    An empty blocklist is legitimate, unlike an empty proxy list. Leaving
-    "domain": [] behind would match nothing but read as though blocking were
-    configured.
+    An empty block or reader list is legitimate, unlike an empty proxy list.
+    Leaving "domain": [] behind would match nothing but read as though the
+    feature were configured.
     """
     for section in (cfg["dns"], cfg["route"]):
-        section["rules"] = [r for r in section["rules"] if r.get("action") != "reject"]
+        section["rules"] = [r for r in section["rules"] if not predicate(r)]
 
 
-def main(template, domains, block_domains, secrets, out):
+def main(template, domains, block_domains, reader_domains, secrets, out):
     doms = load_domains(domains)
     if not doms:
         sys.exit(f"refusing to render: no domains in {domains} (would route everything direct)")
@@ -52,6 +56,16 @@ def main(template, domains, block_domains, secrets, out):
     overlap = sorted(set(doms) & set(blocked))
     if overlap:
         sys.exit(f"domain in both {domains} and {block_domains}: {', '.join(overlap)}")
+
+    reader = load_domains(reader_domains)
+
+    # A reader domain carves an exception out of a block. One that is not
+    # blocked excepts nothing, so it silently does nothing at all.
+    unblocked = sorted(set(reader) - set(blocked))
+    if unblocked:
+        sys.exit(
+            f"in {reader_domains} but not blocked in {block_domains}: {', '.join(unblocked)}"
+        )
 
     env = load_secrets(secrets)
     missing = [k for k in REQUIRED if not env.get(k)]
@@ -78,16 +92,26 @@ def main(template, domains, block_domains, secrets, out):
     raw = raw.replace('"__PROXY_SUFFIX__"', json.dumps(["." + d for d in doms]))
     raw = raw.replace('"__BLOCK_EXACT__"', json.dumps(blocked))
     raw = raw.replace('"__BLOCK_SUFFIX__"', json.dumps(["." + d for d in blocked]))
+    raw = raw.replace('"__READER_EXACT__"', json.dumps(reader))
+    raw = raw.replace('"__READER_SUFFIX__"', json.dumps(["." + d for d in reader]))
     cfg = json.loads(raw)
 
     if not blocked:
-        drop_reject_rules(cfg)
+        drop_rules(cfg, lambda r: r.get("action") == "reject")
+    if not reader:
+        drop_rules(cfg, lambda r: "process_name" in r)
 
     pathlib.Path(out).write_text(json.dumps(cfg, indent=2) + "\n")
-    print(f"rendered {out} ({len(doms)} proxied, {len(blocked)} blocked)")
+    print(
+        f"rendered {out} ({len(doms)} proxied, {len(blocked)} blocked, "
+        f"{len(reader)} reader exceptions)"
+    )
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 6:
-        sys.exit("usage: render.py <template> <domains> <block-domains> <secrets> <out>")
+    if len(sys.argv) != 7:
+        sys.exit(
+            "usage: render.py <template> <domains> <block-domains> "
+            "<reader-domains> <secrets> <out>"
+        )
     main(*sys.argv[1:])
