@@ -25,6 +25,16 @@ gemini.google.com
 aistudio.google.com
 ai.google.dev
 
+# --- opencode -------------------------------------------------------------
+# opencode's default provider is OpenCode Zen, not the google key in its
+# auth.json: models.dev gives its endpoint as https://opencode.ai/zen/v1, so
+# the actual model traffic goes here. Also covers models.opencode.ai.
+opencode.ai
+# The model catalogue opencode fetches on startup to resolve provider and
+# model ids. Reachable direct, but it decides which endpoint gets used, so it
+# belongs on the same side of the tunnel as the endpoint itself.
+models.dev
+
 # --- YouTube --------------------------------------------------------------
 youtube.com
 youtu.be
