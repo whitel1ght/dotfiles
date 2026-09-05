@@ -122,10 +122,12 @@ if [ -f "$DOTFILES_DIR/superfile/hotkeys.toml" ]; then
     create_symlink "$DOTFILES_DIR/superfile/hotkeys.toml" "$SUPERFILE_DIR/hotkeys.toml"
 fi
 
-# Repy configuration
-# repy writes a full default config on first run if none exists, so this link
-# has to be in place before repy is first launched or it will create a real
-# file here and this symlink will never be made.
+# Repy ebook reader
+# Only configuration.json is linked: repy keeps its library and reading
+# positions in its own state files, which are machine-local. Same split as
+# superfile. The link must also be in place before repy is first launched —
+# repy writes a full default config when the file is absent, which would leave
+# a real file where the symlink belongs.
 if [ -f "$DOTFILES_DIR/repy/configuration.json" ]; then
     create_symlink "$DOTFILES_DIR/repy/configuration.json" "$HOME/.config/repy/configuration.json"
 fi
@@ -136,6 +138,14 @@ fi
 # generated file look editable.
 if [ -f "$DOTFILES_DIR/newsboat/config" ]; then
     create_symlink "$DOTFILES_DIR/newsboat/config" "$HOME/.config/newsboat/config"
+fi
+
+# Reddittui configuration
+# Only the toml is linked. reddittui writes its cache to ~/.cache/reddittui and
+# its log to ~/.local/state, so nothing else in this directory is machine-local.
+if [ -f "$DOTFILES_DIR/reddittui/reddittui.toml" ]; then
+    create_symlink "$DOTFILES_DIR/reddittui/reddittui.toml" \
+        "$HOME/.config/reddittui/reddittui.toml"
 fi
 
 # Neovim configuration
@@ -268,14 +278,7 @@ if [ -f "$DOTFILES_DIR/claude/CLAUDE.md" ]; then
 fi
 
 
-# epy ebook reader
-# Only configuration.json is linked: states.db lives in the same directory and
-# holds reading positions, which are machine-local. Same split as superfile.
-if [ -f "$DOTFILES_DIR/epy/configuration.json" ]; then
-    create_symlink "$DOTFILES_DIR/epy/configuration.json" "$HOME/.config/epy/configuration.json"
-fi
-
-# macdict backs epy's "Define Word"; reaches the macOS dictionaries via ctypes,
+# macdict backs repy's "Define Word"; reaches the macOS dictionaries via ctypes,
 # so it needs no venv or third-party package.
 if [ -f "$DOTFILES_DIR/bin/macdict" ]; then
     create_symlink "$DOTFILES_DIR/bin/macdict" "$HOME/.local/bin/macdict"
@@ -299,11 +302,20 @@ if [ -f "$DOTFILES_DIR/bin/tmux-prune" ]; then
     create_symlink "$DOTFILES_DIR/bin/tmux-prune" "$HOME/.local/bin/tmux-prune"
 fi
 
-# Install epy via pipx and re-apply the vertical padding patch. Guarded like
-# the vendor sync above: install.sh runs under `set -e`, and a pipx or patch
-# failure must not abort the remaining setup. Set EPY_SETUP=0 to skip.
-if [ "${EPY_SETUP:-1}" != "0" ] && [ -x "$DOTFILES_DIR/epy-setup.sh" ]; then
-    "$DOTFILES_DIR/epy-setup.sh" install || log_warn "epy setup failed"
+
+# Install reddittui from its checksum-verified release binary. Guarded the same
+# way: a network failure here must not abort the remaining setup. Set
+# REDDITTUI_SETUP=0 to skip.
+if [ "${REDDITTUI_SETUP:-1}" != "0" ] && [ -x "$DOTFILES_DIR/reddittui-setup.sh" ]; then
+    "$DOTFILES_DIR/reddittui-setup.sh" install || log_warn "reddittui setup failed"
+fi
+
+# Start the self-hosted Redlib that reddittui reads reddit through. Guarded the
+# same way, and it fails loudly but harmlessly on a machine with no Docker
+# running — reddittui is simply unusable until it is up. Set REDLIB_SETUP=0 to
+# skip.
+if [ "${REDLIB_SETUP:-1}" != "0" ] && [ -x "$DOTFILES_DIR/redlib-setup.sh" ]; then
+    "$DOTFILES_DIR/redlib-setup.sh" up || log_warn "redlib setup failed"
 fi
 
 

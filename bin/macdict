@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """Print a word's definition from the macOS built-in dictionaries.
 
-Written for epy's DictionaryClient hook. epy runs `macdict <word>` through the
-shell and renders stdout in a scrollable pane, but treats ANY stderr output as
-a failure and shows that instead of the definition -- so nothing here writes to
-stderr, and a miss is an ordinary message on stdout.
+Backs repy's dictionary_client (originally epy's DictionaryClient hook). repy
+special-cases only dict, sdcv and wkdict; anything else is a command template
+with the word appended as the final argument, so it runs `macdict <word>` and
+renders stdout.
+
+Nothing here writes to stderr, and a miss is an ordinary message on stdout.
+That was required by epy, which treated any stderr output as a failure and
+showed it instead of the definition. repy captures stderr separately and is
+not as brittle, but a lookup miss is not an error and does not belong there
+anyway.
 
 Uses ctypes rather than pyobjc so it runs on stock system Python: no venv, no
 pip, no network. DCSCopyTextDefinition reads whichever dictionaries are active
@@ -109,7 +115,7 @@ def main():
 
     try:
         definition = look_up(word)
-    except Exception as exc:  # noqa: BLE001 - a traceback on stderr breaks epy
+    except Exception as exc:  # noqa: BLE001 - report on stdout, never stderr
         print("Dictionary lookup failed: %s" % exc)
         return
 
