@@ -184,6 +184,28 @@ assert_eq "0" "$(q "len([r for r in c['dns']['rules'] if 'process_name' in r])")
 assert_eq "1" "$(q "len([r for r in c['route']['rules'] if r.get('action')=='reject'])")" \
     "empty reader list leaves blocking intact"
 
+# --- a secret containing __ is not a leftover placeholder ---------------------
+# REALITY public keys are base64url, which uses underscores, so a key can
+# contain "__" by chance. The unsubstituted-placeholder guard used to run after
+# secret substitution and read that as a leftover marker, failing the render
+# for one key in some and rendering fine after regenerating — the worst kind of
+# intermittent.
+new_sandbox
+sed -i '' 's|^VLESS_PBK=.*|VLESS_PBK=abc__def__ghi|' "$ROOT/secrets.env"
+render >/dev/null 2>&1
+assert_eq "0" "$?" "a secret containing __ still renders"
+assert_eq "abc__def__ghi" \
+    "$(q "c['outbounds'][0]['tls']['reality']['public_key']")" \
+    "the double underscore survives into the rendered config"
+
+# --- a genuinely unknown placeholder is still caught --------------------------
+new_sandbox
+TEMPLATE_ORIG="$TEMPLATE"
+TEMPLATE="$ROOT/broken-template.json"
+sed 's|"log"|"__NOT_A_REAL_MARKER__": 1, "log"|' "$TEMPLATE_ORIG" > "$TEMPLATE"
+assert_fails "an unknown __MARKER__ in the template refuses to render" -- render
+TEMPLATE="$TEMPLATE_ORIG"
+
 # --- argument handling -------------------------------------------------------
 new_sandbox
 assert_fails "wrong argument count refuses to render" -- \
