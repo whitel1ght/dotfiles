@@ -1,0 +1,63 @@
+# reddittui configuration.
+#
+# reddittui reads reddit through a self-hosted Redlib, not through reddit
+# directly. That is forced, not a preference: on 30 June 2026 reddit put
+# logged-out old.reddit.com behind a login wall, so every subreddit request
+# now 302s to /login/?reason=lor2 and the scraper finds no posts. Unauthenticated
+# .json went 403 a month before that. reddittui's stock backend cannot work.
+#
+# Redlib still works because it emulates the official reddit app client and
+# holds its own OAuth token — no account, no credentials in this repo. It runs
+# locally; see redlib/compose.yaml and redlib-setup.sh. Public Redlib instances
+# are not an option: of six tested, five returned 403/410/502 and the last
+# served a browser-verification challenge.
+#
+# Reddit is reachable direct — it is not in proxy/proxy-domains.txt, and the
+# newsboat feed already fetches it that way. Nothing here needs the tunnel.
+
+[core]
+bypassCache = false
+logLevel = "Warn"
+
+# Filters apply to the home page, where reddittui shows r/popular rather than a
+# curated set. newsboat has subreddits.txt to decide what is worth reading;
+# this is the equivalent lever, and it works by subtraction instead.
+#
+# Anything genuinely worth following belongs in newsboat/subreddits.txt, where
+# it arrives as a weekly digest. This client is for going somewhere specific —
+# `reddittui --subreddit neovim`, or `s` to switch — so the home page only
+# needs to stay out of the way.
+[filter]
+subreddits = [
+  "politics",
+  "news",
+  "worldnews",
+  "AmItheAsshole",
+  "interestingasfuck",
+  "pics",
+]
+keywords = []
+
+# The default timeout is 10s. Redlib is local, but the request it makes on
+# your behalf is not: reddit throttles this IP hard — see
+# newsboat/subreddits.txt, where that throttling forced every feed into a
+# single request — so give a slow upstream room to arrive rather than failing
+# the page.
+#
+# The cache matters more here than it would against reddit directly. Redlib
+# makes two upstream requests per page, so every cache hit is two requests not
+# spent against a tight rate limit. An hour is upstream's default and there is
+# no reason to lower it.
+[client]
+timeoutSeconds = 20
+cacheTtlSeconds = 3600
+
+# The local Redlib, via the TLS front end that redlib/compose.yaml starts.
+#
+# The scheme has to be written out. reddittui rewrites any non-https scheme to
+# https (client/url.go NormalizeBaseUrl), and a bare "localhost:8443" parses as
+# scheme "localhost" and becomes the nonsense "https:8443" — so this is the one
+# spelling that survives. The port is why the stack does not need root.
+[server]
+domain = "https://localhost:8443"
+type = "redlib"

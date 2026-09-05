@@ -1,0 +1,53 @@
+# Self-hosted Redlib, the backend reddittui reads reddit through.
+#
+# Why this exists at all: on 30 June 2026 reddit put logged-out old.reddit.com
+# behind a login wall, and unauthenticated .json went 403 a month before that.
+# Every terminal client that worked by scraping stopped working. Redlib still
+# works because it does neither — it emulates the official reddit app client
+# and holds its own OAuth token, which needs no account and no credentials in
+# this repo.
+#
+# Two containers rather than one, and the second is not optional:
+# reddittui forces the https scheme on whatever `domain` it is given
+# (client/url.go NormalizeBaseUrl rewrites any other scheme), so it cannot talk
+# to redlib's plain HTTP. Caddy terminates TLS in front of it with an
+# mkcert-signed certificate that the system keychain already trusts.
+#
+# Port 8443 rather than 443 so nothing here needs root. reddittui keeps the
+# port when it rewrites the scheme, so `https://localhost:8443` survives intact.
+#
+# The certificate and the Caddyfile live in ~/.config/redlib/, not in git: one
+# of them is a private key. `redlib-setup.sh` generates them.
+#
+#   redlib-setup.sh up       start (generates the cert on first run)
+#   redlib-setup.sh status   container state + a live fetch through the stack
+#   redlib-setup.sh down     stop
+
+services:
+  redlib:
+    image: quay.io/redlib/redlib:latest
+    container_name: redlib
+    restart: unless-stopped
+    environment:
+      # newsboat can then read per-subreddit feeds from here instead of
+      # reddit's own RSS. See the reddittui section in the root README.
+      REDLIB_ENABLE_RSS: "on"
+    # Not published to the host: Caddy is the only thing that should reach it,
+    # and binding it would expose an unauthenticated reddit proxy on the LAN.
+    networks: [redlib]
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: redlib-tls
+    restart: unless-stopped
+    ports:
+      # 127.0.0.1 on purpose — this is for this machine, not the network.
+      - "127.0.0.1:8443:8443"
+    volumes:
+      - ${HOME}/.config/redlib/certs:/certs:ro
+      - ${HOME}/.config/redlib/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on: [redlib]
+    networks: [redlib]
+
+networks:
+  redlib:

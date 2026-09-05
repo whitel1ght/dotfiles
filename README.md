@@ -267,6 +267,31 @@ The certificate and its private key live in `~/.config/redlib/`, never in git.
 The Caddyfile is copied there rather than symlinked, because Docker cannot
 follow a symlink pointing outside a mount.
 
+### What the `o` key does, and why it is not the article
+
+Two things surprise people here, and neither is a broken keybinding.
+
+`o` is bound **only in the comments view**. The posts list binds `H`, `s`,
+`backspace` and `L` and nothing else, so `o` on the list is a no-op by design.
+
+In the comments view it opens the **local Redlib page**, not the post's source
+link. That is an upstream bug against a Redlib backend, not a configuration
+mistake: `RedlibCommentsParser.getPostContent` looks for `<a id="post_url">`
+with `FindChildren`, which scans only the direct children of `<main>`, while
+Redlib nests that anchor inside `#column_one`. The lookup always fails, so
+`ParseComments` falls back to the page URL and hands the browser
+`https://localhost:8443/...`.
+
+Left unfixed on purpose. The one-line fix (`FindChildren` → `FindDescendants`)
+would mean building reddittui from source and giving up the checksum-verified
+release binary, which is a worse trade than a key that opens the same post in a
+browser instead of the source site.
+
+It does mean the browser must trust the mkcert CA, and **Firefox and its forks
+ignore the macOS System keychain** — they keep their own store. `redlib-setup.sh`
+adds the CA to every LibreWolf and Firefox profile it finds, using `certutil`
+from `nss`. Without that step `o` opens onto a certificate warning.
+
 ### The rate limit is the real constraint
 
 Reddit throttles this IP hard — the same throttling that forced every feed in

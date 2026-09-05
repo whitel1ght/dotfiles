@@ -1,0 +1,22 @@
+# TLS terminator in front of redlib.
+#
+# This exists only because reddittui forces the https scheme onto whatever
+# server it is pointed at (client/url.go), so a local plain-HTTP backend is
+# unreachable to it. Caddy is doing nothing here but adding TLS.
+#
+# Copied to ~/.config/redlib/Caddyfile by redlib-setup.sh; the compose file
+# mounts it from there rather than from the repo, because it sits next to the
+# private key it references.
+
+{
+	# Nothing should be administering this remotely.
+	admin off
+	# The certificate is supplied below. Without this Caddy would try to solve
+	# an ACME challenge for "localhost" and fail on every start.
+	auto_https off
+}
+
+https://localhost:8443 {
+	tls /certs/cert.pem /certs/key.pem
+	reverse_proxy redlib:8080
+}
