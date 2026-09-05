@@ -8,6 +8,20 @@
 # subreddits.txt holds bare community names, which become weekly-top feeds —
 # the week's best posts rather than every post, so the reader stays a digest.
 #
+# Every community is folded into ONE multireddit request. That is forced, not
+# a preference: reddit throttles unauthenticated RSS so hard that only the
+# first request in a window succeeds and the rest return curl error 56, a
+# connection reset. Measured 2026-09-05 — fourteen separate feeds fetched
+# exactly one; serialising with reload-threads 1 fetched one; four grouped
+# feeds fetched one; separate newsboat invocations four seconds apart fetched
+# one. A single request always works.
+#
+# limit=100 raises reddit's default 25-item cap, which is the only lever that
+# helps. It is still a pooled top-N, so high-volume communities crowd out
+# quiet ones — with these fourteen, six were represented in the top 100. The
+# fix for that is curation, not configuration: if a community you care about
+# never appears, drop the loud ones it is competing with.
+#
 # The output is generated, never edited: it is rebuilt from scratch every run
 # and lives outside the repo, so a hand edit would be silently lost.
 set -euo pipefail
@@ -20,6 +34,9 @@ OUT="${XDG_CONFIG_HOME:-$HOME/.config}/newsboat/urls"
 # a feed reader is to get a bounded digest instead of an endless stream.
 SORT="top"
 PERIOD="week"
+# Reddit's default is 25 and its maximum is 100. Always worth asking for the
+# maximum: one request is all the rate limit allows, so it may as well be full.
+LIMIT="100"
 
 die() { echo "newsboat-urls: $*" >&2; exit 1; }
 
@@ -38,13 +55,15 @@ generate() {
   grep -vE '^\s*(#|$)' "$SRC/feeds.txt" || true
 
   echo
-  echo "# --- reddit, from subreddits.txt ---"
-  # First field is the community; anything after it is extra tags. Every entry
-  # also gets a "reddit" tag so the whole lot can be filtered in or out.
-  while read -r sub tags; do
-    printf 'https://www.reddit.com/r/%s/%s.rss?t=%s "~r/%s" reddit %s\n' \
-      "$sub" "$SORT" "$PERIOD" "$sub" "$tags"
-  done < <(grep -vE '^\s*(#|$)' "$SRC/subreddits.txt" || true)
+  echo "# --- reddit: every community in subreddits.txt, as one multireddit ---"
+  # Only the first field is used. Anything after it is a note for the human
+  # reading subreddits.txt; it cannot affect grouping, because there is only
+  # ever one group.
+  local subs
+  subs=$(awk '!/^[[:space:]]*(#|$)/ { printf "%s+", $1 }' "$SRC/subreddits.txt" | sed 's/+$//')
+  [ -n "$subs" ] || return 0
+  printf 'https://www.reddit.com/r/%s/%s.rss?t=%s&limit=%s "~reddit" reddit\n' \
+    "$subs" "$SORT" "$PERIOD" "$LIMIT"
 }
 
 if [ "$dry_run" = 1 ]; then
@@ -63,4 +82,4 @@ feeds=$(grep -cE '^https?://' "$tmp" || true)
 mv "$tmp" "$OUT"
 trap - EXIT
 subs=$(grep -cE '^\s*[^#[:space:]]' "$SRC/subreddits.txt" || true)
-echo "wrote $OUT ($feeds feeds, $subs of them reddit communities)"
+echo "wrote $OUT ($feeds feeds; $subs reddit communities folded into 1)"

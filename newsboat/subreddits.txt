@@ -1,10 +1,21 @@
 # Reddit communities to follow, one per line. This is the list to edit.
 #
-#   <subreddit> [extra-tag...]
+#   <subreddit> [note]
 #
-# The name only — no r/ prefix, no URL. `newsboat-urls` turns each line into
-# a weekly-top feed, which is the point: the week's best posts as a digest,
-# not the firehose. Change SORT/PERIOD in bin/newsboat-urls to alter that.
+# The name only — no r/ prefix, no URL. Anything after the name is a note for
+# whoever is reading this file; the generator ignores it.
+#
+# All of these become ONE feed: a single multireddit request for the week's
+# top 100 across every community listed. That is forced by reddit, which
+# throttles unauthenticated RSS so aggressively that only the first request in
+# a window succeeds — fourteen separate feeds fetched exactly one (measured
+# 2026-09-05, see bin/newsboat-urls for the full set of things that did not
+# work). One request always succeeds.
+#
+# The consequence to keep in mind: it is a pooled top-100, so busy communities
+# crowd out quiet ones. Of these fourteen, six showed up. If something you
+# care about never appears, the fix is to remove whatever is drowning it —
+# manga and manhwa are the loudest here by a wide margin.
 #
 # reddit.com is blocked at the proxy for every process except newsboat (see
 # proxy/reader-domains.txt), so these fetch here and stay unreachable in a
