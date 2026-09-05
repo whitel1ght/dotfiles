@@ -1,0 +1,10 @@
+{
+  "Setting": {
+    "dictionary_client": "macdict",
+    "preferred_tts_engine": null
+  },
+  "Keymap": {
+    "library": "R",
+    "add_highlight_comment": "C"
+  }
+}
