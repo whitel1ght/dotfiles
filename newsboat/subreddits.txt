@@ -29,6 +29,8 @@ commandline computing
 unixporn computing
 rust computing
 golang computing
+vuejs computing
+javascript computing
 
 # --- AI tooling -----------------------------------------------------------
 LocalLLaMA ai
@@ -44,3 +46,6 @@ metroidvania media
 roguelikes media
 manga media
 manhwa media
+
+# --- Jokes ----------------------------------------------------------------
+dadjokes jokes
