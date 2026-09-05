@@ -210,9 +210,15 @@ Settings that differ from the stock defaults:
   two in step through any future retheme. Nothing is lost — that theme's
   selected-item backgrounds equal its panel background, so selection is signalled
   by foreground colour either way.
-- `cd_on_quit = true` — on its own this only makes superfile *print* its last
-  directory. The `spf()` wrapper in `zsh/.zshrc` runs `spf --print-last-dir` and
-  `cd`s to the result.
+- `cd_on_quit = true` — on its own this only makes superfile *record* its last
+  directory, as a `cd '<dir>'` line in the `lastdir` file (`spf path-list
+  --lastdir-file`). The `spf()` wrapper in `zsh/.zshrc` clears that file, runs
+  superfile, and sources whatever it wrote back. superfile's `--print-last-dir`
+  flag looks like the tidier route and cannot be used: it prints to stdout, so
+  the `$(…)` needed to capture it takes stdout away from bubbletea, which sizes
+  itself from the terminal on stdout, gets 0×0, and paints the TUI into the pipe
+  instead of onto the screen. The window then looks hung with nothing on it, and
+  superfile survives the terminal being abandoned.
 - `zoxide_support = true` — <kbd>z</kbd> opens a zoxide jump prompt.
 - `sidebar_sections = ["pinned", "disks"]` — drops the XDG home shortcuts, which
   are noise on a machine where the work lives in `~/projects`, and puts pinned

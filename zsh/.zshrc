@@ -199,13 +199,20 @@ zstyle ':fzf-tab:*' switch-group '<' '>'
 # and the popup would keep fzf's stock colours while everything else is themed.
 zstyle ':fzf-tab:*' use-fzf-default-opts yes
 
-# Superfile (spf) — cd_on_quit only makes superfile print its last directory;
-# the shell has to act on it. `command` stops the function recursing into itself.
+# Superfile (spf) — cd_on_quit makes superfile write `cd '<dir>'` to its lastdir
+# file on exit; the shell has to source that. The tidier-looking --print-last-dir
+# cannot be used here: it prints to stdout, so capturing it in $(…) also takes the
+# terminal away from bubbletea, which then has no tty to size itself against and
+# renders the whole TUI into the pipe — the window just sits there looking hung.
+# The file is cleared first so a crashed or killed superfile cannot cd us to
+# wherever the previous run ended. `command` stops the function recursing.
 spf() {
-  local dir
-  dir="$(command spf --print-last-dir "$@")" || return
-  if [[ -n "$dir" ]]; then
-    cd "$dir"
+  local lastdir_file
+  lastdir_file="$(command spf path-list --lastdir-file)" || return
+  command rm -f -- "$lastdir_file"
+  command spf "$@" || return
+  if [[ -f $lastdir_file ]]; then
+    eval "$(<"$lastdir_file")"
   fi
 }
 
