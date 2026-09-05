@@ -1,10 +1,67 @@
 {
-  "Setting": {
-    "dictionary_client": "macdict",
-    "preferred_tts_engine": null
-  },
   "Keymap": {
-    "library": "R",
-    "add_highlight_comment": "C"
+    "add_bookmark": "b",
+    "add_highlight": "a",
+    "add_highlight_comment": "c",
+    "beginning_of_ch": "g",
+    "define_word": "d",
+    "end_of_ch": "G",
+    "enlarge": "+",
+    "follow": "f",
+    "help": "?",
+    "jump_to_position": "`",
+    "library": "r",
+    "mark_position": "m",
+    "metadata": "M",
+    "next_chapter": "L",
+    "open_image": "o",
+    "page_down": "l",
+    "page_up": "h",
+    "prev_chapter": "H",
+    "quit": "q",
+    "regex_search": "/",
+    "scroll_down": "j",
+    "scroll_up": "k",
+    "set_width": "=",
+    "show_bookmarks": "B",
+    "show_hide_progress": "s",
+    "show_highlights": "A",
+    "shrink": "-",
+    "switch_color": "c",
+    "table_of_contents": "t",
+    "tts_toggle": "!"
+  },
+  "Setting": {
+    "color_theme": "Default",
+    "default_viewer": "auto",
+    "dictionary_client": "macdict",
+    "inline_images": "placeholder",
+    "justify_text": false,
+    "kosync_auto_pull": true,
+    "kosync_password": null,
+    "kosync_server": "https://sync.koreader.rocks",
+    "kosync_username": null,
+    "library_directories": [],
+    "line_spacing": "single",
+    "mouse_support": false,
+    "opds_add_to_calibre": false,
+    "opds_catalogs": [
+      {
+        "name": "Project Gutenberg",
+        "password": null,
+        "url": "https://www.gutenberg.org/ebooks/search.opds/",
+        "username": null
+      }
+    ],
+    "opds_download_directory": null,
+    "page_scroll_animation": true,
+    "paragraph_style": "spaced",
+    "preferred_tts_engine": "purr",
+    "seamless_between_chapters": false,
+    "show_line_numbers": false,
+    "show_progress_indicator": true,
+    "show_top_bar": true,
+    "tts_engine_args": [],
+    "width": null
   }
 }
