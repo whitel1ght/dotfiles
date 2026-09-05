@@ -40,10 +40,11 @@ feedlist-format    "%4i %n %11u %t"
 save-path "~/wiki/saved"
 
 # --- Browser ----------------------------------------------------------------
-# `o` opens the current item here. For reddit this fails on purpose: the domain
-# is blocked at the proxy for every process except newsboat, so the article is
-# readable in this reader and the site is not reachable in a browser.
-# See proxy/reader-domains.txt.
+# `o` opens the current item here. This used to fail on purpose for reddit,
+# which was blocked at the proxy for every process except newsboat. It is not
+# blocked any more — reddittui needed the same domain and the exception only
+# grants it to one process name — so `o` now opens reddit links like any
+# other. The limiting moved to the browser. See proxy/reader-domains.txt.
 browser "open %u"
 
 # --- Keys -------------------------------------------------------------------

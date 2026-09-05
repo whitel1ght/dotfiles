@@ -17,9 +17,14 @@
 # care about never appears, the fix is to remove whatever is drowning it —
 # manga and manhwa are the loudest here by a wide margin.
 #
-# reddit.com is blocked at the proxy for every process except newsboat (see
-# proxy/reader-domains.txt), so these fetch here and stay unreachable in a
-# browser. Opening a post with `o` will fail by design.
+# reddit.com is no longer blocked at the proxy. It was, for every process
+# except newsboat, until reddittui went in: that exception matches on process
+# name and grants the domain to exactly one binary, so a second client meant
+# unblocking the domain outright. `o` opens posts in a browser now.
+#
+# That does not change what this file is for. This list is still the curated
+# weekly digest; reddittui is for going somewhere specific on purpose. If a
+# community is worth reading regularly it belongs here, not in a bookmark.
 #
 # Edit, then run: newsboat-urls
 
@@ -35,17 +40,6 @@ javascript computing
 # --- AI tooling -----------------------------------------------------------
 LocalLLaMA ai
 ClaudeAI ai
-
-# --- Art ------------------------------------------------------------------
-learnart art
-ArtFundamentals art
-SketchDaily art
-
-# --- Media ----------------------------------------------------------------
-metroidvania media
-roguelikes media
-manga media
-manhwa media
 
 # --- Jokes ----------------------------------------------------------------
 dadjokes jokes

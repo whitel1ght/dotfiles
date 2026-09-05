@@ -16,7 +16,6 @@
 onliner.by
 banana.by
 pikabu.ru
-reddit.com
 
 # --- Social ---------------------------------------------------------------
 linkedin.com

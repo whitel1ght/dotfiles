@@ -65,7 +65,9 @@ Four details that matter:
 - **Step 4 comes before step 5 on purpose.** The exception has to be reachable
   before the block it is an exception to. It is narrow by construction: it
   matches on process name, so the domain stays rejected for a browser and
-  every other process.
+  every other process. Nothing uses it right now — `reader-domains.txt` is
+  empty and the renderer drops step 4 entirely — but the ordering is what
+  makes it work when something does.
 - **Step 5 comes before step 6 on purpose.** First match wins, so a domain in
   both lists would be tunnelled rather than blocked if the order were
   reversed. `render.py` refuses to render an overlap at all, but the ordering
@@ -204,10 +206,19 @@ reload`. The exception matches on process name, so the site loads in the feed
 reader and stays refused everywhere else — including when newsboat's `o` key
 tries to hand a link to the browser. That failure is the feature.
 
+`reader-domains.txt` is currently empty, so the renderer drops those rules
+altogether. Reddit was its only entry and came off when reddittui went in: one
+process name cannot cover both a feed reader and a TUI client, so the choice
+was to keep the block and give up the client, or unblock and move the limiting
+to the browser. Note the shape of that trade before adding an entry — this
+mechanism buys a strict block at the cost of exactly one program being able to
+reach the site.
+
 **To block a domain:** add its apex to `proxy/block-domains.txt`, then
 `proxyctl reload`. Both lists use the same apex-plus-subdomains matching, so
-one `reddit.com` line covers `old.reddit.com` and `www.reddit.com` — but not
-`redd.it`, which is a separate registrable domain and needs its own line.
+one `linkedin.com` line covers `www.linkedin.com` and `api.linkedin.com` — but
+a separate registrable domain needs its own line, the way `redd.it` would not
+have been covered by a `reddit.com` entry.
 
 Blocking is enforced by the daemon, so `proxyctl off` lifts it. That is a
 deliberate trade for keeping every domain decision in one versioned place; if

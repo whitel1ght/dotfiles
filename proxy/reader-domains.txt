@@ -1,5 +1,16 @@
 # Domains that stay blocked for everything except the feed reader.
 #
+# Currently empty, and that is a decision rather than an oversight: reddit came
+# off both this list and block-domains.txt when reddittui went in. A TUI client
+# is a second process that needs the same domain, and this mechanism grants the
+# exception to exactly one process name — so the choice was to keep reddit
+# blocked and give up the client, or unblock it and move the limiting back to
+# the browser. The browser won. See the reddittui section in the root README.
+#
+# With no domains here the renderer drops the process_name rules from the
+# generated config entirely, rather than emitting a rule that matches nothing.
+# The mechanism below still works the moment a domain is added back.
+#
 # Every domain listed here MUST also appear in block-domains.txt — this file
 # does not block anything, it only carves an exception out of an existing
 # block. A domain here that is not blocked there does nothing at all, so the
@@ -12,5 +23,3 @@
 # Same apex-plus-subdomains matching as the other two lists.
 #
 # Edit this file, then run: proxyctl reload
-
-reddit.com
