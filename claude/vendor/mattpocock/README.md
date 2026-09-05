@@ -6,7 +6,7 @@ Managed by claude/vendor-sync.sh — do not edit by hand.
 | --- | --- |
 | Source | `https://github.com/mattpocock/skills.git` |
 | Ref | `main` |
-| Commit | `6654f6b60cd9d5be8b54c6fafe44346dabeb3b76` |
+| Commit | `3cca18b368ae95cdbdebbff572ccafa662551015` |
 | Licence | LICENSE (see `UPSTREAM-LICENSE`) |
 
 ## Skills
