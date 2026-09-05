@@ -29,6 +29,16 @@ datetime-format "%Y-%m-%d %H:%M"
 articlelist-format "%4i %f %D  %?T?|%-17T| ?%t"
 feedlist-format    "%4i %n %11u %t"
 
+# --- Saving -----------------------------------------------------------------
+# `s` on an article writes it here. Inside ~/wiki on purpose: saved articles
+# are notes, so they ride along with `notes push` to the server and are
+# searchable next to everything else rather than piling up in $HOME.
+#
+# newsboat falls back to the CURRENT directory if this path does not exist,
+# rather than erroring — so if saves ever start landing where you ran
+# newsboat from, this directory has gone missing.
+save-path "~/wiki/saved"
+
 # --- Browser ----------------------------------------------------------------
 # `o` opens the current item here. For reddit this fails on purpose: the domain
 # is blocked at the proxy for every process except newsboat, so the article is
