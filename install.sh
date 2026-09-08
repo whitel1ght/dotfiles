@@ -94,6 +94,39 @@ link_dir_contents() {
     done
 }
 
+# Machine-local config files: private values, per-machine paths, credentials.
+# They live outside this repo by design and so do not arrive with a clone.
+#
+# Every consumer of these reads them behind a [ -f ] guard, which means an
+# absent file is SILENT. That is how a fresh machine ends up with no git
+# identity, no Jira token and no wiki-sync host while every script reports
+# success. Seeding a stub from the committed template makes the gap visible.
+#
+# Each *.example is written to be inert when copied verbatim — its assignments
+# are commented out — so seeding can never introduce a placeholder that looks
+# like a real value. A bogus value is worse than none: bin/notes prints a
+# precise "unset: NOTES_USER" when the variable is absent, but resolves
+# "your.server.ip.here" and fails at DNS when it is set to a placeholder.
+SEEDED_CONFIGS=()
+
+seed_local_config() {
+    local example="$1" target="$2" mode="${3:-600}" hint="${4:-}"
+
+    if [ ! -f "$example" ]; then
+        log_warn "Missing template: $example"
+        return 0
+    fi
+
+    # Never touch a file that already exists — it holds real credentials.
+    [ -e "$target" ] && return 0
+
+    mkdir -p "$(dirname "$target")"
+    cp "$example" "$target"
+    chmod "$mode" "$target"
+    log_info "Created $target from $(basename "$example")"
+    SEEDED_CONFIGS+=("$target${hint:+  ->  $hint}")
+}
+
 # tmux configuration
 if [ -f "$DOTFILES_DIR/tmux/.tmux.conf" ]; then
     create_symlink "$DOTFILES_DIR/tmux/.tmux.conf" "$HOME/.tmux.conf"
@@ -170,6 +203,17 @@ if [ -f "$DOTFILES_DIR/zsh/.p10k.zsh" ]; then
     create_symlink "$DOTFILES_DIR/zsh/.p10k.zsh" "$HOME/.p10k.zsh"
 fi
 
+# Sourced at the end of .zshrc behind [ -f ]. Holds the wiki-sync server that
+# bin/notes needs; without it `notes pull` stops with "unset: NOTES_USER ...".
+seed_local_config "$DOTFILES_DIR/zsh/.zshrc.local.example" \
+    "$HOME/.zshrc.local" 600 "wiki sync host for bin/notes (pull_notes/push_notes)"
+
+# Sourced by .zshenv for EVERY zsh invocation, so these reach non-interactive
+# shells and tool subprocesses. Without them mrglass shows no ticket detail and
+# the handle-ticket skill gets 401 from the Jira REST API.
+seed_local_config "$DOTFILES_DIR/mrglass/secrets.env.example" \
+    "$HOME/.config/mrglass/secrets.env" 600 "JIRA_EMAIL + JIRA_API_TOKEN for mrglass"
+
 # Git configuration
 if [ -f "$DOTFILES_DIR/git/.gitconfig" ]; then
     create_symlink "$DOTFILES_DIR/git/.gitconfig" "$HOME/.gitconfig"
@@ -182,6 +226,12 @@ fi
 if [ -f "$DOTFILES_DIR/git/config/git/ignore" ]; then
     create_symlink "$DOTFILES_DIR/git/config/git/ignore" "$HOME/.config/git/ignore"
 fi
+
+# ~/.gitconfig ends with an [include] of this path. git skips a missing include
+# without a word, then falls back to username@hostname for authorship — which
+# writes commits as e.g. "dmitry@192.168.2.97" and only warns.
+seed_local_config "$DOTFILES_DIR/git/.gitconfig.local.example" \
+    "$HOME/.gitconfig.local" 644 "set user.name and user.email before committing"
 
 # Keep a host repo's .git/info/exclude in sync with our personal component names,
 # so symlinks we place inside its working tree don't show up as untracked files.
@@ -382,10 +432,8 @@ setup_proxy() {
     fi
 
     if [ ! -f "$secrets" ]; then
-        mkdir -p "$(dirname "$secrets")"
-        cp "$DOTFILES_DIR/proxy/secrets.env.example" "$secrets"
-        chmod 600 "$secrets"
-        log_warn "Created $secrets - fill it in, then run: proxyctl on"
+        seed_local_config "$DOTFILES_DIR/proxy/secrets.env.example" \
+            "$secrets" 600 "six VLESS values, then: proxyctl on"
         return 0
     fi
 
@@ -443,6 +491,19 @@ fi
 
 # Optional: Install Homebrew packages
 log_info "To install Homebrew packages, run: ./brew-install.sh"
+
+# Say plainly what still needs a human. These were all silent failures before:
+# the file is created and readable, so every [ -f ] guard downstream passes,
+# and the missing VALUE only surfaces much later as a 401 or a DNS error.
+if [ ${#SEEDED_CONFIGS[@]} -gt 0 ]; then
+    echo
+    log_warn "Created ${#SEEDED_CONFIGS[@]} local config file(s) from templates."
+    log_warn "They are INERT until filled in - every value is commented out:"
+    for _seeded in "${SEEDED_CONFIGS[@]}"; do
+        log_warn "    $_seeded"
+    done
+    echo
+fi
 
 log_info "Dotfiles installation complete!"
 log_info "You may need to restart applications to pick up the new configurations."

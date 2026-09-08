@@ -15,6 +15,7 @@ Personal configuration files for macOS development tools.
 ├── claude/         # Claude Code: personal skills, agents, settings, CLAUDE.md
 ├── repy/           # repy ebook reader config
 ├── newsboat/       # newsboat config + the feed and subreddit lists
+├── mrglass/        # mrglass credentials template (Jira)
 ├── reddittui/      # reddittui terminal Reddit client config
 ├── redlib/         # self-hosted Redlib: compose file + TLS front end
 ├── proxy/          # sing-box TUN routing: domain list, config template, daemon
@@ -24,6 +25,7 @@ Personal configuration files for macOS development tools.
 ├── install.sh        # Symlink setup script
 ├── brew-install.sh   # Homebrew package installer
 ├── macos-daemons.sh  # Toggle the macOS media analysis daemons
+├── install.test.sh   # Tests install.sh's local-config seeding
 ├── keyboard-setup.sh # Remap Caps Lock to backtick (the tmux prefix)
 ├── reddittui-setup.sh # reddittui release-binary installer
 ├── redlib-setup.sh   # Redlib backend: cert generation + compose up
@@ -67,6 +69,8 @@ The install script will:
 - Create symlinks from config files to their expected system locations
 - Backup existing files with `.backup` extension
 - Create necessary directories if they don't exist
+- Seed the machine-local config files from their templates, and list the
+  ones still needing values (see [Machine-local configuration](#machine-local-configuration))
 - Disable the macOS media analysis daemons (see [macOS daemons](#macos-daemons))
 - Remap Caps Lock to backtick, so the tmux prefix sits under the left pinky
   (see [Keyboard](#keyboard))
@@ -631,14 +635,80 @@ To update the Brewfile after installing new packages:
 brew bundle dump --describe --force
 ```
 
+## Machine-local configuration
+
+Some files cannot live in this repo: they hold credentials, or values that are
+true of exactly one machine. They therefore do not arrive with a clone, and
+**every consumer of them reads them behind a `[ -f ]` guard** — so an absent
+file is completely silent.
+
+That is how a freshly cloned machine ends up with no git identity, no Jira
+token and no wiki-sync host while every script reports success. The failure
+surfaces much later and somewhere else: a commit authored as
+`dmitry@192.168.2.97`, a Jira 401 that reads like an expired token, a `notes
+pull` that stops on `unset: NOTES_USER`.
+
+`install.sh` seeds each one from a committed `*.example` and prints what still
+needs filling in:
+
+| Seeded file | Mode | Template | Needed for |
+|---|---|---|---|
+| `~/.gitconfig.local` | 644 | `git/.gitconfig.local.example` | commit authorship |
+| `~/.zshrc.local` | 600 | `zsh/.zshrc.local.example` | wiki sync (`bin/notes`) |
+| `~/.config/mrglass/secrets.env` | 600 | `mrglass/secrets.env.example` | Jira, for mrglass and `handle-ticket` |
+| `~/.config/sing-box/secrets.env` | 600 | `proxy/secrets.env.example` | the proxy tunnel |
+
+An existing file is **never** overwritten — it holds real credentials — so the
+seeding is safe to re-run, and `./install.sh` is safe to run on a configured
+machine.
+
+### Every template is inert
+
+Each `*.example` has all of its assignments **commented out**, so copying one
+verbatim changes nothing. That is deliberate: a placeholder that looks like a
+value is worse than no value.
+
+- `bin/notes` prints a precise `unset: NOTES_USER (or CLOUD)` when the
+  variables are absent. With `CLOUD=your.server.ip.here` it instead fails at
+  DNS resolution, which reads like a broken network.
+- `commit.template` pointing at a path that does not exist aborts **every**
+  commit, and the error names the template rather than the file that set it.
+- `export PATH="$PATH:$PYTHON_UTILS"` with `PYTHON_UTILS` unset appends an
+  empty element, and an empty element in `PATH` means the current directory.
+
+Run `./install.test.sh` to test the seeding. It runs the real `install.sh`
+against a sandbox `HOME` with every optional step disabled, and asserts the
+files land with the right modes, export nothing, and survive a re-run
+untouched.
+
+### What still cannot be seeded
+
+A template cannot supply these; they are listed here because their absence is
+equally silent:
+
+- `~/.ssh/known_hosts` — host keys are trust decisions. Missing entries make
+  `rsync`/`ssh` fail with `Host key verification failed`, and rsync has no
+  terminal to accept a fingerprint on.
+- The server side of a key pair. A new machine's key must be added to
+  `authorized_keys` before `notes pull` works, and to GitLab/GitHub before
+  pushing.
+- `glab` / `gh` auth — `glab auth login --hostname gitlab.com --web` and
+  `gh auth login`. Pass `--hostname`: run from a repo whose origin is GitHub
+  and `glab` offers that host as though it were GitLab, then 404s.
+- `~/wiki` itself, restored with `notes pull` — which needs the SSH key that
+  the vault inside `~/wiki` is holding. Break the loop with the iCloud copy of
+  `machine-rebuild.kdbx`, which is why `vault-sync.sh` refreshes it.
+
 ## Private/Sensitive Configurations
 
-For sensitive information (API keys, server credentials, etc.), use the private config system:
+Covered by [Machine-local configuration](#machine-local-configuration) above:
+`install.sh` seeds `~/.zshrc.local` and the other private files from their
+templates, so there is no copy step to remember. Fill in the values it lists,
+and note that every target is gitignored and cannot be committed by accident.
 
-1. Copy the example file: `cp zsh/.zshrc.local.example ~/.zshrc.local`
-2. Edit `~/.zshrc.local` with your private settings
-3. The main `.zshrc` will automatically source this file
-4. `.zshrc.local` is gitignored and won't be committed
+To add a new private setting, put a **commented-out** example of it in the
+matching `*.example` and fill it in on the real file. Keeping the template
+inert is what makes seeding safe.
 
 ## Usage
 

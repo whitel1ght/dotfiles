@@ -1,11 +1,26 @@
-# Private git configuration
-# Copy this to ~/.gitconfig.local and customize
+# Private git configuration.
+#
+# Copy to ~/.gitconfig.local. install.sh does that copy for you on a fresh
+# machine. ~/.gitconfig (symlinked from this repo) ends with an [include] of
+# this path, and git ignores an include whose file is absent — silently.
+#
+# EVERY SETTING BELOW IS COMMENTED OUT deliberately. An unfilled copy must
+# change nothing: git without user.name falls back to username@hostname and
+# only warns, which is bad but recoverable, whereas committing as "Your Name"
+# writes a wrong identity into history that needs a rebase to undo.
+#
+# Uncomment and fill in before your first commit. To check what git will
+# actually use:  git config user.name && git config user.email
 
 [user]
-	name = Your Name
-	email = your.email@example.com
+	# name = Your Name
+	# email = you@example.com
 
 [commit]
-	template = /path/to/your/commit/template
+	# A commit-message template. Leave this commented unless the file exists:
+	# git aborts every commit if commit.template points at a missing path, and
+	# the error names the template rather than this file.
+	# template = ~/.gitmessage
 
-# Add any other personal git settings here
+# Anything else machine-local goes here — signing keys, per-host credential
+# helpers, work-only aliases.
