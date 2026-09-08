@@ -93,6 +93,10 @@ export PATH="/opt/homebrew/opt/ruby/bin:$PATH"
 # User binaries
 export PATH="$HOME/.codeium/windsurf/bin:$PATH"
 export PATH="$HOME/.cargo/bin:$PATH"
+# Where `go install` puts binaries. Without this, installing a Go tool
+# appears to succeed and the command is then simply not found — mrglass,
+# built from ~/projects/mrglass, lands here.
+export PATH="$HOME/go/bin:$PATH"
 export PATH="$HOME/.local/bin:$PATH"
 
 # -----------------------------------------------------------------------------

@@ -1,0 +1,42 @@
+# mrglass configuration — the merge-request dashboard built from
+# ~/projects/mrglass and installed to ~/go/bin by `go install ./cmd/mrglass`.
+#
+# NOT the mrs/mrsw/mrsd/mrsn aliases in zsh/.zshrc: those still point at
+# ~/projects/gitlab-mr-status/bin/mr-status.py, a Python predecessor whose
+# checkout does not exist on this machine, so all five are currently dead.
+#
+# Every field is optional; upstream's defaults are in the repo's
+# config/config.example.yaml. Only the deliberate departures are set here.
+#
+# NO CREDENTIALS IN THIS FILE. It is committed. JIRA_EMAIL and JIRA_API_TOKEN
+# live in ~/.config/mrglass/secrets.env (mode 600, seeded by install.sh from
+# mrglass/secrets.env.example), which .zshenv sources into the environment.
+# GitLab and GitHub auth belong to glab and gh, not here.
+
+# The ecfx repos are all on gitlab.com; mrglass reaches them through glab.
+forge: gitlab
+
+# Matches ghostty, superfile, newsboat, fzf and nvim.
+theme: tokyonight
+
+# Where local clones live, so the `c` review can find the MR's repo and run
+# against a real checkout rather than the diff alone.
+projectsDir: ~/projects
+
+tickets:
+  # `J` on a selected MR opens its ticket. {key} is substituted with the
+  # matched key (ECFX-15234). Empty disables J — which is what an absent
+  # config amounts to, and why the key appeared to do nothing.
+  urlTemplate: "https://ecfxdev.atlassian.net/browse/{key}"
+
+  # Inline ticket status when an MR is expanded. This is what the Jira token
+  # actually buys: without status/jiraBaseURL the credentials are never used.
+  status: jira
+  jiraBaseURL: "https://ecfxdev.atlassian.net"
+
+# `w` opens an MR's branch in a throwaway worktree. Left disabled: the command
+# below works, but tmux window management here is already handled by
+# tmux-claude-picker and fuzzmux, so enable it only if you want a second route.
+# worktree:
+#   openCommand: "tmux new-window -c {dir} {cmd}"
+#   workCmd: "claude"

@@ -181,6 +181,16 @@ if [ -f "$DOTFILES_DIR/reddittui/reddittui.toml" ]; then
         "$HOME/.config/reddittui/reddittui.toml"
 fi
 
+# mrglass configuration
+# Only config.yaml is linked. Its sibling secrets.env holds the Jira
+# credentials and is seeded separately below, never symlinked — this file is
+# committed and that one must not be. mrglass also writes state under
+# ~/.local/state, so nothing else here is machine-local.
+if [ -f "$DOTFILES_DIR/mrglass/config.yaml" ]; then
+    create_symlink "$DOTFILES_DIR/mrglass/config.yaml" \
+        "$HOME/.config/mrglass/config.yaml"
+fi
+
 # Neovim configuration
 if [ -d "$DOTFILES_DIR/nvim" ]; then
     create_symlink "$DOTFILES_DIR/nvim" "$HOME/.config/nvim"
