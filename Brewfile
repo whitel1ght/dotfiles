@@ -30,6 +30,12 @@ brew "giflib"
 brew "aspell"
 # Protocol definitions and daemon for D-Bus at-spi
 brew "at-spi2-core"
+# Bourne-Again SHell, a UNIX command interpreter
+# Not optional: macOS ships bash 3.2, which has no associative arrays. The
+# fuzzmux tmux plugin declares one at scripts/init.sh:52 under `set -u`, so on
+# stock bash it aborts there — before binding prefix s/w/f/C-p — and tmux
+# reports nothing at all. Same class of limit bin/notes works around by hand.
+brew "bash"
 # Clone of cat(1) with syntax highlighting and Git integration
 brew "bat"
 # Console Matrix
@@ -167,12 +173,28 @@ brew "mkcert"
 brew "mole"
 # AeroSpace is an i3-like tiling window manager for macOS
 cask "nikitabobko/tap/aerospace"
+# Password manager app
+# This is the tool that opens ~/wiki/machine-rebuild.kdbx, which holds the SSH
+# keys, VLESS credentials and git identity a rebuild needs. Its absence is a
+# bootstrap deadlock rather than an inconvenience: vault-sync.sh and every
+# keepassxc-cli line in the vault runbook fail without it, so the vault that
+# exists to rebuild a machine cannot be opened on the machine being rebuilt.
+# The cask symlinks keepassxc-cli into the Homebrew prefix; there is no
+# CLI-only formula.
+cask "keepassxc"
 # Open-source keystroke visualiser
 cask "keycastr"
 # A custom version of Firefox, focused on privacy, security and freedom
 cask "librewolf"
 # Clipboard manager
 cask "maccy"
+# Utility to hide the notch
+# The notch reserves safeAreaInsets.top = 32pt across the FULL screen width,
+# whether or not the menu bar is hidden, so windows can never use it and the
+# band just sits empty above every AeroSpace layout. TopNotch masks it black so
+# it reads as bezel. It captures the rendered wallpaper and swaps in a masked
+# copy, so it works even with the dynamic providers that have no file on disk.
+cask "topnotch"
 mas "Harvest", id: 506189836
 mas "Numbers", id: 409203825
 mas "Quiver", id: 866773894
