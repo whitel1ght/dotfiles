@@ -3,7 +3,23 @@ return {
   {
     'mason-org/mason.nvim',
     config = function()
-      require('mason').setup({})
+      -- This was previously set up twice: bare here, then again with the real
+      -- options from after/plugin/mason.lua, which ran later and won. Folded
+      -- into one call so the options live with the spec that owns them.
+      require('mason').setup({
+        height = 0.5,
+        ui = {
+          border = 'rounded',
+          icons = {
+            package_installed = '✓',
+            package_pending = '➜',
+            package_uninstalled = '✗',
+          },
+        },
+        registries = {
+          'github:mason-org/mason-registry',
+        },
+      })
     end,
   },
   {
@@ -222,10 +238,20 @@ return {
     'WhoIsSethDaniel/mason-tool-installer.nvim',
     dependencies = { 'mason-org/mason.nvim' },
     config = function()
-      -- Mason package name, not the lspconfig name ('elmls'), which
+      -- Mason package names, not lspconfig names ('elmls'), which
       -- mason-lspconfig's ensure_installed does not resolve.
+      --
+      -- This list was previously split across two setup() calls — this one and
+      -- after/plugin/mason-tool-installer.lua. The second ran later and
+      -- REPLACED this list rather than extending it, so elm-language-server
+      -- was silently never installed despite being declared here.
       require('mason-tool-installer').setup({
-        ensure_installed = { 'elm-language-server' },
+        ensure_installed = {
+          'elm-language-server',
+          'prettier',
+          'stylua',
+          'flake8',
+        },
       })
     end,
   },
