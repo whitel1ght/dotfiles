@@ -41,7 +41,8 @@ return {
           'ruby_lsp',
           'elixirls',
           'pyright',
-          'jinja_lsp'
+          'jinja_lsp',
+          'gopls'
         },
         automatic_enable = false,
       })
@@ -224,6 +225,36 @@ return {
         },
       })
       vim.lsp.enable('jinja_lsp')
+
+      -- gopls (Go). Needed for ~/projects/mrglass; nothing here configured a Go
+      -- server before, so editing it had no completion or diagnostics at all.
+      --
+      -- root_markers leads with go.work: in a multi-module workspace gopls must
+      -- be rooted at the workspace, not at whichever go.mod is nearest, or it
+      -- indexes one module and reports the rest as unresolved imports.
+      vim.lsp.config('gopls', {
+        capabilities = capabilities,
+        settings = {
+          gopls = {
+            -- Off by default, and both catch real bugs rather than style.
+            analyses = {
+              unusedparams = true,
+              nilness = true,
+              unusedwrite = true,
+              useany = true,
+            },
+            staticcheck = true,
+            gofumpt = true,
+            -- Without this, completing a symbol from a package you have not
+            -- imported yet returns nothing instead of offering the import.
+            completeUnimported = true,
+            usePlaceholders = true,
+          },
+        },
+        on_attach = lsp_attach,
+        root_markers = { 'go.work', 'go.mod', '.git' },
+      })
+      vim.lsp.enable('gopls')
 
       -- Elm language server
       vim.lsp.config('elmls', {
