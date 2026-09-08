@@ -86,9 +86,25 @@ if (command -v perl && command -v cpanm) >/dev/null 2>&1; then
 fi
 
 # Node Version Manager
+#
+# nvm comes from Homebrew, which does NOT create ~/.nvm and does NOT put nvm.sh
+# there — it installs to $HOMEBREW_PREFIX/opt/nvm/nvm.sh and leaves NVM_DIR to
+# you. Sourcing "$NVM_DIR/nvm.sh" therefore matched nothing on a fresh machine,
+# and the [ -s ] guard made that silent: nvm installed, nvm never loaded, no
+# node, no npm. Everything downstream that needs node failed with no clue why —
+# mason could not install ts_ls, vue_ls, eslint, jsonls, cssls, html, pyright or
+# elm-language-server, so eight LSP servers were simply absent.
+#
+# NVM_DIR is still ~/.nvm: that is where nvm puts the node versions it installs,
+# and it has to exist before the first `nvm install` or nvm errors out.
+# HOMEBREW_PREFIX comes from .zprofile, with a fallback for non-login shells
+# that never sourced it.
 export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+[ -d "$NVM_DIR" ] || mkdir -p "$NVM_DIR"
+NVM_BREW="${HOMEBREW_PREFIX:-/opt/homebrew}/opt/nvm"
+[ -s "$NVM_BREW/nvm.sh" ] && \. "$NVM_BREW/nvm.sh"
+[ -s "$NVM_BREW/etc/bash_completion.d/nvm" ] && \. "$NVM_BREW/etc/bash_completion.d/nvm"
+unset NVM_BREW
 
 # SDKMAN (must be at end for proper initialization)
 export SDKMAN_DIR="$HOME/.sdkman"
