@@ -58,12 +58,23 @@ assert_contains "$out" "INERT until filled in" "prints the needs-attention summa
 
 # --- the seeded copies must not set anything ------------------------------
 echo "inertness"
-vals="$( . "$SANDBOX/.zshrc.local" 2>/dev/null
-         . "$SANDBOX/.config/mrglass/secrets.env" 2>/dev/null
-         echo "CLOUD=${CLOUD:-} NOTES_USER=${NOTES_USER:-} JIRA_EMAIL=${JIRA_EMAIL:-} JIRA_API_TOKEN=${JIRA_API_TOKEN:-}" )"
-[ "$vals" = "CLOUD= NOTES_USER= JIRA_EMAIL= JIRA_API_TOKEN=" ] \
+# env -i is REQUIRED, not tidiness. Sourcing in the current environment lets
+# ${JIRA_EMAIL:-} fall back to the real value this machine already exports via
+# .zshenv, so the test would both pass for the wrong reason on a clean machine
+# and PRINT A LIVE API TOKEN into its output on a configured one.
+#
+# For the same reason the failure message reports only which names were set,
+# never their values.
+leaked="$(env -i HOME="$SANDBOX" bash -c '
+    . "$HOME/.zshrc.local" 2>/dev/null
+    . "$HOME/.config/mrglass/secrets.env" 2>/dev/null
+    for v in CLOUD NOTES_USER NOTES_PORT NOTES_REMOTE_DIR JIRA_EMAIL JIRA_API_TOKEN; do
+        eval "x=\${$v:-}"
+        [ -n "$x" ] && printf "%s " "$v"
+    done')"
+[ -z "$leaked" ] \
     && pass "seeded shell configs export nothing" \
-    || fail "seeded shell configs export nothing" "got [$vals]"
+    || fail "seeded shell configs export nothing" "these were set: $leaked"
 
 # An empty trailing PATH element means "current directory" — a real hazard.
 pathv="$( . "$SANDBOX/.zshrc.local" 2>/dev/null; echo "${PATH:-}" )"
