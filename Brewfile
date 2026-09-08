@@ -30,6 +30,11 @@ brew "giflib"
 brew "aspell"
 # Protocol definitions and daemon for D-Bus at-spi
 brew "at-spi2-core"
+# Official Amazon AWS command-line interface
+# ecfx-update needs it to mint a CodeArtifact token for the ecfx-pypi
+# repository; without it that script fails at its first aws call. Credentials
+# live in ~/.aws/credentials, which the machine-rebuild vault tracks.
+brew "awscli"
 # Bourne-Again SHell, a UNIX command interpreter
 # Not optional: macOS ships bash 3.2, which has no associative arrays. The
 # fuzzmux tmux plugin declares one at scripts/init.sh:52 under `set -u`, so on

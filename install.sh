@@ -462,6 +462,36 @@ if [ "${PROXY_SETUP:-1}" != "0" ]; then
     setup_proxy || log_warn "Proxy setup incomplete"
 fi
 
+# --- SDKMAN ----------------------------------------------------------------
+# .zshrc sources ~/.sdkman/bin/sdkman-init.sh behind [[ -s ]], so its absence is
+# silent there. The ecfx-* runners are not so forgiving: each sources that path
+# UNCONDITIONALLY, so on a machine without SDKMAN they die on line 1 with "No
+# such file or directory" and never reach the work they describe.
+#
+# ecfx-backend's .sdkmanrc pins java 25.0.3-tem, gradle, micronaut and groovy;
+# the runners call `sdk env install` themselves, so only SDKMAN itself is
+# needed here. There is no Homebrew formula, hence the upstream installer.
+#
+# rcupdate=false matters: without it the installer appends its init block to
+# ~/.zshrc, which is a symlink into this repo — it would edit a versioned file
+# and duplicate the block .zshrc already carries. Set SDKMAN_SETUP=0 to skip.
+setup_sdkman() {
+    if [ -d "$HOME/.sdkman" ]; then
+        log_info "SDKMAN already installed"
+        return 0
+    fi
+
+    command -v curl >/dev/null 2>&1 || { log_warn "curl not found - skipping SDKMAN"; return 0; }
+
+    curl -s "https://get.sdkman.io?rcupdate=false" | bash >/dev/null 2>&1 || return 1
+    [ -s "$HOME/.sdkman/bin/sdkman-init.sh" ] || return 1
+    log_info "Installed SDKMAN"
+}
+
+if [ "${SDKMAN_SETUP:-1}" != "0" ]; then
+    setup_sdkman || log_warn "SDKMAN install failed - the ecfx-* runners will not work"
+fi
+
 # --- ECFX tooling (private repo) -------------------------------------------
 # The ecfx-* helper scripts live in a separate private repo because they carry
 # employer infrastructure detail that does not belong in a public one. Guarded
