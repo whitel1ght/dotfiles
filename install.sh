@@ -302,6 +302,37 @@ if [ -f "$DOTFILES_DIR/bin/tmux-prune" ]; then
     create_symlink "$DOTFILES_DIR/bin/tmux-prune" "$HOME/.local/bin/tmux-prune"
 fi
 
+# Install TPM and the plugins tmux/.tmux.conf declares. Nothing else did this:
+# the config ends in `run '~/.tmux/plugins/tpm/tpm'`, which is silent when the
+# path does not exist, so on a fresh machine every plugin binding — fuzzmux's
+# prefix s/w/f, the Claude pickers on j/a/o, resurrect and continuum — was
+# simply absent with no error anywhere. Guarded like the steps below: a network
+# failure must not abort the rest. Set TMUX_SETUP=0 to skip.
+setup_tmux_plugins() {
+    local tpm="$HOME/.tmux/plugins/tpm"
+
+    if [ ! -d "$tpm" ]; then
+        git clone --depth 1 https://github.com/tmux-plugins/tpm "$tpm" || return 1
+        log_info "Installed TPM"
+    fi
+
+    # install_plugins reads TMUX_PLUGIN_MANAGER_PATH, which only exists once the
+    # config has been sourced by a running server. A server started before TPM
+    # was cloned never ran the `run` line, so re-source before installing.
+    if tmux info >/dev/null 2>&1; then
+        tmux source-file "$HOME/.tmux.conf" 2>/dev/null || true
+    fi
+
+    "$tpm/bin/install_plugins" >/dev/null 2>&1 || return 1
+    log_info "tmux plugins installed"
+
+    tmux info >/dev/null 2>&1 && tmux source-file "$HOME/.tmux.conf" 2>/dev/null || true
+}
+
+if [ "${TMUX_SETUP:-1}" != "0" ] && command -v tmux >/dev/null 2>&1; then
+    setup_tmux_plugins || log_warn "tmux plugin setup failed — run tmux and press prefix+I"
+fi
+
 
 # Install reddittui from its checksum-verified release binary. Guarded the same
 # way: a network failure here must not abort the remaining setup. Set

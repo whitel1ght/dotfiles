@@ -455,7 +455,19 @@ instead.
 
 The prefix is remapped to backtick (`` ` ``), and **Caps Lock also sends
 backtick** — see [Keyboard](#keyboard) for why. Plugins are managed with
-[TPM](https://github.com/tmux-plugins/tpm); install them with `` ` `` + <kbd>I</kbd>.
+[TPM](https://github.com/tmux-plugins/tpm), which `install.sh` clones and then
+populates — `` ` `` + <kbd>I</kbd> still works to install by hand, and
+`TMUX_SETUP=0 ./install.sh` skips the automatic step.
+
+TPM used to be left to the reader, and that was a trap: `.tmux.conf` ends in
+`run '~/.tmux/plugins/tpm/tpm'`, which is **silent** when the path is absent.
+On a machine without it every plugin binding is missing — fuzzmux's `s`/`w`/`f`,
+the Claude pickers on `j`/`a`/`o`, resurrect and continuum — and tmux reports
+nothing at all, so it reads as "the prefix works but the plugins don't".
+
+`bash` is in the `Brewfile` for the same reason. macOS ships bash 3.2, which has
+no associative arrays; fuzzmux declares one in `scripts/init.sh` under `set -u`,
+so on stock bash it aborts before binding anything, again with no error anywhere.
 
 Declared plugins:
 
