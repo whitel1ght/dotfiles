@@ -41,10 +41,20 @@ Personal configuration files for macOS development tools.
    ./install.sh
    ```
 
-3. (Optional) Set up Zsh with Oh My Zsh and Powerlevel10k:
+3. Zsh is set up by `install.sh` already. To re-run it on its own — after a
+   plugin update, say:
    ```bash
    ./zsh-setup.sh
    ```
+   It installs Oh My Zsh, Powerlevel10k, and the three plugins `.zshrc` names
+   (`zsh-autosuggestions`, `zsh-syntax-highlighting`, `fzf-tab`), and generates
+   the `kubectl` and `docker` completions. Skip it during install with
+   `ZSH_SETUP=0 ./install.sh`.
+
+   The Oh My Zsh installer runs with `--keep-zshrc`. Without it, `--unattended`
+   sets `OVERWRITE_CONFIRMATION=no` and the installer moves `~/.zshrc` aside —
+   symlinks included — and writes its own template, silently undoing the
+   symlinks `install.sh` just made.
 
 4. (Optional) Install Homebrew packages:
    ```bash

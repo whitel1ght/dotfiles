@@ -392,6 +392,16 @@ if [ "${ECFX_TOOLING:-1}" != "0" ]; then
     setup_ecfx_tooling || log_warn "ECFX tooling setup incomplete"
 fi
 
+# Install oh-my-zsh, powerlevel10k and the three plugins .zshrc names. This is
+# not optional in practice: without them a new machine gets "plugin not found"
+# from oh-my-zsh and a prompt that falls back to the p10k wizard. Guarded like
+# the tooling above — install.sh runs under `set -e` and a network failure here
+# must not abort the rest. Set ZSH_SETUP=0 to skip. Safe to re-run, and safe in
+# either order relative to the symlinks above thanks to --keep-zshrc.
+if [ "${ZSH_SETUP:-1}" != "0" ] && [ -x "$DOTFILES_DIR/zsh-setup.sh" ]; then
+    "$DOTFILES_DIR/zsh-setup.sh" || log_warn "zsh setup failed"
+fi
+
 # Optional: Install Homebrew packages
 log_info "To install Homebrew packages, run: ./brew-install.sh"
 

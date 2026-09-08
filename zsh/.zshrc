@@ -216,8 +216,14 @@ spf() {
   fi
 }
 
-# Syntax highlighting
-source "$HOME/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+# Syntax highlighting. Sourced by path rather than through the plugins array
+# because it has to come last — after fzf's keybindings above define their
+# widgets, since it wraps whatever exists at load time. Guarded: on a machine
+# where zsh-setup.sh has not run yet, an unguarded source made every shell
+# start with an error.
+ZSH_HIGHLIGHT="$ZSH/custom/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+[[ -r "$ZSH_HIGHLIGHT" ]] && source "$ZSH_HIGHLIGHT"
+unset ZSH_HIGHLIGHT
 
 # Powerlevel10k configuration
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
