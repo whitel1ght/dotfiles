@@ -70,6 +70,12 @@ brew "gh"
 brew "git-delta"
 # Tcl/Tk UI for the git revision control system
 brew "git-gui"
+# Open source GitLab command line tool
+# The GitLab half of the pair this setup assumes: gh was declared here, glab
+# never was. mrglass authenticates GitLab THROUGH glab rather than a token of
+# its own, and the handle-ticket skill drives MRs with `glab mr create/view/
+# update`, so without it both are dead on a fresh machine.
+brew "glab"
 # Render markdown on the CLI
 brew "glow"
 # GSettings schemas for desktop components
