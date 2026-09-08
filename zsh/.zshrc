@@ -3,6 +3,24 @@
 # ============================================================================
 
 # -----------------------------------------------------------------------------
+# VAULT DRIFT WARNING
+# -----------------------------------------------------------------------------
+# Warn if the machine-rebuild vault is behind the files it mirrors. Compares
+# mtimes only — never opens the vault, so no passphrase and no measurable cost
+# (measured at under 10ms). Silent unless something drifted, and silent
+# entirely without ~/wiki.
+#
+# This MUST stay above the instant prompt preamble below. p10k captures console
+# output produced after that preamble and warns about it on every start, since
+# such output breaks the prompt it has already drawn. This used to sit at the
+# end of the file and was harmless only because ~/wiki was empty and the check
+# never printed; restoring the wiki made it print, and p10k started complaining.
+#
+# Called by absolute path on purpose: ~/.local/bin is added to PATH further
+# down in this file, so `command -v vault-check` finds nothing this early.
+[ -x "$HOME/.local/bin/vault-check" ] && "$HOME/.local/bin/vault-check"
+
+# -----------------------------------------------------------------------------
 # POWERLEVEL10K INSTANT PROMPT
 # -----------------------------------------------------------------------------
 if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
@@ -251,8 +269,3 @@ unset ZSH_HIGHLIGHT
 [[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
 
 export PATH="$HOME/.local/bin:$PATH"
-
-# Warn if the machine-rebuild vault is behind the files it mirrors. Compares
-# mtimes only — never opens the vault, so no passphrase and no measurable cost.
-# Silent unless something drifted, and silent entirely without ~/wiki.
-command -v vault-check >/dev/null 2>&1 && vault-check
