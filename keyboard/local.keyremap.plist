@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>local.keyremap</string>
+  <!-- Caps Lock (0x700000039) sends Grave Accent / Tilde (0x700000035).
+       hidutil mappings live in the HID layer and are lost on every reboot, so
+       this re-applies them at login. RunAtLoad with no KeepAlive: it is a
+       one-shot command that exits, not a daemon — KeepAlive would respawn it
+       in a tight loop forever. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/hidutil</string>
+    <string>property</string>
+    <string>--set</string>
+    <string>{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":0x700000039,"HIDKeyboardModifierMappingDst":0x700000035}]}</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>

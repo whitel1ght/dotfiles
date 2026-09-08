@@ -326,6 +326,14 @@ if [ "${MACOS_DAEMONS:-1}" != "0" ] && [ -x "$DOTFILES_DIR/macos-daemons.sh" ]; 
     "$DOTFILES_DIR/macos-daemons.sh" disable || log_warn "Daemon disable failed"
 fi
 
+# Remap Caps Lock to backtick, restoring the tmux prefix to the position it had
+# on the previous (ISO) keyboard. Guarded like the daemon toggle above:
+# install.sh runs under `set -e`, and a hidutil failure must not abort the
+# remaining setup. Set KEYBOARD_SETUP=0 to keep stock Caps Lock.
+if [ "${KEYBOARD_SETUP:-1}" != "0" ] && [ -x "$DOTFILES_DIR/keyboard-setup.sh" ]; then
+    "$DOTFILES_DIR/keyboard-setup.sh" apply || log_warn "Keyboard remap failed"
+fi
+
 # --- Proxy routing (sing-box TUN) -----------------------------------------
 # All routing rules live in proxy/proxy-domains.txt; secrets stay in
 # ~/.config/sing-box/secrets.env and never enter this repo. Guarded like the

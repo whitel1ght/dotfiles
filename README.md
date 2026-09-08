@@ -18,11 +18,13 @@ Personal configuration files for macOS development tools.
 ├── reddittui/      # reddittui terminal Reddit client config
 ├── redlib/         # self-hosted Redlib: compose file + TLS front end
 ├── proxy/          # sing-box TUN routing: domain list, config template, daemon
+├── keyboard/       # Caps Lock -> backtick remap: the login LaunchAgent
 ├── bin/            # Helper executables linked into ~/.local/bin
 ├── Brewfile          # Homebrew package list
 ├── install.sh        # Symlink setup script
 ├── brew-install.sh   # Homebrew package installer
 ├── macos-daemons.sh  # Toggle the macOS media analysis daemons
+├── keyboard-setup.sh # Remap Caps Lock to backtick (the tmux prefix)
 ├── reddittui-setup.sh # reddittui release-binary installer
 ├── redlib-setup.sh   # Redlib backend: cert generation + compose up
 └── zsh-setup.sh      # Oh My Zsh and Powerlevel10k installer
@@ -66,6 +68,8 @@ The install script will:
 - Backup existing files with `.backup` extension
 - Create necessary directories if they don't exist
 - Disable the macOS media analysis daemons (see [macOS daemons](#macos-daemons))
+- Remap Caps Lock to backtick, so the tmux prefix sits under the left pinky
+  (see [Keyboard](#keyboard))
 - Link the repy ebook reader config (see [repy](#repy))
 - Install reddittui from its release binary and start the Redlib backend it
   reads through (see [reddittui](#reddittui))
@@ -131,6 +135,87 @@ going until it idles out or you reboot — the script says so when it happens.
 
 Run `./macos-daemons.test.sh` to test the script; it stubs `launchctl` and never
 touches real daemons.
+
+## Keyboard
+
+`keyboard-setup.sh` remaps **Caps Lock to backtick**, and `install.sh` runs it
+on every run.
+
+```bash
+./keyboard-setup.sh          # apply, now and at every login (default)
+./keyboard-setup.sh remove   # clear the remap, restore Caps Lock
+./keyboard-setup.sh status   # is the remap active, is the agent installed
+```
+
+Skip it during install with `KEYBOARD_SETUP=0 ./install.sh`.
+
+### Why
+
+tmux's prefix is backtick (`tmux/.tmux.conf`). That was chosen on an **ISO**
+keyboard, where backtick/tilde sits next to left Shift — under the left pinky,
+one finger, no reach. This machine is **ANSI**, where that key does not exist
+and backtick lives at the top-left, under Esc.
+
+So the prefix moved to a key that is both a stretch *and* one slip away from
+Esc, which nvim uses constantly. A mis-hit does not just miss: it arms the tmux
+prefix, which then swallows the next keystroke.
+
+Rebinding the prefix was the obvious fix and the wrong one — it would mean
+relearning `` ` ``+`j`, `` ` ``+`a`, `` ` ``+`o`, `` ` ``+`c` and every fuzzmux
+key, and the `Ctrl` space is already crowded: nvim holds `C-d/u/n/p/j/k`, oil
+adds `C-s/h/t/c/l`, fzf owns `C-r`/`C-t`, and AeroSpace claims every
+`alt-<letter>` system-wide. Moving the *key* instead leaves `tmux.conf`
+untouched.
+
+Caps Lock is the only free key in that zone — Tab, Esc, `1`, `q`, `a` and `z`
+are all bound somewhere in this repo — and it was doing nothing here: no
+modifier remap, and not switching input sources.
+
+### How it works
+
+The remap is a HID-layer `UserKeyMapping` applied by `hidutil`, which is a
+native macOS mechanism — no Karabiner, no kernel extension, no `sudo`:
+
+| Usage code | Key |
+|---|---|
+| `0x700000039` | Caps Lock (source) |
+| `0x700000035` | Grave Accent and Tilde (destination) |
+
+Two things follow from where that sits:
+
+- **It does not survive a reboot.** The mapping lives in the HID layer, which
+  is rebuilt at every boot. `keyboard/local.keyremap.plist` is a LaunchAgent
+  that re-applies it at login — `RunAtLoad` with no `KeepAlive`, because
+  `hidutil` is a one-shot command that exits and `KeepAlive` would respawn it
+  in a tight loop.
+- **The real backtick key still works.** Both keys now send the same code, so
+  either one is the tmux prefix. Double-tapping still types a literal backtick,
+  through the `bind-key` … `send-prefix` line already in `tmux.conf`.
+
+The plist is copied into `~/Library/LaunchAgents/` rather than symlinked, and
+re-copied on every `apply`, so editing the repo copy takes effect on the next
+run without a second step to remember.
+
+`hidutil` takes hex on `--set` but prints decimal on `--get`, which is why
+`status` matches on `30064771129` / `30064771125`.
+
+### Caveats
+
+- **Caps Lock is gone as Caps Lock.** There is no shift-lock any more. If you
+  want it back, `./keyboard-setup.sh remove`.
+- **Watch for a press delay.** macOS debounces the physical Caps Lock key to
+  stop accidental activation. Remapping through `hidutil` normally bypasses
+  that, but if the prefix starts feeling sluggish, that debounce is the reason
+  — Karabiner-Elements handles it without the delay and is the fallback.
+- **macOS upgrades can clear the mapping.** Same failure mode as the media
+  daemons: run `./keyboard-setup.sh status` after upgrading.
+- The Russian and ABC input sources are enabled on this machine. While a
+  non-Latin source is active, every letter-based binding in tmux, nvim,
+  newsboat, superfile and repy stops matching — that is an input-source
+  problem, not a remap problem.
+
+Run `./keyboard-setup.test.sh` to test the script; it stubs `hidutil` and
+`launchctl` and never touches the real keyboard or your LaunchAgents.
 
 ## repy
 
@@ -368,7 +453,8 @@ instead.
 
 ## tmux
 
-The prefix is remapped to backtick (`` ` ``). Plugins are managed with
+The prefix is remapped to backtick (`` ` ``), and **Caps Lock also sends
+backtick** — see [Keyboard](#keyboard) for why. Plugins are managed with
 [TPM](https://github.com/tmux-plugins/tpm); install them with `` ` `` + <kbd>I</kbd>.
 
 Declared plugins:
