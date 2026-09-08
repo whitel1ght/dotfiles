@@ -1,10 +1,6 @@
 # mrglass configuration — the merge-request dashboard built from
 # ~/projects/mrglass and installed to ~/go/bin by `go install ./cmd/mrglass`.
 #
-# NOT the mrs/mrsw/mrsd/mrsn aliases in zsh/.zshrc: those still point at
-# ~/projects/gitlab-mr-status/bin/mr-status.py, a Python predecessor whose
-# checkout does not exist on this machine, so all five are currently dead.
-#
 # Every field is optional; upstream's defaults are in the repo's
 # config/config.example.yaml. Only the deliberate departures are set here.
 #

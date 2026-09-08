@@ -93,8 +93,9 @@ brew "pkgconf"
 # Generate introspection data for GObject libraries
 brew "gobject-introspection"
 # Open source programming language to build simple/reliable/efficient software
-# Needed by ~/projects/mrglass, the MR-status TUI this shell aliases mrs/mrsw/
-# mrsn to. Its go.mod requires 1.24.2. Go was never declared here — the old
+# Needed by ~/projects/mrglass, the merge-request TUI, which is built with
+# `go install ./cmd/mrglass` into ~/go/bin. Its go.mod requires 1.24.2. Go was
+# never declared here — the old
 # machine had it installed outside this repo (reddittui-setup.sh's header still
 # records "this machine has 1.22.1"), so a fresh machine got no toolchain and
 # mrglass could not be built at all.
