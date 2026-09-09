@@ -267,3 +267,6 @@ unset ZSH_HIGHLIGHT
 [[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
 
 export PATH="$HOME/.local/bin:$PATH"
+
+# opencode
+export PATH=/Users/dmitry/.opencode/bin:$PATH

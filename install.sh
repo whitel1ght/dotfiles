@@ -142,6 +142,15 @@ if [ -f "$DOTFILES_DIR/ghostty/config" ]; then
     create_symlink "$DOTFILES_DIR/ghostty/config" "$HOME/.config/ghostty/config"
 fi
 
+# OpenCode configuration
+if [ -f "$DOTFILES_DIR/opencode/opencode.jsonc" ]; then
+    create_symlink "$DOTFILES_DIR/opencode/opencode.jsonc" "$HOME/.config/opencode/opencode.jsonc"
+fi
+
+if [ -d "$DOTFILES_DIR/opencode/themes" ]; then
+    link_dir_contents "$DOTFILES_DIR/opencode/themes" "$HOME/.config/opencode/themes"
+fi
+
 # Superfile configuration
 # Config and runtime state (logs, pinned.json, bundled themes) share one
 # directory, so link the two config files rather than the directory itself.
