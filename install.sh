@@ -366,6 +366,11 @@ if [ -f "$DOTFILES_DIR/bin/notes" ]; then
     create_symlink "$DOTFILES_DIR/bin/notes" "$HOME/.local/bin/notes"
 fi
 
+# ecfx-daily-commits lists today's commits across all ecfx-* repos.
+if [ -f "$DOTFILES_DIR/bin/ecfx-daily-commits" ]; then
+    create_symlink "$DOTFILES_DIR/bin/ecfx-daily-commits" "$HOME/.local/bin/ecfx-daily-commits"
+fi
+
 # tmux-prune closes idle tmux windows; bound to prefix+X in tmux/.tmux.conf.
 if [ -f "$DOTFILES_DIR/bin/tmux-prune" ]; then
     create_symlink "$DOTFILES_DIR/bin/tmux-prune" "$HOME/.local/bin/tmux-prune"
