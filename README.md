@@ -74,7 +74,7 @@ The install script will:
 - Disable the macOS media analysis daemons (see [macOS daemons](#macos-daemons))
 - Remap Caps Lock to backtick, so the tmux prefix sits under the left pinky
   (see [Keyboard](#keyboard))
-- Link the repy ebook reader config (see [repy](#repy))
+- Install the repy ebook reader and link its config (see [repy](#repy))
 - Install reddittui from its release binary and start the Redlib backend it
   reads through (see [reddittui](#reddittui))
 
@@ -228,11 +228,18 @@ port of [epy](https://github.com/wustho/epy), which this repo used to
 configure. It reads `~/.config/repy/configuration.json`, which `install.sh`
 links.
 
-It is not on crates.io; install it from the tagged source:
+It is not on crates.io, so `install.sh` builds it from the tag pinned in
+`REPY_TAG`, which is the same as running:
 
 ```bash
-cargo install --git https://github.com/newptcai/repy --tag v0.25.0
+cargo install --locked --git https://github.com/newptcai/repy --tag v0.25.0
 ```
+
+That needs cargo, from the Brewfile's `rust` formula. Without it the step
+warns and moves on, so on a fresh machine run `./brew-install.sh` first, or
+re-run `install.sh` after it. Re-runs skip the build once that tag is
+installed; bumping `REPY_TAG` triggers a rebuild. Skip the step with
+`REPY_SETUP=0 ./install.sh`.
 
 ### Where repy keeps its data
 

@@ -423,6 +423,32 @@ if [ "${REDLIB_SETUP:-1}" != "0" ] && [ -x "$DOTFILES_DIR/redlib-setup.sh" ]; th
     "$DOTFILES_DIR/redlib-setup.sh" up || log_warn "redlib setup failed"
 fi
 
+# Install repy from its tagged source; it is not on crates.io. Only its config
+# used to be handled here, so a fresh machine got a linked configuration.json
+# and no reader. `cargo install --list` records the tag each crate was built
+# from, which makes re-runs a local no-op instead of a git fetch. Needs cargo
+# from the Brewfile's rust formula. Set REPY_SETUP=0 to skip.
+REPY_TAG="v0.25.0"
+
+setup_repy() {
+    if ! command -v cargo >/dev/null 2>&1; then
+        log_warn "cargo not found - run ./brew-install.sh, then re-run this script"
+        return 0
+    fi
+
+    if cargo install --list | grep -qF "newptcai/repy?tag=$REPY_TAG#"; then
+        log_info "repy $REPY_TAG already installed"
+        return 0
+    fi
+
+    cargo install --locked --git https://github.com/newptcai/repy --tag "$REPY_TAG" || return 1
+    log_info "Installed repy $REPY_TAG"
+}
+
+if [ "${REPY_SETUP:-1}" != "0" ]; then
+    setup_repy || log_warn "repy install failed"
+fi
+
 
 # Disable the macOS media analysis daemons. Guarded like the vendor sync above:
 # install.sh runs under `set -e`, and a launchctl failure must not abort the
