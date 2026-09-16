@@ -98,13 +98,58 @@ assert_eq "1" "$rc" "a name the repo already owns is refused"
 assert_contains "$out" "not a cs-add link" "the refusal says why"
 assert_eq "no" "$(is_link "$SK/committed-skill")" "the repo's own skill is untouched"
 
-out="$("$ADD" +superpowers 2>&1)"; rc=$?
-assert_eq "1" "$rc" "a plugin name is refused"
-assert_contains "$out" "only at launch" "the refusal points at cs instead"
+out="$("$ADD" +nosuchplugin 2>&1)"; rc=$?
+assert_eq "1" "$rc" "an unknown plugin name fails"
+assert_contains "$out" "No installed plugin" "the failure names the problem"
 
 out="$("$ADD" --remove committed-skill 2>&1)"; rc=$?
 assert_eq "1" "$rc" "removing a skill cs-add did not create is refused"
 assert_eq "yes" "$(exists "$SK/committed-skill")" "that skill survives the attempt"
+
+echo "plugins"
+# Two cached versions, only one of them installed: reading installPath must beat
+# globbing the cache, which would be a coin toss between them.
+make_skill "$TMP/plugincache/demo-1.0/skills/delta"
+make_skill "$TMP/plugincache/demo-0.9/skills/stale"
+cat > "$TMP/installed.json" <<EOF
+{
+  "version": 2,
+  "plugins": {
+    "demo@market":   [{ "installPath": "$TMP/plugincache/demo-1.0" }],
+    "gone@market":   [{ "installPath": "$TMP/plugincache/absent" }],
+    "twin@market-a": [{ "installPath": "$TMP/plugincache/demo-1.0" }],
+    "twin@market-b": [{ "installPath": "$TMP/plugincache/demo-1.0" }]
+  }
+}
+EOF
+export CS_ADD_INSTALLED="$TMP/installed.json"
+
+out="$("$ADD" +demo 2>&1)"
+assert_contains "$out" "linked 1 skill(s): delta" "a +plugin links the installed version's skills"
+assert_eq "yes" "$(is_link "$SK/delta")" "delta is linked"
+assert_eq "no" "$(exists "$SK/stale")" "the stale cached version is not used"
+assert_contains "$out" "no namespacing" "the loss of namespacing is stated"
+assert_contains "$out" "hooks" "the unloaded hooks are stated"
+
+out="$("$ADD" +twin 2>&1)"; rc=$?
+assert_eq "1" "$rc" "an ambiguous plugin name fails"
+assert_contains "$out" "ambiguous" "the ambiguity lists candidates"
+
+out="$("$ADD" +gone 2>&1)"; rc=$?
+assert_eq "1" "$rc" "a plugin whose install path is missing fails"
+assert_contains "$out" "missing install path" "the failure says the path is gone"
+
+out="$("$ADD" +demo@market 2>&1)"
+assert_contains "$out" "delta" "a fully qualified plugin id also resolves"
+
+cat > "$TMP/installed-multi.json" <<EOF
+{ "version": 2, "plugins": { "both@market": [
+    { "scope": "user",    "installPath": "$TMP/plugincache/demo-1.0" },
+    { "scope": "project", "installPath": "$TMP/plugincache/demo-0.9" } ] } }
+EOF
+out="$(CS_ADD_INSTALLED="$TMP/installed-multi.json" "$ADD" +both 2>&1)"
+assert_contains "$out" "several scopes" "a plugin installed at several scopes warns"
+assert_eq "no" "$(exists "$SK/stale")" "the warning does not stop it using the first entry"
 
 echo "removal"
 "$ADD" --remove beta >/dev/null 2>&1

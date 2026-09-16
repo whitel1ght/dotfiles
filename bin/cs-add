@@ -18,9 +18,17 @@
 # the only record kept: --remove and --clear act on it, which is what keeps this
 # from ever deleting a skill the repository actually owns.
 #
+# An installed plugin can be named with +, because a plugin's skills are kept
+# on disk as ordinary directories and can be linked like any other. What that
+# does not bring across is the rest of the plugin: its hooks and MCP servers
+# stay unloaded, and its skills arrive unnamespaced, as `brainstorming` rather
+# than `superpowers:brainstorming`. Start the session with `cs +superpowers`
+# when the whole plugin is wanted; +name here is for reaching one mid-session.
+#
 # Usage:
 #   cs-add ~/bundles/frontend        link every skill in a bundle
 #   cs-add ~/bundles/frontend/skills/vue-expert    link one skill
+#   cs-add +superpowers              link an installed plugin's skills
 #   cs-add --list                    show what this tool has activated
 #   cs-add --remove vue-expert       unlink one
 #   cs-add --clear                   unlink everything it activated
@@ -123,6 +131,44 @@ is_active() {
     active_names | grep -qxF -- "$name"
 }
 
+# Where an installed plugin's files actually live. Read from installPath rather
+# than globbing the cache: a plugin updated in place leaves its older versions
+# behind, and frontend-design currently has two of them, so a glob would be a
+# coin toss between the installed one and a stale one.
+resolve_plugin_path() {
+    local name="$1" installed matches path
+    installed="${CS_ADD_INSTALLED:-$HOME/.claude/plugins/installed_plugins.json}"
+
+    if [ ! -f "$installed" ]; then
+        log_error "No installed plugins at $installed"
+        return 1
+    fi
+
+    matches="$(jq -r --arg n "$name" \
+        '.plugins | keys[] | select(. == $n or startswith($n + "@"))' "$installed" 2>/dev/null)"
+
+    case "$(printf '%s\n' "$matches" | grep -c .)" in
+        1) ;;
+        0) log_error "No installed plugin named '$name'. Try: claude plugin list"; return 1 ;;
+        *) log_error "'$name' is ambiguous: $(echo "$matches" | tr '\n' ' ')"; return 1 ;;
+    esac
+
+    # The entry is an array because one plugin can be installed at more than one
+    # scope. Taking [0] is right for the usual single entry and a silent coin
+    # toss otherwise, so say so rather than pick quietly.
+    if [ "$(jq -r --arg k "$matches" '.plugins[$k] | length' "$installed" 2>/dev/null)" -gt 1 ]; then
+        log_warn "'$name' is installed at several scopes; using the first"
+    fi
+
+    path="$(jq -r --arg k "$matches" \
+        '.plugins[$k][0].installPath // ""' "$installed" 2>/dev/null)"
+    if [ -z "$path" ] || [ ! -d "$path" ]; then
+        log_error "'$name' resolves to a missing install path: ${path:-<none>}"
+        return 1
+    fi
+    printf '%s\n' "$path"
+}
+
 # Link one skill. A name already taken by a real directory is refused rather
 # than replaced: that is a skill the repository itself ships, and clobbering it
 # would look like this tool working right up until the commit.
@@ -215,14 +261,16 @@ cmd_clear() {
 
 cmd_add() {
     local -a added=()
-    local failed=0 src sub name
+    local failed=0 src sub name from_plugin=false
 
     for src in "$@"; do
         case "$src" in
             +*)
-                log_error "'$src' is a plugin; plugins load only at launch. Use: cs $src"
-                failed=1
-                continue
+                if ! src="$(resolve_plugin_path "${src#+}")"; then
+                    failed=1
+                    continue
+                fi
+                from_plugin=true
                 ;;
         esac
         if [ ! -d "$src" ]; then
@@ -273,6 +321,10 @@ cmd_add() {
 
     log_info "linked ${#added[@]} skill(s): ${added[*]}"
     log_info "they go live once Claude Code rescans — a turn or two, not instantly"
+    if [ "$from_plugin" = true ]; then
+        log_warn "linked as plain skills: no namespacing, and the plugin's hooks and"
+        log_warn "MCP servers stay unloaded. Use 'cs +<name>' for the whole plugin."
+    fi
     return "$failed"
 }
 
