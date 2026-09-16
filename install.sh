@@ -382,6 +382,12 @@ if [ -f "$DOTFILES_DIR/bin/cs" ]; then
     create_symlink "$DOTFILES_DIR/bin/cs" "$HOME/.local/bin/cs"
 fi
 
+# cs-add links skills into a session that is already running; Claude Code
+# rescans its skill directories, so they arrive without a restart.
+if [ -f "$DOTFILES_DIR/bin/cs-add" ]; then
+    create_symlink "$DOTFILES_DIR/bin/cs-add" "$HOME/.local/bin/cs-add"
+fi
+
 # Install TPM and the plugins tmux/.tmux.conf declares. Nothing else did this:
 # the config ends in `run '~/.tmux/plugins/tpm/tpm'`, which is silent when the
 # path does not exist, so on a fresh machine every plugin binding — fuzzmux's
