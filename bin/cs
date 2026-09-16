@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+# Launch Claude Code with a chosen skill set instead of everything installed.
+#
+# A plain `claude` loads every skill and agent under ~/.claude/, which is one
+# global namespace shared by every project. That index is always-on context:
+# each skill contributes its frontmatter to the system prompt whether or not the
+# session could ever use it, and today that is ~60KB before the first prompt.
+#
+# The fix is subtractive. `--setting-sources project,local` drops the user
+# settings source, and user-scope skills, agents and enabledPlugins all ride on
+# it, so the session starts at the project's own skills plus the built-ins.
+# What that also drops is the rest of settings.json — permissions, hooks,
+# defaultMode, autoMode — which are wanted every time, so this re-supplies them
+# through --settings with enabledPlugins stripped out. Plugins then come back
+# one at a time, named on the command line.
+#
+# Nothing here mutates configuration. Every choice lives in the argv of one
+# session, so two terminals can run different skill sets against the same repo.
+#
+# Usage:
+#   cs                          bare session: project skills + built-ins
+#   cs +superpowers             ...plus that marketplace plugin
+#   cs ~/projects/foo/bundle    ...plus a plugin directory (skills and agents)
+#   cs --no-project +superpowers   drop the repo's own skills as well
+#   cs +superpowers ~/b -- -c   trailing args after -- go to claude verbatim
+#   cs --show                   print the resolved command, run nothing
+#   cs --all                    plain claude, full legacy context (escape hatch)
+#
+# The built-in skills (code-review, loop, run, ...) are part of Claude Code and
+# stay in every session; only --disable-slash-commands removes them, and it
+# removes all the others too.
+set -uo pipefail
+
+CLAUDE_DIR="${CS_CLAUDE_DIR:-$HOME/.claude}"
+SETTINGS="$CLAUDE_DIR/settings.json"
+INSTALLED="$CLAUDE_DIR/plugins/installed_plugins.json"
+
+# The trap that removes the settings file fires after main has returned, so the
+# path cannot live in a local: it must outlive the function that created it.
+CS_TMP=""
+cleanup() { [ -n "${CS_TMP:-}" ] && rm -f "$CS_TMP"; return 0; }
+
+RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
+log_error() { echo -e "${RED}[cs]${NC} $1" >&2; }
+log_warn()  { echo -e "${YELLOW}[cs]${NC} $1" >&2; }
+
+usage() {
+    sed -n '/^# Usage:/,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'
+}
+
+require_jq() {
+    command -v jq >/dev/null 2>&1 && return 0
+    log_error "jq is required but not installed. Run ./brew-install.sh"
+    return 1
+}
+
+# Expand a bare plugin name to the `name@marketplace` id that settings wants.
+# An id given in full is trusted as-is, so a plugin that is not installed yet
+# can still be named. A bare name must match exactly one installed plugin;
+# matching several is an error rather than a guess, because enabling the wrong
+# one fails silently as a missing skill much later.
+resolve_plugin_id() {
+    local name="$1" matches
+    case "$name" in *@*) printf '%s\n' "$name"; return 0 ;; esac
+
+    if [ ! -f "$INSTALLED" ]; then
+        log_error "No installed plugins at $INSTALLED — name '$name' as name@marketplace"
+        return 1
+    fi
+
+    matches="$(jq -r --arg n "$name" \
+        '.plugins | keys[] | select(startswith($n + "@"))' "$INSTALLED" 2>/dev/null)"
+
+    case "$(printf '%s\n' "$matches" | grep -c .)" in
+        1) printf '%s\n' "$matches" ;;
+        0) log_error "No installed plugin named '$name'. Try: claude plugin list"; return 1 ;;
+        *) log_error "'$name' is ambiguous: $(echo "$matches" | tr '\n' ' ')"; return 1 ;;
+    esac
+}
+
+# settings.json minus enabledPlugins. Plugins are the one thing this tool
+# decides per session, so inheriting them would defeat the point; everything
+# else in that file is wanted on every run and would otherwise be lost with the
+# user settings source.
+base_settings() {
+    if [ ! -f "$SETTINGS" ]; then
+        printf '{}\n'
+        return 0
+    fi
+    if ! jq -e . "$SETTINGS" >/dev/null 2>&1; then
+        log_error "$SETTINGS is not valid JSON"
+        return 1
+    fi
+    jq -c 'del(.enabledPlugins)' "$SETTINGS"
+}
+
+# Merge the chosen plugin ids into the base settings. An empty selection omits
+# enabledPlugins entirely rather than writing {}, so the absence is explicit.
+build_settings() {
+    local base="$1"; shift
+    local ids_json
+
+    if [ "$#" -eq 0 ]; then
+        printf '%s\n' "$base"
+        return 0
+    fi
+
+    ids_json="$(for id in "$@"; do
+        jq -n --arg k "$id" '{($k): true}'
+    done | jq -s 'add // {}')" || return 1
+
+    jq -c --argjson p "$ids_json" '. + {enabledPlugins: $p}' <<<"$base"
+}
+
+# A directory is a plugin only if it carries the manifest Claude Code looks for.
+# Saying so here turns a silently-ignored --plugin-dir into an error at launch.
+validate_plugin_dir() {
+    local dir="$1"
+    if [ ! -d "$dir" ]; then
+        log_error "Not a directory: $dir"
+        return 1
+    fi
+    if [ ! -f "$dir/.claude-plugin/plugin.json" ] \
+       && [ ! -d "$dir/skills" ] && [ ! -d "$dir/agents" ]; then
+        log_warn "$dir has no .claude-plugin/plugin.json, skills/ or agents/ — loading anyway"
+    fi
+    return 0
+}
+
+main() {
+    local show=false
+    # The repo's own .claude/skills are usually the point of being in the repo,
+    # so they are kept by default; --no-project is for the rarer case of wanting
+    # a named toolset and nothing the directory would otherwise contribute.
+    local sources="project,local"
+    local -a plugin_names=() plugin_dirs=() passthrough=()
+
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --show|-n)   show=true; shift ;;
+            --no-project) sources="local"; shift ;;
+            --help|-h) usage; return 0 ;;
+            --all)     shift; exec claude "$@" ;;
+            --)        shift; passthrough=("$@"); break ;;
+            +*)        plugin_names+=("${1#+}"); shift ;;
+            -*)        passthrough+=("$1"); shift ;;
+            *)
+                validate_plugin_dir "$1" || return 1
+                # Claude Code resolves --plugin-dir relative to its own cwd;
+                # an absolute path keeps `cs ../bundle` meaning what it reads as.
+                plugin_dirs+=("$(cd "$1" && pwd)")
+                shift
+                ;;
+        esac
+    done
+
+    require_jq || return 1
+
+    local -a plugin_ids=()
+    local name id
+    for name in ${plugin_names[@]+"${plugin_names[@]}"}; do
+        id="$(resolve_plugin_id "$name")" || return 1
+        plugin_ids+=("$id")
+    done
+
+    local base settings
+    base="$(base_settings)" || return 1
+    settings="$(build_settings "$base" ${plugin_ids[@]+"${plugin_ids[@]}"})" || return 1
+
+    local -a argv=(claude --setting-sources "$sources")
+
+    # Settings go through a 0600 file rather than an argv string: the merged
+    # blob is configuration, and argv is world-readable through ps.
+    local tmp
+    tmp="$(mktemp "${TMPDIR:-/tmp}/cs-settings.XXXXXX")" || return 1
+    CS_TMP="$tmp"
+    chmod 600 "$tmp"
+    printf '%s\n' "$settings" > "$tmp"
+    argv+=(--settings "$tmp")
+
+    local dir
+    for dir in ${plugin_dirs[@]+"${plugin_dirs[@]}"}; do
+        argv+=(--plugin-dir "$dir")
+    done
+    argv+=(${passthrough[@]+"${passthrough[@]}"})
+
+    if [ "$show" = true ]; then
+        printf '%s\n' "${argv[@]}"
+        echo "--- settings ---"
+        cat "$tmp"
+        cleanup
+        return 0
+    fi
+
+    # Run as a child rather than exec so the settings file can be removed when
+    # the session ends; exec would replace this shell and leak it every launch.
+    trap cleanup EXIT INT TERM
+    "${argv[@]}"
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    main "$@"
+fi

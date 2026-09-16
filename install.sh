@@ -376,6 +376,12 @@ if [ -f "$DOTFILES_DIR/bin/tmux-prune" ]; then
     create_symlink "$DOTFILES_DIR/bin/tmux-prune" "$HOME/.local/bin/tmux-prune"
 fi
 
+# cs launches Claude Code with a chosen skill set rather than every skill and
+# agent installed under ~/.claude. See the header of bin/cs for why that matters.
+if [ -f "$DOTFILES_DIR/bin/cs" ]; then
+    create_symlink "$DOTFILES_DIR/bin/cs" "$HOME/.local/bin/cs"
+fi
+
 # Install TPM and the plugins tmux/.tmux.conf declares. Nothing else did this:
 # the config ends in `run '~/.tmux/plugins/tpm/tpm'`, which is silent when the
 # path does not exist, so on a fresh machine every plugin binding — fuzzmux's
