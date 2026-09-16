@@ -306,6 +306,46 @@ write_artefacts() {
     return 0
 }
 
+# Wrap the hand-written skills in claude/skills/ as a plugin so they load the
+# same way everything else does: named in a repository's settings, namespaced,
+# no flag. The skills stay where they are and the wrapper links to them —
+# plugin SKILLS may be symlinks (plugin AGENTS may not, but there are none here).
+build_personal_wrapper() {
+    local dir="$VENDOR_ROOT/personal" src n
+    src="$VENDOR_ROOT/skills"
+    [ -d "$src" ] || return 0
+
+    rm -rf "$dir"
+    mkdir -p "$dir/.claude-plugin" "$dir/skills" || return 1
+    for n in "$src"/*/; do
+        [ -f "${n}SKILL.md" ] || continue
+        ln -sfn "${n%/}" "$dir/skills/$(basename "${n%/}")"
+    done
+    jq -n --arg desc "$GENERATED_NOTE Personal skills from dotfiles." \
+        '{"$schema":"https://anthropic.com/claude-code/plugin.schema.json",
+          name:"personal", version:"0.0.0", description:$desc}' \
+        > "$dir/.claude-plugin/plugin.json"
+}
+
+# One marketplace over both kinds of wrapper, so `claude plugin marketplace add`
+# on this directory exposes the personal skills and every vendored source.
+write_marketplace() {
+    local dir="$VENDOR_ROOT/.claude-plugin" entries name
+    mkdir -p "$dir" || return 1
+
+    entries="$( { [ -d "$VENDOR_ROOT/personal" ] && jq -n \
+            '{name:"personal", description:"Personal skills from dotfiles.", source:"./personal"}'
+        while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            jq -n --arg n "$name" \
+                '{name:$n, description:("Vendored skills from " + $n + "."), source:("./vendor/" + $n)}'
+        done <<< "$(source_names)"; } | jq -s . )"
+
+    jq -n --argjson plugins "$entries" \
+        '{name:"dmitry-dotfiles", owner:{name:"Dmitry"}, plugins:$plugins}' \
+        > "$dir/marketplace.json"
+}
+
 # Remove wrappers and lock entries no longer named in the manifest, so
 # deleting a manifest entry uninstalls the skill.
 prune_removed() {
@@ -391,6 +431,8 @@ main() {
     done <<< "$(source_names)"
 
     prune_removed
+    build_personal_wrapper || log_warn 'could not build the personal wrapper'
+    write_marketplace  || log_warn 'could not write the marketplace manifest'
     [ "$failed" -eq 0 ] || return 2
     return 0
 }

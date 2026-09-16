@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "mattpocock",
-  "version": "0.0.0+3cca18b",
+  "version": "0.0.0+959a8e9",
   "description": "Managed by claude/vendor-sync.sh — do not edit by hand. Vendored skills for mattpocock.",
   "skills": [
     "./skills/teach"

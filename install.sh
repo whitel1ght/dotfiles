@@ -309,37 +309,26 @@ sync_git_exclude() {
 }
 
 # Claude Code configuration
-# skills/ and agents/ are linked per-item so they coexist with work components
-# from claude-components, which symlinks those whole directories to itself.
-if [ -d "$DOTFILES_DIR/claude/skills" ]; then
-    link_dir_contents "$DOTFILES_DIR/claude/skills" "$HOME/.claude/skills"
-fi
-
-if [ -d "$DOTFILES_DIR/claude/agents" ]; then
-    link_dir_contents "$DOTFILES_DIR/claude/agents" "$HOME/.claude/agents"
-fi
-
-# Refresh vendored third-party skills, then link each wrapper. Each wrapper is a
-# skills-dir plugin, so its skills are namespaced and cannot collide with the
-# bare names in claude/skills/. Guarded because install.sh runs under `set -e`:
-# a failed sync must fall back to the committed copies, not abort the install.
+# Skills are no longer linked into ~/.claude/skills. That directory was a single
+# namespace shared by every project, so everything in it reached the system
+# prompt of every session whether or not it applied. They are published as a
+# marketplace instead: a repository names the plugins it wants in its own
+# .claude/settings.json, the names arrive namespaced, and nothing loads unasked.
+#
+#   claude plugin install personal@dmitry-dotfiles --scope project
+#
+# Refresh vendored third-party skills first — the sync also regenerates the
+# personal wrapper and the marketplace manifest. Guarded because install.sh runs
+# under `set -e`: a failed sync must fall back to the committed copies, not abort
+# the install.
 if [ "${SKILLS_SYNC:-1}" != "0" ] && [ -x "$DOTFILES_DIR/claude/vendor-sync.sh" ]; then
     "$DOTFILES_DIR/claude/vendor-sync.sh" || log_warn "Vendor sync failed — using committed copies"
-    if command -v claude >/dev/null 2>&1; then
-        claude plugin marketplace update || log_warn "Marketplace update failed"
-    fi
 fi
 
-if [ -d "$DOTFILES_DIR/claude/vendor" ]; then
-    link_dir_contents "$DOTFILES_DIR/claude/vendor" "$HOME/.claude/skills"
-fi
-
-# If claude-components is checked out, keep its local exclude list current so
-# our symlinks inside its skills/ and agents/ dirs stay out of its git status.
-CLAUDE_COMPONENTS_DIR="${CLAUDE_COMPONENTS_DIR:-$HOME/projects/claude-components}"
-if [ -d "$CLAUDE_COMPONENTS_DIR/.git" ]; then
-    sync_git_exclude "$CLAUDE_COMPONENTS_DIR" "skills" "$DOTFILES_DIR/claude/skills"
-    sync_git_exclude "$CLAUDE_COMPONENTS_DIR" "skills" "$DOTFILES_DIR/claude/vendor" append
+if command -v claude >/dev/null 2>&1 && [ -f "$DOTFILES_DIR/claude/.claude-plugin/marketplace.json" ]; then
+    claude plugin marketplace add "$DOTFILES_DIR/claude" >/dev/null 2>&1 \
+        || claude plugin marketplace update dmitry-dotfiles >/dev/null 2>&1 \
+        || log_warn "Could not register the dotfiles marketplace"
 fi
 
 if [ -f "$DOTFILES_DIR/claude/CLAUDE.md" ]; then
