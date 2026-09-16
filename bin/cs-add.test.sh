@@ -56,12 +56,25 @@ make_skill "$TMP/bundle/skills/alpha"
 make_skill "$TMP/bundle/skills/beta"
 make_skill "$TMP/solo/gamma"
 
+make_agent() {
+    mkdir -p "$(dirname "$1")"
+    printf -- '---\nname: %s\ndescription: Fixture agent.\ntools: Read\n---\nProbe.\n' \
+        "$(basename "$1" .md)" > "$1"
+}
+make_agent "$TMP/bundle/agents/alpha-expert.md"
+make_agent "$TMP/bundle/agents/beta-expert.md"
+# Not agents: the repo keeps prose in agents/ too, and linking it would register
+# two bogus agent types.
+printf '# notes\n' > "$TMP/bundle/agents/README.md"
+printf '# index\n' > "$TMP/bundle/agents/MODULE_INDEX.md"
+make_agent "$TMP/agentsonly/agents/lone-expert.md"
+
 export CS_ADD_REPO="$REPO"
 SK="$REPO/.claude/skills"
 EX="$REPO/.git/info/exclude"
 
 echo "adding"
-out="$("$ADD" "$TMP/bundle" 2>&1)"
+out_bundle="$("$ADD" "$TMP/bundle" 2>&1)"; out="$out_bundle"
 assert_contains "$out" "linked 2 skill(s)" "a bundle links every skill it holds"
 assert_eq "yes" "$(is_link "$SK/alpha")" "alpha is linked"
 assert_eq "yes" "$(is_link "$SK/beta")" "beta is linked"
@@ -70,6 +83,21 @@ assert_contains "$out" "next rescans" "the rescan delay is stated, not assumed"
 out="$("$ADD" "$TMP/solo/gamma" 2>&1)"
 assert_contains "$out" "linked 1 skill(s)" "a lone SKILL.md directory links as one skill"
 assert_eq "yes" "$(is_link "$SK/gamma")" "gamma is linked"
+
+echo "agents"
+AG="$REPO/.claude/agents"
+assert_eq "yes" "$(is_link "$AG/alpha-expert.md")" "a bundle's agents are linked too"
+assert_contains "$out_bundle" "linked 2 agent(s)" "the agent count is reported"
+assert_contains "$out_bundle" "NEW session" "agents are said to need a restart, not a rescan"
+assert_eq "no" "$(exists "$AG/README.md")" "prose in agents/ is not linked as an agent"
+assert_eq "no" "$(exists "$AG/MODULE_INDEX.md")" "the module index is not linked as an agent"
+
+out="$("$ADD" "$TMP/agentsonly" 2>&1)"
+assert_contains "$out" "linked 1 agent(s)" "a bundle with only agents still works"
+assert_eq "yes" "$(is_link "$AG/lone-expert.md")" "the agents-only bundle is linked"
+
+out="$("$ADD" "$TMP/agentsonly/agents/lone-expert.md" 2>&1)"
+assert_contains "$out" "agent(s)" "a bare .md path links as one agent"
 
 echo "git exclude"
 ex="$(cat "$EX")"
@@ -169,10 +197,15 @@ assert_eq "no" "$(exists "$SK/beta")" "--remove unlinks"
 assert_lacks "$(cat "$EX")" "/.claude/skills/beta" "--remove drops the exclude entry"
 assert_eq "yes" "$(is_link "$SK/alpha")" "--remove leaves the others alone"
 
+"$ADD" --remove alpha-expert >/dev/null 2>&1
+assert_eq "no" "$(exists "$AG/alpha-expert.md")" "--remove reaches an agent by its bare name"
+
 "$ADD" --clear >/dev/null 2>&1
 assert_eq "no" "$(exists "$SK/alpha")" "--clear unlinks everything it added"
 assert_eq "no" "$(exists "$SK/gamma")" "--clear reaches later additions too"
 assert_eq "yes" "$(exists "$SK/committed-skill")" "--clear never touches the repo's own skills"
+assert_eq "no" "$(exists "$AG/beta-expert.md")" "--clear unlinks agents as well"
+assert_eq "no" "$(exists "$AG/lone-expert.md")" "--clear reaches every linked agent"
 ex="$(cat "$EX")"
 assert_lacks "$ex" "cs-add session skills" "--clear removes the marker block"
 assert_contains "$ex" "*.log" "--clear preserves unrelated exclude content"

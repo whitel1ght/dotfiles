@@ -1,22 +1,25 @@
 #!/usr/bin/env bash
-# Add skills to a Claude Code session that is already running.
+# Add skills and agents to a Claude Code session that is already running.
 #
 # Claude Code rescans its skill directories while a session is live, so a skill
-# that appears on disk becomes usable a turn or two later without a restart.
-# What it does NOT reload is plugins: --plugin-dir and enabledPlugins are read
-# once at launch, so anything plugin-shaped still needs a new session.
+# that appears on disk becomes usable a few exchanges later without a restart.
+# Agents do not work that way: agent types are bound when the session starts,
+# and a newly linked one stays invisible until the next launch. Both are linked
+# here anyway, because the alternative is worse — most skills that dispatch
+# agents name a dozen or more, and a skill whose agents are missing fails on
+# every dispatch rather than degrading.
 #
-# Everything lands in the repository's own .claude/skills/, never ~/.claude/.
-# That is the one directory visible to both kinds of session: a plain `claude`
-# scans it, and so does a `cs` session, whose whole method is dropping the user
-# settings source that ~/.claude/skills rides on. Linking into ~/.claude would
-# work for one of the two and silently do nothing for the other.
+# Everything lands in the repository's own .claude/, never ~/.claude/. That is
+# the one place visible to both kinds of session: a plain `claude` scans it, and
+# so does a `cs` session, whose whole method is dropping the user settings
+# source that ~/.claude rides on. Linking into ~/.claude would work for one of
+# the two and silently do nothing for the other.
 #
-# Because that directory is usually version-controlled, every link is also
+# Because those directories are usually version-controlled, every link is also
 # written to .git/info/exclude — local to the clone, never committed — so an
 # activated skill cannot turn into an accidental commit. That exclude block is
 # the only record kept: --remove and --clear act on it, which is what keeps this
-# from ever deleting a skill the repository actually owns.
+# from ever deleting something the repository actually owns.
 #
 # An installed plugin can be named with +, because a plugin's skills are kept
 # on disk as ordinary directories and can be linked like any other. What that
@@ -26,11 +29,12 @@
 # when the whole plugin is wanted; +name here is for reaching one mid-session.
 #
 # Usage:
-#   cs-add ~/bundles/frontend        link every skill in a bundle
+#   cs-add ~/bundles/frontend        link a bundle's skills and agents
 #   cs-add ~/bundles/frontend/skills/vue-expert    link one skill
+#   cs-add ~/bundles/frontend/agents/vue-expert.md link one agent
 #   cs-add +superpowers              link an installed plugin's skills
 #   cs-add --list                    show what this tool has activated
-#   cs-add --remove vue-expert       unlink one
+#   cs-add --remove vue-expert       unlink one, by either kind
 #   cs-add --clear                   unlink everything it activated
 set -uo pipefail
 
@@ -46,8 +50,8 @@ usage() {
     sed -n '/^# Usage:/,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'
 }
 
-# The repo whose .claude/skills is being written to. Overridable so the tests
-# can run against a fixture instead of the checkout they live in.
+# The repo whose .claude is being written to. Overridable so the tests can run
+# against a fixture instead of the checkout they live in.
 repo_root() {
     if [ -n "${CS_ADD_REPO:-}" ]; then
         printf '%s\n' "$CS_ADD_REPO"
@@ -55,32 +59,34 @@ repo_root() {
     fi
     local root
     root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
-        log_error "Not inside a git repository — cs-add needs one to write .claude/skills"
+        log_error "Not inside a git repository — cs-add needs one to write .claude/"
         return 1
     }
     printf '%s\n' "$root"
 }
 
-skills_dir() { printf '%s\n' "$(repo_root)/.claude/skills"; }
 exclude_file() { printf '%s\n' "$(repo_root)/.git/info/exclude"; }
 
-# Names currently inside the marker block, one per line. The block stores
-# gitignore patterns, so strip the leading path back down to the skill name.
-active_names() {
+# Entries are stored as repo-relative paths rather than bare names, because a
+# name alone no longer says what it is: skills are directories under
+# .claude/skills and agents are .md files under .claude/agents.
+active_entries() {
     local ex; ex="$(exclude_file)"
     [ -f "$ex" ] || return 0
     awk -v b="$BEGIN_MARK" -v e="$END_MARK" '
         $0 == b { inside = 1; next }
         $0 == e { inside = 0; next }
-        inside && /^\/\.claude\/skills\// { sub(/^\/\.claude\/skills\//, ""); print }
+        inside && /^\/\.claude\// { sub(/^\//, ""); print }
     ' "$ex"
 }
 
-# Replace the marker block with exactly the names given. Content outside the
+is_active() { active_entries | grep -qxF -- "$1"; }
+
+# Replace the marker block with exactly the entries given. Content outside the
 # markers is copied through untouched — the file belongs to the user, and other
 # tools (dotfiles' own installer among them) write their own blocks into it.
 write_exclude() {
-    local ex tmp name
+    local ex tmp entry
     ex="$(exclude_file)"
     mkdir -p "$(dirname "$ex")"
     touch "$ex"
@@ -95,7 +101,7 @@ write_exclude() {
     if [ "$#" -gt 0 ]; then
         {
             printf '%s\n' "$BEGIN_MARK"
-            for name in "$@"; do printf '/.claude/skills/%s\n' "$name"; done
+            for entry in "$@"; do printf '/%s\n' "$entry"; done
             printf '%s\n' "$END_MARK"
         } >> "$tmp"
     fi
@@ -103,38 +109,95 @@ write_exclude() {
     mv "$tmp" "$ex"
 }
 
-# Expand an argument into the skill directories it names: a bundle contributes
-# each child of its skills/, a lone skill contributes itself.
+# Skill directories an argument names: a bundle contributes each child of its
+# skills/, a lone skill contributes itself.
 skill_sources() {
-    local src="$1" d
+    local src="$1" d found=false
     if [ -f "$src/SKILL.md" ]; then
         printf '%s\n' "$src"
         return 0
     fi
     if [ -d "$src/skills" ]; then
-        local found=false
         for d in "$src"/skills/*/; do
             [ -f "$d/SKILL.md" ] || continue
             printf '%s\n' "${d%/}"
             found=true
         done
-        [ "$found" = true ] && return 0
-        log_error "$src/skills contains no skills"
-        return 1
     fi
-    log_error "$src is neither a skill (SKILL.md) nor a bundle (skills/)"
+    [ "$found" = true ] && return 0
     return 1
 }
 
-is_active() {
-    local name="$1"
-    active_names | grep -qxF -- "$name"
+# Agent files an argument names. A bundle need not have any, so an empty result
+# is not an error here — only a source with neither skills nor agents is.
+agent_sources() {
+    local src="$1" f found=false
+    if [ -d "$src/agents" ]; then
+        for f in "$src"/agents/*.md; do
+            [ -f "$f" ] || continue
+            case "$(basename "$f")" in
+                README.md|MODULE_INDEX.md) continue ;;
+            esac
+            printf '%s\n' "$f"
+            found=true
+        done
+    fi
+    [ "$found" = true ] && return 0
+    return 1
+}
+
+# Link one skill directory or agent file. A name already taken by something
+# real is refused rather than replaced: that is something the repository itself
+# ships, and clobbering it would look like this tool working right up until the
+# commit.
+link_entry() {
+    local src="$1" kind="$2" name entry target abs
+    name="$(basename "$src")"
+    entry=".claude/$kind/$name"
+    target="$(repo_root)/$entry"
+
+    mkdir -p "$(dirname "$target")" || return 1
+
+    if [ -e "$target" ] && [ ! -L "$target" ]; then
+        log_error "$name already exists in the repo and is not a cs-add link — skipping"
+        return 1
+    fi
+    if [ -L "$target" ] && ! is_active "$entry"; then
+        log_error "$name is a symlink this tool did not create — skipping"
+        return 1
+    fi
+
+    if [ -d "$src" ]; then
+        abs="$(cd "$src" && pwd)"
+    else
+        abs="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
+    fi
+
+    ln -sfn "$abs" "$target" || return 1
+    printf '%s\n' "$entry"
+}
+
+unlink_entry() {
+    local entry="$1" target
+    target="$(repo_root)/$entry"
+
+    if ! is_active "$entry"; then
+        log_error "$entry was not activated by cs-add — leaving it alone"
+        return 1
+    fi
+    if [ -L "$target" ]; then
+        rm -f "$target"
+    elif [ -e "$target" ]; then
+        log_error "$entry is not a symlink — refusing to delete it"
+        return 1
+    fi
+    return 0
 }
 
 # Where an installed plugin's files actually live. Read from installPath rather
 # than globbing the cache: a plugin updated in place leaves its older versions
-# behind, and frontend-design currently has two of them, so a glob would be a
-# coin toss between the installed one and a stale one.
+# behind, so a glob would be a coin toss between the installed one and a stale
+# one.
 resolve_plugin_path() {
     local name="$1" installed matches path
     installed="${CS_ADD_INSTALLED:-$HOME/.claude/plugins/installed_plugins.json}"
@@ -188,99 +251,84 @@ warn_if_already_enabled() {
     log_warn "Linking them adds unnamespaced duplicates. This is only useful in a cs session."
 }
 
-# Link one skill. A name already taken by a real directory is refused rather
-# than replaced: that is a skill the repository itself ships, and clobbering it
-# would look like this tool working right up until the commit.
-add_one() {
-    local src="$1" dir name target
-    dir="$(skills_dir)"
-    name="$(basename "$src")"
-    target="$dir/$name"
-
-    mkdir -p "$dir" || return 1
-
-    if [ -e "$target" ] && [ ! -L "$target" ]; then
-        log_error "$name already exists in the repo and is not a cs-add link — skipping"
-        return 1
-    fi
-    if [ -L "$target" ] && ! is_active "$name"; then
-        log_error "$name is a symlink this tool did not create — skipping"
-        return 1
-    fi
-
-    ln -sfn "$(cd "$src" && pwd)" "$target" || return 1
-    printf '%s\n' "$name"
-}
-
-remove_one() {
-    local name="$1" target
-    target="$(skills_dir)/$name"
-
-    if ! is_active "$name"; then
-        log_error "$name was not activated by cs-add — leaving it alone"
-        return 1
-    fi
-    if [ -L "$target" ]; then
-        rm -f "$target"
-    elif [ -e "$target" ]; then
-        log_error "$name is not a symlink — refusing to delete it"
-        return 1
-    fi
-    return 0
-}
-
 cmd_list() {
-    local names name target
-    names="$(active_names)"
-    if [ -z "$names" ]; then
+    local entries entry target
+    entries="$(active_entries)"
+    if [ -z "$entries" ]; then
         log_info "nothing activated in $(repo_root)"
         return 0
     fi
-    while IFS= read -r name; do
-        [ -n "$name" ] || continue
-        target="$(skills_dir)/$name"
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        target="$(repo_root)/$entry"
         if [ -L "$target" ]; then
-            printf '  %-32s -> %s\n' "$name" "$(readlink "$target")"
+            printf '  %-40s -> %s\n' "$entry" "$(readlink "$target")"
         else
-            printf '  %-32s (recorded but missing)\n' "$name"
+            printf '  %-40s (recorded but missing)\n' "$entry"
         fi
-    done <<< "$names"
+    done <<< "$entries"
+}
+
+# A name is matched against the tail of each entry, so `vue-expert` reaches both
+# .claude/skills/vue-expert and .claude/agents/vue-expert.md without the caller
+# having to know which kind it was.
+entries_matching() {
+    local name="$1" entry
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        case "$entry" in
+            */"$name"|*/"$name".md) printf '%s\n' "$entry" ;;
+        esac
+    done <<< "$(active_entries)"
 }
 
 cmd_remove() {
-    local -a keep=()
-    local failed=0 name existing
+    local -a targets=() keep=()
+    local failed=0 name entry found
+
     for name in "$@"; do
-        remove_one "$name" || failed=1
+        found="$(entries_matching "$name")"
+        if [ -z "$found" ]; then
+            log_error "'$name' was not activated by cs-add — leaving it alone"
+            failed=1
+            continue
+        fi
+        while IFS= read -r entry; do
+            [ -n "$entry" ] && targets+=("$entry")
+        done <<< "$found"
     done
 
-    while IFS= read -r existing; do
-        [ -n "$existing" ] || continue
+    for entry in ${targets[@]+"${targets[@]}"}; do
+        unlink_entry "$entry" || failed=1
+    done
+
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
         local dropped=false
-        for name in "$@"; do
-            [ "$existing" = "$name" ] && dropped=true
+        for name in ${targets[@]+"${targets[@]}"}; do
+            [ "$entry" = "$name" ] && dropped=true
         done
-        [ "$dropped" = false ] && keep+=("$existing")
-    done <<< "$(active_names)"
+        [ "$dropped" = false ] && keep+=("$entry")
+    done <<< "$(active_entries)"
 
     write_exclude ${keep[@]+"${keep[@]}"} || return 1
-    log_info "removed; the session drops them within a turn or two"
+    [ "${#targets[@]}" -gt 0 ] && log_info "removed ${#targets[@]} entr(ies)"
     return "$failed"
 }
 
 cmd_clear() {
-    local name
-    while IFS= read -r name; do
-        [ -n "$name" ] || continue
-        remove_one "$name" >/dev/null 2>&1
-    done <<< "$(active_names)"
+    local entry
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        unlink_entry "$entry" >/dev/null 2>&1
+    done <<< "$(active_entries)"
     write_exclude || return 1
     log_info "cleared"
 }
 
 cmd_add() {
-    local -a added=()
-    local failed=0 src sub name from_plugin=false
+    local -a added_skills=() added_agents=()
+    local failed=0 src sub entry from_plugin=false subs
 
     for src in "$@"; do
         case "$src" in
@@ -292,42 +340,70 @@ cmd_add() {
                 from_plugin=true
                 ;;
         esac
+
+        # A bare agent file, named directly rather than through a bundle.
+        if [ -f "$src" ] && case "$src" in *.md) true ;; *) false ;; esac; then
+            if entry="$(link_entry "$src" agents)"; then
+                added_agents+=("$entry")
+            else
+                failed=1
+            fi
+            continue
+        fi
+
         if [ ! -d "$src" ]; then
             log_error "Not a directory: $src"
             failed=1
             continue
         fi
 
+        local got=false
+
         # Captured first rather than piped straight into the loop: a command
         # substitution feeding `done <<<` discards its exit status, so a source
         # that resolves to nothing would report success having linked nothing.
-        local subs
-        if ! subs="$(skill_sources "$src")"; then
-            failed=1
-            continue
+        if subs="$(skill_sources "$src")"; then
+            got=true
+            while IFS= read -r sub; do
+                [ -n "$sub" ] || continue
+                if entry="$(link_entry "$sub" skills)"; then
+                    added_skills+=("$entry")
+                else
+                    failed=1
+                fi
+            done <<< "$subs"
         fi
 
-        while IFS= read -r sub; do
-            [ -n "$sub" ] || continue
-            if name="$(add_one "$sub")"; then
-                added+=("$name")
-            else
-                failed=1
-            fi
-        done <<< "$subs"
+        if subs="$(agent_sources "$src")"; then
+            got=true
+            while IFS= read -r sub; do
+                [ -n "$sub" ] || continue
+                if entry="$(link_entry "$sub" agents)"; then
+                    added_agents+=("$entry")
+                else
+                    failed=1
+                fi
+            done <<< "$subs"
+        fi
+
+        if [ "$got" = false ]; then
+            log_error "$src is neither a skill (SKILL.md) nor a bundle (skills/ or agents/)"
+            failed=1
+        fi
     done
 
+    local -a added=(${added_skills[@]+"${added_skills[@]}"} ${added_agents[@]+"${added_agents[@]}"})
     if [ "${#added[@]}" -eq 0 ]; then
         return "$failed"
     fi
 
-    # The block is rewritten from the union, so re-adding a skill is a no-op
-    # rather than a duplicate line.
+    # The block is rewritten from the union, so re-adding is a no-op rather than
+    # a duplicate line.
     local -a union=()
     local existing a seen
     while IFS= read -r existing; do
         [ -n "$existing" ] && union+=("$existing")
-    done <<< "$(active_names)"
+    done <<< "$(active_entries)"
     for a in "${added[@]}"; do
         seen=false
         for existing in ${union[@]+"${union[@]}"}; do
@@ -338,9 +414,17 @@ cmd_add() {
 
     write_exclude ${union[@]+"${union[@]}"} || return 1
 
-    log_info "linked ${#added[@]} skill(s): ${added[*]}"
-    log_info "they go live when Claude Code next rescans: a few exchanges, not instantly."
-    log_info "the session's skill listing is what tells you they arrived."
+    if [ "${#added_skills[@]}" -gt 0 ]; then
+        log_info "linked ${#added_skills[@]} skill(s): $(printf '%s\n' "${added_skills[@]}" | xargs -n1 basename | tr '\n' ' ')"
+        log_info "skills go live when Claude Code next rescans: a few exchanges, not instantly."
+    fi
+    if [ "${#added_agents[@]}" -gt 0 ]; then
+        log_info "linked ${#added_agents[@]} agent(s): $(printf '%s\n' "${added_agents[@]}" | xargs -n1 basename | sed 's/\.md$//' | tr '\n' ' ')"
+        # Verified against 2.1.273: a newly linked agent stays unavailable for
+        # the whole session, however long you wait. Saying "soon" here would be
+        # a lie that costs someone a debugging session.
+        log_warn "agents are bound at launch — these need a NEW session, not a rescan."
+    fi
     if [ "$from_plugin" = true ]; then
         log_warn "linked as plain skills: no namespacing, and the plugin's hooks and"
         log_warn "MCP servers stay unloaded. Use 'cs +<name>' for the whole plugin."
