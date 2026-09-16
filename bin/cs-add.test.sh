@@ -65,7 +65,7 @@ out="$("$ADD" "$TMP/bundle" 2>&1)"
 assert_contains "$out" "linked 2 skill(s)" "a bundle links every skill it holds"
 assert_eq "yes" "$(is_link "$SK/alpha")" "alpha is linked"
 assert_eq "yes" "$(is_link "$SK/beta")" "beta is linked"
-assert_contains "$out" "turn or two" "the rescan delay is stated, not assumed"
+assert_contains "$out" "next rescans" "the rescan delay is stated, not assumed"
 
 out="$("$ADD" "$TMP/solo/gamma" 2>&1)"
 assert_contains "$out" "linked 1 skill(s)" "a lone SKILL.md directory links as one skill"
@@ -150,6 +150,18 @@ EOF
 out="$(CS_ADD_INSTALLED="$TMP/installed-multi.json" "$ADD" +both 2>&1)"
 assert_contains "$out" "several scopes" "a plugin installed at several scopes warns"
 assert_eq "no" "$(exists "$SK/stale")" "the warning does not stop it using the first entry"
+
+# Linking a plugin the user already has enabled produces a silent duplicate:
+# the skills are present either way, so nothing visibly changes and the command
+# looks broken. Say so instead.
+echo '{"enabledPlugins":{"demo@market":true}}' > "$TMP/settings-on.json"
+out="$(CS_ADD_SETTINGS="$TMP/settings-on.json" "$ADD" +demo 2>&1)"
+assert_contains "$out" "already has these skills" "an already-enabled plugin warns about duplicates"
+assert_contains "$out" "cs session" "the warning says where it is actually useful"
+
+echo '{"enabledPlugins":{"other@market":true}}' > "$TMP/settings-off.json"
+out="$(CS_ADD_SETTINGS="$TMP/settings-off.json" "$ADD" +demo 2>&1)"
+assert_lacks "$out" "already has these skills" "a plugin that is not enabled does not warn"
 
 echo "removal"
 "$ADD" --remove beta >/dev/null 2>&1

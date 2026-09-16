@@ -166,7 +166,26 @@ resolve_plugin_path() {
         log_error "'$name' resolves to a missing install path: ${path:-<none>}"
         return 1
     fi
+
+    warn_if_already_enabled "$matches"
     printf '%s\n' "$path"
+}
+
+# A plugin enabled in user settings is already loaded in any session started
+# with a plain `claude`, under its namespaced names. Linking it again adds a
+# second, unnamespaced copy of every skill — twice the always-on cost, and no
+# visible change, which reads as the command having done nothing.
+warn_if_already_enabled() {
+    local key="$1" settings enabled
+    settings="${CS_ADD_SETTINGS:-$HOME/.claude/settings.json}"
+    [ -f "$settings" ] || return 0
+
+    enabled="$(jq -r --arg k "$key" '.enabledPlugins[$k] // false' "$settings" 2>/dev/null)"
+    [ "$enabled" = "true" ] || return 0
+
+    log_warn "'$key' is enabled in your user settings."
+    log_warn "A session started with plain 'claude' already has these skills, namespaced."
+    log_warn "Linking them adds unnamespaced duplicates. This is only useful in a cs session."
 }
 
 # Link one skill. A name already taken by a real directory is refused rather
@@ -320,7 +339,8 @@ cmd_add() {
     write_exclude ${union[@]+"${union[@]}"} || return 1
 
     log_info "linked ${#added[@]} skill(s): ${added[*]}"
-    log_info "they go live once Claude Code rescans — a turn or two, not instantly"
+    log_info "they go live when Claude Code next rescans: a few exchanges, not instantly."
+    log_info "the session's skill listing is what tells you they arrived."
     if [ "$from_plugin" = true ]; then
         log_warn "linked as plain skills: no namespacing, and the plugin's hooks and"
         log_warn "MCP servers stay unloaded. Use 'cs +<name>' for the whole plugin."
