@@ -143,7 +143,12 @@ main() {
             --all)     shift; exec claude "$@" ;;
             --)        shift; passthrough=("$@"); break ;;
             +*)        plugin_names+=("${1#+}"); shift ;;
-            -*)        passthrough+=("$1"); shift ;;
+            # Anything else beginning with - is claude's, and so is everything
+            # after it. Taking the flag alone and continuing would strand its
+            # value: `--add-dir ~/repo` would pass the flag through and then
+            # read the path as a bundle, which is a silent wrong answer rather
+            # than an error.
+            -*)        passthrough=("$@"); break ;;
             *)
                 validate_plugin_dir "$1" || return 1
                 # Claude Code resolves --plugin-dir relative to its own cwd;

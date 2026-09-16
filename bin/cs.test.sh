@@ -128,6 +128,16 @@ assert_contains "$out" "$TMP/bundle" "a relative path is made absolute"
 out="$("$CS" --show -- --continue)"
 assert_contains "$out" "--continue" "args after -- reach claude"
 
+# A claude flag that takes a value must carry its value with it; the path must
+# not be read as a bundle.
+out="$("$CS" --show --add-dir "$TMP/bundle")"
+assert_contains "$out" "--add-dir" "an unrecognised flag reaches claude"
+assert_lacks "$out" "--plugin-dir" "its value is not mistaken for a bundle"
+
+out="$("$CS" --show +superpowers "$TMP/bundle" --add-dir /tmp)"
+assert_contains "$out" "--plugin-dir" "bundles before the flag are still bundles"
+assert_contains "$out" "--add-dir" "the flag and its value still reach claude"
+
 out="$("$CS" --show "$TMP/nonexistent" 2>&1)"; rc=$?
 assert_eq "1" "$rc" "a missing directory fails"
 assert_contains "$out" "Not a directory" "a missing directory says so"
