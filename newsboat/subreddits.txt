@@ -17,14 +17,9 @@
 # care about never appears, the fix is to remove whatever is drowning it —
 # manga and manhwa are the loudest here by a wide margin.
 #
-# reddit.com is no longer blocked at the proxy. It was, for every process
-# except newsboat, until reddittui went in: that exception matches on process
-# name and grants the domain to exactly one binary, so a second client meant
-# unblocking the domain outright. `o` opens posts in a browser now.
-#
-# That does not change what this file is for. This list is still the curated
-# weekly digest; reddittui is for going somewhere specific on purpose. If a
-# community is worth reading regularly it belongs here, not in a bookmark.
+# This list is the curated weekly digest. newsboat's `o` key opens a post in
+# the browser, but if a community is worth reading regularly it belongs here,
+# not in a bookmark.
 #
 # Edit, then run: newsboat-urls
 

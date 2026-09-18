@@ -207,12 +207,10 @@ reader and stays refused everywhere else — including when newsboat's `o` key
 tries to hand a link to the browser. That failure is the feature.
 
 `reader-domains.txt` is currently empty, so the renderer drops those rules
-altogether. Reddit was its only entry and came off when reddittui went in: one
-process name cannot cover both a feed reader and a TUI client, so the choice
-was to keep the block and give up the client, or unblock and move the limiting
-to the browser. Note the shape of that trade before adding an entry — this
-mechanism buys a strict block at the cost of exactly one program being able to
-reach the site.
+altogether and the mechanism is inert — it re-engages the moment a domain goes
+back in. Note the shape of the trade before adding an entry: this mechanism
+buys a strict block at the cost of exactly one program being able to reach the
+site.
 
 **To block a domain:** add its apex to `proxy/block-domains.txt`, then
 `proxyctl reload`. Both lists use the same apex-plus-subdomains matching, so

@@ -182,14 +182,6 @@ if [ -f "$DOTFILES_DIR/newsboat/config" ]; then
     create_symlink "$DOTFILES_DIR/newsboat/config" "$HOME/.config/newsboat/config"
 fi
 
-# Reddittui configuration
-# Only the toml is linked. reddittui writes its cache to ~/.cache/reddittui and
-# its log to ~/.local/state, so nothing else in this directory is machine-local.
-if [ -f "$DOTFILES_DIR/reddittui/reddittui.toml" ]; then
-    create_symlink "$DOTFILES_DIR/reddittui/reddittui.toml" \
-        "$HOME/.config/reddittui/reddittui.toml"
-fi
-
 # mrglass configuration
 # Only config.yaml is linked. Its sibling secrets.env holds the Jira
 # credentials and is seeded separately below, never symlinked — this file is
@@ -406,22 +398,6 @@ setup_tmux_plugins() {
 
 if [ "${TMUX_SETUP:-1}" != "0" ] && command -v tmux >/dev/null 2>&1; then
     setup_tmux_plugins || log_warn "tmux plugin setup failed — run tmux and press prefix+I"
-fi
-
-
-# Install reddittui from its checksum-verified release binary. Guarded the same
-# way: a network failure here must not abort the remaining setup. Set
-# REDDITTUI_SETUP=0 to skip.
-if [ "${REDDITTUI_SETUP:-1}" != "0" ] && [ -x "$DOTFILES_DIR/reddittui-setup.sh" ]; then
-    "$DOTFILES_DIR/reddittui-setup.sh" install || log_warn "reddittui setup failed"
-fi
-
-# Start the self-hosted Redlib that reddittui reads reddit through. Guarded the
-# same way, and it fails loudly but harmlessly on a machine with no Docker
-# running — reddittui is simply unusable until it is up. Set REDLIB_SETUP=0 to
-# skip.
-if [ "${REDLIB_SETUP:-1}" != "0" ] && [ -x "$DOTFILES_DIR/redlib-setup.sh" ]; then
-    "$DOTFILES_DIR/redlib-setup.sh" up || log_warn "redlib setup failed"
 fi
 
 # Install repy from its tagged source; it is not on crates.io. Only its config
