@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Remove worktrees whose MR has been merged.
+#
+#   clean-worktrees        clean ~/projects/worktrees/<repo>/<name>
+#   clean-worktrees -n     dry run, print what would go
+#
+# "Merged" is asked of GitLab, not git: MRs are squash-merged, so the branch is
+# never an ancestor of master and `git branch --merged` would miss every one.
+#
+# A worktree is removed only when ALL of these hold, and its local branch goes
+# with it:
+#   - the latest MR for its branch is merged
+#   - it has no uncommitted or untracked changes (ignored files don't count)
+#   - HEAD is the commit the MR merged, an ancestor of it, or on a remote —
+#     so no local-only commit is lost
+# Anything else is reported and left alone: open or closed MRs, no MR, detached
+# HEADs, worktrees on the default branch, and directories git doesn't know.
+# Stale worktree entries whose directory is already gone are pruned.
+set -euo pipefail
+
+WORKTREES_DIR="${WORKTREES_DIR:-$HOME/projects/worktrees}"
+
+dry=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -n|--dry-run) dry=1 ;;
+    -h|--help) sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "clean-worktrees: unknown option $1" >&2; exit 1 ;;
+  esac
+  shift
+done
+
+[ -d "$WORKTREES_DIR" ] || { echo "clean-worktrees: no $WORKTREES_DIR" >&2; exit 1; }
+
+removed=0 kept=0 failed=0
+repos=""
+keep() { echo "  keep    $1 — $2"; kept=$((kept + 1)); }
+
+for wt in "$WORKTREES_DIR"/*/*/; do
+  [ -d "$wt" ] || continue
+  wt="${wt%/}"; name="${wt#"$WORKTREES_DIR"/}"
+
+  if [ ! -e "$wt/.git" ] || ! main=$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+    keep "$name" "not a git worktree"; continue
+  fi
+  main="${main%/.git}"
+  case $'\n'"$repos"$'\n' in *$'\n'"$main"$'\n'*) ;; *) repos="$repos${repos:+$'\n'}$main" ;; esac
+
+  branch=$(git -C "$wt" branch --show-current)
+  [ -n "$branch" ] || { keep "$name" "detached HEAD"; continue; }
+  default=$(git -C "$wt" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/master)
+  [ "$branch" != "${default#origin/}" ] || { keep "$name" "on $branch"; continue; }
+
+  project=$(git -C "$wt" remote get-url origin | sed -E 's#^(https?://[^/]+/|git@[^:]+:)##; s#\.git$##')
+  mr=$(glab api "projects/$(jq -rn --arg p "$project" '$p | @uri')/merge_requests?source_branch=$(jq -rn --arg b "$branch" '$b | @uri')&state=all" 2>/dev/null \
+    | jq -c 'sort_by(.updated_at) | last // empty') || { keep "$name" "GitLab lookup failed"; failed=$((failed + 1)); continue; }
+  [ -n "$mr" ] || { keep "$name" "no MR for $branch"; continue; }
+  state=$(jq -r .state <<<"$mr"); ref="!$(jq -r .iid <<<"$mr")"
+  [ "$state" = merged ] || { keep "$name" "$ref is $state"; continue; }
+
+  [ -z "$(git -C "$wt" status --porcelain)" ] || { keep "$name" "$ref merged, but has uncommitted changes"; continue; }
+
+  head=$(git -C "$wt" rev-parse HEAD); merged_sha=$(jq -r .sha <<<"$mr")
+  if [ "$head" != "$merged_sha" ] \
+    && ! git -C "$wt" merge-base --is-ancestor "$head" "$merged_sha" 2>/dev/null \
+    && [ -n "$(git -C "$wt" rev-list -1 HEAD --not --remotes)" ]; then
+    keep "$name" "$ref merged, but has commits made after it that exist nowhere else"; continue
+  fi
+
+  if [ "$dry" -eq 1 ]; then
+    echo "  would   remove $name ($ref merged, branch $branch)"; removed=$((removed + 1)); continue
+  fi
+  if git -C "$main" worktree remove "$wt" && git -C "$main" branch -D -q "$branch"; then
+    echo "  removed $name ($ref merged, branch $branch)"; removed=$((removed + 1))
+  else
+    failed=$((failed + 1))
+  fi
+done
+
+if [ "$dry" -eq 0 ]; then
+  while IFS= read -r main; do
+    [ -n "$main" ] && git -C "$main" worktree prune
+  done <<<"$repos"
+  find "$WORKTREES_DIR" -mindepth 1 -maxdepth 1 -type d -empty -delete
+fi
+
+echo "$removed removed, $kept kept, $failed failed$([ "$dry" -eq 1 ] && echo ' (dry run)')"
+[ "$failed" -eq 0 ]

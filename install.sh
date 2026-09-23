@@ -327,6 +327,11 @@ if [ -f "$DOTFILES_DIR/claude/CLAUDE.md" ]; then
     create_symlink "$DOTFILES_DIR/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
 fi
 
+# Commands are the exception to the rule above: global, but typed only. Each
+# declares `disable-model-invocation: true`, which keeps its description out of
+# the system prompt — the body loads only when invoked as /name.
+link_dir_contents "$DOTFILES_DIR/claude/commands" "$HOME/.claude/commands"
+
 
 # macdict backs repy's "Define Word"; reaches the macOS dictionaries via ctypes,
 # so it needs no venv or third-party package.
@@ -350,6 +355,16 @@ fi
 # ecfx-daily-commits lists today's commits across all ecfx-* repos.
 if [ -f "$DOTFILES_DIR/bin/ecfx-daily-commits" ]; then
     create_symlink "$DOTFILES_DIR/bin/ecfx-daily-commits" "$HOME/.local/bin/ecfx-daily-commits"
+fi
+
+# sync-tickets moves my Jira tickets to match my MRs; driven by /sync-tickets.
+if [ -f "$DOTFILES_DIR/bin/sync-tickets" ]; then
+    create_symlink "$DOTFILES_DIR/bin/sync-tickets" "$HOME/.local/bin/sync-tickets"
+fi
+
+# clean-worktrees removes merged worktrees; driven by /clean-worktrees.
+if [ -f "$DOTFILES_DIR/bin/clean-worktrees" ]; then
+    create_symlink "$DOTFILES_DIR/bin/clean-worktrees" "$HOME/.local/bin/clean-worktrees"
 fi
 
 # tmux-prune closes idle tmux windows; bound to prefix+X in tmux/.tmux.conf.

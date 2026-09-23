@@ -120,6 +120,20 @@ assert_contains "$out3" "survived rc=0" "does not abort the install"
 [ -e "$SANDBOX/should-not-exist" ] && fail "creates nothing when template missing" "file created" \
     || pass "creates nothing when template missing"
 
+# --- global commands must stay out of the context window ------------------
+echo "claude commands"
+for cmd in "$TEST_DIR"/claude/commands/*.md; do
+    [ -e "$cmd" ] || continue
+    name="$(basename "$cmd")"
+    if sed -n '1,/^---$/{/^---$/!p;}' <(tail -n +2 "$cmd") | grep -qx 'disable-model-invocation: true'; then
+        pass "$name is invoke-only"
+    else
+        fail "$name is invoke-only" "missing disable-model-invocation: true in frontmatter"
+    fi
+    [ -L "$SANDBOX/.claude/commands/$name" ] && pass "$name linked into ~/.claude/commands" \
+        || fail "$name linked into ~/.claude/commands" "no symlink in sandbox"
+done
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
