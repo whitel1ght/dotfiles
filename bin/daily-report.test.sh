@@ -50,6 +50,18 @@ head -1 "$SANDBOX/2026-01-06.md" | grep -q '^# ' && pass "creates the entry with
 grep -qx '## habits' "$SANDBOX/2026-01-06.md" && pass "fills it from template.md" || fail "fills it from template.md" "no template"
 assert_eq "- fresh" "$(block 2026-01-06)" "writes the block into it"
 
+echo "daily-report save --plan"
+save_plan() { printf '%s\n' "$2" | "$SCRIPT" save "$1" --plan >/dev/null; }
+plan() { sed -n '/start-day:start/,/start-day:end/p' "$SANDBOX/$1.md" | sed '1d;$d'; }
+save_plan 2026-01-05 "- [ ] plan one"
+assert_eq "- [ ] plan one" "$(plan 2026-01-05)" "writes the plan block"
+first=$(awk '/^### ECFX/{getline; while ($0 == "") getline; print; exit}' "$SANDBOX/2026-01-05.md")
+assert_eq "<!-- start-day:start -->" "$first" "puts the plan first in ### ECFX"
+save_plan 2026-01-05 "- [ ] plan two"
+assert_eq "- [ ] plan two" "$(plan 2026-01-05)" "a re-run replaces the plan"
+assert_eq "- second" "$(block 2026-01-05)" "leaves the report block alone"
+grep -qxF -- '- [X] my own line' "$SANDBOX/2026-01-05.md" && pass "keeps my own lines beside the plan" || fail "keeps my own lines beside the plan" "lost"
+
 echo "daily-report — input checks"
 printf '' | "$SCRIPT" save 2026-01-07 >/dev/null 2>&1 && fail "refuses an empty report" "exit 0" || pass "refuses an empty report"
 "$SCRIPT" collect 26-1-1 >/dev/null 2>&1 && fail "rejects a malformed date" "exit 0" || pass "rejects a malformed date"

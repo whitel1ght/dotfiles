@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# Gather what changed since the last working day, for /start-day's plan.
+#
+#   start-day collect [--since ISO]   print a compact digest
+#   start-day save                    read the plan on stdin into today's diary
+#
+# "Overnight" means since the last saved plan, so Monday covers Friday evening;
+# before the first plan, since yesterday morning. collect notes the time it
+# started and save makes that the next run's starting point, so an aborted
+# run never skips anything.
+#
+# collect reads, each best-effort (a failing source prints a note, the rest run):
+#   carry-over    the ### ECFX section of the last diary entry before today:
+#                 unticked items, the plan, and the day's report
+#   my MRs        comments from others, approvals and pipeline state on my open
+#                 MRs active since then (idle ones in one line), and which merged
+#   review queue  MRs waiting on me, from mr-review-queue's triage script
+#   jira          tickets newly assigned to me, my tickets others touched, and
+#                 my To-Do backlog
+# Slack and the calendar come through claude.ai connectors, which the command
+# reads itself; there's no script access to either.
+set -euo pipefail
+
+JIRA_BASE="${JIRA_BASE:-https://ecfxdev.atlassian.net}"
+DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
+STATE_DIR="${START_DAY_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/start-day}"
+HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
+
+iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+epoch_of() { date -j -u -f %Y-%m-%dT%H:%M:%SZ "$1" +%s 2>/dev/null || date -u -d "$1" +%s; }
+section() { printf '\n## %s\n\n' "$1"; }
+
+collect_carryover() {
+  section "Carry-over from the last diary entry"
+  local today last
+  today=$(date +%F)
+  last=$(ls "$DIARY_DIR" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$' | sed 's/\.md$//' \
+    | awk -v t="$today" '$0 < t' | tail -1)
+  [ -n "$last" ] || { echo "(no earlier diary entry)"; return; }
+  echo "From $last:"; echo
+  awk '/^### ECFX/ { on = 1; next } on && /^#{1,3} / { exit } on' "$DIARY_DIR/$last.md" | grep -v '^<!--' | grep . \
+    || echo "(empty)"
+}
+
+collect_my_mrs() {
+  section "My open MRs"
+  local me mrs
+  me=$(glab api user | jq -r .username) || { echo "(GitLab unavailable)"; return; }
+  mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { echo "(GitLab unavailable)"; return; }
+  [ "$(jq length <<<"$mrs")" -gt 0 ] || echo "(none)"
+  # Detail only for MRs touched since then; long-idle ones get one line, since
+  # they have nothing new to act on and each costs two API calls.
+  jq -r --arg since "$SINCE" '[.[] | select(.updated_at <= $since) | .references.full]
+    | select(length > 0) | "- idle since then: \(join(", "))"' <<<"$mrs"
+  jq -r --arg since "$SINCE" '.[] | select(.updated_at > $since) | [.project_id, .iid, .references.full, .title, .draft] | @tsv' <<<"$mrs" \
+  | while IFS=$'\t' read -r pid iid ref title draft; do
+      local detail notes
+      detail=$(glab api "projects/$pid/merge_requests/$iid" 2>/dev/null || echo '{}')
+      notes=$(glab api "projects/$pid/merge_requests/$iid/notes?sort=desc&order_by=created_at&per_page=50" 2>/dev/null || echo '[]')
+      printf -- '- %s %s%s — pipeline %s, %s\n' "$ref" "$title" "$([ "$draft" = true ] && echo ' [draft]')" \
+        "$(jq -r '.head_pipeline.status // "none"' <<<"$detail")" \
+        "$(jq -r '.merge_status // "unknown"' <<<"$detail")"
+      # "awaiting my reply" when I haven't commented on the MR since the note. A
+      # plain MR comment can't be resolved, so resolvability alone would hide a
+      # whole first review posted as one comment.
+      jq -r --arg since "$SINCE" --arg me "$me" '
+        ([.[] | select(.author.username == $me and (.system | not)) | .created_at] | max // "") as $mine
+        | map(select(.created_at > $since and .author.username != $me))
+        | (map(select(.system and (.body | test("approved this merge request")))) | map("    approved by @\(.author.username)")[]),
+          (map(select(.system | not)) | reverse | .[]
+            | "    @\(.author.username) (\(if .created_at > $mine then "awaiting my reply" else "I replied since" end)\(if .resolvable and (.resolved | not) then ", unresolved thread" else "" end)): \(.body | gsub("\\s+"; " ") | .[0:220])")' <<<"$notes"
+    done
+  echo
+  echo "Merged since then:"
+  glab api "merge_requests?scope=created_by_me&state=merged&updated_after=$SINCE&per_page=100" 2>/dev/null \
+    | jq -r '.[] | "- \(.references.full) \(.title)"' | grep . || echo "(none)"
+}
+
+collect_review_queue() {
+  section "Review queue (MRs waiting on me)"
+  local triage
+  triage=$(ls ~/.claude/plugins/cache/*/shared/*/skills/mr-review-queue/scripts/triage.py 2>/dev/null | sort -V | tail -1)
+  [ -n "$triage" ] || { echo "(mr-review-queue not installed)"; return; }
+  python3 "$triage" 2>/dev/null | jq -r '
+    .buckets | to_entries[] | select(.value | length > 0) | .key as $b
+    | if ($b == "already_approved" or $b == "draft") then "- \($b): \(.value | length) (\(.value | map(.ref) | join(", ")))"
+      else (.value[] | "- [\($b)] \(.ref) \(.title) — @\(.author)\(if .context then ": \(.context)" else "" end)") end' \
+    || echo "(triage failed)"
+}
+
+collect_jira() {
+  section "Jira"
+  [ -n "${JIRA_EMAIL:-}" ] && [ -n "${JIRA_API_TOKEN:-}" ] || { echo "(JIRA_EMAIL/JIRA_API_TOKEN unset)"; return; }
+  local since_jql
+  since_jql=$(date -r "$(epoch_of "$SINCE")" '+%Y/%m/%d %H:%M' 2>/dev/null || date -d "$SINCE" '+%Y/%m/%d %H:%M')
+  jql() {
+    curl -sf -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -G "$JIRA_BASE/rest/api/3/search/jql" \
+      --data-urlencode "jql=$1" --data-urlencode fields=status,summary,issuetype,priority --data-urlencode maxResults=15 \
+      | jq -r '.issues[] | "- \(.key) [\(.fields.status.name), \(.fields.priority.name // "-")] \(.fields.issuetype.name): \(.fields.summary)"'
+  }
+  echo "Newly assigned to me:"
+  jql "assignee = currentUser() AND assignee CHANGED TO currentUser() AFTER \"$since_jql\"" | grep . || echo "(none)"
+  echo; echo "My tickets someone else changed:"
+  jql "assignee = currentUser() AND updated >= \"$since_jql\" AND NOT status CHANGED BY currentUser() AFTER \"$since_jql\" AND statusCategory != Done" \
+    | grep . || echo "(none)"
+  echo; echo "My To-Do backlog (by priority):"
+  jql "assignee = currentUser() AND status = \"To-Do\" ORDER BY priority DESC, updated DESC" | grep . \
+    || echo "(none, or Jira unavailable — token may have expired)"
+}
+
+case "${1:-}" in
+  collect)
+    shift
+    now=$(date +%s)
+    if [ "${1:-}" = --since ] && [ -n "${2:-}" ]; then SINCE="$2"
+    elif [ -s "$STATE_DIR/last-run" ]; then SINCE=$(cat "$STATE_DIR/last-run")
+    else SINCE=$(iso $((now - 86400 - 10#$(date +%H) * 3600 - 10#$(date +%M) * 60 - 10#$(date +%S) + 8 * 3600))); fi
+    mkdir -p "$STATE_DIR"; iso "$now" > "$STATE_DIR/pending"
+    printf '# Since %s (%s local)\n' "$SINCE" "$(date -r "$(epoch_of "$SINCE")" '+%a %H:%M' 2>/dev/null || echo ?)"
+    collect_carryover; collect_my_mrs; collect_review_queue; collect_jira ;;
+  save)
+    "$HERE/daily-report" save "$(date +%F)" --plan
+    if [ -s "$STATE_DIR/pending" ]; then mv "$STATE_DIR/pending" "$STATE_DIR/last-run"; fi ;;
+  -h|--help|"") sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
+  *) echo "start-day: unknown command $1" >&2; exit 1 ;;
+esac

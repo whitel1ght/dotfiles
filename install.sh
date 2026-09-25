@@ -372,6 +372,11 @@ if [ -f "$DOTFILES_DIR/bin/daily-report" ]; then
     create_symlink "$DOTFILES_DIR/bin/daily-report" "$HOME/.local/bin/daily-report"
 fi
 
+# start-day gathers overnight activity for /start-day and files the plan in the diary.
+if [ -f "$DOTFILES_DIR/bin/start-day" ]; then
+    create_symlink "$DOTFILES_DIR/bin/start-day" "$HOME/.local/bin/start-day"
+fi
+
 # dev switches the dashboard dev server between worktrees (tmux window dev:dashboard).
 if [ -f "$DOTFILES_DIR/bin/dev" ]; then
     create_symlink "$DOTFILES_DIR/bin/dev" "$HOME/.local/bin/dev"
