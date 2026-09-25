@@ -227,6 +227,32 @@ tool for it.
 IP. If it shows your ISP, unmatched traffic is going direct, which is correct
 unless you've flipped the hatch.
 
+## iPhone (Happ)
+
+The phone runs [Happ](https://www.happ.su) with the same proxy split: only
+`proxy-domains.txt` goes through the VPS, and everything else goes direct. The phone
+blocks nothing: `block-domains.txt` and `reader-domains.txt` are Mac-only.
+`render-happ.py` builds Happ's routing profile from that same list, so there is one
+list to edit for both devices.
+
+| Step | Command |
+|---|---|
+| First time only: add the VPS to Happ | `proxyctl happ server`, scan, open in Happ |
+| Install or update the routing profile | `proxyctl happ`, scan, open in Happ |
+
+Each command opens a QR code in Preview (made with `qrencode`; the image is
+deleted two minutes later) that the iPhone camera opens as a `vless://` or
+`happ://routing/onadd/...` link. The code is too big for a terminal window;
+`--terminal` prints it there anyway. After editing the domain list, run
+`proxyctl reload` for the Mac and `proxyctl happ` again for the phone.
+
+Two more things differ from the Mac:
+
+- Domains are written `domain:<apex>`, Xray's apex-plus-subdomains match; a bare
+  entry would be a substring match.
+- The server QR carries the VPS credentials. Show it only to the phone, and don't
+  screenshot it.
+
 ## First run on a new machine
 
 ```bash

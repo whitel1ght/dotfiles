@@ -5,6 +5,12 @@
 # block-domains.txt (rejected) or reader-domains.txt (blocked except for the
 # feed reader), then `proxyctl reload`.
 # Secrets live in ~/.config/sing-box/secrets.env and never enter git.
+#
+# The iPhone runs Happ with the same proxy list and blocks nothing. `proxyctl
+# happ` shows its routing profile as a QR code to scan with the camera, rendered
+# from proxy-domains.txt, so re-run it after editing that list. `proxyctl happ server` shows the VPS itself, for
+# a first-time setup; that QR carries the credentials, so show it only to the phone.
+# The QR opens as an image in Preview; add --terminal to print it in the shell.
 set -euo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/projects/dotfiles}"
@@ -79,8 +85,31 @@ case "${1:-status}" in
       echo "daemon        : stopped"
     fi
     ;;
+  happ)
+    if [ "${2:-}" = server ]; then
+      [ -f "$SECRETS" ] || die "missing $SECRETS (copy proxy/secrets.env.example)"
+      link="$("$PROXY_DIR/render-happ.py" server "$SECRETS")"
+      what="the VPS server (contains credentials; don't share or screenshot it)"
+    else
+      link="$("$PROXY_DIR/render-happ.py" routing "$PROXY_DIR/proxy-domains.txt")"
+      what="the routing profile (only the proxy-domains.txt list goes through the VPS)"
+    fi
+    command -v qrencode >/dev/null || { echo "$link"; die "qrencode not installed (brew install qrencode); send the link above to the phone instead"; }
+    if [ "${3:-${2:-}}" = --terminal ]; then
+      qrencode -t ansiutf8 -m 2 "$link"
+    else
+      # The link runs to ~1.4 KB, so the code is ~120 modules a side: too big for
+      # a terminal, sharp as an image. The file holds the link, credentials
+      # included for `server`, so it is private and removed shortly after.
+      png="$(mktemp -t happ-qr)"
+      qrencode -t PNG -o "$png" -s 8 -m 4 "$link"
+      open -a Preview "$png"
+      (sleep 120; rm -f "$png") >/dev/null 2>&1 &
+    fi
+    echo "Scan with the iPhone camera, open in Happ: $what."
+    ;;
   *)
-    echo "usage: proxyctl {on|off|status|reload|logs|all|direct}" >&2
+    echo "usage: proxyctl {on|off|status|reload|logs|all|direct|happ [server] [--terminal]}" >&2
     exit 1
     ;;
 esac

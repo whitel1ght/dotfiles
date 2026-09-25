@@ -119,6 +119,8 @@ brew "itstool"
 brew "jpeg"
 # Lightweight and flexible command-line JSON processor
 brew "jq"
+# QR code encoder; `proxyctl happ` shows the iPhone setup as a scannable code
+brew "qrencode"
 # Simple terminal UI for git commands
 brew "lazygit"
 # Next-gen compiler infrastructure

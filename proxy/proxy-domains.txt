@@ -24,7 +24,23 @@ generativelanguage.googleapis.com
 gemini.google.com
 aistudio.google.com
 ai.google.dev
+# Gemini app backends and assets (from v2fly domain-list-community's
+# google-deepmind list): the iOS app talks to these, not just gemini.google.com
+robinfrontend-pa.googleapis.com
+proactivebackend-pa.googleapis.com
+geller-pa.googleapis.com
+gemini.google
+gemini.gstatic.com
+
+# --- NotebookLM (now "Gemini Notebook") ----------------------------------
+# notebooklm.google.com permanently redirects to notebook.google.com; the app
+# still calls the old names and its own API backends
 notebook.google.com
+notebook.google
+notebooklm.google.com
+notebooklm.google
+notebooklm-pa.googleapis.com
+notebooklm.googleapis.com
 
 # --- opencode -------------------------------------------------------------
 # opencode's default provider is OpenCode Zen, not the google key in its
