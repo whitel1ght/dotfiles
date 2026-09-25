@@ -188,6 +188,15 @@ command -v vivid >/dev/null 2>&1 && export LS_COLORS="$(vivid generate tokyonigh
 zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
 
 # Per-context previews. $realpath is the candidate as a path, $word as text.
+# bin/dev: Tab offers its subcommands and the dashboard worktrees, by branch,
+# instead of the files in the current directory.
+_dev() {
+  local -a items
+  items=("${(@f)$(dev --complete 2>/dev/null)}")
+  _describe 'dev' items
+}
+compdef _dev dev
+
 zstyle ':fzf-tab:complete:cd:*' fzf-preview 'eza -1 --icons --color=always $realpath'
 zstyle ':fzf-tab:complete:__zoxide_z:*' fzf-preview 'eza -1 --icons --color=always $realpath'
 zstyle ':fzf-tab:complete:(nvim|vim|vi|bat|cat|less):*' fzf-preview 'bat -n --color=always $realpath'

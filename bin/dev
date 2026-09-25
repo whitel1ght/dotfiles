@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# Serve one dashboard worktree on the dev port, switching from whichever is up.
+#
+#   dev              pick a worktree with fzf
+#   dev <query>      the worktree whose branch or path matches (fzf if several)
+#   dev .            the worktree you're in
+#   dev status       which worktree is being served
+#   dev stop         stop the dev server
+#   dev attach       jump to its tmux window
+#
+# zsh completes subcommands and worktree branches (see _dev in zsh/.zshrc).
+#
+# Only one dashboard can hold the port: login lives on
+# https://testfirm1.myecfxlocal.com:4000. So switching means stopping the server
+# wherever it runs — our tmux window or any other pane — then starting the new
+# worktree in one fixed place: the "dashboard dev" window of the tmux session
+# "servers", beside the backend's windows. Both are created if missing.
+#
+# A fresh worktree lacks what git ignores, so the switch fills it in first:
+#   certs/          copied from the main checkout (a symlink would show up as
+#                   untracked, since .gitignore matches /certs/ as a directory)
+#   submodules      initialised when missing (src/protobufs)
+#   node_modules    `npm ci` when missing or older than package-lock.json
+# and the pane runs `nvm use`, so the worktree's .nvmrc picks the Node version.
+# src/protobufs-ts is left to dev.sh, which builds it when it's missing.
+set -euo pipefail
+
+REPO="${DEV_REPO:-$HOME/projects/ecfx-dashboard}"
+PORT="${DEV_PORT:-4000}"
+URL="${DEV_URL:-https://testfirm1.myecfxlocal.com:$PORT}"
+SESSION="${DEV_SESSION:-servers}"
+WINDOW="${DEV_WINDOW:-dashboard dev}"
+MATCH="${DEV_MATCH:-vite}"          # what a process on the port must be for us to stop it
+WAIT="${DEV_WAIT:-120}"
+
+die() { echo "dev: $*" >&2; exit 1; }
+
+listener() { lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | head -1; }
+cwd_of() { lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'; }
+branch_of() { git -C "$1" branch --show-current 2>/dev/null || true; }
+
+# Worktrees of the repo that live under ~/projects: skips review scratch copies in /tmp.
+worktrees() {
+  git -C "$REPO" worktree list --porcelain | awk -v home="$HOME/projects/" '
+    /^worktree / { path = substr($0, 10); branch = "(detached)" }
+    /^branch /   { branch = substr($0, 8); sub("^refs/heads/", "", branch) }
+    /^prunable/  { path = "" }
+    /^$/         { if (index(path, home) == 1) print branch "\t" path; path = "" }
+    END          { if (index(path, home) == 1) print branch "\t" path }'
+}
+
+pick() {
+  local query="${1:-}" list matches
+  list=$(worktrees)
+  if [ "$query" = . ]; then
+    local top; top=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a worktree"
+    awk -F'\t' -v p="$top" '$2 == p { print $2 }' <<<"$list" | grep . || die "$top is not a worktree of $REPO"
+    return
+  fi
+  if [ -n "$query" ]; then
+    matches=$(grep -i -- "$query" <<<"$list" || true)
+    [ -n "$matches" ] || die "no worktree matches '$query'"
+    if [ "$(wc -l <<<"$matches")" -eq 1 ]; then cut -f2 <<<"$matches"; return; fi
+  fi
+  command -v fzf >/dev/null || die "several worktrees match; install fzf or narrow the query"
+  column -t -s $'\t' <<<"${matches:-$list}" \
+    | fzf --height 40% --reverse --prompt "serve> " --query "$query" \
+    | awk '{ print $NF }'
+}
+
+stop() {
+  local pid cmd
+  pid=$(listener) || true
+  [ -n "$pid" ] || return 0
+  cmd=$(ps -o command= -p "$pid" || true)
+  case "$cmd" in
+    *"$MATCH"*) ;;
+    *) die "port $PORT is held by something else (pid $pid: $cmd) — not stopping it" ;;
+  esac
+  echo "stopping $(cwd_of "$pid") ($(branch_of "$(cwd_of "$pid")"))"
+  kill "$pid" 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -n "$(listener)" ] || return 0
+    sleep 0.5
+  done
+  kill -9 "$pid" 2>/dev/null || true
+}
+
+prepare() {
+  local dir="$1"
+  if [ ! -e "$dir/certs" ] && [ -d "$REPO/certs" ] && [ "$dir" != "$REPO" ]; then
+    cp -R "$REPO/certs" "$dir/certs" && echo "copied certs/ from $REPO"
+  fi
+  if git -C "$dir" submodule status 2>/dev/null | grep -q '^-'; then
+    echo "initialising submodules"
+    git -C "$dir" submodule update --init --quiet
+  fi
+}
+
+serve() {
+  local dir="$1" run
+  prepare "$dir"
+  # nvm loads only in interactive shells, and a tmux pane command isn't one, so the
+  # pane loads it itself and picks the worktree's .nvmrc: each branch gets the Node
+  # it pins. npm ci runs in the pane, not here: it can take a minute and its output
+  # belongs next to the server's. The shell stays open afterwards so a crash stays
+  # readable.
+  run='nvm_sh="${HOMEBREW_PREFIX:-/opt/homebrew}/opt/nvm/nvm.sh"; if [ -s "$nvm_sh" ]; then . "$nvm_sh"; nvm use --silent 2>/dev/null || nvm use --silent default 2>/dev/null || nvm use --silent node; fi; if [ ! -d node_modules ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then npm ci; fi && npm run dev; echo; echo "[dev server exited]"; exec "${SHELL:-zsh}" -l'
+  if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
+    tmux new-session -d -s "$SESSION" -n "$WINDOW" -c "$dir" "$run"
+  elif ! tmux list-windows -t "=$SESSION" -F '#W' | grep -qx "$WINDOW"; then
+    tmux new-window -d -t "=$SESSION:" -n "$WINDOW" -c "$dir" "$run"
+  else
+    tmux respawn-pane -k -t "=$SESSION:$WINDOW" -c "$dir" "$run"
+  fi
+
+  printf 'serving %s (%s) in tmux %s:%s ' "$dir" "$(branch_of "$dir")" "$SESSION" "$WINDOW"
+  local waited=0
+  until [ -n "$(listener)" ]; do
+    [ "$waited" -lt "$WAIT" ] || { echo; echo "not up after ${WAIT}s — check it with: dev attach"; exit 1; }
+    sleep 1; waited=$((waited + 1)); printf .
+  done
+  echo; echo "up: $URL"
+}
+
+status() {
+  local pid dir
+  pid=$(listener) || true
+  [ -n "$pid" ] || { echo "nothing on port $PORT"; return; }
+  dir=$(cwd_of "$pid")
+  echo "port $PORT: $dir ($(branch_of "$dir")), pid $pid"
+  echo "$URL"
+}
+
+attach() {
+  tmux has-session -t "=$SESSION" 2>/dev/null || die "no tmux session '$SESSION'"
+  if [ -n "${TMUX:-}" ]; then tmux switch-client -t "=$SESSION:$WINDOW"
+  else tmux attach -t "=$SESSION:$WINDOW"; fi
+}
+
+[ -d "$REPO" ] || die "no repo at $REPO"
+case "${1:-}" in
+  -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' ;;
+  status) status ;;
+  stop) stop ;;
+  --complete)
+    # For zsh completion: "value:description" pairs.
+    printf '%s\n' 'status:which worktree is being served' 'stop:stop the dev server' \
+      'attach:jump to the dev server window' '.:the worktree you are in'
+    worktrees | awk -F'\t' '{ print $1 ":" $2 }' ;;
+  attach) attach ;;
+  *)
+    dir=$(pick "${1:-}")
+    [ -n "$dir" ] || exit 1
+    stop
+    serve "$dir" ;;
+esac

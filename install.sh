@@ -372,6 +372,11 @@ if [ -f "$DOTFILES_DIR/bin/daily-report" ]; then
     create_symlink "$DOTFILES_DIR/bin/daily-report" "$HOME/.local/bin/daily-report"
 fi
 
+# dev switches the dashboard dev server between worktrees (tmux window dev:dashboard).
+if [ -f "$DOTFILES_DIR/bin/dev" ]; then
+    create_symlink "$DOTFILES_DIR/bin/dev" "$HOME/.local/bin/dev"
+fi
+
 # tmux-prune closes idle tmux windows; bound to prefix+X in tmux/.tmux.conf.
 if [ -f "$DOTFILES_DIR/bin/tmux-prune" ]; then
     create_symlink "$DOTFILES_DIR/bin/tmux-prune" "$HOME/.local/bin/tmux-prune"
