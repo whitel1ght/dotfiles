@@ -367,6 +367,11 @@ if [ -f "$DOTFILES_DIR/bin/clean-worktrees" ]; then
     create_symlink "$DOTFILES_DIR/bin/clean-worktrees" "$HOME/.local/bin/clean-worktrees"
 fi
 
+# daily-report gathers the day's work for /daily-report and files it in the diary.
+if [ -f "$DOTFILES_DIR/bin/daily-report" ]; then
+    create_symlink "$DOTFILES_DIR/bin/daily-report" "$HOME/.local/bin/daily-report"
+fi
+
 # tmux-prune closes idle tmux windows; bound to prefix+X in tmux/.tmux.conf.
 if [ -f "$DOTFILES_DIR/bin/tmux-prune" ]; then
     create_symlink "$DOTFILES_DIR/bin/tmux-prune" "$HOME/.local/bin/tmux-prune"

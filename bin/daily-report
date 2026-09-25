@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# Gather a day's work for /daily-report, and file the written report in the diary.
+#
+#   daily-report collect [DATE]   print a compact digest of the day's work
+#   daily-report save [DATE]      read a report on stdin into that day's diary
+#
+# DATE is YYYY-MM-DD or "yesterday"; default today.
+#
+# collect reads four sources, each best-effort — one failing prints a note and
+# the rest still run:
+#   commits   ecfx-daily-commits for the day
+#   gitlab    my activity feed: MRs opened/merged/approved and comments, grouped
+#             by MR and marked mine or a review of someone else's. Pushes and
+#             branch deletions are left out; the commits already cover them.
+#   jira      tickets whose status I changed that day
+#   claude    each Claude session active that day: project, title, my prompts
+#             (built-in commands dropped), and its last few substantial replies —
+#             work that leaves no commit behind
+#
+# save puts the report between markers under "### ECFX" in ~/wiki/diary/DATE.md,
+# replacing the block a previous run wrote, so re-running updates rather than
+# duplicates. Lines outside the markers are never touched. A missing diary file
+# is created the way nvim's vimwiki autocmd does: the date, then template.md.
+set -euo pipefail
+
+JIRA_BASE="${JIRA_BASE:-https://ecfxdev.atlassian.net}"
+DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
+CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
+BUILTINS="usage|context|exit|model|clear|compact|cost|help|config|status|resume|rewind|login|logout|doctor|memory|permissions|hooks|agents|mcp|plugin|ide|theme|vim|fast|effort|tasks|rename|export|init|bug|feedback"
+HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
+
+cmd="${1:-}"; shift || true
+case "${1:-}" in
+  "") day=$(date +%F) ;;
+  yesterday) day=$(date -v-1d +%F 2>/dev/null || date -d yesterday +%F) ;;
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) day="$1" ;;
+  *) echo "daily-report: DATE must be YYYY-MM-DD or yesterday" >&2; exit 1 ;;
+esac
+
+epoch() { date -j -f '%Y-%m-%d %H:%M:%S' "$1 00:00:00" +%s 2>/dev/null || date -d "$1" +%s; }
+shift_day() { date -j -v"$2"d -f %F "$1" +%F 2>/dev/null || date -d "$1 $2 day" +%F; }
+next=$(shift_day "$day" +1)
+prev=$(shift_day "$day" -1)
+
+section() { printf '\n## %s\n\n' "$1"; }
+
+collect_commits() {
+  section "Commits"
+  "$HERE/ecfx-daily-commits" "$day 00:00" "$next 00:00" | sed 's/^\(ecfx-[^ ]*\)$/### \1/' || echo "(commits unavailable)"
+}
+
+collect_gitlab() {
+  section "GitLab activity"
+  local user me username events
+  user=$(glab api user) || { echo "(GitLab unavailable)"; return; }
+  me=$(jq -r .id <<<"$user"); username=$(jq -r .username <<<"$user")
+  # after/before are exclusive dates in UTC; widen by a day, then keep only
+  # events whose local date is the one asked for.
+  events=$(glab api --paginate "users/$me/events?after=$prev&before=$next&per_page=100" | jq -s --arg d "$day" '
+    add // [] | map(select((.created_at | sub("\\.[0-9]+"; "") | fromdateiso8601 | strflocaltime("%Y-%m-%d")) == $d))
+    | map(select(.action_name | test("^(pushed|deleted)") | not))') || { echo "(GitLab unavailable)"; return; }
+  [ "$(jq length <<<"$events")" -gt 0 ] || { echo "(none)"; return; }
+
+  # One line per MR: what I did to it, and whose it is.
+  jq -r '
+    map(. + {iid: (if .target_type == "MergeRequest" then .target_iid else .note.noteable_iid end)})
+    | map(select(.iid != null)) | group_by([.project_id, .iid])[]
+    | [.[0].project_id, .[0].iid, (map(.action_name) | group_by(.) | map("\(.[0]) ×\(length)") | join(", "))] | @tsv' <<<"$events" \
+  | while IFS=$'\t' read -r pid iid actions; do
+      glab api "projects/$pid/merge_requests/$iid" 2>/dev/null | jq -r --arg a "$actions" --arg me "$username" '
+        "- \(.references.full) \(.title) [\(.state)\(if .draft then ", draft" else "" end)] — \($a)\(if .author.username == $me then " (my MR)" else " (review for @\(.author.username))" end)"' \
+        || echo "- project $pid !$iid — $actions"
+    done
+  jq -r 'map(select(.target_type != "MergeRequest" and .note.noteable_type != "MergeRequest"))[]
+    | "- \(.action_name) \(.target_type // "") \(.target_title // "")"' <<<"$events"
+}
+
+collect_jira() {
+  section "Jira status changes"
+  [ -n "${JIRA_EMAIL:-}" ] && [ -n "${JIRA_API_TOKEN:-}" ] || { echo "(JIRA_EMAIL/JIRA_API_TOKEN unset)"; return; }
+  curl -sf -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -G "$JIRA_BASE/rest/api/3/search/jql" \
+    --data-urlencode "jql=status CHANGED BY currentUser() DURING (\"$day\", \"$next\")" \
+    --data-urlencode fields=status,summary,issuetype \
+    | jq -r '.issues[] | "- \(.key) → \(.fields.status.name) (\(.fields.issuetype.name)): \(.fields.summary)"' \
+    | grep . || echo "(none, or Jira unavailable — token may have expired)"
+}
+
+collect_claude() {
+  section "Claude sessions"
+  local from to
+  from=$(( $(epoch "$day") * 1000 )); to=$(( $(epoch "$next") * 1000 ))
+  [ -f "$CLAUDE_DIR/history.jsonl" ] || { echo "(no history)"; return; }
+  # Built-in commands (/usage, /context, ...) are how I drive Claude, not work.
+  jq -c --argjson f "$from" --argjson t "$to" --arg builtin "$BUILTINS" '
+    select(.timestamp >= $f and .timestamp < $t)
+    | select(.display | test("^/(\($builtin))(\\s|$)") | not)' "$CLAUDE_DIR/history.jsonl" \
+  | jq -rs 'group_by(.sessionId) | sort_by(.[0].timestamp)[]
+      | [.[0].sessionId, (.[0].project | sub(".*/"; "")), (.[0].timestamp / 1000 | strflocaltime("%H:%M")),
+         (map(.display | gsub("\\s+"; " ") | .[0:220]) | tojson)] | @tsv' \
+  | while IFS=$'\t' read -r sid project started prompts; do
+      local transcript title last
+      transcript=$(find "$CLAUDE_DIR/projects" -maxdepth 2 -name "$sid.jsonl" 2>/dev/null | head -1)
+      title="" last=""
+      if [ -n "$transcript" ]; then
+        title=$(jq -r 'select(.type == "custom-title" or .type == "ai-title") | .customTitle // .aiTitle' "$transcript" 2>/dev/null | tail -1)
+        # The last few substantial replies: the final one is often just a
+        # closing question, while the ones before it say what was done.
+        last=$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text
+            | gsub("\\s+"; " ") | select(length > 80) | .[0:350]' "$transcript" 2>/dev/null | tail -3)
+      fi
+      printf '### %s — %s (from %s)\n\n' "$project" "${title:-untitled}" "$started"
+      jq -r '.[] | "- asked: \(.)"' <<<"$prompts"
+      [ -z "$last" ] || sed 's/^/- replied: /' <<<"$last"
+      echo
+    done
+}
+
+save() {
+  local file="$DIARY_DIR/$day.md" block
+  block=$(cat)
+  [ -n "$block" ] || { echo "daily-report: nothing on stdin" >&2; exit 1; }
+  mkdir -p "$DIARY_DIR"
+  if [ ! -f "$file" ]; then
+    { printf '# %s\n\n' "$(date)"; cat "$DIARY_DIR/template.md" 2>/dev/null || printf '## Work\n\n### ECFX\n'; } > "$file"
+  fi
+  BLOCK="$block" python3 - "$file" <<'PY'
+import os, re, sys
+path = sys.argv[1]
+text = open(path).read()
+start, end = "<!-- daily-report:start -->", "<!-- daily-report:end -->"
+block = f"{start}\n{os.environ['BLOCK'].strip()}\n{end}"
+if start in text and end in text:
+    text = re.sub(re.escape(start) + r".*?" + re.escape(end), lambda _: block, text, flags=re.S)
+else:
+    m = re.search(r"^### ECFX[ \t]*\n", text, flags=re.M)
+    if not m:
+        if not re.search(r"^## Work[ \t]*$", text, flags=re.M):
+            text = text.rstrip("\n") + "\n\n## Work\n"
+        text = text.rstrip("\n") + "\n\n### ECFX\n"
+        m = re.search(r"^### ECFX[ \t]*\n", text, flags=re.M)
+    # End of the ECFX section: the next heading of level 1-3, or end of file.
+    nxt = re.search(r"^#{1,3} ", text[m.end():], flags=re.M)
+    cut = m.end() + (nxt.start() if nxt else len(text) - m.end())
+    body = text[m.end():cut].rstrip("\n")
+    text = text[:m.end()] + (body + "\n\n" if body.strip() else "\n") + block + "\n" + ("\n" + text[cut:] if nxt else "")
+open(path, "w").write(text)
+PY
+  echo "$file"
+}
+
+case "$cmd" in
+  collect)
+    printf '# Work digest for %s\n' "$day"
+    collect_commits; collect_gitlab; collect_jira; collect_claude ;;
+  save) save ;;
+  -h|--help|"") sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; [ -n "$cmd" ] ;;
+  *) echo "daily-report: unknown command $cmd" >&2; exit 1 ;;
+esac
