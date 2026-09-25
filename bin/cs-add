@@ -19,7 +19,10 @@
 # written to .git/info/exclude — local to the clone, never committed — so an
 # activated skill cannot turn into an accidental commit. That exclude block is
 # the only record kept: --remove and --clear act on it, which is what keeps this
-# from ever deleting something the repository actually owns.
+# from ever deleting something the repository actually owns. A symlink another
+# tool left at a name being added is adopted into that record when it already
+# points at the same source — the disk does not change, only who will clean it
+# up; a link pointing anywhere else is refused.
 #
 # An installed plugin can be named with +, because a plugin's skills are kept
 # on disk as ordinary directories and can be linked like any other. What that
@@ -146,31 +149,60 @@ agent_sources() {
     return 1
 }
 
+# Whether two paths name the same thing. Textual equality settles most of it;
+# the physical comparison is there because a symlinked parent directory lets one
+# location be spelled two ways, and that would otherwise read as a conflict. It
+# only answers for directories — cd cannot enter a file — so a pair of
+# differently-spelled file paths falls through to "not the same", which costs a
+# refusal rather than a wrong overwrite.
+same_target() {
+    local a="$1" b="$2" pa pb
+    [ "$a" = "$b" ] && return 0
+    pa="$(cd -P "$a" 2>/dev/null && pwd -P)" || return 1
+    pb="$(cd -P "$b" 2>/dev/null && pwd -P)" || return 1
+    [ -n "$pa" ] && [ "$pa" = "$pb" ]
+}
+
 # Link one skill directory or agent file. A name already taken by something
 # real is refused rather than replaced: that is something the repository itself
 # ships, and clobbering it would look like this tool working right up until the
 # commit.
 link_entry() {
-    local src="$1" kind="$2" name entry target abs
+    local src="$1" kind="$2" name entry target abs existing
     name="$(basename "$src")"
     entry=".claude/$kind/$name"
     target="$(repo_root)/$entry"
 
     mkdir -p "$(dirname "$target")" || return 1
 
-    if [ -e "$target" ] && [ ! -L "$target" ]; then
-        log_error "$name already exists in the repo and is not a cs-add link — skipping"
-        return 1
-    fi
-    if [ -L "$target" ] && ! is_active "$entry"; then
-        log_error "$name is a symlink this tool did not create — skipping"
-        return 1
-    fi
-
     if [ -d "$src" ]; then
         abs="$(cd "$src" && pwd)"
     else
         abs="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
+    fi
+
+    if [ -e "$target" ] && [ ! -L "$target" ]; then
+        log_error "$name already exists in the repo and is not a cs-add link — skipping"
+        return 1
+    fi
+    # A link another tool made is adopted when it already points exactly where
+    # this one would aim it. The refusal exists to protect things the repository
+    # owns, and a symlink to the very source being added is not that: the disk
+    # ends up identical either way, so refusing would only leave the skill
+    # unusable over a bookkeeping difference. Pointing somewhere else is a real
+    # conflict and still refused, naming the target so the clash is visible.
+    #
+    # The cost is that the entry now joins this tool's record, so --remove and
+    # --clear will unlink it and leave whatever installed it believing it is
+    # still there. Say that at adoption rather than let it surface later.
+    if [ -L "$target" ] && ! is_active "$entry"; then
+        existing="$(readlink "$target")"
+        if ! same_target "$existing" "$abs"; then
+            log_error "$name is a symlink to $existing, not $abs — skipping"
+            return 1
+        fi
+        log_warn "$name was already linked here by something else; adopting it."
+        log_warn "--remove and --clear will now unlink it."
     fi
 
     ln -sfn "$abs" "$target" || return 1

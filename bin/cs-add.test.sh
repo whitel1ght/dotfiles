@@ -134,6 +134,37 @@ out="$("$ADD" --remove committed-skill 2>&1)"; rc=$?
 assert_eq "1" "$rc" "removing a skill cs-add did not create is refused"
 assert_eq "yes" "$(exists "$SK/committed-skill")" "that skill survives the attempt"
 
+echo "adoption"
+# Another installer got there first. Its link is indistinguishable from the one
+# cs-add would write, so refusing over the missing bookkeeping entry would leave
+# the skill unusable for no gain.
+make_skill "$TMP/preexisting/adopted"
+ln -sfn "$TMP/preexisting/adopted" "$SK/adopted"
+out="$("$ADD" "$TMP/preexisting/adopted" 2>&1)"; rc=$?
+assert_eq "0" "$rc" "a link already pointing at the source is adopted, not refused"
+assert_contains "$out" "adopting it" "the adoption is announced"
+assert_contains "$out" "--clear will now unlink it" "the new ownership is stated"
+assert_contains "$(cat "$EX")" "/.claude/skills/adopted" "the adopted link joins the record"
+assert_eq "$TMP/preexisting/adopted" "$(readlink "$SK/adopted")" "the adopted link still points where it did"
+
+# A name that is taken by a link to something else is a genuine clash, and stays
+# a refusal — adoption is only ever a no-op on disk.
+make_skill "$TMP/preexisting/clashing"
+make_skill "$TMP/elsewhere/clashing"
+ln -sfn "$TMP/elsewhere/clashing" "$SK/clashing"
+out="$("$ADD" "$TMP/preexisting/clashing" 2>&1)"; rc=$?
+assert_eq "1" "$rc" "a link pointing somewhere else is still refused"
+assert_contains "$out" "$TMP/elsewhere/clashing" "the refusal names what it actually points at"
+assert_eq "$TMP/elsewhere/clashing" "$(readlink "$SK/clashing")" "the foreign link is left alone"
+assert_lacks "$(cat "$EX")" "/.claude/skills/clashing" "the refused name is not recorded"
+
+# Spelling the same directory through a symlinked parent is the same directory.
+ln -sfn "$TMP/preexisting" "$TMP/preexisting-alias"
+make_skill "$TMP/preexisting/aliased"
+ln -sfn "$TMP/preexisting-alias/aliased" "$SK/aliased"
+out="$("$ADD" "$TMP/preexisting/aliased" 2>&1)"; rc=$?
+assert_eq "0" "$rc" "a link spelled through a symlinked parent is adopted"
+
 echo "plugins"
 # Two cached versions, only one of them installed: reading installPath must beat
 # globbing the cache, which would be a coin toss between them.
