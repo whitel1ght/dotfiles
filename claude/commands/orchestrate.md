@@ -22,7 +22,8 @@ piece, write the briefs, check what comes back, settle conflicts, talk to the us
 **Not you:** editing project files. That includes small fixes. A one-line change still
 goes to a subagent, because once you start writing code you stop orchestrating and your
 context fills with detail. The only files you write are the progress log and brief files
-in the scratchpad directory.
+in the scratchpad directory, and on the heavy route the spec and plans. Those are
+decisions, not code.
 
 **Reading and running:** reading a specific file range to check a claim, `git diff`,
 `git status` and running tests or linters are cheap and yours to do. Broad exploration
@@ -62,6 +63,21 @@ whole context into yours. Put shared context (the plan, conventions, the interfa
 between pieces) in one file in the scratchpad and point every brief at it, instead of
 pasting it into each one.
 
+## Choose the route
+
+After step 1 below, decide which route the task needs, and tell the user which one and why
+in one line.
+
+- **Heavy route**: the task spans two or more repos, changes a contract between services
+  (protobufs, an API, a queue message), or splits into more than about five pieces. Use
+  the superpowers skills, as described in "Heavy route" below. Their extra structure pays
+  for itself here: a spec both sides build against, plans a fresh subagent can execute
+  without your context, and a progress ledger in each repo.
+- **Lean route**: everything else. Follow the flow below. On a small task the superpowers
+  structure costs more than it saves.
+
+If the superpowers skills aren't installed, use the lean route and say so.
+
 ## Flow
 
 1. **Understand.** Send one or two cheap readers (`haiku`/Explore, in parallel) to map the
@@ -88,6 +104,49 @@ pasting it into each one.
 Stop and ask the user mid-run only for decisions that are theirs: product behaviour,
 scope changes, anything destructive or outward-facing like pushing, posting or
 transitioning tickets. Decide technical questions yourself and note them in the log.
+
+## Heavy route
+
+You still orchestrate. The skills give the work a structure, and you keep the view across
+repos that no single skill has.
+
+**Where the documents go:** the spec and every plan live in
+`~/projects/worktrees/.plans/<ticket-or-feature>/`, not in the repos. By default the skills
+save them to `docs/superpowers/` and commit them, which would put them in every MR. Tell
+each skill this path, and never commit these files. One spec serves all the repos.
+
+1. **Understand.** Same as the lean route: cheap readers map each repo involved.
+2. **Design.** Use `superpowers:brainstorming` to reach a written spec the user approves.
+   Save it as `spec.md` in the documents folder. For multi-repo work the spec must pin
+   down the contract between repos: message and field names, types, versions, and which
+   repo releases first. Every plan builds against that contract, so it is the most
+   important decision in the task.
+3. **Plans.** Use `superpowers:writing-plans` to write one plan per repo, saved as
+   `plan-<repo>.md` in the documents folder, each naming the spec. The execution method is
+   already decided (subagent-driven), so don't ask the user to pick one. Give the user
+   all the plans together, with the order you'll run them in and why, and wait for their
+   approval. That and the spec approval are the two planned pauses.
+4. **Workspaces.** Use `superpowers:using-git-worktrees`, but create each worktree at
+   `~/projects/worktrees/<repo>/<ticket-or-feature>`, branching from the repo's default
+   branch. That's where the user keeps worktrees, and `/clean-worktrees` removes them
+   there once the MRs merge.
+5. **Execute.** Run `superpowers:subagent-driven-development` on each repo's plan in
+   dependency order. The repo that defines the contract goes first, then the repos that
+   consume it (for example protobufs, then backend, then dashboard). Run them one after
+   another: the skill runs its plan in this session. Its own model-selection guidance
+   agrees with yours, and it must still pass an explicit `model` on every dispatch.
+6. **Check across repos.** After each repo finishes, check its result against the spec's
+   contract before starting the next one. For example: the consumer is pinned to the
+   producer's new version, and field names match on both sides. This check is yours: no
+   per-repo review can see both sides.
+7. **Finish.** Use `superpowers:verification-before-completion` for each repo, then
+   `superpowers:finishing-a-development-branch`. It asks the user before pushing or
+   opening MRs, which is right: those actions are outward-facing.
+
+Your progress log is the map across repos. Record the spec path, each plan's path and
+status, and the path to each repo's ledger (under `.superpowers/sdd/` in that repo's
+worktree; it's git-ignored). After
+compaction, rebuild state from your log and those ledgers, not from memory.
 
 ## Progress log
 
