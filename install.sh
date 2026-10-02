@@ -365,6 +365,25 @@ fi
 # the system prompt — the body loads only when invoked as /name.
 link_dir_contents "$DOTFILES_DIR/claude/commands" "$HOME/.claude/commands"
 
+# wt keeps worktrees in ~/projects/worktrees/<repo>/<name>. These hooks send
+# Claude Code's own worktrees (claude -w, subagent isolation) there too, instead
+# of <repo>/.claude/worktrees. settings.json isn't linked, since Claude Code
+# rewrites it; only the two hook keys are merged in.
+if [ -f "$DOTFILES_DIR/bin/wt" ]; then
+    create_symlink "$DOTFILES_DIR/bin/wt" "$HOME/.local/bin/wt"
+    settings="$HOME/.claude/settings.json"
+    [ -f "$settings" ] || echo '{}' > "$settings"
+    tmp="$(mktemp)"
+    if jq --arg wt "$HOME/.local/bin/wt" '
+        .hooks.WorktreeCreate = [{hooks: [{type: "command", command: "\($wt) hook-create"}]}]
+        | .hooks.WorktreeRemove = [{hooks: [{type: "command", command: "\($wt) hook-remove"}]}]' \
+        "$settings" > "$tmp"; then
+        mv "$tmp" "$settings"
+    else
+        rm -f "$tmp"; log_warn "Could not add the worktree hooks to $settings"
+    fi
+fi
+
 
 # macdict backs repy's "Define Word"; reaches the macOS dictionaries via ctypes,
 # so it needs no venv or third-party package.

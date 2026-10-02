@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# Keep every git worktree in one place: ~/projects/worktrees/<repo>/<name>.
+#
+#   wt add <repo> <name> [branch]   create one; the branch is checked out if it
+#                                   exists locally or on origin, else created
+#                                   from origin's default branch (default: name)
+#   wt move <worktree> [name]       move an existing worktree into the layout
+#   wt ls                           every worktree of every repo in ~/projects,
+#                                   out-of-place ones marked
+#   wt hook-create | hook-remove    Claude Code's WorktreeCreate/WorktreeRemove
+#                                   hooks: JSON on stdin, see install.sh
+#
+# Clones live at ~/projects/<repo>. clean-worktrees, dev, /orchestrate and
+# /watch-mrs all look for worktrees here. The hooks send Claude Code's own
+# worktrees here too (claude -w, subagent isolation, background sessions),
+# instead of <repo>/.claude/worktrees. A hook-made worktree gets the branch
+# named like it if that exists, else Claude's usual worktree-<name>; removal
+# refuses a worktree with uncommitted changes, and drops its branch only when
+# every commit on it is also on a remote.
+#
+# move works where `git worktree move` refuses: worktrees with submodules. It
+# renames the directory, repairs git's links both ways, re-points each
+# submodule's gitdir and core.worktree at absolute paths, and renames the
+# Claude Code session history for the old path so `claude --resume` still finds
+# it. It refuses a locked worktree (a running Claude session holds the lock).
+set -euo pipefail
+
+PROJECTS_DIR="${PROJECTS_DIR:-$HOME/projects}"
+WORKTREES_DIR="${WORKTREES_DIR:-$PROJECTS_DIR/worktrees}"
+CLAUDE_PROJECTS="${CLAUDE_PROJECTS:-$HOME/.claude/projects}"
+
+die() { echo "wt: $*" >&2; exit 1; }
+claude_key() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g'; }
+
+add() {
+  add_at "$PROJECTS_DIR/$1" "$2" "${3:-$2}"
+}
+
+add_at() { # clone name branch
+  local clone="$1" name="$2" branch="$3"
+  local dest="$WORKTREES_DIR/$(basename "$clone")/$name"
+  [ -d "$clone/.git" ] || die "no clone at $clone"
+  [ ! -e "$dest" ] || die "$dest already exists"
+  git -C "$clone" fetch -q origin
+  mkdir -p "$(dirname "$dest")"
+  if git -C "$clone" show-ref -q --verify "refs/heads/$branch" \
+    || git -C "$clone" show-ref -q --verify "refs/remotes/origin/$branch"; then
+    git -C "$clone" worktree add -q "$dest" "$branch"
+  else
+    local base
+    base=$(git -C "$clone" symbolic-ref -q --short refs/remotes/origin/HEAD || echo origin/master)
+    git -C "$clone" worktree add -q --no-track -b "$branch" "$dest" "$base"
+  fi
+  [ ! -f "$dest/.gitmodules" ] || git -C "$dest" submodule update -q --init --recursive
+  echo "$dest"
+}
+
+move() {
+  local src dest main
+  src=$(cd "${1:?usage: wt move <worktree> [name]}" && pwd -P)
+  [ -f "$src/.git" ] || die "$src is not a linked worktree"
+  main=$(git -C "$src" rev-parse --path-format=absolute --git-common-dir); main="${main%/.git}"
+  local repo name
+  repo=$(basename "$main")
+  name="${2:-$(git -C "$src" branch --show-current | sed -nE 's#^([^/]*/)?([A-Za-z]+-[0-9]+).*#\2#p' | tr a-z A-Z)}"
+  [ -n "$name" ] || die "can't derive a name from the branch; pass one"
+  dest="$WORKTREES_DIR/$repo/$name"
+  [ "$src" != "$dest" ] || { echo "already in place: $dest"; return; }
+  [ ! -e "$dest" ] || die "$dest already exists"
+  local admin
+  admin=$(sed 's/^gitdir: //' "$src/.git")
+  [ ! -f "$admin/locked" ] || die "$src is locked: $(cat "$admin/locked")"
+
+  mkdir -p "$(dirname "$dest")"
+  mv "$src" "$dest"
+  git -C "$main" worktree repair "$dest" >/dev/null 2>&1
+  local sub
+  if [ -d "$admin/modules" ]; then
+    while read -r sub; do
+      [ -f "$dest/$sub/.git" ] && [ -d "$admin/modules/$sub" ] || continue
+      printf 'gitdir: %s\n' "$admin/modules/$sub" > "$dest/$sub/.git"
+      git config --file "$admin/modules/$sub/config" core.worktree "$dest/$sub"
+    done < <(git -C "$dest" config --file .gitmodules --get-regexp '\.path$' | awk '{print $2}')
+  fi
+  git -C "$dest" status --porcelain >/dev/null || die "moved to $dest, but git status fails there"
+  git -C "$dest" submodule foreach -q --recursive 'git status --porcelain >/dev/null' \
+    || die "moved to $dest, but a submodule is broken"
+
+  local old new
+  old="$CLAUDE_PROJECTS/$(claude_key "$src")"; new="$CLAUDE_PROJECTS/$(claude_key "$dest")"
+  if [ -d "$old" ] && [ ! -e "$new" ]; then mv "$old" "$new"; fi
+  echo "moved $src -> $dest"
+}
+
+main_of() {
+  local d
+  d=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir) || return 1
+  echo "${d%/.git}"
+}
+
+hook_create() {
+  local input name cwd main branch
+  input=$(cat)
+  name=$(jq -r .name <<<"$input"); cwd=$(jq -r .cwd <<<"$input")
+  main=$(main_of "$cwd") || die "$cwd is not in a git repo"
+  local dest="$WORKTREES_DIR/$(basename "$main")/$name"
+  if [ -f "$dest/.git" ] && [ "$(main_of "$dest")" = "$main" ]; then echo "$dest"; return; fi
+  branch="worktree-$name"
+  git -C "$main" show-ref -q --verify "refs/heads/$name" && branch="$name"
+  add_at "$main" "$name" "$branch" >&2
+  echo "$dest"
+}
+
+hook_remove() {
+  local path main branch
+  path=$(jq -r .worktree_path)
+  [ -d "$path" ] || return 0
+  main=$(main_of "$path") || die "$path is not a git worktree"
+  branch=$(git -C "$path" branch --show-current)
+  # --force because git refuses any worktree with submodules; the check above it
+  # is what keeps uncommitted work (submodule changes show in status too).
+  [ -z "$(git -C "$path" status --porcelain)" ] || die "kept $path: it has uncommitted changes"
+  git -C "$main" worktree remove --force "$path"
+  if [ -n "$branch" ] && [ -z "$(git -C "$main" rev-list -1 "$branch" --not --remotes)" ]; then
+    git -C "$main" branch -q -D "$branch"
+  fi
+}
+
+ls_all() {
+  local clone
+  for clone in "$PROJECTS_DIR"/*/; do
+    clone="${clone%/}"
+    [ -d "$clone/.git" ] || continue
+    git -C "$clone" worktree list --porcelain | awk -v root="$WORKTREES_DIR/$(basename "$clone")/" -v repo="$(basename "$clone")" '
+      /^worktree / { w = substr($0, 10); n++; b = "(detached)"; lock = ""; next }
+      /^branch / { b = substr($0, 19) }
+      /^locked/ { lock = " [locked]" }
+      /^$/ && n > 1 { printf "%s  %-60s %s%s\n", (index(w, root) == 1 ? "  " : "!!"), w, b, lock }'
+  done
+}
+
+case "${1:-}" in
+  add) shift; [ $# -ge 2 ] || die "usage: wt add <repo> <name> [branch]"; add "$@" ;;
+  move) shift; move "$@" ;;
+  ls) ls_all ;;
+  hook-create) hook_create ;;
+  hook-remove) hook_remove ;;
+  -h|--help|"") sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
+  *) die "unknown command $1" ;;
+esac

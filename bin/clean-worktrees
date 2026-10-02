@@ -70,7 +70,8 @@ for wt in "$WORKTREES_DIR"/*/*/; do
   if [ "$dry" -eq 1 ]; then
     echo "  would   remove $name ($ref merged, branch $branch)"; removed=$((removed + 1)); continue
   fi
-  if git -C "$main" worktree remove "$wt" && git -C "$main" branch -D -q "$branch"; then
+  # --force only because git refuses worktrees with submodules; it's clean (checked above).
+  if git -C "$main" worktree remove --force "$wt" && git -C "$main" branch -D -q "$branch"; then
     echo "  removed $name ($ref merged, branch $branch)"; removed=$((removed + 1))
   else
     failed=$((failed + 1))
