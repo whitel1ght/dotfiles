@@ -5,7 +5,8 @@
     "npm:@ollama/pi-web-search",
     "npm:pi-claude-bridge",
     "npm:billion-context",
-    "git:github.com/obra/superpowers"
+    "git:github.com/obra/superpowers",
+    "npm:pi-web-access"
   ],
   "theme": "dark",
   "lastChangelogVersion": "1.0.0",
