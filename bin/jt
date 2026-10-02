@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# Search Jira tickets with fzf and preview them, on top of jira-cli.
+#
+#   jt                  my open ECFX tickets, recently updated first
+#   jt <text>           ECFX tickets whose text matches, in any status
+#   jt ECFX-123 | 123   show that ticket
+#   jt -q '<jql>'       any JQL, within the project
+#   jt -m               current sprint: everything assigned to me (alias jmine)
+#   jt -u               current Omni sprint: unassigned and To-Do (alias jtodo)
+#
+# In the picker: enter opens the ticket in the browser (or prints its key when
+# the output is piped), ctrl-o opens it without leaving, ctrl-y copies the key,
+# ctrl-w makes a worktree for it with `wt add` and prints the path. ctrl-d/ctrl-u
+# scroll the preview half a page, shift-up/down a line.
+#
+# ctrl-w uses the repo you're in, else asks which clone in ~/projects. The
+# branch is one that already has the key in its name (local or origin), else a
+# new <user>/<KEY>_<summary-slug>, as the rest of my branches are named.
+#
+# Needs JIRA_EMAIL and JIRA_API_TOKEN (~/.config/mrglass/secrets.env), fzf, and
+# jira-cli for the preview (`jira init` against ecfxdev.atlassian.net).
+set -euo pipefail
+
+JIRA_BASE="${JIRA_BASE:-https://ecfxdev.atlassian.net}"
+JIRA_PROJECT="${JIRA_PROJECT:-ECFX}"
+PROJECTS_DIR="${PROJECTS_DIR:-$HOME/projects}"
+BRANCH_PREFIX="${JT_BRANCH_PREFIX:-$(id -un)/}"
+TEAM_FILTER="${JT_TEAM_FILTER:-OmniEngineersFilter}"
+MAX_ROWS="${JT_MAX_ROWS:-1000}"
+
+die() { echo "jt: $*" >&2; exit 1; }
+
+preview_cmd='jira issue view {1} --plain --comments 5 2>&1 | sed "s/[[:space:]]*$//"'
+
+# The list comes from Jira's search API directly: jira-cli 1.7.0 ignores the
+# page offset on it and returns the first 100 rows for every page.
+search() {
+  local jql="$1" order="ORDER BY updated DESC" token="" count=0 body resp status
+  if [[ "$jql" =~ ^(.*[^[:alnum:]_])?([Oo][Rr][Dd][Ee][Rr][[:space:]]+[Bb][Yy][[:space:]].*)$ ]]; then
+    jql="${BASH_REMATCH[1]}"; order="${BASH_REMATCH[2]}"
+    jql="${jql%"${jql##*[![:space:]]}"}"
+  fi
+  jql="project = $JIRA_PROJECT${jql:+ AND ($jql)} $order"
+  while [ "$count" -lt "$MAX_ROWS" ]; do
+    body="$(jq -nc --arg jql "$jql" --arg t "$token" \
+      '{jql: $jql, fields: ["status", "summary"], maxResults: 100} + (if $t == "" then {} else {nextPageToken: $t} end)')"
+    resp="$(curl -sS -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H 'Content-Type: application/json' \
+      -w '\n%{http_code}' -X POST "$JIRA_BASE/rest/api/3/search/jql" -d "$body")" || return 1
+    status="${resp##*$'\n'}"; resp="${resp%$'\n'*}"
+    if [ "$status" != 200 ]; then
+      jq -r '(.errorMessages // []) + ((.errors // {}) | [.[]]) | join("; ")' <<<"$resp" >&2 2>/dev/null \
+        || echo "HTTP $status" >&2
+      return 1
+    fi
+    jq -r '.issues[] | "\(.key)\t\(.fields.status.name)\t\(.fields.summary | gsub("\t"; " "))"' <<<"$resp" \
+      | awk -F '\t' '{ printf "%s\t%-13s\t%s\n", $1, $2, $3 }'
+    count=$((count + $(jq '.issues | length' <<<"$resp")))
+    token="$(jq -r '.nextPageToken // empty' <<<"$resp")"
+    [ -n "$token" ] || break
+  done
+}
+
+slug() {
+  tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | cut -d- -f1-5 | sed 's/^-*//; s/-*$//'
+}
+
+pick_repo() {
+  local top
+  if top="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+    basename "$(dirname "$top")"
+    return
+  fi
+  fd -H -d 2 -t d '^\.git$' "$PROJECTS_DIR" --exclude worktrees 2>/dev/null \
+    | xargs -n1 dirname | xargs -n1 basename | sort \
+    | fzf --prompt 'repo> ' --height 40% || die "no repo picked"
+}
+
+worktree() {
+  local key="$1" summary="$2" repo clone branch
+  repo="$(pick_repo)"
+  clone="$PROJECTS_DIR/$repo"
+  [ -d "$clone" ] || die "no clone at $clone"
+  git -C "$clone" fetch -q origin 2>/dev/null || true
+  branch="$(git -C "$clone" for-each-ref --format='%(refname:lstrip=2)' refs/heads refs/remotes/origin \
+    | sed 's#^origin/##' | rg "(^|/)$key(_|$)" | sort -u | head -1 || true)"
+  [ -n "$branch" ] || branch="$BRANCH_PREFIX${key}_$(printf '%s' "$summary" | slug)"
+  wt add "$repo" "$key" "$branch"
+}
+
+query=""
+case "${1:-}" in
+  -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -q) [ -n "${2:-}" ] || die "-q needs a JQL query"; query="$2" ;;
+  -m) query="sprint in openSprints() AND assignee = currentUser() ORDER BY status, updated DESC" ;;
+  -u) query="filter = $TEAM_FILTER AND sprint in openSprints() AND assignee is EMPTY AND status = \"To-Do\" ORDER BY Rank" ;;
+  "") query="assignee = currentUser() AND statusCategory != Done" ;;
+  *)
+    if [[ "$*" =~ ^[0-9]+$ ]]; then set -- "$JIRA_PROJECT-$*"; fi
+    if [[ "$*" =~ ^[A-Za-z]+-[0-9]+$ ]]; then
+      exec jira issue view "$(printf '%s' "$*" | tr '[:lower:]' '[:upper:]')" --comments 10
+    fi
+    text="$*"; text="${text//\\/\\\\}"; text="${text//\"/\\\"}"
+    query="text ~ \"$text\""
+    ;;
+esac
+
+rows="$(search "$query")" || die "jira search failed"
+[ -n "$rows" ] || { echo "jt: nothing found" >&2; exit 1; }
+
+out="$(printf '%s\n' "$rows" | fzf --height 100% --delimiter '\t' --tabstop 1 --prompt 'jira> ' \
+  --header 'enter open · ctrl-o open, stay · ctrl-y copy key · ctrl-w worktree · ctrl-d/u scroll' \
+  --preview "$preview_cmd" --preview-window 'down,65%,wrap' \
+  --bind 'ctrl-o:execute-silent(jira open {1})' \
+  --bind 'ctrl-d:preview-half-page-down,ctrl-u:preview-half-page-up' \
+  --expect ctrl-y,ctrl-w)" || exit 0
+
+action="$(sed -n 1p <<<"$out")"
+row="$(sed -n 2p <<<"$out")"
+[ -n "$row" ] || exit 0
+key="${row%%[[:space:]]*}"
+summary="${row##*$'\t'}"
+
+case "$action" in
+  ctrl-y) printf '%s' "$key" | pbcopy; echo "copied $key" >&2 ;;
+  ctrl-w) worktree "$key" "$summary" ;;
+  *) if [ -t 1 ]; then jira open "$key" >/dev/null; else echo "$key"; fi ;;
+esac

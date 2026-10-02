@@ -115,6 +115,8 @@ brew "openssl@1.1"
 brew "python@3.10"
 # Make XML documents translatable through PO files
 brew "itstool"
+# Jira from the terminal: search and preview tickets; bin/jt puts fzf on top
+brew "jira-cli"
 # Image manipulation library
 brew "jpeg"
 # Lightweight and flexible command-line JSON processor

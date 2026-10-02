@@ -63,6 +63,10 @@ alias yesterday='git log --all --pretty=format:"*%h - %s" --after="$(date -v -1d
 # File listing
 alias eza='eza -1 --icons'
 
+# Jira sprint views, see `jt -h`
+alias jmine='jt -m'   # current sprint, assigned to me
+alias jtodo='jt -u'   # current Omni sprint, unassigned and To-Do
+
 # Wiki sync. The server details live in ~/.zshrc.local; bin/notes reads them
 # from the environment so none of them appear in this public repo.
 alias pull_notes='notes pull'

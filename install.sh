@@ -434,6 +434,19 @@ if [ -f "$DOTFILES_DIR/bin/mr-watch" ]; then
     create_symlink "$DOTFILES_DIR/bin/mr-watch" "$HOME/.local/bin/mr-watch"
 fi
 
+# jt searches and previews Jira tickets with fzf, on top of jira-cli. jira-cli
+# keeps its own config; the token itself comes from JIRA_API_TOKEN in the
+# mrglass secrets file, so the config only needs the site, login and project.
+if [ -f "$DOTFILES_DIR/bin/jt" ]; then
+    create_symlink "$DOTFILES_DIR/bin/jt" "$HOME/.local/bin/jt"
+fi
+if command -v jira >/dev/null 2>&1 && [ ! -f "$HOME/.config/.jira/.config.yml" ] \
+    && [ -n "${JIRA_EMAIL:-}" ] && [ -n "${JIRA_API_TOKEN:-}" ]; then
+    jira init --installation cloud --server https://ecfxdev.atlassian.net \
+        --login "$JIRA_EMAIL" --auth-type basic --project ECFX --board None \
+        || echo "jira init failed; run it by hand once JIRA_API_TOKEN works"
+fi
+
 # dev switches the dashboard dev server between worktrees (tmux window dev:dashboard).
 if [ -f "$DOTFILES_DIR/bin/dev" ]; then
     create_symlink "$DOTFILES_DIR/bin/dev" "$HOME/.local/bin/dev"
