@@ -14,7 +14,7 @@ Bash, mcp__cloudwatch-mcp-server__execute_log_insights_query
 
 ## Slack Notification
 
-After displaying the report to the user, **ask if they want to post it to Slack**. If they confirm, post to the **Development** Slack channel using the incoming webhook:
+After displaying the report to the user, **ask if they want to post it to Slack**. If they confirm, post to the **Development** Slack channel using the webhook in `SLACK_WEBHOOK_URL` (set in `~/.zshrc.local`; if it is unset, tell the user instead of posting):
 
 ```bash
 curl -s -X POST "$SLACK_WEBHOOK_URL" \

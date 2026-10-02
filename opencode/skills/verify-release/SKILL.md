@@ -14,7 +14,7 @@ Read, Grep, Glob, Bash, the Atlassian MCP’s matching tool, mcp__cloudwatch-mcp
 
 ## Slack Notification
 
-After generating the report, **ask the user** if they would like to post it to the Development Slack channel. Only post if they confirm. Use the incoming webhook:
+After generating the report, **ask the user** if they would like to post it to the Development Slack channel. Only post if they confirm, using the webhook in `SLACK_WEBHOOK_URL` (set in `~/.zshrc.local`; if it is unset, tell the user instead of posting):
 
 ```bash
 curl -s -X POST "$SLACK_WEBHOOK_URL" \

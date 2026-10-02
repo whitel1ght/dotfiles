@@ -41,4 +41,9 @@
 # export PYTHON_UTILS="$HOME/projects/scripts"
 # export PATH="$PATH:$PYTHON_UTILS"
 
+# Slack incoming webhook for the health-check / verify-release skills (the
+# Development channel). Post-only credential — treat it as a secret and rotate
+# it if it ever lands in a tracked file.
+# export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+
 # Add any other private environment variables, aliases, or configurations here
