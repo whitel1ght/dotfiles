@@ -1,0 +1,67 @@
+{
+  "localModel": "ollama/qwen2.5-coder:14b-16k",
+  "maxRunning": 4,
+  "timing": {
+    "pingTimeoutSeconds": 20,
+    "pingCacheSeconds": 300,
+    "stallSeconds": 120,
+    "toolStallSeconds": 900,
+    "localStallSeconds": 300
+  },
+  "taskTypes": {
+    "text": {
+      "use": "Transform text that is pasted into the task, with no file or shell access: summarise, rewrite, translate, convert formats, draft a commit message or MR blurb from a diff you include.",
+      "tools": [],
+      "models": [
+        "opencode-go/glm-5.3-flash",
+        "opencode-go/qwen3.8-flash",
+        "opencode-go/mimo-v2.6-flash",
+        "claude-bridge/claude-haiku-4-5"
+      ]
+    },
+    "explore": {
+      "use": "Find and read code or docs and report what is there: locate where something lives, trace a call path, answer a question about a codebase. Read-only.",
+      "tools": ["read", "grep", "find", "ls", "bash"],
+      "models": [
+        "opencode-go/glm-5.3-flash",
+        "opencode-go/qwen3.8-flash",
+        "opencode-go/mimo-v2.6-flash",
+        "opencode-go/deepseek-v4.1-flash",
+        "claude-bridge/claude-sonnet-5-5"
+      ]
+    },
+    "implement": {
+      "use": "Make a well-specified code change and verify it: edit files, run the tests or build.",
+      "tools": ["read", "grep", "find", "ls", "bash", "edit", "write"],
+      "models": [
+        "opencode-go/glm-5.3",
+        "opencode-go/grok-4.7",
+        "opencode-go/qwen3.8-max",
+        "opencode-go/mimo-v2.6-pro",
+        "claude-bridge/claude-sonnet-5-5"
+      ]
+    },
+    "review": {
+      "use": "Review a change or a piece of code for bugs, risks and missed cases, and report findings. Read-only.",
+      "tools": ["read", "grep", "find", "ls", "bash"],
+      "models": [
+        "opencode-go/qwen3.8-max",
+        "opencode-go/grok-4.7",
+        "opencode-go/glm-5.3",
+        "opencode-go/mimo-v2.6-pro",
+        "claude-bridge/claude-sonnet-5-5"
+      ]
+    },
+    "reason": {
+      "use": "Hard thinking where a wrong answer is expensive: root-cause a tricky bug, weigh a design, check a plan for holes. Read-only.",
+      "tools": ["read", "grep", "find", "ls", "bash"],
+      "models": [
+        "opencode-go/mimo-v2.6-pro",
+        "opencode-go/grok-4.7",
+        "opencode-go/kimi-k3",
+        "opencode-go/qwen3.8-max",
+        "claude-bridge/claude-opus-5-5"
+      ]
+    }
+  }
+}

@@ -72,6 +72,11 @@ alias jtodo='jt -u'   # current Omni sprint, unassigned and To-Do
 alias pull_notes='notes pull'
 alias push_notes='notes push'
 
+# Local Pi chat on the 16k qwen2.5-coder (ollama/*.Modelfile). It cannot call
+# tools, so they are off; feed it with @file and !command instead. No skills or
+# context files either: they would take ~10k of its 16k window.
+alias pil='pi --model ollama/qwen2.5-coder:14b-16k --no-tools -ns -nc -np'
+
 # Better grep
 grep='grep --color=auto --exclude-dir={.bzr,CVS,.git,.hg,.svn}'
 

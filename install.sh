@@ -184,6 +184,21 @@ if [ -f "$DOTFILES_DIR/bin/olink" ]; then
     create_symlink "$DOTFILES_DIR/bin/olink" "$HOME/.local/bin/olink"
 fi
 
+# OpenCode Console credential for Pi's opencode-go provider (pi/models.json)
+if [ -f "$DOTFILES_DIR/bin/opencode-console-auth" ]; then
+    create_symlink "$DOTFILES_DIR/bin/opencode-console-auth" "$HOME/.local/bin/opencode-console-auth"
+fi
+
+# Pi configuration
+# plink does the linking, for the same reason olink exists: create_symlink skips
+# a target that is already a symlink even when it points at the wrong place, and
+# ~/.pi/agent also holds auth.json, sessions/ and install/, which are Pi's own.
+# Linking is per item, never the directory.
+if [ -f "$DOTFILES_DIR/bin/plink" ]; then
+    create_symlink "$DOTFILES_DIR/bin/plink" "$HOME/.local/bin/plink"
+    DOTFILES_DIR="$DOTFILES_DIR" bash "$DOTFILES_DIR/bin/plink"
+fi
+
 # Superfile configuration
 # Config and runtime state (logs, pinned.json, bundled themes) share one
 # directory, so link the two config files rather than the directory itself.
@@ -524,6 +539,47 @@ setup_repy() {
 
 if [ "${REPY_SETUP:-1}" != "0" ]; then
     setup_repy || log_warn "repy install failed"
+fi
+
+# --- Ollama models ------------------------------------------------------------
+# Each ollama/*.Modelfile names its model in a `# name:` header and derives it
+# from a base model with different parameters, so building one is a manifest
+# write, not a download. Rebuilt every run to pick up edits. Needs a running
+# `ollama serve` and the base model pulled; either missing is a warning, not a
+# failure. Set OLLAMA_SETUP=0 to skip.
+setup_ollama_models() {
+    if ! command -v ollama >/dev/null 2>&1; then
+        log_warn "ollama not found - skipping local models"
+        return 0
+    fi
+    if ! ollama list >/dev/null 2>&1; then
+        log_warn "ollama is not running - start \`ollama serve\`, then re-run this script"
+        return 0
+    fi
+
+    local modelfile name base
+    for modelfile in "$DOTFILES_DIR"/ollama/*.Modelfile; do
+        [ -f "$modelfile" ] || continue
+        name="$(sed -n 's/^# name: *//p' "$modelfile" | head -1)"
+        base="$(sed -n 's/^FROM *//p' "$modelfile" | head -1)"
+        if [ -z "$name" ] || [ -z "$base" ]; then
+            log_warn "$(basename "$modelfile"): needs a '# name:' header and a FROM line"
+            continue
+        fi
+        if ! ollama show "$base" >/dev/null 2>&1; then
+            log_warn "$name: base model $base is not pulled - run: ollama pull $base"
+            continue
+        fi
+        if ollama create "$name" -f "$modelfile" >/dev/null 2>&1; then
+            log_info "Built ollama model $name"
+        else
+            log_warn "Failed to build ollama model $name"
+        fi
+    done
+}
+
+if [ "${OLLAMA_SETUP:-1}" != "0" ]; then
+    setup_ollama_models || log_warn "ollama model setup failed"
 fi
 
 

@@ -14,6 +14,8 @@ Personal configuration files for macOS development tools.
 ├── zsh/            # Zsh configuration (.zshrc, .zprofile, .p10k.zsh)
 ├── claude/         # Claude Code: personal skills, agents, commands, settings, CLAUDE.md
 ├── opencode/       # OpenCode: config, themes, plugins, generated commands
+├── pi/             # Pi: settings, models, MCP servers, extensions
+├── ollama/         # Local Ollama model variants (Modelfiles) built by install.sh
 ├── repy/           # repy ebook reader config
 ├── newsboat/       # newsboat config + the feed and subreddit lists
 ├── mrglass/        # mrglass credentials template (Jira)
@@ -566,6 +568,72 @@ To check what a command or agent actually resolved to:
 opencode debug config
 ```
 
+## Pi
+
+`pi/` is the [Pi](https://pi.dev) config, hand-maintained and symlinked into
+`~/.pi/agent/`. Linking is per item: that directory also holds `auth.json`,
+`sessions/`, `install/` and `npm/`, which Pi owns and which stay machine-local.
+
+| `~/.pi/agent/` | Source |
+| --- | --- |
+| `settings.json`, `models.json`, `mcp-servers.json`, `subagents.json` | `pi/` (`subagents-research.md` beside it explains the roster) |
+| `APPEND_SYSTEM.md` | `pi/APPEND_SYSTEM.md` |
+| `AGENTS.md` | `claude/CLAUDE.md` — one set of personal instructions for both tools |
+| `skills/` | `opencode/skills/` — shared, same `SKILL.md` layout |
+| `agents/` | `opencode/agents/` — shared, used as subagent profiles |
+| `extensions/` | `pi/extensions/` — our own TypeScript extensions |
+
+Extensions in `pi/extensions/`:
+
+| | |
+| --- | --- |
+| `background-terminals/` | `bg_start` / `bg_list` / `bg_output` / `bg_stop` and `/ps`: long-running commands the model can leave running and is woken about. See its README. |
+| `subagents/` | `agent_spawn` / `agent_list` / `agent_output` / `agent_wait` / `agent_stop` and `/agents`: delegate a task to a child pi. The parent picks a task type; models are tried best first from `subagents.json` (ranked in `pi/subagents-research.md`), each pinged first and replaced if it stalls or fails, Claude last. See its README. |
+| `mcp-env/` | Registers the MCP servers in `mcp-servers.json` with `${VAR}` expanded in every field. Pi itself skips `url` and `oauth.clientId`, so from `mcp.json` they reached Slack and Microsoft as literal `${…}`. A server whose variables are unset is left out with a warning. |
+| `inline-files/` | When the model has no tools, `@path` in a message attaches the file's contents, as `pi @file` does on the command line. |
+
+Each has its own tests: `cd pi/extensions/<name> && npm test`.
+
+**OpenCode Go has no API keys.** OpenCode v2 signs in to the OpenCode Console
+(`opencode auth login opencode`) and calls `opencode.ai/inference/go/...` with that
+OAuth token plus an `x-opencode-org-id` header; Pi's built-in `opencode-go` provider
+instead expects an API key on `opencode.ai/zen/go`, which answers `401 Invalid API
+key`. `models.json` re-points the provider at the Console endpoints and fills the key
+and header from `bin/opencode-console-auth`, which reads OpenCode's own credential on
+every request, so Pi follows OpenCode's token refreshes and no secret is stored. Two
+models, `qwen3.8-flash` and `minimax-m3`, speak the Anthropic API there and are
+redefined in full with that base URL. Keep no `opencode-go` entry in `auth.json`: a
+stored key outranks `models.json`. If the Console token expires, run `opencode` once.
+
+**The local model is `qwen2.5-coder:14b-16k`,** built by `install.sh` from
+`ollama/qwen2.5-coder-14b-16k.Modelfile`: the same weights with a 16k window
+instead of Ollama's default 4096, past which Ollama silently drops the start of
+the prompt — the system prompt first. 16k loads at ~11GB; the model's 32k limit
+would take 15GB of a 24GB machine. It needs `ollama serve` running and
+`qwen2.5-coder:14b` pulled; `OLLAMA_SETUP=0 ./install.sh` skips the build.
+
+It cannot call tools: even with a one-line prompt it prints the call as JSON
+instead of the `<tool_call>` block Ollama parses. So it serves only tool-less
+work — the `text` subagents, and `pil` (in `.zshrc`), a local chat with tools,
+skills and context files off, fed with `@file` and `!command`.
+
+The MCP servers (`mcp-servers.json`) and `pi-claude-bridge` hold no secrets. OAuth client
+ids and secrets are `${VAR}` references, set in `~/.zshrc.local` (see
+`zsh/.zshrc.local.example`); Pi must be started from a shell that exported them.
+The tokens Pi obtains at sign-in live in `~/.pi/agent/mcp-auth.json`, outside this repo.
+
+### Relinking
+
+```sh
+plink
+```
+
+`install.sh` runs it. Run it on its own after adding or moving something, then
+start a new Pi session. Not `/reload`: it rebuilds the system prompt mid-session,
+and `pi-claude-bridge` then refuses every turn (`prompt-capture: no capture for
+this … system prompt`). Like `olink`, it repairs a link that is broken or pointing
+elsewhere; `plink -n` previews. `./bin/plink.test.sh` tests it.
+
 ## Adding New Configs
 
 1. Create a directory for the tool: `mkdir newtool`
@@ -605,7 +673,7 @@ needs filling in:
 | Seeded file | Mode | Template | Needed for |
 |---|---|---|---|
 | `~/.gitconfig.local` | 644 | `git/.gitconfig.local.example` | commit authorship |
-| `~/.zshrc.local` | 600 | `zsh/.zshrc.local.example` | wiki sync (`bin/notes`) |
+| `~/.zshrc.local` | 600 | `zsh/.zshrc.local.example` | wiki sync (`bin/notes`), MCP OAuth clients for OpenCode and Pi |
 | `~/.config/mrglass/secrets.env` | 600 | `mrglass/secrets.env.example` | Jira, for mrglass and `handle-ticket` |
 | `~/.config/sing-box/secrets.env` | 600 | `proxy/secrets.env.example` | the proxy tunnel |
 

@@ -1,0 +1,103 @@
+{
+  "providers": {
+    "ollama": {
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "baseUrl": "http://127.0.0.1:11434/v1",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "qwen2.5-coder:14b-16k",
+          "name": "Qwen2.5 Coder 14B (16k, local)",
+          "input": [
+            "text"
+          ],
+          "contextWindow": 16384,
+          "maxTokens": 4096
+        },
+        {
+          "_launch": true,
+          "id": "qwen3.6:35b",
+          "input": [
+            "text",
+            "image"
+          ],
+          "reasoning": true
+        }
+      ]
+    },
+    "opencode-go": {
+      "baseUrl": "https://opencode.ai/inference/go/openai/v1",
+      "apiKey": "!\"$HOME/.local/bin/opencode-console-auth\" token",
+      "headers": {
+        "x-opencode-org-id": "!\"$HOME/.local/bin/opencode-console-auth\" org"
+      },
+      "models": [
+        {
+          "id": "qwen3.8-flash",
+          "name": "Qwen3.8 Flash",
+          "api": "anthropic-messages",
+          "baseUrl": "https://opencode.ai/inference/go/anthropic",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "cost": {
+            "input": 0.15,
+            "output": 0.47,
+            "cacheRead": 0.016,
+            "cacheWrite": 0.2
+          },
+          "contextWindow": 1000000,
+          "maxTokens": 131072,
+          "compat": {
+            "allowEmptySignature": true
+          },
+          "inputLimits": {
+            "images": {
+              "resize": {
+                "maxWidth": 2000,
+                "maxHeight": 2000,
+                "maxBytes": 4718592,
+                "jpegQuality": 80
+              }
+            }
+          }
+        },
+        {
+          "id": "minimax-m3",
+          "name": "MiniMax-M3",
+          "api": "anthropic-messages",
+          "baseUrl": "https://opencode.ai/inference/go/anthropic",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "cost": {
+            "input": 0.3,
+            "output": 1.2,
+            "cacheRead": 0.06,
+            "cacheWrite": 0
+          },
+          "contextWindow": 1000000,
+          "maxTokens": 131072,
+          "inputLimits": {
+            "images": {
+              "resize": {
+                "maxWidth": 2000,
+                "maxHeight": 2000,
+                "maxBytes": 4718592,
+                "jpegQuality": 80
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
