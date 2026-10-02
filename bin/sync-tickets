@@ -75,6 +75,18 @@ recent=$(glab api --paginate "merge_requests?scope=created_by_me&state=all&updat
 open=$(glab api --paginate "merge_requests?scope=created_by_me&state=opened&per_page=100" | jq -s 'add // []')
 
 # One line per ticket touched in the window: key, target status, its MRs as JSON.
+#
+# WHY NOT @tsv, which reads more naturally here. It was @tsv until a title containing a
+# double quote (ECFX-17417: 'ECFX-17417: "Retrieve again" row action') took the whole run
+# down with "jq: parse error: Invalid numeric literal": @tsv escapes the backslash that
+# tojson had just put there, so the field read back as \" instead of " and stopped being
+# valid JSON. A title with a real tab or newline shifts every later field the same way.
+# The failure is not loud — the script dies mid-loop, after it has already moved tickets
+# and posted links, so the next run re-does the window with a half-applied state behind it.
+#
+# The MR list is base64'd as one field; key and target stay plain text because neither can
+# contain a tab (a Jira key is KEY-nnn, a status is a fixed word). base64 is the one encoding
+# nothing in a title can corrupt.
 plan=$(jq -rn --argjson recent "$recent" --argjson open "$open" --arg p "$JIRA_PROJECT" '
   def key: first((.source_branch, .title) | scan("\($p)-[0-9]+")) // null;
   ([$recent[] | key] | map(select(. != null)) | unique) as $touched
@@ -86,7 +98,7 @@ plan=$(jq -rn --argjson recent "$recent" --argjson open "$open" --arg p "$JIRA_P
   | (if any($m[]; .state == "opened" and (.draft | not)) then "In MR"
      elif any($m[]; .state == "opened") then "In Progress"
      else "In QA" end) as $target
-  | [$k, $target, ($m | map({url: .web_url, ref: .references.full, title}) | tojson)] | @tsv')
+  | [$k, $target, ($m | map({url: .web_url, ref: .references.full, title}) | tojson | @base64)] | @tsv')
 
 rank() {
   case "$1" in
@@ -110,8 +122,9 @@ transition_to() {
 }
 
 moved=0 linked=0 behind=0 skipped=0 failed=0
-while IFS=$'\t' read -r key target mrs; do
+while IFS=$'\t' read -r key target mrs_b64; do
   [ -n "${key:-}" ] || continue
+  mrs=$(base64 -d <<<"$mrs_b64")
   refs=$(jq -r 'map(.ref | sub("^.*/"; "")) | join(", ")' <<<"$mrs")
   issue=$(jira GET "/rest/api/3/issue/$key?fields=status,assignee") || { failed=$((failed + 1)); continue; }
   status=$(jq -r .fields.status.name <<<"$issue")
@@ -135,7 +148,8 @@ while IFS=$'\t' read -r key target mrs; do
   fi
 
   existing=$(jira GET "/rest/api/3/issue/$key/remotelink" | jq -c '[.[].object.url]') || { failed=$((failed + 1)); continue; }
-  while IFS=$'\t' read -r url ref title; do
+  while IFS= read -r mr; do
+    url=$(jq -r .url <<<"$mr"); ref=$(jq -r .ref <<<"$mr"); title=$(jq -r .title <<<"$mr")
     jq -e --arg u "$url" 'index($u)' <<<"$existing" >/dev/null && continue
     repo="${ref%%!*}"; repo="${repo##*/}"; iid="${ref##*!}"
     if [ "$dry" -eq 1 ]; then echo "  would  link $key ← $repo!$iid"; linked=$((linked + 1)); continue; fi
@@ -146,7 +160,9 @@ while IFS=$'\t' read -r key target mrs; do
     if jira POST "/rest/api/3/issue/$key/remotelink" "$link" >/dev/null; then
       echo "  linked $key ← $repo!$iid"; linked=$((linked + 1))
     else failed=$((failed + 1)); fi
-  done < <(jq -r '.[] | [.url, .ref, .title] | @tsv' <<<"$mrs")
+  # -c keeps one compact JSON object per line, so each MR arrives whole however its title is
+  # punctuated. No delimiter is involved, so nothing in the payload can be read as structure.
+  done < <(jq -c '.[]' <<<"$mrs")
 done <<<"$plan"
 
 echo "since $since: $moved moved, $linked linked, $behind behind, $skipped skipped, $failed failed$([ "$dry" -eq 1 ] && echo ' (dry run)')"

@@ -43,8 +43,13 @@ cat > "$FIX/recent.json" <<EOF
  $(mr ECFX-5 opened false backend 14),
  $(mr ECFX-6 opened false backend 15),
  $(mr ECFX-7 merged false backend 16),
+ {"id":98,"iid":98,"state":"merged","draft":false,"source_branch":"dmitry/ECFX-8_x","title":"ECFX-8: \"Retrieve again\" row action","web_url":"https://gitlab.com/ecfx/backend/-/merge_requests/17","references":{"full":"ecfx/backend!17"}},
  {"id":99,"iid":99,"state":"opened","draft":false,"source_branch":"no-key","title":"chore","web_url":"u","references":{"full":"ecfx/backend!99"}}]
 EOF
+# ECFX-8's MR title carries quotes, tabs and a backslash: ECFX-17417's real title was
+# 'ECFX-17417: "Retrieve again" row action in the Retrieve list', which is what made the
+# plan's tab-separated encoding corrupt that row. A title must survive the plan -> loop
+# -> link-title round trip verbatim, or the ticket is silently skipped or mislabelled.
 # ECFX-7 merged in the window but still has an older open MR: stays In MR.
 echo "[$(mr ECFX-7 opened false dashboard 30)]" > "$FIX/open.json"
 
@@ -55,6 +60,7 @@ issue ECFX-4 "In Progress" someone
 issue ECFX-5 "Rejected Incomplete" me
 issue ECFX-6 "To-Do" me
 issue ECFX-7 "In Progress" me
+issue ECFX-8 "In Progress" me
 
 cat > "$STUBS/glab" <<'EOF'
 #!/bin/bash
@@ -116,6 +122,11 @@ assert_contains "$out" "skip   ECFX-4 — assigned to someone" "skips tickets no
 assert_contains "$out" "skip   ECFX-5 — Rejected Incomplete is left alone" "skips unmanaged statuses"
 assert_lacks "$out" "ECFX-7 In Progress → In QA" "an older open MR keeps the ticket out of QA"
 assert_contains "$out" "would  ECFX-7 In Progress → In MR" "judges a ticket on MRs outside the window too"
+# The regression this file exists for: a title with quotes/tabs/backslash must not corrupt
+# the row it travels in. Before the fix this row died with "jq: parse error: Invalid numeric
+# literal", which aborted the whole run partway and left Jira half-written.
+assert_contains "$out" "would  ECFX-8 In Progress → In QA" "an MR title with quotes and tabs still moves its ticket"
+assert_contains "$out" "backend!17" "the awkward title still yields its ref"
 assert_lacks "$out" "link ECFX-1 ← dashboard!20" "does not re-link an MR already on the ticket"
 assert_contains "$out" "would  link ECFX-1 ← backend!10" "links an MR missing from the ticket"
 [ -e "$FIX/writes.log" ] && fail "dry run writes nothing" "$(cat "$FIX/writes.log")" || pass "dry run writes nothing"
@@ -128,6 +139,12 @@ out="$(run --since 1d)"
 [ "$(status_of ECFX-6)" = "In MR" ] && pass "takes To-Do to In MR via In Progress" \
     || fail "takes To-Do to In MR via In Progress" "$(status_of ECFX-6)"
 [ "$(status_of ECFX-3)" = "In QA" ] && pass "never moves a ticket backwards" || fail "never moves a ticket backwards" "$(status_of ECFX-3)"
+[ "$(status_of ECFX-8)" = "In QA" ] && pass "an awkward MR title does not abort the run" || fail "an awkward MR title does not abort the run" "$(status_of ECFX-8)"
+# The link title goes to Jira verbatim, so it has to come back out of the plan unmangled.
+# Asserted on the title alone: the payload is JSON, so the quotes arrive escaped there and
+# matching on the escaped form is what actually proves nothing was mangled in transit.
+assert_contains "$(cat "$FIX/writes.log")" 'backend!17 — ECFX-8: \"Retrieve again\" row action' \
+    "a link title carrying quotes and tabs reaches Jira intact"
 [ "$(status_of ECFX-4)" = "In Progress" ] && pass "leaves others' tickets alone" || fail "leaves others' tickets alone" "$(status_of ECFX-4)"
 links="$(grep -c 'remotelink' "$FIX/writes.log")"
 [ "$links" -gt 0 ] && pass "posts remote links" || fail "posts remote links" "none"
