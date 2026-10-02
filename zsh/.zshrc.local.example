@@ -46,4 +46,12 @@
 # it if it ever lands in a tracked file.
 # export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 
+# OAuth clients for the Slack and Outlook MCP servers (opencode/opencode.jsonc
+# and pi/mcp-servers.json). Registered app credentials, not tokens: the tokens each
+# tool obtains at sign-in are stored by the tool itself.
+# export SLACK_MCP_CLIENT_ID=
+# export SLACK_MCP_CLIENT_SECRET=
+# export OUTLOOK_MCP_TENANT_ID=
+# export OUTLOOK_MCP_CLIENT_ID=
+
 # Add any other private environment variables, aliases, or configurations here
