@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# Watch my open MRs for new human review notes; driven by /watch-mrs.
+#
+#   mr-watch check [--since ISO]   one pass; exit 0 new notes, 1 none, 2 GitLab down
+#   mr-watch wait [--every SECS]   sleep, check, repeat until something is new
+#                                  (default 3600s; sleeps first, so a round left
+#                                  unacked on purpose doesn't fire at once)
+#   mr-watch reply <round>         post the round's reply, then ack it
+#   mr-watch ack <round>           mark the round's notes handled, post nothing
+#   mr-watch held                  rounds with a reply written but not posted
+#
+# Each MR with new notes gets a round directory holding review.md: every
+# discussion that has a new note, whole, with the new notes marked. Only a short
+# summary goes to stdout, so the session reading it stays small; the fixer reads
+# review.md itself. The fixer writes response.md (one top-level reply) and
+# optionally threads.tsv (discussion id, tab, one-line reply per inline thread).
+#
+# Draft MRs are skipped: their notes are addressed once the MR is marked ready.
+# So are approved ones, meaning the required approvals are met and someone
+# actually approved (GitLab calls an MR needing none "approved" from the start):
+# a push there could reset the approval, so leftover nits are mine to judge.
+# A note is new when all of these hold:
+#   - a human wrote it: not me, not a system note, not a project or group bot,
+#     not a username in MR_WATCH_IGNORE (space-separated)
+#   - it's newer than my last note on the MR and than the MR's last acked round
+#   - its discussion isn't resolved
+# Before an MR's first acked round, the floor is --since, or a week ago.
+# Nothing is marked seen until ack or reply, so a round that fails is found again.
+set -euo pipefail
+
+STATE_DIR="${MR_WATCH_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/mr-watch}"
+PROJECTS_DIR="${PROJECTS_DIR:-$HOME/projects}"
+BOT_RE='^(project|group)_[0-9]+_bot'
+
+iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+ignore_re() {
+  local re="$BOT_RE" u
+  for u in ${MR_WATCH_IGNORE:-}; do re="$re|^$u\$"; done
+  echo "$re"
+}
+
+worktree_of() { # project-path branch
+  local clone="$PROJECTS_DIR/${1##*/}"
+  [ -d "$clone/.git" ] || { echo "none (no clone at $clone)"; return; }
+  local wt
+  wt=$(git -C "$clone" worktree list --porcelain \
+    | awk -v b="branch refs/heads/$2" '/^worktree / { w = substr($0, 10) } $0 == b { print w; exit }')
+  [ -n "$wt" ] || { echo "none (clone $clone)"; return; }
+  local dirty
+  dirty=$(git -C "$wt" status --porcelain | wc -l | tr -d ' ')
+  echo "$wt ($([ "$dirty" -eq 0 ] && echo clean || echo "DIRTY: $dirty changed files"))"
+}
+
+check() {
+  local default_floor
+  default_floor=$(iso $(($(date +%s) - 7 * 86400)))
+  [ "${1:-}" = --since ] && [ -n "${2:-}" ] && default_floor="$2"
+  local me mrs
+  me=$(glab api user | jq -r .username) || return 2
+  mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || return 2
+  mkdir -p "$STATE_DIR/seen" "$STATE_DIR/rounds"
+  local found=0 re stamp
+  re=$(ignore_re); stamp=$(date +%Y%m%dT%H%M%S)
+
+  while IFS=$'\t' read -r pid iid ref title branch updated url; do
+    local key="$pid-$iid" floor
+    floor=$(cat "$STATE_DIR/seen/$key" 2>/dev/null || echo "$default_floor")
+    [[ "$updated" > "$floor" ]] || continue
+    local approvals disc picked
+    approvals=$(glab api "projects/$pid/merge_requests/$iid/approvals") || return 2
+    jq -e '.approved and (.approved_by | length > 0)' <<<"$approvals" >/dev/null && continue
+    disc=$(glab api --paginate "projects/$pid/merge_requests/$iid/discussions?per_page=100" | jq -s 'add') || return 2
+    picked=$(jq --arg me "$me" --arg re "$re" --arg floor "$floor" '
+      def human: (.system | not) and .author.username != $me and (.author.username | test($re) | not);
+      ([.[].notes[] | select(.system | not) | select(.author.username == $me) | .created_at] | max // "") as $mine
+      | ([$floor, $mine] | max) as $cut
+      | [.[] | select((.notes | map(select(.resolvable))) as $r | ($r | length) > 0 and ($r | all(.resolved)) | not)
+          | select(any(.notes[]; human and .created_at > $cut))
+          | {id, notes: [.notes[] | select(.system | not) | . + {new: (human and .created_at > $cut)}]}]' <<<"$disc")
+    [ "$(jq length <<<"$picked")" -gt 0 ] || continue
+
+    found=$((found + 1))
+    local round="$STATE_DIR/rounds/$key-$stamp" wt
+    mkdir -p "$round"
+    wt=$(worktree_of "${ref%!*}" "$branch")
+    jq -r '[.[].notes[] | select(.new) | .created_at] | max' <<<"$picked" > "$round/watermark"
+    printf '%s\t%s\t%s\n' "$pid" "$iid" "$ref" > "$round/mr"
+    {
+      printf '# %s %s\n\n' "$ref" "$title"
+      printf -- '- url: %s\n- branch: %s\n- project id: %s, iid: %s\n- worktree: %s\n' "$url" "$branch" "$pid" "$iid" "$wt"
+      jq -r '.[] | "\n## Discussion \(.id)\(.notes[0].position | if . then " — inline \(.new_path // .old_path):\(.new_line // .old_line)" else "" end)\n",
+        (.notes[] | "### \(if .new then "NEW " else "" end)@\(.author.username), \(.created_at), note \(.id)\n\n\(.body)\n")' <<<"$picked"
+    } > "$round/review.md"
+    jq -r --arg ref "$ref" --arg round "$round" --arg wt "$wt" '
+      [.[].notes[] | select(.new)] as $n
+      | "- \($ref): \($n | length) new note(s) from \($n | map("@" + .author.username) | unique | join(", ")) in \(length) thread(s)\n  round: \($round)\n  worktree: \($wt)"' <<<"$picked"
+  done < <(jq -r '.[] | select(.draft | not) | [.project_id, .iid, .references.full, .title, .source_branch, .updated_at, .web_url] | @tsv' <<<"$mrs")
+
+  [ "$found" -gt 0 ] || return 1
+}
+
+round_arg() {
+  local r="${1:-}"
+  [ -n "$r" ] && [ -f "$r/mr" ] || { echo "mr-watch: not a round directory: $r" >&2; exit 1; }
+  echo "${r%/}"
+}
+
+ack() {
+  local r key
+  r=$(round_arg "${1:-}"); key=$(basename "$r"); key="${key%-*}"
+  local wm cur
+  wm=$(cat "$r/watermark"); cur=$(cat "$STATE_DIR/seen/$key" 2>/dev/null || echo "")
+  [[ "$wm" > "$cur" ]] && echo "$wm" > "$STATE_DIR/seen/$key"
+  touch "$r/acked"
+}
+
+reply() {
+  local r pid iid ref
+  r=$(round_arg "${1:-}")
+  [ ! -f "$r/posted" ] || { echo "mr-watch: $r was already posted" >&2; exit 1; }
+  [ -s "$r/response.md" ] || { echo "mr-watch: no response.md in $r" >&2; exit 1; }
+  IFS=$'\t' read -r pid iid ref < "$r/mr"
+  local base="projects/$pid/merge_requests/$iid"
+  glab api --method POST "$base/notes" -F "body=@$r/response.md" >/dev/null
+  local n=0 disc text
+  if [ -s "$r/threads.tsv" ]; then
+    while IFS=$'\t' read -r disc text; do
+      [ -n "$disc" ] && [ -n "$text" ] || continue
+      printf '%s' "$text" | glab api --method POST "$base/discussions/$disc/notes" -F "body=@-" >/dev/null
+      n=$((n + 1))
+    done < "$r/threads.tsv"
+  fi
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$r/posted"
+  ack "$r"
+  echo "posted to $ref: summary reply + $n thread repl$([ "$n" -eq 1 ] && echo y || echo ies)"
+}
+
+held() {
+  local r any=0
+  for r in "$STATE_DIR"/rounds/*/; do
+    r="${r%/}"
+    [ -f "$r/response.md" ] && [ ! -f "$r/posted" ] || continue
+    any=1; printf '%s\t%s\n' "$(cut -f3 "$r/mr")" "$r"
+  done
+  [ "$any" -eq 1 ] || echo "(none)"
+}
+
+case "${1:-}" in
+  check) shift; check "$@" ;;
+  wait)
+    shift; every=3600
+    [ "${1:-}" = --every ] && [ -n "${2:-}" ] && every="$2"
+    while :; do
+      sleep "$every"
+      rc=0; check || rc=$?
+      [ "$rc" -eq 0 ] && exit 0
+      [ "$rc" -eq 2 ] && echo "mr-watch: GitLab unavailable at $(date +%H:%M), retrying" >&2
+    done ;;
+  reply) reply "${2:-}" ;;
+  ack) ack "${2:-}"; echo "acked $(basename "${2%/}")" ;;
+  held) held ;;
+  -h|--help|"") sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
+  *) echo "mr-watch: unknown command $1" >&2; exit 1 ;;
+esac

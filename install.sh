@@ -429,6 +429,11 @@ if [ -f "$DOTFILES_DIR/bin/start-day" ]; then
     create_symlink "$DOTFILES_DIR/bin/start-day" "$HOME/.local/bin/start-day"
 fi
 
+# mr-watch finds new review notes on my MRs and posts the replies; driven by /watch-mrs.
+if [ -f "$DOTFILES_DIR/bin/mr-watch" ]; then
+    create_symlink "$DOTFILES_DIR/bin/mr-watch" "$HOME/.local/bin/mr-watch"
+fi
+
 # dev switches the dashboard dev server between worktrees (tmux window dev:dashboard).
 if [ -f "$DOTFILES_DIR/bin/dev" ]; then
     create_symlink "$DOTFILES_DIR/bin/dev" "$HOME/.local/bin/dev"
