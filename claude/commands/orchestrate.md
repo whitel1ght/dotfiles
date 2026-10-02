@@ -19,6 +19,10 @@ together, so keep it for decisions, not file dumps.
 **You:** clarify the goal, pick the approach, split the work, choose a model for each
 piece, write the briefs, check what comes back, settle conflicts, talk to the user.
 
+Dispatch through the host's native subagent mechanism: Claude Code's `Agent` tool or
+OpenCode's `task` tool. When independent pieces can run at the same time, dispatch them
+in parallel rather than serially.
+
 **Not you:** editing project files. That includes small fixes. A one-line change still
 goes to a subagent, because once you start writing code you stop orchestrating and your
 context fills with detail. The only files you write are the progress log and brief files
@@ -31,7 +35,7 @@ decisions, not code.
 
 ## Picking the model
 
-Pass `model` on every Agent call. Without it, a subagent inherits your expensive model,
+Pass `model` on every subagent dispatch. Without it, a subagent inherits your expensive model,
 which defeats the point. Choose the cheapest model that can do the piece well:
 
 | Work | Model |
@@ -87,14 +91,17 @@ If the superpowers skills aren't installed, use the lean route and say so.
    done-when. Mark which pieces are independent. Show the user the plan in a compact
    table (piece, model, depends on) plus the key decisions, and **wait for approval**.
    This is the one planned pause.
-3. **Execute.** Run independent pieces in parallel in one message. When parallel pieces
-   write to the same repo, give each `isolation: "worktree"` so they can't collide.
-   Pieces that depend on each other run in order, and each gets the facts it needs from
-   the previous result, not the whole report.
+3. **Execute.** Create a separate worktree for each implementation piece with
+   `wt add <repo> <ticket-or-feature> [branch]`, then give the resulting path to the
+   subagent. In OpenCode, do not rely on a Claude-specific `isolation` argument: make
+   the worktree explicit in the brief and require the subagent to work there. Run
+   independent pieces in parallel; dependent pieces run in order and receive only the
+   facts they need from the previous result.
 4. **Check.** After each piece: read `git diff --stat` and spot-check the risky parts of
    the diff, run the tests yourself, and compare against the done-when. Don't trust "done"
-   in a report. For a fix, use `SendMessage` to continue the same subagent (its context is
-   cached, so this is cheaper than a new one) with the specific failure.
+   in a report. For a fix, continue the same subagent when the host supports resuming it
+   (Claude Code: `SendMessage`; OpenCode: resume the task by its task id); otherwise
+   dispatch a new one with the specific failure.
 5. **Review.** For a non-trivial change, one `sonnet` reviewer reads the whole diff
    against the goal before you call it finished. Settle its findings yourself: fix via a
    subagent, or decline with a reason.
@@ -126,7 +133,8 @@ each skill this path, and never commit these files. One spec serves all the repo
    already decided (subagent-driven), so don't ask the user to pick one. Give the user
    all the plans together, with the order you'll run them in and why, and wait for their
    approval. That and the spec approval are the two planned pauses.
-4. **Workspaces.** Use `superpowers:using-git-worktrees`, but create each worktree at
+4. **Workspaces.** Use `superpowers:using-git-worktrees`, but create each worktree with
+   `wt add <repo> <ticket-or-feature> [branch]`: it puts it at
    `~/projects/worktrees/<repo>/<ticket-or-feature>`, branching from the repo's default
    branch. That's where the user keeps worktrees, and `/clean-worktrees` removes them
    there once the MRs merge.
