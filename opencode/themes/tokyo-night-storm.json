@@ -55,6 +55,15 @@
     "markdownListEnumeration": "cyan",
     "markdownImage": "blue",
     "markdownImageText": "cyan",
-    "markdownCodeBlock": "fg"
+    "markdownCodeBlock": "fg",
+    "syntaxComment": "muted",
+    "syntaxKeyword": "magenta",
+    "syntaxFunction": "blue",
+    "syntaxVariable": "red",
+    "syntaxString": "green",
+    "syntaxNumber": "orange",
+    "syntaxType": "yellow",
+    "syntaxOperator": "cyan",
+    "syntaxPunctuation": "fg"
   }
 }

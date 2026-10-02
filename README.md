@@ -12,7 +12,8 @@ Personal configuration files for macOS development tools.
 ├── superfile/      # superfile terminal file manager config
 ├── nvim/           # Neovim configuration
 ├── zsh/            # Zsh configuration (.zshrc, .zprofile, .p10k.zsh)
-├── claude/         # Claude Code: personal skills, agents, settings, CLAUDE.md
+├── claude/         # Claude Code: personal skills, agents, commands, settings, CLAUDE.md
+├── opencode/       # OpenCode: config, themes, plugins, generated commands
 ├── repy/           # repy ebook reader config
 ├── newsboat/       # newsboat config + the feed and subreddit lists
 ├── mrglass/        # mrglass credentials template (Jira)
@@ -445,6 +446,125 @@ else. Override the location with `CLAUDE_COMPONENTS_DIR` if you clone it elsewhe
 Order doesn't matter: run either repo's setup script first. If `claude-components`
 later replaces the `~/.claude/skills` symlink, re-run `./install.sh` to restore the
 personal links.
+
+## OpenCode
+
+`opencode/` is the OpenCode config, and it is maintained natively — hand-edited,
+committed, and symlinked into `~/.config/opencode/`. It is not generated from
+`claude/` or from the `claude-components` repo, both of which stay exactly as they
+are for Claude Code.
+
+| | |
+| --- | --- |
+| `~/.config/opencode/command/` | → `opencode/commands/` |
+| `~/.config/opencode/skills/` | → `opencode/skills/` |
+| `~/.config/opencode/agents/` | → `opencode/agents/` |
+| `~/.config/opencode/modules/` | → `opencode/modules/` |
+
+| Directory | Contents |
+| --- | --- |
+| `commands/` | 7 slash commands, same names as `claude/commands/` |
+| `skills/` | 69 skills, each a directory containing `SKILL.md` |
+| `agents/` | 30 subagents, one markdown file each |
+| `modules/` | 8 shared context files the review skills read mid-review |
+
+### Relinking
+
+After adding, renaming, or moving skills, commands, agents or modules, run:
+
+```sh
+olink
+```
+
+It rebuilds the links in the table above (plus `opencode.jsonc`, `themes/` and
+`plugins/`) and then runs `opencode reload`, so a running OpenCode picks up the
+change without a restart. It is `install.sh`'s OpenCode step alone — no brew, no
+daemons, no seeding — and unlike `install.sh` it repairs a link that is broken
+or pointing somewhere else. `olink -n` previews it; `olink --no-reload` links
+without reloading.
+
+### What the port changed
+
+**No Claude models, anywhere.** Claude Code's `model:` names a tier (`opus`,
+`sonnet`, `haiku`); OpenCode wants `provider/model-id` and has no alias table, so a
+tier is unresolvable. Every tier pin is gone. Exactly one command keeps a model:
+`sync-tickets` runs a single bash script and summarises it, so it is pinned to
+`opencode/qwen3.8-flash` ($0.15 / $0.47). Everything else inherits the session model.
+
+**`CLAUDE.md` → `AGENTS.md`.** 26 files referenced the Claude Code project-memory
+file. The body references were rewritten; the two agents whose entire job was
+managing it were renamed and retargeted, because keeping the name would have left a
+`claude-md-manager` that maintains `AGENTS.md`:
+
+| Was | Now |
+| --- | --- |
+| `claude-md-manager` | `project-memory-manager` |
+| `claude-skills-expert` | `skills-architect` |
+
+Every other name is unchanged, so the two trees stay greppable against each other.
+
+**`${CLAUDE_PLUGIN_ROOT}` resolved.** The variable is set by Claude Code's plugin
+loader and is empty under OpenCode, which would have pointed an instruction at `/`.
+Module references now point at `~/.config/opencode/modules/`, which ships with this
+repo, so they resolve without the upstream clone. The one genuine exception is the
+`record-mr-review-marker.sh` hook, which stays where it is — inside
+`claude-components`, because that is where the script lives.
+
+**Inert frontmatter dropped or commented.** OpenCode recognises `description`,
+`agent`, `model` and `subtask` in a command, and `description`, `mode` and
+`permission` in an agent. `allowed-tools` was dropped outright: OpenCode's
+permission model is global config in `opencode.jsonc`, so an allowlist in a file
+would imply enforcement that does not exist. `argument-hint` and
+`disable-model-invocation` were kept as comments — both encode intent a future
+editor would otherwise have to re-derive. The second is structural rather than
+declarative: a file in `command/` is a user-invoked slash command, so there is no
+path by which the model can reach it alone.
+
+**Skill names are the directory name.** OpenCode requires a skill's `name:` to
+equal the directory holding `SKILL.md`, and rejects a mismatch *silently* — no
+error, no log line, the skill simply never appears. 41 of the 65 upstream skills
+were written `name: MR Description Generator` inside `mr-review/`, so all 69 here
+match their directory.
+
+**Two agents may edit.** The 28 review lenses are `permission: edit: deny` — they
+report findings and must not act on them. `project-memory-manager` and
+`skills-architect` exist to write files, so they are `edit: allow`.
+
+### The model ladder
+
+`orchestrate.md`, `review-local.md` and `watch-mrs.md` each dispatch subagents with
+an explicit per-call `model`, because without one a subagent inherits the caller's
+model and the whole point of orchestrating is lost. The Claude tiers became:
+
+| Work | Model | Cost (1M in/out) |
+| --- | --- | --- |
+| Finding code, gathering facts, summarising output | `opencode/space-bunny-free` | free |
+| Mechanical edits with an exact spec | `opencode/space-bunny-free` | free |
+| Implementing, debugging, tests, code review | `opencode/glm-5.3-flash` | $0.15 / $0.50 |
+| Hard design or diagnosis, second opinion | `opencode/glm-5.3` | $1.40 / $4.40 |
+| `sync-tickets` (one bash call) | `opencode/qwen3.8-flash` | $0.15 / $0.47 |
+
+Reading and mechanical work is free because it is low-stakes and high-volume: a
+wrong file path costs one retry, a wrong implementation costs a review cycle.
+Anything that writes code or judges a diff is paid, so quality never depends on a
+free tier's quota.
+
+All five ids are `status: active` in the Zen catalog. Note that Zen needs credits:
+a paid id resolves fine and then fails with `Insufficient account funds`, which is
+a billing error rather than a parse error and easy to misread.
+
+### Both directory spellings work
+
+The docs say `commands/` and `agents/`; this install uses `command/` for commands.
+The installed build globs `{command,commands}/**/*.md` and
+`{agent,agents}/**/*.md`, so both are read — the singular is kept only because it is
+what is already in place. Skills use `skills/` throughout.
+
+To check what a command or agent actually resolved to:
+
+```sh
+opencode debug config
+```
 
 ## Adding New Configs
 

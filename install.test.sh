@@ -134,6 +134,33 @@ for cmd in "$TEST_DIR"/claude/commands/*.md; do
         || fail "$name linked into ~/.claude/commands" "no symlink in sandbox"
 done
 
+# --- the opencode copy must be generated, not the claude file linked ---------
+echo "opencode commands"
+# Singular on purpose: this build of OpenCode reads ~/.config/opencode/command, while
+# the published docs say `commands`. Linking the plural is the silent half-fix — the
+# install reports success and no command ever appears.
+OC_DIR="$SANDBOX/.config/opencode/command"
+[ -L "$OC_DIR" ] && pass "~/.config/opencode/command linked (singular)" \
+    || fail "~/.config/opencode/command linked (singular)" "not a symlink: $OC_DIR"
+[ "$(cd "$OC_DIR" 2>/dev/null && pwd -P)" = "$TEST_DIR/opencode/commands" ] \
+    && pass "the link points at the generated copy, not claude/commands" \
+    || fail "the link points at the generated copy, not claude/commands" "resolves elsewhere"
+
+# The whole reason the copy is generated: a bare Claude tier here is a command that
+# dies with UnknownError when invoked, so check every shipped file rather than one.
+for cmd in "$OC_DIR"/*.md; do
+    [ -e "$cmd" ] || continue
+    name="$(basename "$cmd")"
+    m="$(awk '/^model:/{print $2; exit}' "$cmd")"
+    if [ -z "$m" ]; then
+        pass "$name ships without a model (inherits)"
+    elif printf '%s' "$m" | grep -q '/'; then
+        pass "$name pins a provider-qualified model"
+    else
+        fail "$name pins a provider-qualified model" "bare tier '$m' would fail at invocation"
+    fi
+done
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

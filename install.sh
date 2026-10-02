@@ -151,6 +151,39 @@ if [ -d "$DOTFILES_DIR/opencode/themes" ]; then
     link_dir_contents "$DOTFILES_DIR/opencode/themes" "$HOME/.config/opencode/themes"
 fi
 
+if [ -d "$DOTFILES_DIR/opencode/plugins" ]; then
+    link_dir_contents "$DOTFILES_DIR/opencode/plugins" "$HOME/.config/opencode/plugins"
+fi
+
+# Commands, skills, agents and modules are plain symlinks into ~/.config/opencode.
+# They used to be generated on the way in by bin/sync-opencode-commands and
+# bin/sync-opencode-components, which translated Claude Code frontmatter. Those are
+# gone: opencode/ is now maintained natively and hand-edited, so generating over it
+# would silently discard every local edit on the next install.
+#
+# The destination for commands is `command`, singular. Both spellings work — the
+# installed build globs `{command,commands}/**/*.md` and `{agent,agents}/**/*.md` —
+# but `command` is what is already in place, so keep that name rather than moving it.
+#
+# skills, agents and modules use the plural spelling throughout, which is both what the
+# docs show and what the glob prefers.
+create_oc_link() {
+    if [ -d "$DOTFILES_DIR/opencode/$1" ]; then
+        create_symlink "$DOTFILES_DIR/opencode/$1" "$HOME/.config/opencode/$2"
+    fi
+}
+create_oc_link commands command
+create_oc_link skills   skills
+create_oc_link agents   agents
+create_oc_link modules  modules
+
+# olink re-runs just the OpenCode linking above on demand — after adding or
+# moving a skill, say — and then reloads the server. It also repairs a link that
+# is broken or pointing elsewhere, which install.sh's create_symlink will not.
+if [ -f "$DOTFILES_DIR/bin/olink" ]; then
+    create_symlink "$DOTFILES_DIR/bin/olink" "$HOME/.local/bin/olink"
+fi
+
 # Superfile configuration
 # Config and runtime state (logs, pinned.json, bundled themes) share one
 # directory, so link the two config files rather than the directory itself.

@@ -1,3 +1,33 @@
 {
-  "$schema": "https://opencode.ai/config.json"
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "skill": {
+      "*": "allow"
+    }
+  },
+  "plugin": [
+    "superpowers@git+https://github.com/obra/superpowers.git"
+  ],
+  "mcp": {
+    "servers": {
+      "slack": {
+        "type": "remote",
+        "url": "https://mcp.slack.com/mcp",
+        "oauth": {
+          "client_id": "{env:SLACK_MCP_CLIENT_ID}",
+          "client_secret": "{env:SLACK_MCP_CLIENT_SECRET}",
+          "callback_port": 19876,
+          "redirect_uri": "http://127.0.0.1:19876/callback"
+        }
+      },
+      "outlook-calendar": {
+        "type": "remote",
+        "url": "https://agent365.svc.cloud.microsoft/agents/tenants/{env:OUTLOOK_MCP_TENANT_ID}/servers/mcp_CalendarTools",
+        "oauth": {
+          "client_id": "{env:OUTLOOK_MCP_CLIENT_ID}",
+          "callback_port": 19876
+        }
+      }
+    }
+  }
 }
