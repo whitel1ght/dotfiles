@@ -578,6 +578,7 @@ opencode debug config
 | --- | --- |
 | `settings.json`, `models.json`, `mcp-servers.json`, `subagents.json` | `pi/` (`subagents-research.md` beside it explains the roster) |
 | `APPEND_SYSTEM.md` | `pi/APPEND_SYSTEM.md` |
+| `prompts/` | `pi/prompts/` — slash commands; `orchestrate` is the Claude `/orchestrate` on Pi's subagents |
 | `AGENTS.md` | `claude/CLAUDE.md` — one set of personal instructions for both tools |
 | `skills/` | `opencode/skills/` — shared, same `SKILL.md` layout |
 | `agents/` | `opencode/agents/` — shared, used as subagent profiles |

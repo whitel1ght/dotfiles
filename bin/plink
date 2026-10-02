@@ -137,6 +137,12 @@ fi
 [ -d "$DOTFILES_DIR/opencode/skills" ] && \
     link_item "$DOTFILES_DIR/opencode/skills" "$PI_DEST/skills"
 
+# Slash commands. The shared source is claude/commands; pi/prompts holds the
+# pi-specific ports of the ones whose subagent mechanics differ (type instead of model).
+if [ -d "$PI_SRC/prompts" ]; then
+    link_item "$PI_SRC/prompts" "$PI_DEST/prompts"
+fi
+
 # Subagent profiles are the OpenCode agents: same markdown, same frontmatter.
 [ -d "$DOTFILES_DIR/opencode/agents" ] && \
     link_item "$DOTFILES_DIR/opencode/agents" "$PI_DEST/agents"

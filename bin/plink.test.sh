@@ -19,6 +19,7 @@ HOME_DIR="$SANDBOX/home"
 DEST="$HOME_DIR/.pi/agent"
 
 mkdir -p "$DOT/pi/extensions" "$DOT/claude" "$DOT/opencode/skills/alpha" "$DOT/opencode/agents" "$HOME_DIR"
+mkdir -p "$DOT/pi/prompts"; printf '# o\n' > "$DOT/pi/prompts/orchestrate.md"
 for f in settings.json models.json mcp-servers.json subagents.json; do printf '{}\n' > "$DOT/pi/$f"; done
 printf 'append\n' > "$DOT/pi/APPEND_SYSTEM.md"
 printf '// ext\n'  > "$DOT/pi/extensions/tool.ts"
