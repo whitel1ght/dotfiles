@@ -30,7 +30,8 @@ Run sync-tickets first, so the Jira statuses gathered next are already true.
 
 The first line gives the start of the window ("Since ..."). Use the same window for
 Slack. The digest has: carry-over from my last diary entry, my open MRs (reviews
-received, approvals, pipelines), MRs waiting on my review, and Jira.
+received, approvals, pipelines), which of my MRs are ready to merge (and in what order,
+when they depend on each other), MRs waiting on my review, and Jira.
 
 **Slack** (the claude.ai Slack connector; if its tools are deferred, load them with
 ToolSearch). Use only `slack_search_public_and_private`, `slack_read_thread` and
@@ -78,6 +79,11 @@ Group the work by what it unblocks, in this order:
   my own work. Then new pickups from the To-Do backlog, highest priority first, at most
   three.
 
+Separately, **Merge**: one checkbox per MR under "Merge now", and one checkbox per chain
+under "Merge in order" naming each MR in merge order ("merge backend !6390, then admin
+!273"). Leave out "Waiting on dependencies" unless one of those MRs unblocks something
+already in First or Today, in which case say so in one short line.
+
 Before writing, check that every one of these made it in or was dropped on purpose: each
 review note on my MRs awaiting my reply, each review_now or re_review MR, each newly
 assigned ticket, each unticked carry-over item and each Slack request. Group several
@@ -96,6 +102,10 @@ write must come from what you gathered:
 #### Plan
 
 **Meetings:** 10:00 standup · 14:30 retrieve v2 sync
+
+**Merge**
+- [ ] merge dashboard !940 (ecfx-1020)
+- [ ] merge backend !870, then admin !871 (ecfx-1007)
 
 **First**
 - [ ] reply to @anna in DM: which firms get the new export

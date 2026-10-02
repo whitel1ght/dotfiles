@@ -14,6 +14,9 @@
 #                 unticked items, the plan, and the day's report
 #   my MRs        comments from others, approvals and pipeline state on my open
 #                 MRs active since then (idle ones in one line), and which merged
+#   ready to merge  my open MRs that are mergeable now, or blocked only by
+#                 another of my own open MRs (stacked branch, GitLab /blocks, or
+#                 same ticket in an upstream repo), in merge order
 #   review queue  MRs waiting on me, from mr-review-queue's triage script
 #   jira          tickets newly assigned to me, my tickets others touched, and
 #                 my To-Do backlog
@@ -25,6 +28,9 @@ JIRA_BASE="${JIRA_BASE:-https://ecfxdev.atlassian.net}"
 DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
 STATE_DIR="${START_DAY_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/start-day}"
 HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
+# Upstream-first repo order for same-ticket merge ordering (see collect_ready_to_merge).
+START_DAY_REPO_ORDER="${START_DAY_REPO_ORDER:-ecfx-protobufs ecfx-backend}"
+START_DAY_POLL_DELAY="${START_DAY_POLL_DELAY:-2}"
 
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 epoch_of() { date -j -u -f %Y-%m-%dT%H:%M:%SZ "$1" +%s 2>/dev/null || date -u -d "$1" +%s; }
@@ -47,6 +53,7 @@ collect_my_mrs() {
   local me mrs
   me=$(glab api user | jq -r .username) || { echo "(GitLab unavailable)"; return; }
   mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { echo "(GitLab unavailable)"; return; }
+  ME_USERNAME="$me"; MY_MRS_JSON="$mrs"
   [ "$(jq length <<<"$mrs")" -gt 0 ] || echo "(none)"
   # Detail only for MRs touched since then; long-idle ones get one line, since
   # they have nothing new to act on and each costs two API calls.
@@ -74,6 +81,220 @@ collect_my_mrs() {
   echo "Merged since then:"
   glab api "merge_requests?scope=created_by_me&state=merged&updated_after=$SINCE&per_page=100" 2>/dev/null \
     | jq -r '.[] | "- \(.references.full) \(.title)"' | grep . || echo "(none)"
+}
+
+# Tags each MR with its upstream repo and ticket key, computes open-dependency
+# edges (stacked branch, declared /blocks — including someone else's open MR,
+# same-ticket contract order across repos) and groups them into upstream-first
+# merge chains. Input: the enriched MR array built in collect_ready_to_merge.
+# $order: lowercase repo names, earlier = more upstream.
+READY_JQ=$(cat <<'JQ'
+def repo_of(r): (r | capture("^(?<p>.+)!(?<n>[0-9]+)$").p) | split("/") | last;
+
+def ticket_of(x):
+  ( (x.source_branch // "") | ascii_downcase | [match("ecfx-([0-9]+)")] ) as $s
+  | if ($s | length) > 0 then ("ECFX-" + $s[0].captures[0].string)
+    else
+      ( (x.title // "") | ascii_downcase | [match("ecfx-([0-9]+)")] ) as $t
+      | if ($t | length) > 0 then ("ECFX-" + $t[0].captures[0].string) else null end
+    end;
+
+# A declared blocker still counts unless GitLab already merged or closed it —
+# includes someone else's MR, which we can't rank/status like our own.
+def open_blocker(b): (b.state // "") as $s | $s != "merged" and $s != "closed";
+
+# Kahn's algorithm, restricted to one weakly-connected component; ties broken
+# by upstream rank then id, so the order is deterministic.
+def topo($compids; $byid):
+  reduce range(0; ($compids|length)) as $i (
+    {emitted: [], remaining: ($compids | map({(.): ($byid[.].deps | map(select(. as $d | $compids | index($d) != null)))}) | add)};
+    . as $state
+    | ($compids - $state.emitted) as $left
+    | ($left | map(select(($state.remaining[.] // []) | length == 0))) as $ready
+    | ($ready | sort_by([$byid[.].rank, .]) | .[0]) as $pick
+    | if $pick == null then $state
+      else
+        $state
+        | .emitted += [$pick]
+        | .remaining = ($state.remaining | with_entries(.value |= map(select(. != $pick))))
+      end
+  ) | .emitted;
+
+. as $raw
+| ($raw | map(. as $r | $r + {id: "\($r.project_id):\($r.iid)", repo: (repo_of($r.ref) | ascii_downcase), mine: true})) as $tagged
+| ($tagged | map(. as $t | $t + {rank: (($order | index($t.repo)) // ($order | length)), ticket: ticket_of($t)})) as $mine
+| ($mine | map(.id)) as $mine_ids
+| ( [ $mine[] | (.blocks // [])[]? | .blocking_merge_request // empty | select(open_blocker(.))
+      | { id: "\(.project_id):\(.iid)", project_id, iid, ref: (.references.full // "\(.project_id)!\(.iid)"),
+          title: (.title // ""), draft: (.draft // .work_in_progress // false), ext_state: .state,
+          mine: false, status: null, rank: null, ticket: null, source_branch: null, target_branch: null,
+          blocks: [], deps: [] }
+    ] | unique_by(.id) | map(select(.id as $eid | ($mine_ids | index($eid)) == null)) ) as $external
+| ($mine + $external) as $nodes
+| ($nodes | map({(.id): .}) | add) as $byid
+| ($nodes | map(
+      if .mine then
+        . as $x
+        | $x + {
+            deps: (
+              [
+                ($nodes[] | select(.mine and .project_id == $x.project_id and .source_branch == $x.target_branch and .id != $x.id) | .id),
+                ( ($x.blocks // [])[]? | .blocking_merge_request // empty | select(open_blocker(.)) | "\(.project_id):\(.iid)" ),
+                ( if $x.ticket then ($nodes[] | select(.mine and .ticket == $x.ticket and .rank < $x.rank and .id != $x.id) | .id) else empty end )
+              ] | unique
+            )
+          }
+      else . end
+  )) as $full
+| (reduce $full[] as $x ({}; reduce $x.deps[] as $d (.; .[$d] = ((.[$d] // []) + [$x.id])))) as $dependents
+| ($full | map(. + {has_dependents: (($dependents[.id] // []) | length) > 0})) as $full
+| ($full | map({(.id): .id}) | add) as $init_comp
+| ([$full[] | . as $x | $x.deps[] | {a: $x.id, b: .}]) as $edges
+| (reduce range(0; ($full|length)+1) as $i (
+     $init_comp;
+     reduce $edges[] as $e (
+       .;
+       . as $comp
+       | ($comp[$e.a]) as $ca
+       | ($comp[$e.b]) as $cb
+       | if $ca == $cb then $comp
+         else
+           (if $ca < $cb then $ca else $cb end) as $new
+           | ($comp | with_entries(if (.value == $ca or .value == $cb) then .value = $new else . end))
+         end
+     )
+   )) as $comp_of
+| ([$full[] | select((.deps|length) > 0 or .has_dependents) | .id]) as $graphids
+| ($full | map({(.id): .}) | add) as $byid2
+| {nodes: $full, chains: ($graphids | group_by($comp_of[.]) | map(topo(.; $byid2)))}
+JQ
+)
+
+collect_ready_to_merge() {
+  section "Ready to merge"
+  local mrs
+  mrs="${MY_MRS_JSON:-}"
+  if [ -z "$mrs" ]; then
+    mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { echo "(GitLab unavailable)"; return; }
+  fi
+  [ "$(jq length <<<"$mrs")" -gt 0 ] || { echo "(none)"; return; }
+
+  local order_json enriched rows
+  order_json=$(printf '%s\n' "$START_DAY_REPO_ORDER" | tr '[:upper:]' '[:lower:]' | tr ' ' '\n' | grep . | jq -R . | jq -s .)
+
+  # Non-draft MRs get their real merge status (polled past "checking"); drafts
+  # are excluded from output but kept as graph nodes since an open dependant
+  # still needs to know it's waiting on a draft.
+  enriched="[]"
+  rows=$(jq -r '.[] | [.project_id, .iid, .references.full, .title, .web_url, .source_branch, .target_branch, .draft] | @tsv' <<<"$mrs")
+  while IFS=$'\t' read -r pid iid ref title web_url src tgt draft; do
+    [ -n "$pid" ] || continue
+    local status blocks detail tries
+    if [ "$draft" = "true" ]; then
+      status="draft"; blocks="[]"
+    else
+      tries=0
+      while :; do
+        detail=$(glab api "projects/$pid/merge_requests/$iid" 2>/dev/null || echo '{}')
+        status=$(jq -r '.detailed_merge_status // "unknown"' <<<"$detail")
+        tries=$((tries + 1))
+        case "$status" in
+          checking|unchecked)
+            [ "$tries" -ge 3 ] && { status="pending"; break; }
+            sleep "$START_DAY_POLL_DELAY" ;;
+          *) break ;;
+        esac
+      done
+      blocks=$(glab api "projects/$pid/merge_requests/$iid/blocks" 2>/dev/null || echo '[]')
+    fi
+    enriched=$(jq -c --arg pid "$pid" --arg iid "$iid" --arg ref "$ref" --arg title "$title" --arg web_url "$web_url" \
+      --arg src "$src" --arg tgt "$tgt" --arg draft "$draft" --arg status "$status" --argjson blocks "$blocks" \
+      '. + [{project_id: ($pid|tonumber), iid: ($iid|tonumber), ref: $ref, title: $title, web_url: $web_url,
+             source_branch: $src, target_branch: $tgt, draft: ($draft == "true"), status: $status, blocks: $blocks}]' \
+      <<<"$enriched")
+  done <<<"$rows"
+
+  local graph full chains
+  graph=$(jq -c --argjson order "$order_json" "$READY_JQ" <<<"$enriched") || { echo "(ready-to-merge computation failed)"; return; }
+  full=$(jq -c '.nodes' <<<"$graph")
+  chains=$(jq -c '.chains' <<<"$graph")
+
+  local merge_now order_lines waiting_lines
+  # Merge now: no open dependencies of my own, and nothing of mine depends on
+  # it either — an MR with a dependant only ever appears as a chain head.
+  merge_now=$(jq -r '.[] | select(.mine) | select(.draft | not) | select(.status == "mergeable")
+    | select((.deps|length) == 0) | select(.has_dependents | not)
+    | "- \(.ref) \(.title) — \(.web_url)"' <<<"$full")
+
+  order_lines=""
+  waiting_lines=""
+  while IFS= read -r chain; do
+    [ -n "$chain" ] || continue
+    local headid head_status
+    headid=$(jq -r '.[0]' <<<"$chain")
+    head_status=$(jq -r --arg id "$headid" '.[] | select(.id == $id) | .status' <<<"$full")
+    if [ "$head_status" = "mergeable" ]; then
+      local line
+      # Show the chain up to (and including) the first not-yet-mergeable MR;
+      # anything further downstream is just named, since its current status
+      # can't be trusted until what's ahead of it actually merges.
+      line=$(jq -r --argjson chain "$chain" '
+        . as $full
+        | ($full | map({(.id): .}) | add) as $byid
+        | (reduce range(1; ($chain|length)) as $i (
+             {included: [$chain[0]], broke: false, rest: []};
+             if .broke then .
+             else
+               ($chain[$i]) as $nid
+               | ($byid[$nid]) as $n
+               | (.included += [$nid])
+               | if $n.status != "mergeable" then (.broke = true | .rest = ($chain[($i+1):])) else . end
+             end
+           )) as $walk
+        | ($walk.included | map($byid[.])) as $inc
+        | ($inc | map(.ticket) | unique) as $tix
+        | (if ($tix|length) == 1 and $tix[0] != null then ($tix[0] + ": ") else "" end) as $prefix
+        | ($inc | map("\(.ref) [\(.status)]") | join(" → ")) as $arrow
+        | ($walk.rest | map($byid[.].ref) | join(", ")) as $restrefs
+        | $prefix + $arrow + (if ($walk.rest|length) > 0 then "; after that: " + $restrefs else "" end)
+      ' <<<"$full")
+      order_lines="$order_lines- $line
+"
+    else
+      local w
+      w=$(jq -r --argjson chain "$chain" '
+        . as $full
+        | ($full | map({(.id): .}) | add) as $byid
+        | $chain[] as $nid
+        | ($byid[$nid]) as $n
+        | select($n.mine)
+        | select($n.draft | not)
+        | select($n.status == "mergeable")
+        | select(($n.deps|length) > 0)
+        | ($n.deps | map($byid[.]) | sort_by([.rank, .id]) | .[0]) as $pred
+        | "- \($n.ref) waits on \($pred.ref) (\(
+            if ($pred.mine | not) then "someone else'"'"'s MR, \($pred.ext_state)"
+            elif $pred.draft then "draft"
+            else $pred.status end))"
+      ' <<<"$full")
+      [ -n "$w" ] && waiting_lines="$waiting_lines$w
+"
+    fi
+  done < <(jq -c '.[]' <<<"$chains")
+
+  local printed=0
+  if [ -n "$merge_now" ]; then
+    echo "Merge now:"; echo "$merge_now"; printed=1
+  fi
+  if [ -n "$order_lines" ]; then
+    [ "$printed" -eq 1 ] && echo
+    echo "Merge in order:"; printf '%s' "$order_lines"; printed=1
+  fi
+  if [ -n "$waiting_lines" ]; then
+    [ "$printed" -eq 1 ] && echo
+    echo "Waiting on dependencies:"; printf '%s' "$waiting_lines"; printed=1
+  fi
+  [ "$printed" -eq 1 ] || echo "(none)"
 }
 
 collect_review_queue() {
@@ -117,7 +338,7 @@ case "${1:-}" in
     else SINCE=$(iso $((now - 86400 - 10#$(date +%H) * 3600 - 10#$(date +%M) * 60 - 10#$(date +%S) + 8 * 3600))); fi
     mkdir -p "$STATE_DIR"; iso "$now" > "$STATE_DIR/pending"
     printf '# Since %s (%s local)\n' "$SINCE" "$(date -r "$(epoch_of "$SINCE")" '+%a %H:%M' 2>/dev/null || echo ?)"
-    collect_carryover; collect_my_mrs; collect_review_queue; collect_jira ;;
+    collect_carryover; collect_my_mrs; collect_ready_to_merge; collect_review_queue; collect_jira ;;
   save)
     "$HERE/daily-report" save "$(date +%F)" --plan
     if [ -s "$STATE_DIR/pending" ]; then mv "$STATE_DIR/pending" "$STATE_DIR/last-run"; fi ;;
