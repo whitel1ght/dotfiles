@@ -283,3 +283,8 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # opencode
 export PATH=/Users/dmitry/.opencode/bin:$PATH
+export PATH="$HOME/bin:$PATH"
+
+# Qwen Code PATH block begin
+export PATH='/Users/dmitry/.local/bin':$PATH
+# Qwen Code PATH block end
