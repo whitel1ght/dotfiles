@@ -253,6 +253,17 @@ Two more things differ from the Mac:
 - The server QR carries the VPS credentials. Show it only to the phone, and don't
   screenshot it.
 
+## Other VPNs alongside (DuploCloud)
+
+The tun inbound's `route_exclude_address` hands address ranges back to macOS, so another
+VPN can carry them while sing-box keeps everything else. It lists the ECFX dev01 AWS
+network (`10.221.0.0/16`, where the DuploCloud RDS databases live) and the DuploCloud VPN
+server itself (`54.213.49.194`). Without it, `strict_route` pulls the dev01 range into the
+tun, and the `ip_is_private` rule sends it out "direct" over Wi-Fi, where a private AWS
+address is unreachable. With it, the DuploCloud VPN (OpenVPN) works while `proxyctl on`
+stays on; `nc -vz <rds-endpoint> 5432` checks the path. Another network behind a VPN goes
+in the same list.
+
 ## First run on a new machine
 
 ```bash

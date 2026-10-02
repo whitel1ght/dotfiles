@@ -20,6 +20,7 @@
       "address": [ "172.19.0.1/30" ],
       "auto_route": true,
       "strict_route": true,
+      "route_exclude_address": [ "10.221.0.0/16", "54.213.49.194/32" ],
       "stack": "gvisor"
     }
   ],
