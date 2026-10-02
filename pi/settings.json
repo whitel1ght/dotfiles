@@ -4,7 +4,8 @@
   "packages": [
     "npm:@ollama/pi-web-search",
     "npm:pi-claude-bridge",
-    "npm:billion-context"
+    "npm:billion-context",
+    "git:github.com/obra/superpowers"
   ],
   "theme": "dark",
   "lastChangelogVersion": "1.0.0",
