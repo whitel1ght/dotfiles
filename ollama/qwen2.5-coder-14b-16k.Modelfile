@@ -1,0 +1,9 @@
+# name: qwen2.5-coder:14b-16k
+#
+# qwen2.5-coder:14b with a 16k context window. Ollama otherwise loads it with
+# 4096 tokens and silently drops the start of any longer prompt, system prompt
+# first. The model's limit is 32768; 16k loads at ~12GB, 32k at 15GB, which is
+# too much next to everything else on a 24GB machine. Same weights, no copy.
+# Built by install.sh (OLLAMA_SETUP); Pi uses it via pi/models.json.
+FROM qwen2.5-coder:14b
+PARAMETER num_ctx 16384
