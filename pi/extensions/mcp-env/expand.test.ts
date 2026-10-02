@@ -33,7 +33,7 @@ test("the committed mcp-servers.json names its secrets only as variables", () =>
   assert.deepEqual(out.servers, []);
   assert.deepEqual(
     Object.fromEntries(out.skipped.map((s) => [s.name, s.missing])),
-    { slack: ["SLACK_MCP_CLIENT_ID", "SLACK_MCP_CLIENT_SECRET"], "outlook-calendar": ["OUTLOOK_MCP_TENANT_ID", "OUTLOOK_MCP_CLIENT_ID"] },
+    { slack: ["SLACK_MCP_CLIENT_ID", "SLACK_MCP_CLIENT_SECRET"] },
   );
 });
 

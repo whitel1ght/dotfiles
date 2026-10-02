@@ -8,14 +8,6 @@
         "clientSecret": "${SLACK_MCP_CLIENT_SECRET}",
         "callbackPort": 19876
       }
-    },
-    "outlook-calendar": {
-      "url": "https://agent365.svc.cloud.microsoft/agents/tenants/${OUTLOOK_MCP_TENANT_ID}/servers/mcp_CalendarTools",
-      "description": "Read and manage Outlook calendar events",
-      "oauth": {
-        "clientId": "${OUTLOOK_MCP_CLIENT_ID}",
-        "callbackPort": 19876
-      }
     }
   }
 }
