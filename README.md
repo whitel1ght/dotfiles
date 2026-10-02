@@ -464,7 +464,7 @@ are for Claude Code.
 | Directory | Contents |
 | --- | --- |
 | `commands/` | 7 slash commands, same names as `claude/commands/` |
-| `skills/` | 69 skills, each a directory containing `SKILL.md` |
+| `skills/` | 70 skills, each a directory containing `SKILL.md` |
 | `agents/` | 30 subagents, one markdown file each |
 | `modules/` | 8 shared context files the review skills read mid-review |
 
