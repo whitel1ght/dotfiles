@@ -101,9 +101,14 @@ collect_claude() {
     | select(.display | test("^/(\($builtin))(\\s|$)") | not)' "$CLAUDE_DIR/history.jsonl" \
   | jq -rs 'group_by(.sessionId) | sort_by(.[0].timestamp)[]
       | [.[0].sessionId, (.[0].project | sub(".*/"; "")), (.[0].timestamp / 1000 | strflocaltime("%H:%M")),
-         (map(.display | gsub("\\s+"; " ") | .[0:220]) | tojson)] | @tsv' \
+         (map(.display | gsub("\\s+"; " ") | .[0:220]) | tojson | @base64)] | @tsv' \
   | while IFS=$'\t' read -r sid project started prompts; do
       local transcript title last
+      # prompts arrive base64'd: raw JSON in a @tsv field gets its backslashes
+      # escaped a second time, and any prompt with a quote then breaks jq on
+      # the way back in (an "Invalid numeric literal" that used to kill the
+      # whole run and drop every later session).
+      prompts=$(printf %s "$prompts" | base64 -d 2>/dev/null || printf %s "$prompts" | base64 -D)
       transcript=$(find "$CLAUDE_DIR/projects" -maxdepth 2 -name "$sid.jsonl" 2>/dev/null | head -1)
       title="" last=""
       if [ -n "$transcript" ]; then
