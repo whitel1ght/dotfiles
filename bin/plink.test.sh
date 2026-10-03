@@ -20,7 +20,7 @@ DEST="$HOME_DIR/.pi/agent"
 
 mkdir -p "$DOT/pi/extensions" "$DOT/claude" "$DOT/opencode/skills/alpha" "$DOT/opencode/agents" "$HOME_DIR"
 mkdir -p "$DOT/pi/prompts"; printf '# o\n' > "$DOT/pi/prompts/orchestrate.md"
-for f in settings.json models.json mcp-servers.json subagents.json subagent-models.json subagent-model-guide.md; do printf '{}\n' > "$DOT/pi/$f"; done
+for f in settings.json models.json mcp-servers.json subagents.json subagent-models.json subagent-model-guide.md subagents-research.md; do printf '{}\n' > "$DOT/pi/$f"; done
 printf 'append\n' > "$DOT/pi/APPEND_SYSTEM.md"
 printf '// ext\n'  > "$DOT/pi/extensions/tool.ts"
 printf '# me\n'    > "$DOT/claude/CLAUDE.md"
@@ -45,7 +45,7 @@ echo "plink — create"
 mkdir -p "$DEST/sessions"
 printf 'secret\n' > "$DEST/auth.json"
 run_plink >/dev/null
-for f in settings.json models.json mcp-servers.json subagents.json subagent-models.json subagent-model-guide.md APPEND_SYSTEM.md; do
+for f in settings.json models.json mcp-servers.json subagents.json subagent-models.json subagent-model-guide.md subagents-research.md APPEND_SYSTEM.md; do
     assert_link "$DEST/$f" "$DOT/pi/$f" "links $f"
 done
 assert_link "$DEST/AGENTS.md" "$DOT/claude/CLAUDE.md" "links CLAUDE.md as AGENTS.md"

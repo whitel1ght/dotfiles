@@ -111,7 +111,7 @@ fi
 
 [ "$DRY_RUN" = 1 ] || mkdir -p "$PI_DEST"
 
-for name in settings.json models.json mcp-servers.json subagents.json subagent-models.json subagent-model-guide.md APPEND_SYSTEM.md; do
+for name in settings.json models.json mcp-servers.json subagents.json subagent-models.json subagent-model-guide.md subagents-research.md APPEND_SYSTEM.md; do
     [ -f "$PI_SRC/$name" ] && link_item "$PI_SRC/$name" "$PI_DEST/$name"
 done
 

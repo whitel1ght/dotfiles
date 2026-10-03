@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { missingCatalogModels, parseModelPolicy } from "./src/model-policy.ts";
-import { parseListModels } from "./scripts/check-model-policy.ts";
+import { spawnSync } from "node:child_process";
+import { listPiModels, parseListModels } from "./scripts/check-model-policy.ts";
 import { renderModelGuide } from "./scripts/generate-model-guide.ts";
 
 const read = (name: string) => readFileSync(new URL(`../../${name}`, import.meta.url), "utf8");
@@ -36,7 +37,12 @@ test("the guide covers all three provider families and names the Claude Bridge",
 test("a budget tier is a lower-cost choice than balanced", () => {
   for (const [task, ranking] of policy.rankings) {
     const lead = policy.models.get(ranking.budget[0])!;
-    assert.equal(lead.cost, "low", `${task} budget leads with ${lead.label}`);
+    if (lead.cost !== "low") {
+      assert.match(ranking.rationale.budget, /no safe low-cost/i, `${task} budget lead is not low cost and says why`);
+      assert.ok(!lead.avoidFor.includes("hard reasoning"), `${task} budget leads with ${lead.label}, which avoids hard reasoning`);
+    } else if (task === "reason") {
+      assert.fail("reason budget is expected to document the no-low-cost exception");
+    }
     assert.ok(!ranking.budget.some((ref) => ref.startsWith("claude-bridge/")), `${task} budget uses the subscription`);
   }
 });
@@ -66,4 +72,25 @@ test("missingCatalogModels reports every absent model, sorted, and never accepts
   assert.ok(!missing.includes("openai/gpt-5.4-mini"));
   assert.ok(!missing.includes("claude-bridge/claude-haiku-4-5"));
   assert.deepEqual(missingCatalogModels(policy, new Set(policy.models.keys())), []);
+});
+
+test("the guide's research link resolves where plink puts it", () => {
+  assert.match(renderModelGuide(policy), /\]\(subagents-research\.md\)/);
+  assert.ok(read("subagents-research.md").length > 0);
+  assert.match(readFileSync(new URL("../../../bin/plink", import.meta.url), "utf8"), /subagent-model-guide\.md subagents-research\.md/);
+});
+
+test("listPiModels turns a missing or failing pi into a concise message", () => {
+  const enoent = Object.assign(new Error("spawnSync pi ENOENT"), { code: "ENOENT" });
+  assert.throws(() => listPiModels(() => { throw enoent; }), /`pi` was not found on PATH/);
+  assert.throws(() => listPiModels(() => { throw new Error("boom\n  at stack"); }), (e: Error) => /failed: boom$/.test(e.message));
+  assert.equal(listPiModels(() => "ok"), "ok");
+});
+
+test("check-models exits 1 with one-line stderr and no stack when pi is missing", () => {
+  const script = new URL("./scripts/check-model-policy.ts", import.meta.url).pathname;
+  const result = spawnSync(process.execPath, [script], { encoding: "utf8", env: { ...process.env, PATH: "/nonexistent" } });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /`pi` was not found on PATH/);
+  assert.doesNotMatch(result.stderr, /\n\s+at /);
 });

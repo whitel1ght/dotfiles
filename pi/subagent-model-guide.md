@@ -48,10 +48,10 @@ Low-cost flash models only, with no Claude fallback; fine for read-only search a
 
 | # | Model | Provider | Quality | Speed | Cost |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `opencode-go/mimo-v2.6-flash` (MiMo V2.6 Flash) | opencode-go | good | fast | low |
-| 2 | `opencode-go/deepseek-v4.1-flash` (DeepSeek V4.1 Flash) | opencode-go | good | fast | low |
-| 3 | `opencode-go/glm-5.3-flash` (GLM 5.3 Flash) | opencode-go | good | fast | low |
-| 4 | `opencode-go/qwen3.8-flash` (Qwen 3.8 Flash) | opencode-go | good | fast | low |
+| 1 | `opencode-go/glm-5.3-flash` (GLM 5.3 Flash) | opencode-go | good | fast | low |
+| 2 | `opencode-go/qwen3.8-flash` (Qwen 3.8 Flash) | opencode-go | good | fast | low |
+| 3 | `opencode-go/mimo-v2.6-flash` (MiMo V2.6 Flash) | opencode-go | good | fast | low |
+| 4 | `opencode-go/deepseek-v4.1-flash` (DeepSeek V4.1 Flash) | opencode-go | good | fast | low |
 
 ### Balanced
 
@@ -144,13 +144,14 @@ High-stakes changes where a missed bug is expensive.
 
 ### Budget
 
-Lower-cost first look for exploratory analysis: GPT-5.4 Mini leads, medium-cost reasoners follow. Not for hard root causes; use balanced.
+No safe low-cost reasoning model is cataloged (GPT-5.4 Mini is marked avoid-for hard reasoning), so this is the balanced reasoners minus the Claude fallback: medium cost, not low. Not for hard root causes; use balanced or premium.
 
 | # | Model | Provider | Quality | Speed | Cost |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `openai/gpt-5.4-mini` (GPT-5.4 Mini) | openai | good | fast | low |
-| 2 | `opencode-go/mimo-v2.6-pro` (MiMo V2.6 Pro) | opencode-go | strong | medium | medium |
+| 1 | `opencode-go/mimo-v2.6-pro` (MiMo V2.6 Pro) | opencode-go | strong | medium | medium |
+| 2 | `opencode-go/grok-4.7` (Grok 4.7) | opencode-go | strong | medium | medium |
 | 3 | `opencode-go/kimi-k3` (Kimi K3) | opencode-go | strong | medium | medium |
+| 4 | `opencode-go/qwen3.8-max` (Qwen 3.8 Max) | opencode-go | strong | medium | medium |
 
 ### Balanced
 

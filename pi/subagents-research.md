@@ -72,8 +72,11 @@ All models in the lists answered a ping in 2–6s on 2026-10-02.
 ranking above, unchanged). The quality, speed and cost labels in it are operational guidance: a relative
 "cheap and quick enough for this kind of work", not a price list or a benchmark score. A budget tier leads
 with a model labelled low cost (the Go flash models, GPT-5.4 Mini) and never ends on a Claude subscription
-fallback; where the catalog has no cheaper model that suits a task, the budget tier is the balanced models
-minus the Claude fallback, reordered cheapest first. Nothing is called cheap from its name alone.
+fallback. `explore` is the balanced flash order minus Claude (all four carry the same low label, so nothing
+ranks them by price). `reason` is the exception: the only low-cost candidate, GPT-5.4 Mini, is marked
+avoid-for hard reasoning, so no safe low-cost option is currently cataloged; its budget tier is the balanced
+reasoners minus the Claude fallback, which are medium cost, and no premium or Claude model is added.
+Nothing is called cheap from its name alone.
 
 Vendor-reported (OpenAI's own figures, different harnesses and effort settings; not comparable with the
 Artificial Analysis table above):
@@ -84,7 +87,8 @@ Artificial Analysis table above):
 | GPT-5.3-Codex (xhigh effort) | 56.8% | 77.3% | [OpenAI](https://openai.com/index/introducing-gpt-5-3-codex/) |
 | GPT-5.4 mini | 54.4% | 60.0% | [OpenAI](https://openai.com/index/introducing-gpt-5-4-mini-and-nano/) |
 
-Independent (Artificial Analysis comparison pages, read 2026-10-03; values move, so follow the links):
+Independent (Artificial Analysis comparison URLs and a search-indexed snapshot of them were consulted on
+2026-10-03; the pages were not read in full, and values move, so follow the links):
 
 - [GPT-5.4 non-reasoning vs GPT-5.3-Codex xhigh](https://artificialanalysis.ai/models/comparisons/gpt-5-4-non-reasoning-vs-gpt-5-3-codex)
 - [GPT-5.4 mini xhigh vs GPT-5.3-Codex xhigh](https://artificialanalysis.ai/models/comparisons/gpt-5-4-mini-vs-gpt-5-3-codex)
@@ -95,9 +99,12 @@ non-reasoning) and 24 (GPT-5.4 mini xhigh). The index includes coding-relevant T
 SciCode but is not a pure coding score, and the GPT-5.4 entry is the non-reasoning variant, so it does not
 rank GPT-5.4 as configured here.
 
-How the policy uses it: GPT-5.3-Codex leads premium `implement` for terminal-heavy work, where OpenAI's and
-Artificial Analysis's comparisons agree it is competitive; GPT-5.4 is a premium reviewer/reasoner on
-breadth, not on a measured ranking; GPT-5.4 mini is the budget lead for `implement`, `review` and `reason`
-because it is a low-cost, fast model with vendor-reported SWE-Bench Pro close to the larger two, not because
-a review or reasoning benchmark favours it. Availability was checked with `pi --list-models`
+How the policy uses it: GPT-5.3-Codex leads premium `implement` for terminal-heavy work: OpenAI reports the
+highest Terminal-Bench 2.0 of the three (77.3%), and the Artificial Analysis index entry for it (33) is above the
+other two (18 non-reasoning GPT-5.4, 24 mini), though that comparison is not like for like. GPT-5.4 is a premium
+reviewer/reasoner on breadth, not on a measured ranking. GPT-5.4 mini leads budget `implement` and `review`
+because it is a low-cost, fast model; its vendor-reported SWE-Bench Pro is close to the larger two (54.4% vs
+57.7% / 56.8%) but its Terminal-Bench 2.0 is materially behind (60.0% vs 75.1% / 77.3%), so it suits small,
+well-specified edits and light review, not terminal-heavy work. It does not lead `reason`: no reasoning benchmark
+favours it and its own metadata says avoid hard reasoning. Availability was checked with `pi --list-models`
 (`npm run check-models`); every configured model was present on 2026-10-03, so none was substituted.

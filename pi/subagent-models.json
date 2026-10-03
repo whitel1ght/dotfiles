@@ -290,10 +290,10 @@
     },
     "explore": {
       "budget": [
-        "opencode-go/mimo-v2.6-flash",
-        "opencode-go/deepseek-v4.1-flash",
         "opencode-go/glm-5.3-flash",
-        "opencode-go/qwen3.8-flash"
+        "opencode-go/qwen3.8-flash",
+        "opencode-go/mimo-v2.6-flash",
+        "opencode-go/deepseek-v4.1-flash"
       ],
       "balanced": [
         "opencode-go/glm-5.3-flash",
@@ -360,9 +360,10 @@
     },
     "reason": {
       "budget": [
-        "openai/gpt-5.4-mini",
         "opencode-go/mimo-v2.6-pro",
-        "opencode-go/kimi-k3"
+        "opencode-go/grok-4.7",
+        "opencode-go/kimi-k3",
+        "opencode-go/qwen3.8-max"
       ],
       "balanced": [
         "opencode-go/mimo-v2.6-pro",
@@ -376,7 +377,7 @@
         "openai/gpt-5.4"
       ],
       "rationale": {
-        "budget": "Lower-cost first look for exploratory analysis: GPT-5.4 Mini leads, medium-cost reasoners follow. Not for hard root causes; use balanced.",
+        "budget": "No safe low-cost reasoning model is cataloged (GPT-5.4 Mini is marked avoid-for hard reasoning), so this is the balanced reasoners minus the Claude fallback: medium cost, not low. Not for hard root causes; use balanced or premium.",
         "balanced": "Existing ranking: strongest open reasoners first, Claude Opus as the final fallback.",
         "premium": "Expensive-if-wrong decisions and tricky root causes."
       }

@@ -16,8 +16,28 @@ export function parseListModels(output: string): Set<string> {
   return refs;
 }
 
+type Exec = (file: string, args: string[]) => string;
+
+const run: Exec = (file, args) => execFileSync(file, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+
+export function listPiModels(exec: Exec = run): string {
+  try {
+    return exec("pi", ["--list-models"]);
+  } catch (error) {
+    const { code, message } = error as NodeJS.ErrnoException;
+    if (code === "ENOENT") throw new Error("`pi` was not found on PATH; install it to check model availability");
+    throw new Error(`\`pi --list-models\` failed: ${message.split("\n")[0]}`);
+  }
+}
+
 if (import.meta.main) {
-  const listing = execFileSync("pi", ["--list-models"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  let listing: string;
+  try {
+    listing = listPiModels();
+  } catch (error) {
+    console.error((error as Error).message);
+    process.exit(1);
+  }
   const policy = parseModelPolicy(JSON.parse(readFileSync(POLICY_URL, "utf8")));
   const missing = missingCatalogModels(policy, parseListModels(listing));
   if (missing.length) {
