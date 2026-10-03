@@ -69,6 +69,12 @@ export function selectableModels(policy: ModelPolicy, taskType: string): readonl
   return [...refs].map((ref) => policy.models.get(ref)!);
 }
 
+// Catalog models absent from the `provider/id` set `pi --list-models` reports,
+// sorted. Exact match: anthropic/* never stands in for claude-bridge/*.
+export function missingCatalogModels(policy: ModelPolicy, available: ReadonlySet<string>): string[] {
+  return [...policy.models.keys()].filter((ref) => !available.has(ref)).sort();
+}
+
 function parseRanking(name: string, entry: unknown, catalog: ReadonlyMap<string, ModelMetadata>): TaskRanking {
   const where = `rankings.${name}`;
   if (!isObject(entry)) throw new Error(`${FILE}: ${where} must be an object`);

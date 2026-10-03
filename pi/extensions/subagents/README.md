@@ -17,19 +17,28 @@ that the parent picks the model.
 
 ## Choosing the model
 
-`~/.pi/agent/subagents.json` (from `pi/subagents.json`) is the roster. Each task type
-has a description, a fixed tool set, and its models ranked best first for that kind
-of work, with a `claude-bridge/*` model as the last fallback. The ranking comes from
-public benchmarks; [`pi/subagents-research.md`](../../subagents-research.md) has the
-numbers, the sources and the reasons.
+`~/.pi/agent/subagents.json` (from `pi/subagents.json`) is the roster: each task type's
+description, fixed tool set and timing. Which models a type may use lives in
+`~/.pi/agent/subagent-models.json` (from `pi/subagent-models.json`), the model policy.
+It has a catalog of models (provider, quality, speed, cost, strengths) and, per task
+type (`implement`, `review`, `reason`, `explore`, `text`), a `budget`, `balanced` and
+`premium` array of catalog models, best first, each with a rationale. The `balanced`
+array is the default chain and must end with exactly one `claude-bridge/*` model as the
+last fallback. [`pi/subagent-model-guide.md`](../../subagent-model-guide.md) is the
+generated human-readable view; [`pi/subagents-research.md`](../../subagents-research.md)
+has the benchmark numbers, sources and reasons.
 
-| Type | Tools | Models, best first |
-| --- | --- | --- |
-| `implement` | read + edit | glm-5.3 → grok-4.7 → qwen3.8-max → mimo-v2.6-pro → Sonnet |
-| `review` | read-only | qwen3.8-max → grok-4.7 → glm-5.3 → mimo-v2.6-pro → Sonnet |
-| `reason` | read-only | mimo-v2.6-pro → grok-4.7 → kimi-k3 → qwen3.8-max → Opus |
-| `explore` | read-only | glm-5.3-flash → qwen3.8-flash → mimo-v2.6-flash → deepseek-v4.1-flash → Sonnet |
-| `text` | none | glm-5.3-flash → qwen3.8-flash → mimo-v2.6-flash → Haiku |
+To change a priority, move a model's line within its array in `pi/subagent-models.json`
+(or add it to the catalog first), then:
+
+```sh
+cd pi/extensions/subagents
+npm run generate-guide   # rewrites pi/subagent-model-guide.md; commit it with the JSON
+npm run check-models     # every catalog model must appear in `pi --list-models`
+```
+
+`check-models` lists every missing model and exits non-zero; `anthropic/*` never stands
+in for `claude-bridge/*`.
 
 The parent picks only the type. The extension walks the list:
 

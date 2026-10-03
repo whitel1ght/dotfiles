@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test --test-timeout=20000 *.test.ts"
+    "test": "node --test --test-timeout=20000 *.test.ts",
+    "generate-guide": "node scripts/generate-model-guide.ts",
+    "check-models": "node scripts/check-model-policy.ts"
   }
 }

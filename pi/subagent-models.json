@@ -220,13 +220,15 @@
       "bestFor": [
         "text",
         "implementation",
+        "light review",
         "agent work"
       ],
       "strengths": [
         "cheap agent work"
       ],
       "avoidFor": [
-        "hard reasoning"
+        "hard reasoning",
+        "high-stakes review"
       ]
     },
     "openai/gpt-5.3-codex": {
@@ -281,16 +283,17 @@
         "openai/gpt-5.4"
       ],
       "rationale": {
-        "budget": "Cheap flash models are enough for pasted-text transforms.",
+        "budget": "Low-cost models only (no Claude fallback); enough for pasted-text transforms.",
         "balanced": "Existing ranking: fast open models first, Claude Haiku as the final fallback.",
         "premium": "Stronger models for nuanced rewriting where tone or accuracy matters."
       }
     },
     "explore": {
       "budget": [
+        "opencode-go/mimo-v2.6-flash",
+        "opencode-go/deepseek-v4.1-flash",
         "opencode-go/glm-5.3-flash",
-        "opencode-go/qwen3.8-flash",
-        "opencode-go/deepseek-v4.1-flash"
+        "opencode-go/qwen3.8-flash"
       ],
       "balanced": [
         "opencode-go/glm-5.3-flash",
@@ -304,7 +307,7 @@
         "openai/gpt-5.4"
       ],
       "rationale": {
-        "budget": "Fast open models handle read-only search and summaries.",
+        "budget": "Low-cost flash models only, with no Claude fallback; fine for read-only search and summaries.",
         "balanced": "Existing ranking: flash models first, Claude Sonnet as the final fallback.",
         "premium": "Stronger models for large or subtle codebases."
       }
@@ -327,16 +330,16 @@
         "claude-bridge/claude-opus-5-5"
       ],
       "rationale": {
-        "budget": "Cheaper coding models for small, well-specified edits.",
+        "budget": "GPT-5.4 Mini first for small, well-specified edits; medium-cost coding models follow.",
         "balanced": "Existing ranking: open coding models first, Claude Sonnet as the final fallback.",
         "premium": "Terminal-heavy or risky changes where a first-try success matters."
       }
     },
     "review": {
       "budget": [
+        "openai/gpt-5.4-mini",
         "opencode-go/glm-5.3",
-        "opencode-go/mimo-v2.6-pro",
-        "openai/gpt-5.4-mini"
+        "opencode-go/mimo-v2.6-pro"
       ],
       "balanced": [
         "opencode-go/qwen3.8-max",
@@ -350,16 +353,16 @@
         "claude-bridge/claude-opus-5-5"
       ],
       "rationale": {
-        "budget": "Mid-priced models for routine review passes.",
+        "budget": "Lower-cost first pass: GPT-5.4 Mini screens routine diffs, medium-cost models follow. Escalate risky changes to balanced.",
         "balanced": "Existing ranking: strongest open reviewers first, Claude Sonnet as the final fallback.",
         "premium": "High-stakes changes where a missed bug is expensive."
       }
     },
     "reason": {
       "budget": [
+        "openai/gpt-5.4-mini",
         "opencode-go/mimo-v2.6-pro",
-        "opencode-go/kimi-k3",
-        "openai/gpt-5.4-mini"
+        "opencode-go/kimi-k3"
       ],
       "balanced": [
         "opencode-go/mimo-v2.6-pro",
@@ -373,7 +376,7 @@
         "openai/gpt-5.4"
       ],
       "rationale": {
-        "budget": "Cheaper reasoning models for exploratory analysis.",
+        "budget": "Lower-cost first look for exploratory analysis: GPT-5.4 Mini leads, medium-cost reasoners follow. Not for hard root causes; use balanced.",
         "balanced": "Existing ranking: strongest open reasoners first, Claude Opus as the final fallback.",
         "premium": "Expensive-if-wrong decisions and tricky root causes."
       }
