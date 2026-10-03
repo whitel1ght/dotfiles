@@ -56,14 +56,21 @@ pi/subagents-research.md
     Benchmark evidence, source links, exclusions, and ranking rationale.
 ```
 
-`pi/subagent-models.json` is the single source of truth for model metadata and
-priority. Priority is top-to-bottom in short JSON arrays so changing defaults and
-fallback order only requires moving model lines:
+`pi/subagent-models.json` is the single source of truth for model metadata,
+evidence date, task/tier rationale, compatibility, and priority. Priority is
+top-to-bottom in short JSON arrays so changing defaults and fallback order only
+requires moving model lines:
 
 ```json
 {
+  "evidenceDate": "2026-10-03",
   "rankings": {
     "review": {
+      "budget": [
+        "opencode-go/qwen3.8-flash",
+        "openai/gpt-5.4-mini",
+        "claude-bridge/claude-haiku-4-5"
+      ],
       "balanced": [
         "opencode-go/qwen3.8-max",
         "openai/gpt-5.4",
@@ -73,7 +80,12 @@ fallback order only requires moving model lines:
       "premium": [
         "claude-bridge/claude-opus-5-5",
         "openai/gpt-5.5-pro"
-      ]
+      ],
+      "rationale": {
+        "budget": "Fast, economical models suit bounded review passes.",
+        "balanced": "Strong code analysis with resilient provider fallbacks.",
+        "premium": "Use when ambiguity or failure cost justifies deeper reasoning."
+      }
     }
   },
   "models": {
@@ -89,6 +101,14 @@ fallback order only requires moving model lines:
   }
 }
 ```
+
+Each task defines explicit `budget`, `balanced`, and `premium` arrays plus one
+rationale per tier. This lets the parent choose a cost/quality tier without
+inferring one from prose or model names; top-to-bottom order within the selected
+tier determines preference. A model is compatible with a task exactly when it
+appears in any of that task's three arrays; catalog `bestFor` and `avoidFor`
+values remain descriptive. The existing “three open models followed by exactly
+one Claude Bridge fallback” invariant applies to the balanced array only.
 
 The exact curated OpenAI entries and cross-provider rankings must be researched
 and availability-tested during implementation. They must not be inferred from
@@ -118,7 +138,7 @@ spawn agents.
 
 ```ts
 agent_select_models({
-  flow: "mr-review-multi-agent",
+  flow: "mr-review-multi-agent:5348",
   agents: [
     {
       key: "security",
@@ -133,8 +153,12 @@ agent_select_models({
 ```
 
 Each `key` is stable within the workflow and lets later rounds reuse the user's
-choice for the same role. The extension validates task types, model identifiers,
-and compatibility before rendering the picker.
+choice for the same role. `flow` is a stable invocation ID, not only a workflow
+name; this lets the extension cache a confirmed mapping and return it if the same
+flow accidentally calls the tool twice without reopening the picker. The
+extension validates task types, model identifiers, and compatibility before
+rendering the picker. Custom picker UI is TUI-only; RPC, JSON, and print modes
+fail clearly rather than pretending to select models.
 
 The batch picker shows every planned agent, its current model, and a detail panel
 containing:
@@ -202,8 +226,13 @@ children inherit the automatic-selection policy but not the interactive picker.
 pass the selected model explicitly. New later roles may pass a parent-selected
 model or omit it to use the balanced default for their task type.
 
-An explicit choice changes the first attempt, not the set of fallbacks. Build the
-chain as:
+An explicit compatible choice changes the first attempt, not the set of
+fallbacks. Compatibility means membership in any tier for that task. The
+configured `localModel` remains outside the catalog and tier arrays; it keeps the
+existing special case for tool-less tasks and is checked before curated-policy
+compatibility. Named model profiles remain replacement chains and keep their
+existing `@parent`, free-only, and local-model semantics. Build the normal chain
+as:
 
 ```text
 explicitly selected or automatically chosen model
@@ -249,8 +278,8 @@ Reject configuration when:
 - a ranking references a model missing from the catalog;
 - a model identifier uses direct `anthropic/*`;
 - a task has no balanced ranking;
-- a fallback chain lacks its required Claude Bridge endpoint;
-- a model is assigned to a task it does not support; or
+- a balanced fallback chain lacks its required Claude Bridge endpoint;
+- a selected model does not appear in any tier for that task; or
 - duplicate or malformed role keys are submitted to the picker.
 
 A configured model that is temporarily absent from Pi's available catalog is a
