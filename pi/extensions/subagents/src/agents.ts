@@ -40,6 +40,9 @@ export interface SpawnOptions {
   profile?: { name: string; prompt: string };
   // The delegating agent's own model, which a subagent never runs on.
   parentModel?: string;
+  // The chain was chosen deliberately and includes the parent's model (the
+  // `current` profile), so do not skip it as the delegating agent's own model.
+  parentInChain?: boolean;
   // Why `model` cannot be used right now (no credentials, Ollama down, task too
   // big for it), checked before its ping. Undefined when it can.
   preflight?: (model: string) => Promise<string | undefined>;
@@ -189,7 +192,7 @@ export class AgentManager {
         agent.attempts.push({ model, outcome: "skipped", reason });
         this.emitChange();
       };
-      if (model === options.parentModel) {
+      if (model === options.parentModel && !options.parentInChain) {
         skip("it is the delegating agent's own model");
         continue;
       }

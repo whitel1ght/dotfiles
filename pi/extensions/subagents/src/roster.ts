@@ -11,6 +11,16 @@ export interface TaskType {
   readonly models: readonly string[];
 }
 
+// A named way to pick models instead of a task type's own ranking: either a
+// fixed list, or every roster model that costs nothing. It replaces the type's
+// list; the type still fixes the tools.
+export interface ModelProfile {
+  readonly name: string;
+  // "@parent" stands for the delegating agent's own model, filled in at spawn.
+  readonly models: readonly string[] | undefined;
+  readonly freeOnly: boolean;
+}
+
 export interface Timing {
   readonly pingTimeoutMs: number;
   readonly pingCacheMs: number;
@@ -26,9 +36,11 @@ export interface Roster {
   readonly maxRunning: number;
   readonly timing: Timing;
   readonly types: ReadonlyMap<string, TaskType>;
+  readonly modelProfiles: ReadonlyMap<string, ModelProfile>;
 }
 
 export const CLAUDE_PREFIX = "claude-bridge/";
+export const PARENT_MODEL = "@parent";
 const MIN_OPEN_MODELS = 3;
 
 const TIMING_DEFAULTS = {
@@ -76,7 +88,38 @@ export function parseRoster(raw: unknown): Roster {
     types.set(name, { name, use, tools, models });
   }
   if (!types.size) throw new Error("subagents.json: taskTypes is empty");
-  return { localModel, maxRunning, timing, types };
+  const modelProfiles = parseModelProfiles(raw.modelProfiles ?? {});
+  return { localModel, maxRunning, timing, types, modelProfiles };
+}
+
+// The named model profiles. Each replaces a type's list, so it may name the
+// local model, which the type lists themselves may not.
+function parseModelProfiles(raw: unknown): Map<string, ModelProfile> {
+  if (!isObject(raw)) throw new Error("subagents.json: modelProfiles must be an object");
+  const profiles = new Map<string, ModelProfile>();
+  for (const [name, entry] of Object.entries(raw)) {
+    const where = `modelProfiles.${name}`;
+    if (!isObject(entry)) throw new Error(`subagents.json: ${where} must be an object`);
+    const hasModels = entry.models !== undefined;
+    const hasFree = entry.freeOnly !== undefined;
+    if (hasModels === hasFree) {
+      throw new Error(`subagents.json: ${where} must set exactly one of models or freeOnly`);
+    }
+    if (hasFree) {
+      if (entry.freeOnly !== true) throw new Error(`subagents.json: ${where}.freeOnly must be true`);
+      profiles.set(name, { name, models: undefined, freeOnly: true });
+      continue;
+    }
+    const models = stringList(entry.models, `${where}.models`);
+    if (!models.length) throw new Error(`subagents.json: ${where}.models is empty`);
+    for (const model of models) if (model !== PARENT_MODEL) splitModel(model);
+    if (new Set(models).size !== models.length) throw new Error(`subagents.json: ${where}.models lists a model twice`);
+    if (models.some((m) => m.startsWith("anthropic/"))) {
+      throw new Error(`subagents.json: ${where} uses anthropic/*, which bills the API key; use ${CLAUDE_PREFIX}* instead`);
+    }
+    profiles.set(name, { name, models, freeOnly: false });
+  }
+  return profiles;
 }
 
 export function splitModel(ref: string): { provider: string; id: string } {
@@ -103,6 +146,51 @@ export function chainFor(roster: Roster, type: TaskType, start?: string): string
     throw new Error(`${start} is not on the ${type.name} list: ${type.models.join(", ")}${local}`);
   }
   return type.models.slice(index);
+}
+
+// The models a profile stands for, replacing the type's own list. "@parent"
+// becomes the delegating agent's model; `freeOnly` becomes every roster model
+// that costs nothing.
+export function chainForProfile(
+  roster: Roster,
+  profile: ModelProfile,
+  type: TaskType,
+  parentModel: string | undefined,
+  isFree: (model: string) => boolean,
+): string[] {
+  const models: string[] = [];
+  if (profile.freeOnly) {
+    models.push(...freeModels(roster, type, isFree));
+    if (!models.length) throw new Error(`profile "${profile.name}" found no models that cost nothing`);
+  } else {
+    for (const model of profile.models!) {
+      if (model !== PARENT_MODEL) {
+        models.push(model);
+        continue;
+      }
+      if (!parentModel) throw new Error(`profile "${profile.name}" uses ${PARENT_MODEL}, but this session has no current model`);
+      models.push(parentModel);
+    }
+  }
+  if (type.tools.length && roster.localModel && models.includes(roster.localModel)) {
+    throw new Error(`${roster.localModel} runs locally and cannot use tools, so it cannot run ${type.name} tasks`);
+  }
+  return models;
+}
+
+// The zero-cost models, the type's own ranking first and then the rest of the
+// roster, deduped. The local model is in no list, so it is never in this pool.
+function freeModels(roster: Roster, type: TaskType, isFree: (model: string) => boolean): string[] {
+  const pool: string[] = [];
+  const seen = new Set<string>();
+  const add = (model: string) => {
+    if (seen.has(model) || !isFree(model)) return;
+    seen.add(model);
+    pool.push(model);
+  };
+  for (const model of type.models) add(model);
+  for (const other of roster.types.values()) for (const model of other.models) add(model);
+  return pool;
 }
 
 // The roster as the model reads it in the spawn tool's description.

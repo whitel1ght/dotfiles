@@ -13,9 +13,20 @@ export function spawnDescription(roster: Roster): string {
     "",
     "Task types:",
     describeRoster(roster),
+    describeModelProfiles(roster),
     "",
     `Set \`model\` only to start further down a type's list, e.g. after a subagent's answer was poor.${local}`,
   ].join("\n");
+}
+
+// The named model profiles, as the model reads them in the spawn tool.
+export function describeModelProfiles(roster: Roster): string {
+  const profiles = [...roster.modelProfiles.values()];
+  if (!profiles.length) return "";
+  const lines = profiles.map((p) =>
+    p.freeOnly ? `- ${p.name}: only models that cost nothing (the subscription fallbacks)` : `- ${p.name}: ${p.models!.join(" → ")}`,
+  );
+  return ["", "Model profiles, to replace a type's list with `modelProfile`:", ...lines].join("\n");
 }
 
 export const SPAWN_SNIPPET = "agent_spawn: delegate a task to a subagent";
@@ -23,6 +34,7 @@ export const SPAWN_SNIPPET = "agent_spawn: delegate a task to a subagent";
 export const SPAWN_GUIDELINES = [
   "Use agent_spawn for self-contained work that does not need this conversation: searching a codebase, a well-specified change, a review, summarising text. Run independent ones in parallel.",
   "Choose agent_spawn's task type carefully; it decides the subagent's tools and models. Leave `model` out unless a subagent already did poorly.",
+  "Use agent_spawn's `modelProfile` to run a subagent on your own model (`current`), on free models (`free`), or locally (`local`) instead of its type's ranking.",
   "Treat a subagent's result as a colleague's report: check anything you will act on.",
 ];
 

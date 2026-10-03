@@ -6,7 +6,7 @@ that the parent picks the model.
 
 | Tool | |
 | --- | --- |
-| `agent_spawn` | Start a subagent for `task` of a given `type`, on `model`; returns its id (`agent-N`) at once |
+| `agent_spawn` | Start a subagent for `task` of a given `type`, on `model` or a `modelProfile`; returns its id (`agent-N`) at once |
 | `agent_list` | Status, type, model, runtime, tool calls and cost of every subagent |
 | `agent_output` | The result if finished, recent activity if not; never waits |
 | `agent_wait` | Block until the given (or all running) subagents finish, then return their results |
@@ -61,6 +61,27 @@ refuses a list without three models before its single Claude fallback, any
   exceeds the window less the answer (`maxTokens`) and pi's own prompt — about 10.8k
   tokens of 16k — and the chain goes on to the cloud models.
 
+### Model profiles
+
+`modelProfile` replaces a type's list with a named profile from the roster's
+`modelProfiles` section, for when the ranking is not what you want:
+
+| Profile | Runs on |
+| --- | --- |
+| `current` | your own model, and nothing else — no fallback |
+| `free` | every roster model that costs nothing — the type's own ranked free model first, then the rest (the `claude-bridge/*` subscription fallbacks) |
+| `local` | the local model (`localModel`), for a `text` task |
+| `flash` | glm-5.3-flash → qwen3.8-flash → mimo-v2.6-flash → deepseek-v4.1-flash → Haiku |
+
+So `type="review", modelProfile="current"` runs a review on your own model, and
+`modelProfile="free"` keeps a subagent on the subscription. A profile is either
+`{ "models": [...] }`, where `"@parent"` stands for your model, or
+`{ "freeOnly": true }`. It replaces only the models: `type` still fixes the tools.
+The config refuses a profile that sets both, an empty list, a duplicate, or an
+`anthropic/*` model, and naming the local model for a type that needs tools fails
+at spawn. Only a profile that names `@parent` runs on your model — a pool that
+merely contains it still skips it as the delegating agent's.
+
 ## Behaviour worth knowing
 
 - **A child is a process, not a session.** `pi --mode json -p --no-session` with the
@@ -74,7 +95,7 @@ refuses a list without three models before its single Claude fallback, any
   agent goes idle, unless `agent_output`/`agent_wait`/`agent_stop` already showed it.
 - **No recursion.** Children run with `PI_SUBAGENT=1`, and the extension does nothing
   in a child.
-- **Profiles.** `profile` names a file in `~/.pi/agent/agents/` (the OpenCode agents);
+- **Personas.** `profile` names a file in `~/.pi/agent/agents/` (the OpenCode agents);
   its body joins the child's system prompt, and `permission: edit: deny` removes
   `edit`/`write` from its tools.
 - **Limits.** `maxRunning` (4) at once; a task over 200KB is refused — write it to a

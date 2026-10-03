@@ -18,7 +18,7 @@ import {
   STOP_DESCRIPTION,
   WAIT_DESCRIPTION,
 } from "./src/prompt.ts";
-import { chainFor, isLocal, parseRoster, type Roster } from "./src/roster.ts";
+import { chainFor, chainForProfile, isLocal, PARENT_MODEL, parseRoster, type Roster } from "./src/roster.ts";
 import { AgentView } from "./src/ui/view.ts";
 
 const WIDGET = "subagents";
@@ -98,6 +98,17 @@ export default function (pi: ExtensionAPI) {
     return agent;
   };
 
+  // The models pi can reach whose catalog cost is zero — the subscription
+  // fallbacks. What the `free` profile runs on.
+  const freeModels = (context: ExtensionContext): ReadonlySet<string> => {
+    const free = new Set<string>();
+    for (const entry of context.modelRegistry.getAvailable()) {
+      const cost = entry.cost;
+      if (!cost.input && !cost.output && !cost.cacheRead && !cost.cacheWrite) free.add(`${entry.provider}/${entry.id}`);
+    }
+    return free;
+  };
+
   // Why `model` cannot run `task` now, or undefined when it can. Cheap checks
   // only; whether the model actually answers is what the ping is for.
   const preflight = (task: string, context: ExtensionContext) => async (model: string) => {
@@ -117,6 +128,7 @@ export default function (pi: ExtensionAPI) {
 
   const typeNames = [...roster.types.keys()];
   const profileNames = [...profiles.keys()];
+  const modelProfileNames = [...roster.modelProfiles.keys()];
 
   pi.registerTool({
     name: "agent_spawn",
@@ -137,6 +149,15 @@ export default function (pi: ExtensionAPI) {
             ),
           }
         : {}),
+      ...(modelProfileNames.length
+        ? {
+            modelProfile: Type.Optional(
+              StringEnum(modelProfileNames as [string, ...string[]], {
+                description: "Replace the type's model list with a named profile (see this tool's description); leave it out for the type's own ranking",
+              }),
+            ),
+          }
+        : {}),
       title: Type.Optional(Type.String({ description: "Short label for /agents and notifications" })),
       cwd: Type.Optional(Type.String({ description: "Working directory (default: the session directory)" })),
     }),
@@ -144,10 +165,25 @@ export default function (pi: ExtensionAPI) {
       ctx = context;
       const type = roster.types.get(params.type);
       if (!type) throw new Error(`unknown task type ${params.type}; one of: ${typeNames.join(", ")}`);
-      const chain = chainFor(roster, type, params.model?.trim() || undefined);
       const profileName = (params as { profile?: string }).profile;
       const profile = profileName ? profiles.get(profileName) : undefined;
       if (profileName && !profile) throw new Error(`unknown profile ${profileName}`);
+      const parentModel = context.model ? `${context.model.provider}/${context.model.id}` : undefined;
+
+      const modelProfileName = (params as { modelProfile?: string }).modelProfile;
+      let chain: string[];
+      let parentInChain = false;
+      if (modelProfileName) {
+        const modelProfile = roster.modelProfiles.get(modelProfileName);
+        if (!modelProfile) throw new Error(`unknown model profile ${modelProfileName}; one of: ${modelProfileNames.join(", ")}`);
+        const free = modelProfile.freeOnly ? freeModels(context) : undefined;
+        chain = chainForProfile(roster, modelProfile, type, parentModel, (model) => free?.has(model) ?? false);
+        // Only a profile that names @parent runs on the parent's own model; a
+        // pool that merely contains it still skips it as the delegating agent's.
+        parentInChain = modelProfile.models?.includes(PARENT_MODEL) ?? false;
+      } else {
+        chain = chainFor(roster, type, params.model?.trim() || undefined);
+      }
 
       const agent = manager.spawn({
         type: type.name,
@@ -157,7 +193,8 @@ export default function (pi: ExtensionAPI) {
         cwd: params.cwd ? resolve(context.cwd, params.cwd) : context.cwd,
         tools: profileTools(type.tools, profile),
         profile: profile && { name: profile.name, prompt: profile.prompt },
-        parentModel: context.model ? `${context.model.provider}/${context.model.id}` : undefined,
+        parentModel,
+        parentInChain,
         preflight: preflight(params.task, context),
       });
       return {

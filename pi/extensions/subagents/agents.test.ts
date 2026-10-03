@@ -131,6 +131,15 @@ test("the parent's own model and models the preflight refuses are skipped withou
   assert.deepEqual(agent.attempts.slice(0, 2).map((a) => a.reason), ["it is the delegating agent's own model", "no credentials"]);
 });
 
+test("a chain that deliberately names the parent's model is not skipped", async () => {
+  const manager = make();
+  const done = finished(manager);
+  const agent = manager.spawn(spawnOpts({ chain: ["fake/parent"], parentModel: "fake/parent", parentInChain: true }));
+  await done;
+  assert.equal(agent.status, "done");
+  assert.deepEqual(outcomes(agent), ["fake/parent:done"]);
+});
+
 test("the local model runs lean and one at a time; a second local task falls through", async () => {
   const manager = make({ timing: { localStallMs: 5000 } });
   const first = manager.spawn(spawnOpts({ type: "text", chain: ["ollama/small"], tools: [], task: "first, SLOWLY" }));

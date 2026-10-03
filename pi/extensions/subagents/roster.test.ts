@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { chainFor, describeRoster, parseRoster, splitModel } from "./src/roster.ts";
+import { chainFor, chainForProfile, describeRoster, parseRoster, splitModel } from "./src/roster.ts";
 
 const committed = JSON.parse(readFileSync(new URL("../../subagents.json", import.meta.url), "utf8"));
 
@@ -77,4 +77,68 @@ test("the description lists every type, its tools and its chain", () => {
   const text = describeRoster(parseRoster(committed));
   assert.match(text, /- text: .*\n  tools: none\n  models, best first: opencode-go\/glm-5\.3-flash → /);
   assert.match(text, /- implement: .*\n  tools: read, grep, find, ls, bash, edit, write\n  models, best first: .* → claude-bridge\/claude-sonnet-5-5/);
+});
+
+test("the committed subagents.json carries the four model profiles", () => {
+  const roster = parseRoster(committed);
+  assert.deepEqual([...roster.modelProfiles.keys()], ["current", "free", "local", "flash"]);
+  assert.deepEqual(roster.modelProfiles.get("current")!.models, ["@parent"]);
+  assert.equal(roster.modelProfiles.get("free")!.freeOnly, true);
+  assert.deepEqual(roster.modelProfiles.get("local")!.models, ["ollama/qwen2.5-coder:14b-16k"]);
+});
+
+test("a model profile sets exactly one of models or freeOnly, and its list is well formed", () => {
+  const types = { x: { use: "u", tools: [], models: list } };
+  const withProfiles = (modelProfiles: unknown) => rosterWith(types, { modelProfiles });
+  assert.throws(() => withProfiles({ p: {} }), /exactly one of models or freeOnly/);
+  assert.throws(() => withProfiles({ p: { models: ["a/one"], freeOnly: true } }), /exactly one of models or freeOnly/);
+  assert.throws(() => withProfiles({ p: { freeOnly: false } }), /freeOnly must be true/);
+  assert.throws(() => withProfiles({ p: { models: [] } }), /is empty/);
+  assert.throws(() => withProfiles({ p: { models: ["bare"] } }), /provider\/id/);
+  assert.throws(() => withProfiles({ p: { models: ["a/one", "a/one"] } }), /twice/);
+  assert.throws(() => withProfiles({ p: { models: ["anthropic/x"] } }), /bills the API key/);
+  assert.throws(() => withProfiles([]), /modelProfiles must be an object/);
+});
+
+test("a profile replaces the type's list: @parent, a fixed list, or the zero-cost pool", () => {
+  const types = {
+    text: { use: "u", tools: [], models: list },
+    explore: { use: "u", tools: ["read"], models: list },
+  };
+  const roster = rosterWith(types, {
+    modelProfiles: { current: { models: ["@parent"] }, local: { models: ["ollama/small"] }, free: { freeOnly: true } },
+  });
+  const text = roster.types.get("text")!;
+  const explore = roster.types.get("explore")!;
+  const profile = (name: string) => roster.modelProfiles.get(name)!;
+  const free = (model: string) => model === "claude-bridge/claude-sonnet-5-5";
+
+  assert.deepEqual(chainForProfile(roster, profile("current"), explore, "opencode-go/x", free), ["opencode-go/x"]);
+  assert.deepEqual(chainForProfile(roster, profile("local"), text, "opencode-go/x", free), ["ollama/small"]);
+  assert.deepEqual(chainForProfile(roster, profile("free"), explore, "opencode-go/x", free), ["claude-bridge/claude-sonnet-5-5"]);
+  assert.deepEqual(
+    chainForProfile(roster, { name: "p", models: ["@parent", "z/fallback"], freeOnly: false }, text, "opencode-go/x", free),
+    ["opencode-go/x", "z/fallback"],
+  );
+  assert.throws(() => chainForProfile(roster, profile("current"), explore, undefined, free), /no current model/);
+  assert.throws(() => chainForProfile(roster, profile("local"), explore, "opencode-go/x", free), /cannot use tools/);
+  assert.throws(() => chainForProfile(roster, profile("free"), explore, "opencode-go/x", () => false), /cost nothing/);
+});
+
+test("the free pool keeps the type's own free model first, then the rest", () => {
+  const types = {
+    text: { use: "u", tools: [], models: ["a/one", "b/two", "c/three", "claude-bridge/haiku"] },
+    reason: { use: "u", tools: ["read"], models: ["a/one", "b/two", "c/three", "claude-bridge/opus"] },
+  };
+  const roster = rosterWith(types, { modelProfiles: { free: { freeOnly: true } } });
+  const profile = roster.modelProfiles.get("free")!;
+  const free = (model: string) => model.startsWith("claude-bridge/");
+  assert.deepEqual(chainForProfile(roster, profile, roster.types.get("reason")!, "x/y", free), [
+    "claude-bridge/opus",
+    "claude-bridge/haiku",
+  ]);
+  assert.deepEqual(chainForProfile(roster, profile, roster.types.get("text")!, "x/y", free), [
+    "claude-bridge/haiku",
+    "claude-bridge/opus",
+  ]);
 });

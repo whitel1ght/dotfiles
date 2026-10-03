@@ -8,6 +8,26 @@
     "toolStallSeconds": 900,
     "localStallSeconds": 300
   },
+  "modelProfiles": {
+    "current": {
+      "models": ["@parent"]
+    },
+    "free": {
+      "freeOnly": true
+    },
+    "local": {
+      "models": ["ollama/qwen2.5-coder:14b-16k"]
+    },
+    "flash": {
+      "models": [
+        "opencode-go/glm-5.3-flash",
+        "opencode-go/qwen3.8-flash",
+        "opencode-go/mimo-v2.6-flash",
+        "opencode-go/deepseek-v4.1-flash",
+        "claude-bridge/claude-haiku-4-5"
+      ]
+    }
+  },
   "taskTypes": {
     "text": {
       "use": "Transform text that is pasted into the task, with no file or shell access: summarise, rewrite, translate, convert formats, draft a commit message or MR blurb from a diff you include.",
