@@ -43,12 +43,13 @@ export const SELECT_MODELS_SNIPPET = "agent_select_models: let the user choose m
 export const SELECT_MODELS_DESCRIPTION =
   "Ask the user once to choose a model for each agent of a named multi-agent flow. Selects only; it starts no agents. " +
   "Give `flow` (a stable ID for this invocation, e.g. mr-review-multi-agent:5348) and one entry per planned agent: key, title, task type, your recommended model and why. " +
-  "Returns a model per key to pass as agent_spawn's `model`, or `cancelled: true` when the user declined. Outside the interactive terminal it returns the recommendations unchanged.";
+  "Returns a model per key to pass as agent_spawn's `model`, or `cancelled: true` when the user declined. Outside the interactive parent terminal (RPC, JSON, print, subagents) it fails with an error instead of choosing for the user.";
 
 export const SELECT_MODELS_GUIDELINES = [
   "In a named multi-agent flow (a skill or workflow that runs several agents), plan the initial roster first, then call agent_select_models once for it with a stable `flow` ID for this invocation.",
   "After agent_select_models, reuse the chosen model for each known role as agent_spawn's `model`; choose models for later roles yourself (or repeat the same `flow` for them, which prompts nothing).",
   "If agent_select_models returns cancelled, stop the flow and start no agents.",
+  "If agent_select_models fails because there is no interactive terminal, do not pretend the user chose; pick models yourself or ask the user.",
   "Never call agent_select_models for an ordinary one-off agent_spawn; just spawn it.",
 ];
 

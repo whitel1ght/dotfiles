@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { describeModelProfiles, SELECT_MODELS_GUIDELINES, spawnDescription } from "./src/prompt.ts";
+import { describeModelProfiles, SELECT_MODELS_DESCRIPTION, SELECT_MODELS_GUIDELINES, spawnDescription } from "./src/prompt.ts";
 import { parseModelPolicy } from "./src/model-policy.ts";
 import { parseRoster } from "./src/roster.ts";
 
@@ -36,10 +36,12 @@ test("the selector guidance covers named flows only, once, with reuse and auto-a
   assert.match(guidance, /agent_select_models/);
   assert.match(guidance, /named multi-agent flow/);
   assert.match(guidance, /plan the initial roster/i);
-  assert.match(guidance, /once/);
+  assert.match(guidance, /call agent_select_models once for it/);
   assert.match(guidance, /stable `flow`/);
-  assert.match(guidance, /reuse/i);
-  assert.match(guidance, /later roles/i);
+  assert.match(guidance, /reuse the chosen model for each known role as agent_spawn's `model`/i);
+  assert.match(guidance, /later roles yourself/i);
+  assert.match(guidance, /fails because there is no interactive terminal, do not pretend the user chose/);
+  assert.match(SELECT_MODELS_DESCRIPTION, /fails with an error instead of choosing for the user/);
   assert.match(guidance, /never .*one-off/i);
   assert.match(guidance, /cancelled/);
 });
