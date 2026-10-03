@@ -13,6 +13,9 @@ import { loadProfiles, profileTools } from "./src/profiles.ts";
 import {
   LIST_DESCRIPTION,
   OUTPUT_DESCRIPTION,
+  SELECT_MODELS_DESCRIPTION,
+  SELECT_MODELS_GUIDELINES,
+  SELECT_MODELS_SNIPPET,
   SPAWN_GUIDELINES,
   SPAWN_SNIPPET,
   spawnDescription,
@@ -20,6 +23,9 @@ import {
   WAIT_DESCRIPTION,
 } from "./src/prompt.ts";
 import { chainFor, chainForProfile, isLocal, PARENT_MODEL, parseRoster, type Roster } from "./src/roster.ts";
+import { createModelSelector, registryModels } from "./src/select-models-tool.ts";
+import type { AgentModelSelection, ModelSelectionState } from "./src/selection.ts";
+import { ModelPicker } from "./src/ui/model-picker.ts";
 import { AgentView } from "./src/ui/view.ts";
 
 const WIDGET = "subagents";
@@ -149,7 +155,10 @@ export default function (pi: ExtensionAPI) {
       type: StringEnum(typeNames as [string, ...string[]], { description: "Task type; fixes the tools the subagent gets" }),
       task: Type.String({ description: "Everything the subagent needs, and what it should return. It cannot see this conversation." }),
       model: Type.Optional(
-        Type.String({ description: "Start at this model on the type's list instead of the top. Leave it out unless a subagent already did poorly." }),
+        Type.String({
+          description:
+            "Try this compatible curated model first; the type's list stays as fallback. Use the model agent_select_models returned for this role, or leave it out.",
+        }),
       ),
       ...(profileNames.length
         ? {
@@ -215,6 +224,40 @@ export default function (pi: ExtensionAPI) {
         ],
         details: { id: agent.id, chain },
       };
+    },
+  });
+
+  const selectModels = createModelSelector(roster, policy);
+  pi.registerTool({
+    name: "agent_select_models",
+    label: "Select subagent models",
+    description: SELECT_MODELS_DESCRIPTION,
+    promptSnippet: SELECT_MODELS_SNIPPET,
+    promptGuidelines: SELECT_MODELS_GUIDELINES,
+    parameters: Type.Object({
+      flow: Type.String({ description: "Stable ID of this flow invocation, e.g. mr-review-multi-agent:5348" }),
+      agents: Type.Array(
+        Type.Object({
+          key: Type.String({ description: "Unique role key, later passed with the chosen model" }),
+          title: Type.String({ description: "Short role label shown to the user" }),
+          type: StringEnum(typeNames as [string, ...string[]], { description: "Task type this role will run" }),
+          recommendedModel: Type.String({ description: "Your recommended model, provider/id, compatible with the type" }),
+          recommendation: Type.String({ description: "Why this model fits the role" }),
+        }),
+        { minItems: 1 },
+      ),
+    }),
+    async execute(_id, params, _signal, _onUpdate, context) {
+      ctx = context;
+      const { text: message, details } = await selectModels(params, {
+        mode: context.mode,
+        hasUI: context.hasUI,
+        isChild: Boolean(process.env[CHILD_ENV]),
+        available: () => registryModels(context.modelRegistry.getAvailable()),
+        openPicker: (state: ModelSelectionState) =>
+          context.ui.custom<readonly AgentModelSelection[] | undefined>((tui, theme, _keys, done) => new ModelPicker(state, tui, theme, done)),
+      });
+      return { content: [text(message)], details };
     },
   });
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { describeModelProfiles, spawnDescription } from "./src/prompt.ts";
+import { describeModelProfiles, SELECT_MODELS_GUIDELINES, spawnDescription } from "./src/prompt.ts";
 import { parseModelPolicy } from "./src/model-policy.ts";
 import { parseRoster } from "./src/roster.ts";
 
@@ -29,6 +29,24 @@ test("with no profiles the description says nothing about them", () => {
   const roster = parseRoster({ localModel: "ollama/small", taskTypes: { x: { use: "u", tools: [] } } }, tiny);
   assert.equal(describeModelProfiles(roster), "");
   assert.doesNotMatch(spawnDescription(roster), /modelProfile/);
+});
+
+test("the selector guidance covers named flows only, once, with reuse and auto-assignment", () => {
+  const guidance = SELECT_MODELS_GUIDELINES.join("\n");
+  assert.match(guidance, /agent_select_models/);
+  assert.match(guidance, /named multi-agent flow/);
+  assert.match(guidance, /plan the initial roster/i);
+  assert.match(guidance, /once/);
+  assert.match(guidance, /stable `flow`/);
+  assert.match(guidance, /reuse/i);
+  assert.match(guidance, /later roles/i);
+  assert.match(guidance, /never .*one-off/i);
+  assert.match(guidance, /cancelled/);
+});
+
+test("agent_spawn's model wording says to try it first, not to start further down", () => {
+  assert.match(spawnDescription(parseRoster(committed, policy)), /try .*first/i);
+  assert.doesNotMatch(spawnDescription(parseRoster(committed, policy)), /further down/);
 });
 
 function meta(ref: string) {
