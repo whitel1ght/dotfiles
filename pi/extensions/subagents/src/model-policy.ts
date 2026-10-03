@@ -32,7 +32,7 @@ export interface ModelPolicy {
 }
 
 const FILE = "subagent-models.json";
-const CLAUDE_PREFIX = "claude-bridge/";
+export const CLAUDE_PREFIX = "claude-bridge/";
 const MIN_OPEN_MODELS = 3;
 
 export function parseModelPolicy(raw: unknown): ModelPolicy {

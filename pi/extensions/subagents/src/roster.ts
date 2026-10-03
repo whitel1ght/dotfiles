@@ -3,7 +3,7 @@
 // own list is its balanced ranking, which ends in a Claude model (through
 // claude-bridge, on the subscription) as the last fallback;
 // pi/subagents-research.md says why the lists are in this order.
-import { MODEL_TIERS, modelsFor, type ModelPolicy } from "./model-policy.ts";
+import { CLAUDE_PREFIX, MODEL_TIERS, modelsFor, type ModelPolicy } from "./model-policy.ts";
 
 export interface TaskType {
   readonly name: string;
@@ -44,7 +44,6 @@ export interface Roster {
   readonly modelProfiles: ReadonlyMap<string, ModelProfile>;
 }
 
-export const CLAUDE_PREFIX = "claude-bridge/";
 export const PARENT_MODEL = "@parent";
 
 const TIMING_DEFAULTS = {
@@ -77,12 +76,15 @@ export function parseRoster(raw: unknown, policy: ModelPolicy): Roster {
     if (!ranking) throw new Error(`subagents.json: ${where} has no ranking for ${name} in subagent-models.json`);
     const models = [...ranking.balanced];
     const compatible = [...new Set(MODEL_TIERS.flatMap((tier) => modelsFor(policy, name, tier)))];
-    if (localModel && compatible.includes(localModel)) {
-      throw new Error(`subagent-models.json: rankings.${name} lists ${localModel}; the local model is only used when asked for by name`);
-    }
     types.set(name, { name, use, tools, models, compatible });
   }
   if (!types.size) throw new Error("subagents.json: taskTypes is empty");
+  for (const name of policy.rankings.keys()) {
+    if (!types.has(name)) throw new Error(`subagent-models.json: rankings.${name} has no matching task type in subagents.json`);
+  }
+  if (localModel && policy.models.has(localModel)) {
+    throw new Error(`subagent-models.json: lists ${localModel}; the local model is only used when asked for by name`);
+  }
   const modelProfiles = parseModelProfiles(raw.modelProfiles ?? {});
   return { localModel, maxRunning, timing, types, modelProfiles };
 }

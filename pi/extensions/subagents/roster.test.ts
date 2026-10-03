@@ -63,6 +63,22 @@ test("a roster type needs a ranking in the policy, and the local model may not b
   assert.throws(() => parseRoster({ localModel: "a/one", taskTypes: { x: typeOf() } }, policy), /only used when asked for by name/);
 });
 
+test("a ranking for a task type that subagents.json lacks is rejected", () => {
+  const policy = policyFor({ x: { balanced: list }, typo: { balanced: list } });
+  assert.throws(() => parseRoster({ taskTypes: { x: typeOf() } }, policy), /rankings\.typo has no matching task type/);
+});
+
+test("the local model may not be anywhere in the policy, catalog-only included", () => {
+  const policy = parseModelPolicy({
+    evidenceDate: "2026-10-03",
+    models: Object.fromEntries([...list, "ollama/small"].map((r) => [r, meta(r)])),
+    rankings: {
+      x: { budget: [list[0]], balanced: list, premium: [list.at(-1)], rationale: { budget: "b", balanced: "m", premium: "p" } },
+    },
+  });
+  assert.throws(() => parseRoster({ localModel: "ollama/small", taskTypes: { x: typeOf() } }, policy), /ollama\/small.*only used when asked for by name/);
+});
+
 test("timing defaults, and refuses nonsense", () => {
   const roster = rosterWith({ x: typeOf() });
   assert.deepEqual(roster.timing, {
