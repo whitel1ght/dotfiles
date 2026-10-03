@@ -1,0 +1,382 @@
+{
+  "evidenceDate": "2026-10-03",
+  "models": {
+    "opencode-go/glm-5.3-flash": {
+      "label": "GLM 5.3 Flash",
+      "provider": "opencode-go",
+      "quality": "good",
+      "speed": "fast",
+      "cost": "low",
+      "bestFor": [
+        "text",
+        "exploration"
+      ],
+      "strengths": [
+        "quick and cheap",
+        "good tool use"
+      ],
+      "avoidFor": [
+        "hard reasoning"
+      ]
+    },
+    "opencode-go/qwen3.8-flash": {
+      "label": "Qwen 3.8 Flash",
+      "provider": "opencode-go",
+      "quality": "good",
+      "speed": "fast",
+      "cost": "low",
+      "bestFor": [
+        "text",
+        "exploration"
+      ],
+      "strengths": [
+        "fast",
+        "long context"
+      ],
+      "avoidFor": [
+        "hard reasoning"
+      ]
+    },
+    "opencode-go/mimo-v2.6-flash": {
+      "label": "MiMo V2.6 Flash",
+      "provider": "opencode-go",
+      "quality": "good",
+      "speed": "fast",
+      "cost": "low",
+      "bestFor": [
+        "text",
+        "exploration"
+      ],
+      "strengths": [
+        "fast",
+        "cheap"
+      ],
+      "avoidFor": [
+        "complex edits"
+      ]
+    },
+    "opencode-go/deepseek-v4.1-flash": {
+      "label": "DeepSeek V4.1 Flash",
+      "provider": "opencode-go",
+      "quality": "good",
+      "speed": "fast",
+      "cost": "low",
+      "bestFor": [
+        "exploration"
+      ],
+      "strengths": [
+        "fast code reading"
+      ],
+      "avoidFor": [
+        "complex edits"
+      ]
+    },
+    "opencode-go/glm-5.3": {
+      "label": "GLM 5.3",
+      "provider": "opencode-go",
+      "quality": "strong",
+      "speed": "medium",
+      "cost": "medium",
+      "bestFor": [
+        "implementation",
+        "review"
+      ],
+      "strengths": [
+        "coding",
+        "agentic tool use"
+      ],
+      "avoidFor": [
+        "trivial text work"
+      ]
+    },
+    "opencode-go/grok-4.7": {
+      "label": "Grok 4.7",
+      "provider": "opencode-go",
+      "quality": "strong",
+      "speed": "medium",
+      "cost": "medium",
+      "bestFor": [
+        "implementation",
+        "review",
+        "reasoning"
+      ],
+      "strengths": [
+        "broad coding ability"
+      ],
+      "avoidFor": [
+        "trivial text work"
+      ]
+    },
+    "opencode-go/qwen3.8-max": {
+      "label": "Qwen 3.8 Max",
+      "provider": "opencode-go",
+      "quality": "strong",
+      "speed": "medium",
+      "cost": "medium",
+      "bestFor": [
+        "review",
+        "implementation",
+        "reasoning"
+      ],
+      "strengths": [
+        "careful analysis"
+      ],
+      "avoidFor": [
+        "trivial text work"
+      ]
+    },
+    "opencode-go/mimo-v2.6-pro": {
+      "label": "MiMo V2.6 Pro",
+      "provider": "opencode-go",
+      "quality": "strong",
+      "speed": "medium",
+      "cost": "medium",
+      "bestFor": [
+        "reasoning",
+        "review",
+        "implementation"
+      ],
+      "strengths": [
+        "deep reasoning"
+      ],
+      "avoidFor": [
+        "trivial text work"
+      ]
+    },
+    "opencode-go/kimi-k3": {
+      "label": "Kimi K3",
+      "provider": "opencode-go",
+      "quality": "strong",
+      "speed": "medium",
+      "cost": "medium",
+      "bestFor": [
+        "reasoning"
+      ],
+      "strengths": [
+        "long-horizon reasoning"
+      ],
+      "avoidFor": [
+        "trivial text work"
+      ]
+    },
+    "claude-bridge/claude-haiku-4-5": {
+      "label": "Claude Haiku 4.5",
+      "provider": "claude-bridge",
+      "quality": "good",
+      "speed": "fast",
+      "cost": "subscription",
+      "bestFor": [
+        "text",
+        "exploration"
+      ],
+      "strengths": [
+        "reliable fallback"
+      ],
+      "avoidFor": [
+        "hard reasoning"
+      ]
+    },
+    "claude-bridge/claude-sonnet-5-5": {
+      "label": "Claude Sonnet 5.5",
+      "provider": "claude-bridge",
+      "quality": "very strong",
+      "speed": "medium",
+      "cost": "subscription",
+      "bestFor": [
+        "exploration",
+        "implementation",
+        "review"
+      ],
+      "strengths": [
+        "reliable all-rounder"
+      ],
+      "avoidFor": [
+        "bulk trivial work"
+      ]
+    },
+    "claude-bridge/claude-opus-5-5": {
+      "label": "Claude Opus 5.5",
+      "provider": "claude-bridge",
+      "quality": "top",
+      "speed": "slow",
+      "cost": "subscription",
+      "bestFor": [
+        "reasoning",
+        "review"
+      ],
+      "strengths": [
+        "hardest problems"
+      ],
+      "avoidFor": [
+        "routine work"
+      ]
+    },
+    "openai/gpt-5.4-mini": {
+      "label": "GPT-5.4 Mini",
+      "provider": "openai",
+      "quality": "good",
+      "speed": "fast",
+      "cost": "low",
+      "bestFor": [
+        "text",
+        "implementation",
+        "agent work"
+      ],
+      "strengths": [
+        "cheap agent work"
+      ],
+      "avoidFor": [
+        "hard reasoning"
+      ]
+    },
+    "openai/gpt-5.3-codex": {
+      "label": "GPT-5.3 Codex",
+      "provider": "openai",
+      "quality": "very strong",
+      "speed": "medium",
+      "cost": "high",
+      "bestFor": [
+        "terminal-heavy implementation"
+      ],
+      "strengths": [
+        "terminal and coding agents"
+      ],
+      "avoidFor": [
+        "plain text work"
+      ]
+    },
+    "openai/gpt-5.4": {
+      "label": "GPT-5.4",
+      "provider": "openai",
+      "quality": "very strong",
+      "speed": "medium",
+      "cost": "high",
+      "bestFor": [
+        "review",
+        "reasoning"
+      ],
+      "strengths": [
+        "broad review and reasoning"
+      ],
+      "avoidFor": [
+        "bulk trivial work"
+      ]
+    }
+  },
+  "rankings": {
+    "text": {
+      "budget": [
+        "opencode-go/glm-5.3-flash",
+        "opencode-go/qwen3.8-flash",
+        "openai/gpt-5.4-mini"
+      ],
+      "balanced": [
+        "opencode-go/glm-5.3-flash",
+        "opencode-go/qwen3.8-flash",
+        "opencode-go/mimo-v2.6-flash",
+        "claude-bridge/claude-haiku-4-5"
+      ],
+      "premium": [
+        "claude-bridge/claude-sonnet-5-5",
+        "openai/gpt-5.4"
+      ],
+      "rationale": {
+        "budget": "Cheap flash models are enough for pasted-text transforms.",
+        "balanced": "Existing ranking: fast open models first, Claude Haiku as the final fallback.",
+        "premium": "Stronger models for nuanced rewriting where tone or accuracy matters."
+      }
+    },
+    "explore": {
+      "budget": [
+        "opencode-go/glm-5.3-flash",
+        "opencode-go/qwen3.8-flash",
+        "opencode-go/deepseek-v4.1-flash"
+      ],
+      "balanced": [
+        "opencode-go/glm-5.3-flash",
+        "opencode-go/qwen3.8-flash",
+        "opencode-go/mimo-v2.6-flash",
+        "opencode-go/deepseek-v4.1-flash",
+        "claude-bridge/claude-sonnet-5-5"
+      ],
+      "premium": [
+        "claude-bridge/claude-sonnet-5-5",
+        "openai/gpt-5.4"
+      ],
+      "rationale": {
+        "budget": "Fast open models handle read-only search and summaries.",
+        "balanced": "Existing ranking: flash models first, Claude Sonnet as the final fallback.",
+        "premium": "Stronger models for large or subtle codebases."
+      }
+    },
+    "implement": {
+      "budget": [
+        "openai/gpt-5.4-mini",
+        "opencode-go/glm-5.3",
+        "opencode-go/mimo-v2.6-pro"
+      ],
+      "balanced": [
+        "opencode-go/glm-5.3",
+        "opencode-go/grok-4.7",
+        "opencode-go/qwen3.8-max",
+        "opencode-go/mimo-v2.6-pro",
+        "claude-bridge/claude-sonnet-5-5"
+      ],
+      "premium": [
+        "openai/gpt-5.3-codex",
+        "claude-bridge/claude-opus-5-5"
+      ],
+      "rationale": {
+        "budget": "Cheaper coding models for small, well-specified edits.",
+        "balanced": "Existing ranking: open coding models first, Claude Sonnet as the final fallback.",
+        "premium": "Terminal-heavy or risky changes where a first-try success matters."
+      }
+    },
+    "review": {
+      "budget": [
+        "opencode-go/glm-5.3",
+        "opencode-go/mimo-v2.6-pro",
+        "openai/gpt-5.4-mini"
+      ],
+      "balanced": [
+        "opencode-go/qwen3.8-max",
+        "opencode-go/grok-4.7",
+        "opencode-go/glm-5.3",
+        "opencode-go/mimo-v2.6-pro",
+        "claude-bridge/claude-sonnet-5-5"
+      ],
+      "premium": [
+        "openai/gpt-5.4",
+        "claude-bridge/claude-opus-5-5"
+      ],
+      "rationale": {
+        "budget": "Mid-priced models for routine review passes.",
+        "balanced": "Existing ranking: strongest open reviewers first, Claude Sonnet as the final fallback.",
+        "premium": "High-stakes changes where a missed bug is expensive."
+      }
+    },
+    "reason": {
+      "budget": [
+        "opencode-go/mimo-v2.6-pro",
+        "opencode-go/kimi-k3",
+        "openai/gpt-5.4-mini"
+      ],
+      "balanced": [
+        "opencode-go/mimo-v2.6-pro",
+        "opencode-go/grok-4.7",
+        "opencode-go/kimi-k3",
+        "opencode-go/qwen3.8-max",
+        "claude-bridge/claude-opus-5-5"
+      ],
+      "premium": [
+        "claude-bridge/claude-opus-5-5",
+        "openai/gpt-5.4"
+      ],
+      "rationale": {
+        "budget": "Cheaper reasoning models for exploratory analysis.",
+        "balanced": "Existing ranking: strongest open reasoners first, Claude Opus as the final fallback.",
+        "premium": "Expensive-if-wrong decisions and tricky root causes."
+      }
+    }
+  }
+}

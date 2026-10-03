@@ -1,14 +1,19 @@
-// The roster: which models run each task type, best first, with a Claude model
-// (through claude-bridge, on the subscription) as the last fallback. It lives
-// in subagents.json next to settings.json; pi/subagents-research.md says why
-// the lists are in this order.
+// The roster: the task types and their tools from subagents.json, joined with
+// the model rankings from subagent-models.json (see model-policy.ts). A type's
+// own list is its balanced ranking, which ends in a Claude model (through
+// claude-bridge, on the subscription) as the last fallback;
+// pi/subagents-research.md says why the lists are in this order.
+import { MODEL_TIERS, modelsFor, type ModelPolicy } from "./model-policy.ts";
 
 export interface TaskType {
   readonly name: string;
   readonly use: string;
   // An empty list runs the child with no tools at all.
   readonly tools: readonly string[];
+  // The balanced ranking, best first, ending in the Claude fallback.
   readonly models: readonly string[];
+  // Every model any tier of the policy allows for this type.
+  readonly compatible: readonly string[];
 }
 
 // A named way to pick models instead of a task type's own ranking: either a
@@ -41,7 +46,6 @@ export interface Roster {
 
 export const CLAUDE_PREFIX = "claude-bridge/";
 export const PARENT_MODEL = "@parent";
-const MIN_OPEN_MODELS = 3;
 
 const TIMING_DEFAULTS = {
   pingTimeoutSeconds: 20,
@@ -51,7 +55,7 @@ const TIMING_DEFAULTS = {
   localStallSeconds: 300,
 };
 
-export function parseRoster(raw: unknown): Roster {
+export function parseRoster(raw: unknown, policy: ModelPolicy): Roster {
   if (!isObject(raw)) throw new Error("subagents.json: expected an object");
   const localModel = optionalString(raw.localModel, "localModel");
   if (localModel) splitModel(localModel);
@@ -69,23 +73,14 @@ export function parseRoster(raw: unknown): Roster {
     const use = optionalString(entry.use, `${where}.use`);
     if (!use) throw new Error(`subagents.json: ${where}.use is required`);
     const tools = stringList(entry.tools, `${where}.tools`);
-    const models = stringList(entry.models, `${where}.models`);
-    for (const model of models) splitModel(model);
-    if (new Set(models).size !== models.length) throw new Error(`subagents.json: ${where}.models lists a model twice`);
-    if (models.some((m) => m.startsWith("anthropic/"))) {
-      throw new Error(`subagents.json: ${where} uses anthropic/*, which bills the API key; use ${CLAUDE_PREFIX}* instead`);
+    const ranking = policy.rankings.get(name);
+    if (!ranking) throw new Error(`subagents.json: ${where} has no ranking for ${name} in subagent-models.json`);
+    const models = [...ranking.balanced];
+    const compatible = [...new Set(MODEL_TIERS.flatMap((tier) => modelsFor(policy, name, tier)))];
+    if (localModel && compatible.includes(localModel)) {
+      throw new Error(`subagent-models.json: rankings.${name} lists ${localModel}; the local model is only used when asked for by name`);
     }
-    const claude = models.filter((m) => m.startsWith(CLAUDE_PREFIX));
-    if (claude.length !== 1 || !models.at(-1)!.startsWith(CLAUDE_PREFIX)) {
-      throw new Error(`subagents.json: ${where}.models must end with exactly one ${CLAUDE_PREFIX}* model, the last fallback`);
-    }
-    if (models.length - 1 < MIN_OPEN_MODELS) {
-      throw new Error(`subagents.json: ${where}.models needs at least ${MIN_OPEN_MODELS} models before the Claude fallback`);
-    }
-    if (localModel && models.includes(localModel)) {
-      throw new Error(`subagents.json: ${where} lists ${localModel}; the local model is only used when asked for by name`);
-    }
-    types.set(name, { name, use, tools, models });
+    types.set(name, { name, use, tools, models, compatible });
   }
   if (!types.size) throw new Error("subagents.json: taskTypes is empty");
   const modelProfiles = parseModelProfiles(raw.modelProfiles ?? {});
@@ -132,20 +127,18 @@ export function isLocal(roster: Roster, model: string): boolean {
   return model === roster.localModel;
 }
 
-// The models a subagent tries, in order. `start` skips ahead to a model on the
-// type's list, or puts the local model in front of a tool-less type's list.
-export function chainFor(roster: Roster, type: TaskType, start?: string): string[] {
-  if (!start) return [...type.models];
-  if (isLocal(roster, start)) {
-    if (type.tools.length) throw new Error(`${start} runs locally and cannot use tools, so it cannot run ${type.name} tasks`);
-    return [start, ...type.models];
-  }
-  const index = type.models.indexOf(start);
-  if (index < 0) {
+// The models a subagent tries, in order: the type's balanced list, led by
+// `selected` when given. `selected` must be on one of the type's policy tiers,
+// or be the local model on a tool-less type.
+export function chainFor(roster: Roster, type: TaskType, selected?: string): string[] {
+  if (!selected) return [...type.models];
+  if (isLocal(roster, selected)) {
+    if (type.tools.length) throw new Error(`${selected} runs locally and cannot use tools, so it cannot run ${type.name} tasks`);
+  } else if (!type.compatible.includes(selected)) {
     const local = roster.localModel && !type.tools.length ? `, or ${roster.localModel}` : "";
-    throw new Error(`${start} is not on the ${type.name} list: ${type.models.join(", ")}${local}`);
+    throw new Error(`${selected} is not compatible with ${type.name}: ${type.compatible.join(", ")}${local}`);
   }
-  return type.models.slice(index);
+  return [selected, ...type.models.filter((m) => m !== selected)];
 }
 
 // The models a profile stands for, replacing the type's own list. "@parent"

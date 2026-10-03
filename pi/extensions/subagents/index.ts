@@ -8,6 +8,7 @@ import { AgentManager, type Agent } from "./src/agents.ts";
 import { oversizedTask } from "./src/budget.ts";
 import { describe, renderOutput, wakeMessage } from "./src/format.ts";
 import { CHILD_ENV, piCommand } from "./src/invocation.ts";
+import { parseModelPolicy } from "./src/model-policy.ts";
 import { loadProfiles, profileTools } from "./src/profiles.ts";
 import {
   LIST_DESCRIPTION,
@@ -34,7 +35,15 @@ export default function (pi: ExtensionAPI) {
   const agentDir = getAgentDir();
   const rosterPath = join(agentDir, "subagents.json");
   if (!existsSync(rosterPath)) return;
-  const roster: Roster = parseRoster(JSON.parse(readFileSync(rosterPath, "utf8")));
+  const policyPath = join(agentDir, "subagent-models.json");
+  if (!existsSync(policyPath)) throw new Error(`subagents: ${rosterPath} exists but the model policy ${policyPath} is missing`);
+  let policy;
+  try {
+    policy = parseModelPolicy(JSON.parse(readFileSync(policyPath, "utf8")));
+  } catch (error) {
+    throw new Error(`subagents: invalid model policy ${policyPath}: ${error instanceof Error ? error.message : error}`);
+  }
+  const roster: Roster = parseRoster(JSON.parse(readFileSync(rosterPath, "utf8")), policy);
   const profiles = loadProfiles(join(agentDir, "agents"), parseFrontmatter);
 
   const manager = new AgentManager({
