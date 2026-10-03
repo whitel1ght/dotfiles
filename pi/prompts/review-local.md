@@ -42,7 +42,9 @@ If the skill file is missing, stop and say the `mr-review-multi-agent` skill isn
 installed.
 
 Then read only the panel-selection section into your context:
-`awk '/^### 2\. /{p=1} /^### 3\. /{p=0} p' "$SKILL"`.
+`awk '/^### 2\. /{p=1} /^### 3\. /{p=0} p' "$SKILL"`. That section ends with the skill's
+own gate for per-MR flows; ignore its `Model gate` paragraph, because step 3 below
+replaces it.
 
 ## 2. Per MR (sequential shell calls — no parallel Bash)
 
@@ -81,13 +83,21 @@ the three always-on lenses plus only the specialists the diff clearly needs, acr
 MRs combined (one panel for the feature, not one per MR). Cap at 5, or 6 when the
 feature spans backend and UI. Announce the panel in one line.
 
+**Model gate.** After announcing the panel and before the first spawn, give the flow a
+stable flow ID `review-local:<feature>` and one role key per reviewer (its `profile`).
+Call `agent_select_models` once with key, title, task type, `recommendedModel` and a
+one-sentence recommendation for each. If it is cancelled or errors, stop the flow and
+spawn nothing. Pass each returned model as that reviewer's `model`, and reuse it for the
+same known role later (e.g. a disputed-items re-spawn). A later role that was not selected
+gets an automatic model from the usual policy, without another prompt.
+
 ## 4. Round 1 — parallel, one turn
 
 Spawn the whole panel in one turn, one `agent_spawn` per reviewer: `type: "review"` and
 `profile` set to the specialist's name from the panel section (the agent's file name
 without `.md`, e.g. `java-micronaut-dev`, `vue-expert`,
-`security-compliance-reviewer`). No model — the extension picks it. Short prompt,
-don't inline the brief:
+`security-compliance-reviewer`) and `model` from the gate for each reviewer (leave it out
+only for a role the gate did not cover). Short prompt, don't inline the brief:
 
 > Read `$RUN/brief.md` (your review instructions) and `$RUN/context.md` (the change).
 > Review through the <lens> lens. For MR !X the worktree is `<path>` — ignore any

@@ -15,7 +15,7 @@ together, so keep it for decisions, not file dumps.
 
 ## What you do, and what you hand off
 
-**You:** clarify the goal, pick the approach, split the work, choose a model for each
+**You:** clarify the goal, pick the approach, split the work, choose a type for each
 piece, write the briefs, check what comes back, settle conflicts, talk to the user.
 
 Dispatch through `agent_spawn` / `agent_wait` / `agent_output`, and `/agents`
@@ -46,7 +46,8 @@ best first (the roster and its reasons live in `pi/subagents-research.md`):
 | A genuinely hard design or diagnosis you want a second strong opinion on | `reason` — rare |
 
 Use a `profile` (the OpenCode specialist agents, e.g. `java-micronaut-dev`, `vue-expert`)
-when one matches. Do not pass `model`: the extension pings each model on the type's
+when one matches. Pass the model chosen at the model gate (step 2) for any role that has
+one. For every other spawn leave `model` out: the extension pings each model on the type's
 list before handing over the task, and replaces one that stalls or fails, ending at
 Claude. Only pin it to start further down a list, after a subagent's answer was poor.
 **Escalate** when a subagent fails the same piece twice: re-dispatch one tier further
@@ -92,10 +93,21 @@ and say so.
 1. **Understand.** Send one or two cheap readers (`haiku`/Explore, in parallel) to map the
    relevant code: they answer your specific questions and return file paths and short
    excerpts. Ask the user only about what the code can't answer.
-2. **Plan.** Split the work into pieces that each have a clear owner, a model and a
+2. **Plan.** Split the work into pieces that each have a clear owner, a type and a
    done-when. Mark which pieces are independent. Show the user the plan in a compact
-   table (piece, model, depends on) plus the key decisions, and **wait for approval**.
+   table (piece, type, depends on) plus the key decisions, and **wait for approval**.
    This is the one planned pause.
+
+   **Model gate.** After approval and before the first Execute spawn, give the flow a
+   stable flow ID `orchestrate:<ticket-or-feature>` and one role key per piece, plus
+   `reviewer` when the plan includes the step 5 review. Call `agent_select_models` once
+   with key, title, task type, `recommendedModel` and a one-sentence recommendation for
+   each role, unless the roster is a single agent, which skips the gate. If it is
+   cancelled or errors, stop the flow and spawn nothing. Pass each returned model as that
+   spawn's `model`, and reuse it for the same known role later. Selected models override
+   the type's default list and any model you named in the plan. Later roles that were not
+   known at this point get an automatic model from the usual policy, without another
+   prompt.
 3. **Execute.** Create a separate worktree for each implementation piece with
    `wt add <repo> <ticket-or-feature> [branch]`, then give the resulting path to the
    subagent; the extension runs it with everything pasted into the task as its only

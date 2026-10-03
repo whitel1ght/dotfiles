@@ -33,10 +33,25 @@ directory and the **worktree**. Handle every MR in the summary, in parallel.
      it, so it comes back next check, and tell me in one line.
    - `none (clone <path>)`: create one with `wt add <repo> <TICKET> <branch>` (it
      prints the path), then use it.
+
+   **Model gate (first fixer round only).** Once the worktree step has dropped the DIRTY MRs
+   and before any fixer spawn, gate the session's first round that spawns a fixer. Use the
+   stable flow ID `watch-mrs:<start>`, where `<start>` is the UTC time of the session's
+   first `check`, chosen once and written to `watch-mrs-models.md` in the scratchpad
+   directory together with the choices; re-read it after compaction instead of choosing
+   again. Give every non-DIRTY MR in this round the role key `fixer:<project>!<iid>` with the
+   full project path, so no two roles collide and there is one MR per key. Call
+   `agent_select_models` once with key, title, task type, `recommendedModel` and a
+   one-sentence recommendation for each. If it is cancelled or errors, stop the watch loop:
+   spawn nothing, ack nothing, start no wait, and tell me. Pass each returned model as that
+   fixer's `model`. Later rounds reuse the recorded choice for a known role, and roles that
+   were not selected get an automatic model from the usual policy, without another prompt.
+
 2. **Fixer.** One fixer per MR, all spawned in one turn: `agent_spawn` with
-   `type: "implement"`. For ecfx-backend (and other backend services) also
-   `profile: "java-micronaut-dev"`; otherwise no profile. Pass the worktree path as
-   the spawn's `cwd`. Give each the brief below with its paths filled in.
+   `type: "implement"` and, when the gate covers the MR's role, its `model`. For
+   ecfx-backend (and other backend services) also `profile: "java-micronaut-dev"`;
+   otherwise no profile. Pass the worktree path as the spawn's `cwd`. Give each the brief below with its
+   paths filled in.
 3. **Check** each report as it lands, with cheap commands only:
    `git -C <wt> status --porcelain` (must be empty),
    `git -C <wt> log --oneline @{u}..HEAD` (the commits the report names), and that the

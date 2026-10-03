@@ -122,6 +122,8 @@ duplicating security or production expertise.
 
 State the selected panel and the reason before spawning. The user can veto.
 
+**Model gate (Pi, when `agent_select_models` is available; otherwise skip).** Once the panel is selected and before the Round 1 spawn, use the stable flow ID `frontend-panel:<target>` and one role key per expert (the agent's name). Call `agent_select_models` once, with one entry per role: key, title, task type, `recommendedModel` and a one-sentence recommendation. If it is cancelled or errors, stop the flow and spawn nothing. Pass each returned model as `model` on that role's spawn, and reuse it whenever the same known role is spawned again. A role that was not selected gets an automatic model from the usual policy, without another prompt. Unless a parent flow already gated: when a parent that already gated passes you its established selection context (its flow ID and role choices), do not call `agent_select_models` again; reuse the matching inherited choices as `model` and leave newly discovered roles automatic.
+
 ### 3. Round 1 — independent review (parallel)
 
 Spawn **all selected experts in a single message with parallel Agent calls** so

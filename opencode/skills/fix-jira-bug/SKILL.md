@@ -265,6 +265,8 @@ Before writing code, get a sanity check. Spawn 2–3 agents **in parallel** (a s
 | Infra/deployment | `ops:aws-cloud-architect`, `shared:prod-readiness` |
 | Anything user-facing or risky | Add `shared:prod-readiness` |
 
+**Model gate (Pi, when `agent_select_models` is available; otherwise skip).** Once the reviewers are picked and before spawning them, use the stable flow ID `fix-jira-bug:<TICKET>` and one role key per reviewer agent (the agent's name). Call `agent_select_models` once, with one entry per role: key, title, task type, `recommendedModel` and a one-sentence recommendation. If it is cancelled or errors, stop the flow and spawn nothing. Pass each returned model as `model` on that role's spawn, and reuse it whenever the same known role is spawned again, including in the Phase 10 review. A role that was not selected gets an automatic model from the usual policy, without another prompt.
+
 Each agent gets the full proposal (paste it), the affected file paths, and "reply under 400 words, focused, actionable." Do NOT delegate the synthesis — read the responses yourself and decide which feedback to act on.
 
 If reviewers disagree fundamentally on the approach, **do another round** with a revised proposal that addresses the disagreement. Up to 3 rounds. If still no convergence, stop and `AskUserQuestion`.
@@ -308,7 +310,7 @@ If either fails, fix it before moving on. If the failure is in an unrelated file
 
 ## Phase 10: Multi-agent review of the implementation (up to 3 rounds)
 
-Once tests pass locally, spawn the same flavor of agents you used in Phase 8, but reviewing the **actual diff** this time. Again **in parallel**. Each agent gets:
+Once tests pass locally, spawn the same flavor of agents you used in Phase 8, but reviewing the **actual diff** this time. Again **in parallel**, passing each role the model chosen at the Phase 8 gate (do not call `agent_select_models` again). Each agent gets:
 
 - The proposed root cause and fix summary (recap from Phase 7).
 - The exact files changed + diffs (paste).

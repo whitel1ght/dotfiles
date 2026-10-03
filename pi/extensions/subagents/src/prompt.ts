@@ -50,6 +50,8 @@ export const SELECT_MODELS_GUIDELINES = [
   "After agent_select_models, reuse the chosen model for each known role as agent_spawn's `model`; choose models for later roles yourself (or repeat the same `flow` for them, which prompts nothing).",
   "If agent_select_models returns cancelled, stop the flow and start no agents.",
   "If agent_select_models fails because there is no interactive terminal, do not pretend the user chose; pick models yourself or ask the user.",
+  "When superpowers:subagent-driven-development is about to execute a written plan, derive the expected implementer/reviewer roster from that plan and call agent_select_models once before the first worker. Apply the same one-gate rule to superpowers:dispatching-parallel-agents.",
+  "superpowers:writing-plans and inline superpowers:executing-plans spawn no parallel agents, and ordinary superpowers:requesting-code-review is a one-off agent_spawn: none of them calls agent_select_models.",
   "Never call agent_select_models for an ordinary one-off agent_spawn; just spawn it.",
 ];
 
