@@ -49,10 +49,12 @@ Use a `profile` (the OpenCode specialist agents, e.g. `java-micronaut-dev`, `vue
 when one matches. Pass the model chosen at the model gate (step 2) for any role that has
 one. For every other spawn leave `model` out: the extension pings each model on the type's
 list before handing over the task, and replaces one that stalls or fails, ending at
-Claude. Only pin it to start further down a list, after a subagent's answer was poor.
-**Escalate** when a subagent fails the same piece twice: re-dispatch one tier further
-down the list (`model`) with what went wrong in the brief, rather than retrying the
-same model a third time.
+Claude. A pinned `model` is tried first; the type's balanced list stays behind it as fallback.
+Pin one only after a subagent's answer was poor.
+**Escalate** when a subagent fails the same piece twice: re-dispatch it pinning a
+premium-tier model for that type (`model`, from the tiers in `agent_spawn`'s
+description) with what went wrong in the brief, rather than retrying the same model a
+third time.
 
 ## Briefs
 

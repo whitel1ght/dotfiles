@@ -173,6 +173,28 @@ export function chainForProfile(
   return models;
 }
 
+export interface SpawnChainRequest {
+  readonly model?: string;
+  readonly modelProfile?: ModelProfile;
+  readonly parentModel: string | undefined;
+  readonly isFree: (model: string) => boolean;
+}
+
+// The chain a spawn tries and whether it may run on the delegating agent's own
+// model. An ordinary chain skips that model; a profile naming @parent, or an
+// explicit `model` equal to it (a deliberate pick), keeps it.
+export function planSpawnChain(roster: Roster, type: TaskType, request: SpawnChainRequest): { chain: string[]; parentInChain: boolean } {
+  const { modelProfile, parentModel } = request;
+  if (modelProfile) {
+    return {
+      chain: chainForProfile(roster, modelProfile, type, parentModel, request.isFree),
+      parentInChain: modelProfile.models?.includes(PARENT_MODEL) ?? false,
+    };
+  }
+  const selected = request.model?.trim() || undefined;
+  return { chain: chainFor(roster, type, selected), parentInChain: selected !== undefined && selected === parentModel };
+}
+
 // The zero-cost models, the type's own ranking first and then the rest of the
 // roster, deduped. The local model is in no list, so it is never in this pool.
 function freeModels(roster: Roster, type: TaskType, isFree: (model: string) => boolean): string[] {

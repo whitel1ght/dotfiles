@@ -19,6 +19,9 @@ review.md or a source file yourself. The fixers read those.
 ~/.local/bin/mr-watch check [--since ...]  # one pass now
 ```
 
+Define `<start>` once here, as the UTC time of this first `check` (`date -u +%Y%m%dT%H%M%SZ`);
+the model gate and every later round reuse it.
+
 Mention any held rounds in one line each. If `check` exits 1, nothing is new: go
 straight to "Wait". Exit 2 means GitLab is unreachable: say so and wait.
 
@@ -37,9 +40,10 @@ directory and the **worktree**. Handle every MR in the summary, in parallel.
    **Model gate (first fixer round only).** Once the worktree step has dropped the DIRTY MRs
    and before any fixer spawn, gate the session's first round that spawns a fixer. Use the
    stable flow ID `watch-mrs:<start>`, where `<start>` is the UTC time of the session's
-   first `check`, chosen once and written to `watch-mrs-models.md` in the scratchpad
-   directory together with the choices; re-read it after compaction instead of choosing
-   again. Give every non-DIRTY MR in this round the role key `fixer:<project>!<iid>` with the
+   first `check`, chosen once at Start and used for every later round. Write the flow ID and
+   the choices to `${XDG_STATE_HOME:-$HOME/.local/state}/pi/watch-mrs/<start>/watch-mrs-models.md`
+   (create the directory; it is outside every repository and worktree, so nothing is
+   committed or left dirty); re-read it after compaction instead of choosing again. Give every non-DIRTY MR in this round the role key `fixer:<project>!<iid>` with the
    full project path, so no two roles collide and there is one MR per key. Call
    `agent_select_models` once with key, title, task type, `recommendedModel` and a
    one-sentence recommendation for each. If it is cancelled or errors, stop the watch loop:

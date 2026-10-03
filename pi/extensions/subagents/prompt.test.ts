@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { describeModelProfiles, SELECT_MODELS_DESCRIPTION, SELECT_MODELS_GUIDELINES, spawnDescription } from "./src/prompt.ts";
+import { describeModelProfiles, SELECT_MODELS_DESCRIPTION, SELECT_MODELS_GUIDELINES, SPAWN_GUIDELINES, spawnDescription } from "./src/prompt.ts";
 import { parseModelPolicy } from "./src/model-policy.ts";
 import { parseRoster } from "./src/roster.ts";
 
@@ -10,7 +10,7 @@ const committed = read("subagents.json");
 const policy = parseModelPolicy(read("subagent-models.json"));
 
 test("the spawn description lists the types and the model profiles", () => {
-  const description = spawnDescription(parseRoster(committed, policy));
+  const description = spawnDescription(parseRoster(committed, policy), policy);
   assert.match(description, /Task types:/);
   assert.match(description, /Model profiles, to replace a type's list with `modelProfile`:/);
   assert.match(description, /- current: @parent/);
@@ -28,7 +28,7 @@ test("with no profiles the description says nothing about them", () => {
   });
   const roster = parseRoster({ localModel: "ollama/small", taskTypes: { x: { use: "u", tools: [] } } }, tiny);
   assert.equal(describeModelProfiles(roster), "");
-  assert.doesNotMatch(spawnDescription(roster), /modelProfile/);
+  assert.doesNotMatch(spawnDescription(roster, tiny), /modelProfile/);
 });
 
 test("the selector guidance covers named flows only, once, with reuse and auto-assignment", () => {
@@ -40,15 +40,16 @@ test("the selector guidance covers named flows only, once, with reuse and auto-a
   assert.match(guidance, /stable `flow`/);
   assert.match(guidance, /reuse the chosen model for each known role as agent_spawn's `model`/i);
   assert.match(guidance, /later roles yourself/i);
-  assert.match(guidance, /fails because there is no interactive terminal, do not pretend the user chose/);
+  assert.match(guidance, /fails because there is no interactive terminal, stop the named flow, start no agents and do not pretend the user chose/);
+  assert.doesNotMatch(guidance, /pick models yourself or ask the user/);
   assert.match(SELECT_MODELS_DESCRIPTION, /fails with an error instead of choosing for the user/);
   assert.match(guidance, /never .*one-off/i);
   assert.match(guidance, /cancelled/);
 });
 
 test("agent_spawn's model wording says to try it first, not to start further down", () => {
-  assert.match(spawnDescription(parseRoster(committed, policy)), /try .*first/i);
-  assert.doesNotMatch(spawnDescription(parseRoster(committed, policy)), /further down/);
+  assert.match(spawnDescription(parseRoster(committed, policy), policy), /try .*first/i);
+  assert.doesNotMatch(spawnDescription(parseRoster(committed, policy), policy), /further down/);
 });
 
 function meta(ref: string) {
@@ -104,7 +105,7 @@ for (const path of workflows) {
   test(`${path}: gate block states the selection contract`, () => {
     assert.equal(text.match(/Call\s+`agent_select_models`/g)?.length, 1, "one call instruction in the file");
     assert.match(gate, /Call\s+`agent_select_models` once/);
-    assert.match(gate, /stable flow ID/);
+    assert.match(gate, /stable\s+flow\s+ID/);
     assert.match(gate, /`[a-z-]+:<[^`]+`/, "a concrete flow ID shape");
     assert.match(gate, /role key/);
     assert.match(gate, /recommendedModel/);
@@ -178,7 +179,10 @@ test("watch-mrs gates after dirty filtering, once per session, with collision-fr
   assert.match(gate, /every non-DIRTY MR/);
   assert.match(gate, /session's first round that spawns a fixer/);
   assert.match(gate, /stable flow ID `watch-mrs:<start>`/);
-  assert.match(gate, /UTC time of the session's first `check`.*chosen once.*`watch-mrs-models\.md`.*re-read it after compaction/s);
+  assert.match(gate, /UTC time of the session's first `check`.*chosen once at Start/s);
+  assert.match(gate, /\$\{XDG_STATE_HOME:-\$HOME\/\.local\/state\}\/pi\/watch-mrs\/<start>\/watch-mrs-models\.md/);
+  assert.match(gate, /re-read it after compaction/);
+  assert.match(gate, /outside every repository/);
   assert.match(gate, /role key `fixer:<project>!<iid>` with the full project path/);
   assert.match(gate, /one MR per key/);
   assert.match(gate, /stop the watch loop: spawn nothing, ack nothing, start no wait, and tell me/);
@@ -218,4 +222,57 @@ test("the global guidance covers the external Superpowers flows and excludes sin
   assert.match(guidance, /superpowers:writing-plans/);
   assert.match(guidance, /superpowers:executing-plans/);
   assert.match(guidance, /superpowers:requesting-code-review/);
+});
+
+test("the parent is told the three tier rules and every tier's models for every type", () => {
+  const guidance = [...SPAWN_GUIDELINES, ...SELECT_MODELS_GUIDELINES].join("\n");
+  assert.match(guidance, /budget.*bounded.*low-risk/is);
+  assert.match(guidance, /balanced.*normal/is);
+  assert.match(guidance, /premium.*(ambigu|security|architecture)/is);
+  assert.match(guidance, /~\/\.pi\/agent\/subagent-model-guide\.md/);
+  const description = spawnDescription(parseRoster(committed, policy), policy);
+  assert.match(description, /subagent-model-guide\.md/);
+  for (const [name, ranking] of policy.rankings) {
+    for (const tier of ["budget", "balanced", "premium"] as const) {
+      const line = `${name} ${tier}: ${ranking[tier].join(" → ")}`;
+      assert.ok(description.includes(line), line);
+    }
+  }
+});
+
+test("failure guidance ties the non-TUI error to the named flow", () => {
+  assert.match(SELECT_MODELS_DESCRIPTION, /named flow/);
+});
+
+test("model semantics in the README and orchestrate say tried first, balanced list stays", () => {
+  const readme = repoFile("pi/extensions/subagents/README.md");
+  const orchestrate = repoFile("pi/prompts/orchestrate.md");
+  for (const doc of [readme, orchestrate]) {
+    assert.doesNotMatch(doc, /further down/);
+    assert.match(doc, /`model`[^.]*tried first/);
+    assert.match(doc, /balanced (list|fallback)/i);
+  }
+  assert.doesNotMatch(orchestrate, /one tier further/);
+  assert.match(orchestrate, /Escalate.*pinning\s+a\s+premium-tier model/s);
+});
+
+test("the README documents agent_select_models and its gate", () => {
+  const readme = repoFile("pi/extensions/subagents/README.md");
+  assert.match(readme, /\| `agent_select_models` \|/);
+  const gate = readme.slice(readme.indexOf("## Model selection gate"));
+  assert.ok(gate.length > 0 && readme.includes("## Model selection gate"));
+  assert.match(gate, /picker/i);
+  assert.match(gate, /stable\s+flow\s+ID/);
+  assert.match(gate, /session/);
+  assert.match(gate, /Escape.*caches nothing/s);
+  assert.match(gate, /unavailable/i);
+  assert.match(gate, /interactive.*(TUI|terminal)/is);
+  assert.match(gate, /selected model.*balanced/is);
+});
+
+test("index.ts routes the spawn chain through planSpawnChain", () => {
+  const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  assert.match(index, /planSpawnChain\(/);
+  assert.doesNotMatch(index, /parentInChain\s*=/);
+  assert.doesNotMatch(index, /chainFor\(/);
 });

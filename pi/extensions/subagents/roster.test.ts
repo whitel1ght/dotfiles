@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { parseModelPolicy } from "./src/model-policy.ts";
-import { chainFor, chainForProfile, describeRoster, parseRoster, splitModel } from "./src/roster.ts";
+import { chainFor, chainForProfile, describeRoster, planSpawnChain, parseRoster, splitModel } from "./src/roster.ts";
 
 const read = (name: string) => JSON.parse(readFileSync(new URL(`../../${name}`, import.meta.url), "utf8"));
 const committed = read("subagents.json");
@@ -195,4 +195,24 @@ test("the free pool keeps the type's own free model first, then the rest", () =>
     "claude-bridge/haiku",
     "claude-bridge/opus",
   ]);
+});
+
+test("planSpawnChain honours an explicit pick of the parent's own model, and only that", () => {
+  const roster = parseRoster(committed, committedPolicy);
+  const type = roster.types.get("implement")!;
+  const parent = type.compatible.find((m) => !type.models.includes(m)) ?? type.models[0];
+  const never = () => false;
+  const picked = planSpawnChain(roster, type, { model: parent, parentModel: parent, isFree: never });
+  assert.equal(picked.chain[0], parent);
+  assert.equal(picked.parentInChain, true);
+  const auto = planSpawnChain(roster, type, { parentModel: parent, isFree: never });
+  assert.deepEqual(auto.chain, type.models);
+  assert.equal(auto.parentInChain, false);
+  const other = planSpawnChain(roster, type, { model: type.models[1], parentModel: type.models[0], isFree: never });
+  assert.equal(other.parentInChain, false);
+  const current = planSpawnChain(roster, type, { modelProfile: roster.modelProfiles.get("current"), parentModel: parent, isFree: never });
+  assert.deepEqual(current.chain, [parent]);
+  assert.equal(current.parentInChain, true);
+  const flash = planSpawnChain(roster, type, { modelProfile: roster.modelProfiles.get("flash"), parentModel: parent, isFree: never });
+  assert.equal(flash.parentInChain, false);
 });

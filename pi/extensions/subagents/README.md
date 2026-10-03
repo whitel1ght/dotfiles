@@ -7,6 +7,7 @@ that the parent picks the model.
 | Tool | |
 | --- | --- |
 | `agent_spawn` | Start a subagent for `task` of a given `type`, on `model` or a `modelProfile`; returns its id (`agent-N`) at once |
+| `agent_select_models` | Let the user pick a model per agent of a named multi-agent flow, once; selects only, starts nothing |
 | `agent_list` | Status, type, model, runtime, tool calls and cost of every subagent |
 | `agent_output` | The result if finished, recent activity if not; never waits |
 | `agent_wait` | Block until the given (or all running) subagents finish, then return their results |
@@ -14,6 +15,30 @@ that the parent picks the model.
 
 `/agents` lists them for you; select one to see its task, activity and result
 (`↑↓`/`jk` `ctrl+u`/`ctrl+d` scroll, `G` follow, `x` stop, `esc` back).
+
+## Model selection gate
+
+`agent_select_models` is for named multi-agent flows (review panels, `/orchestrate`,
+`/watch-mrs`, ...). The parent plans the roster, then calls it once with a stable flow
+ID and one entry per agent: key, title, task type and a recommended model with a reason.
+
+- **Picker.** The user sees a picker in the terminal with every compatible model per
+  agent (budget, balanced and premium), the recommendation first, and confirms or changes
+  each. Models pi cannot reach right now are marked unavailable and Enter is blocked on them.
+- **Stable flow ID, session cache.** Confirmed choices are cached per flow ID for the
+  session, so repeating the same ID prompts nothing and returns the same models; roles
+  added later get their recommendation. Concurrent calls for one ID share one picker.
+- **Cancellation.** Escape caches nothing and returns `cancelled: true`; the flow stops
+  and starts no agents.
+- **TUI only.** The picker needs the interactive parent terminal. In RPC, JSON or print
+  mode, and inside subagents, the tool fails with an error and never chooses for the user;
+  a named flow stops there.
+- **Selected model, then balanced fallback.** The parent passes each returned model as
+  `agent_spawn`'s `model`. It is tried first, and the type's balanced list (ending in
+  Claude) stays as fallback. An explicit pick of the parent's own model is honored.
+
+The tiers and their reasons are in `~/.pi/agent/subagent-model-guide.md`, generated from
+`subagent-models.json` by `npm run generate-guide`.
 
 ## Choosing the model
 
@@ -57,7 +82,7 @@ The parent picks only the type. The extension walks the list:
 A subagent fails only when every model on its list has. `agent_output`, the wake-up
 message and `/agents` show every model tried and why each was passed over.
 
-`model` starts further down the list (or, for `text`, on the local model). The config
+`model` is tried first and the type's whole balanced list stays behind it as fallback (for `text`, `model` may also be the local model). The config
 refuses a list without three models before its single Claude fallback, any
 `anthropic/*` model (API billing), and the local model inside a list.
 

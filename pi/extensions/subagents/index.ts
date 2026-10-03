@@ -22,7 +22,7 @@ import {
   STOP_DESCRIPTION,
   WAIT_DESCRIPTION,
 } from "./src/prompt.ts";
-import { chainFor, chainForProfile, isLocal, PARENT_MODEL, parseRoster, type Roster } from "./src/roster.ts";
+import { isLocal, parseRoster, planSpawnChain, type Roster } from "./src/roster.ts";
 import { createModelSelector, registryModels } from "./src/select-models-tool.ts";
 import type { AgentModelSelection, ModelSelectionState } from "./src/selection.ts";
 import { ModelPicker } from "./src/ui/model-picker.ts";
@@ -148,7 +148,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "agent_spawn",
     label: "Subagent",
-    description: spawnDescription(roster),
+    description: spawnDescription(roster, policy),
     promptSnippet: SPAWN_SNIPPET,
     promptGuidelines: SPAWN_GUIDELINES,
     parameters: Type.Object({
@@ -189,19 +189,15 @@ export default function (pi: ExtensionAPI) {
       const parentModel = context.model ? `${context.model.provider}/${context.model.id}` : undefined;
 
       const modelProfileName = (params as { modelProfile?: string }).modelProfile;
-      let chain: string[];
-      let parentInChain = false;
-      if (modelProfileName) {
-        const modelProfile = roster.modelProfiles.get(modelProfileName);
-        if (!modelProfile) throw new Error(`unknown model profile ${modelProfileName}; one of: ${modelProfileNames.join(", ")}`);
-        const free = modelProfile.freeOnly ? freeModels(context) : undefined;
-        chain = chainForProfile(roster, modelProfile, type, parentModel, (model) => free?.has(model) ?? false);
-        // Only a profile that names @parent runs on the parent's own model; a
-        // pool that merely contains it still skips it as the delegating agent's.
-        parentInChain = modelProfile.models?.includes(PARENT_MODEL) ?? false;
-      } else {
-        chain = chainFor(roster, type, params.model?.trim() || undefined);
-      }
+      const modelProfile = modelProfileName ? roster.modelProfiles.get(modelProfileName) : undefined;
+      if (modelProfileName && !modelProfile) throw new Error(`unknown model profile ${modelProfileName}; one of: ${modelProfileNames.join(", ")}`);
+      const free = modelProfile?.freeOnly ? freeModels(context) : undefined;
+      const { chain, parentInChain } = planSpawnChain(roster, type, {
+        model: params.model,
+        modelProfile,
+        parentModel,
+        isFree: (model) => free?.has(model) ?? false,
+      });
 
       const agent = manager.spawn({
         type: type.name,
