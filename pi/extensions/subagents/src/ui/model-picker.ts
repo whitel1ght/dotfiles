@@ -1,16 +1,12 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type TUI } from "@earendil-works/pi-tui";
-import type { ModelSelectionDetails, ModelSelectionState, AgentModelSelection } from "../selection.ts";
-
-// Lines the frame uses besides the role rows: title, blank, blank, footer keys.
-const FRAME_LINES = 4;
-const DETAIL_LINES = 12;
-const MIN_ROWS = 3;
+import { planLayout, type AgentModelSelection, type ModelSelectionDetails, type ModelSelectionState } from "../selection.ts";
 
 // One screen to choose a model for every agent of a batch. Enter confirms all
 // choices at once; Escape cancels them all (the callback gets undefined).
 export class ModelPicker implements Component {
   private notice = "";
+  private finished = false;
   private readonly state: ModelSelectionState;
   private readonly tui: TUI;
   private readonly theme: Theme;
@@ -30,11 +26,21 @@ export class ModelPicker implements Component {
 
   invalidate(): void {}
 
+  private finish(result: readonly AgentModelSelection[] | undefined): void {
+    if (this.finished) return;
+    this.finished = true;
+    this.done(result);
+  }
+
   handleInput(data: string): void {
-    if (matchesKey(data, "escape")) return this.done(undefined);
+    if (this.finished) return;
+    if (matchesKey(data, "escape")) return this.finish(undefined);
     if (matchesKey(data, "enter")) {
-      if (this.state.canConfirm()) return this.done(this.state.result());
-      this.notice = "a chosen model is not available; pick another before confirming";
+      const blocked = this.state.blocked();
+      if (!blocked) return this.finish(this.state.result());
+      this.notice = blocked.hasAlternative
+        ? `${blocked.title}: ${blocked.model} is not available; pick another model`
+        : `${blocked.title}: no compatible model is available; esc to cancel`;
     } else {
       this.notice = "";
       if (matchesKey(data, "up")) this.state.moveAgent(-1);
@@ -48,29 +54,30 @@ export class ModelPicker implements Component {
   render(width: number): string[] {
     const th = this.theme;
     const wrap = (text: string) => text.split("\n").flatMap((l) => wrapTextWithAnsi(l, width));
-    const window = this.state.window(this.rowCapacity());
-    const rows: string[] = [];
-    if (window.start > 0) rows.push(th.fg("dim", `  ↑ ${window.start} more`));
-    for (let i = window.start; i < window.end; i++) rows.push(this.row(this.state.detailsAt(i), i === this.state.currentDetails().index));
-    if (window.end < this.state.size()) rows.push(th.fg("dim", `  ↓ ${this.state.size() - window.end} more`));
-
-    const keys = "↑↓ agent • ←→ model • enter confirm all • esc cancel";
-    const lines = [
-      th.fg("accent", th.bold(`Choose models for ${this.state.size()} subagent${this.state.size() === 1 ? "" : "s"}`)),
-      "",
-      ...rows,
-      "",
-      ...this.detailLines(this.state.currentDetails()).flatMap(wrap),
-      ...(this.notice ? [th.fg("warning", this.notice)] : []),
-      "",
-      th.fg("dim", keys),
-    ];
+    const current = this.state.currentDetails();
+    const details = this.detailLines(current).flatMap(wrap);
+    const plan = planLayout({
+      rows: this.tui.terminal.rows,
+      total: this.state.size(),
+      active: current.index,
+      detailLines: details.length,
+      notice: this.notice !== "",
+    });
+    const { window } = plan;
+    const lines: string[] = [];
+    if (plan.chrome === "full") {
+      const count = this.state.size();
+      lines.push(th.fg("accent", th.bold(`Choose models for ${count} subagent${count === 1 ? "" : "s"}`)), "");
+    }
+    if (plan.indicators && window.start > 0) lines.push(th.fg("dim", `  ↑ ${window.start} more`));
+    for (let i = window.start; i < window.end; i++) lines.push(this.row(this.state.detailsAt(i), i === current.index));
+    if (plan.indicators && window.end < this.state.size()) lines.push(th.fg("dim", `  ↓ ${this.state.size() - window.end} more`));
+    if (plan.chrome === "full") lines.push("");
+    lines.push(...details.slice(0, plan.detailLines));
+    if (plan.notice) lines.push(th.fg("warning", this.notice));
+    if (plan.chrome === "full") lines.push("");
+    if (plan.chrome !== "none") lines.push(th.fg("dim", "↑↓ agent • ←→ model • enter confirm all • esc cancel"));
     return lines.map((line) => truncateToWidth(line, width));
-  }
-
-  // Rows left for roles once the frame, hint lines and the detail block are counted.
-  private rowCapacity(): number {
-    return Math.max(MIN_ROWS, this.tui.terminal.rows - FRAME_LINES - DETAIL_LINES - 2);
   }
 
   private row(d: ModelSelectionDetails, active: boolean): string {
@@ -94,7 +101,7 @@ export class ModelPicker implements Component {
       `provider ${m.provider} • quality ${m.quality} • speed ${m.speed} • cost ${m.cost}`,
       `strengths: ${m.strengths.join(", ") || "none listed"}`,
       `rationale: ${d.recommendation}`,
-      `fallback: ${d.fallbackChain.join(" → ")}`,
+      `fallback: ${d.fallbackChain.map((m) => (d.unavailableFallbacks.includes(m) ? `${m} (unavailable)` : m)).join(" → ")}`,
     ];
   }
 }

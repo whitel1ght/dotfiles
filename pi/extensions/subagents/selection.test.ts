@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseModelPolicy } from "./src/model-policy.ts";
-import { parseRoster } from "./src/roster.ts";
-import { ModelSelectionState, validateSelectionRequests, visibleWindow, type AgentModelRequest } from "./src/selection.ts";
+import { chainFor, parseRoster } from "./src/roster.ts";
+import { ModelSelectionState, planLayout, validateSelectionRequests, visibleWindow, type AgentModelRequest } from "./src/selection.ts";
 
 const meta = (ref: string) => ({
   label: ref,
@@ -135,4 +135,81 @@ test("visibleWindow clamps to the list and the capacity", () => {
   assert.deepEqual(visibleWindow(20, 19, 5), { start: 15, end: 20 });
   assert.deepEqual(visibleWindow(20, 10, 5), { start: 8, end: 13 });
   assert.deepEqual(visibleWindow(20, 0, 0), { start: 0, end: 1 });
+});
+
+test("the layout never exceeds the available rows and keeps the active role visible", () => {
+  for (let rows = 1; rows <= 45; rows++) {
+    for (const total of [1, 2, 5, 20]) {
+      for (const active of [0, Math.floor(total / 2), total - 1]) {
+        for (const detailLines of [0, 6, 14, 40]) {
+          for (const notice of [false, true]) {
+            const plan = planLayout({ rows, total, active, detailLines, notice });
+            const where = JSON.stringify({ rows, total, active, detailLines, notice });
+            assert.ok(plan.lineCount <= rows, `${where} used ${plan.lineCount} lines`);
+            assert.ok(plan.window.end - plan.window.start >= 1, where);
+            assert.ok(active >= plan.window.start && active < plan.window.end, where);
+            assert.ok(plan.detailLines <= detailLines, where);
+          }
+        }
+      }
+    }
+  }
+});
+
+test("short terminals shed details and chrome before role rows; roomy ones keep everything", () => {
+  const tight = planLayout({ rows: 5, total: 20, active: 0, detailLines: 6, notice: false });
+  assert.equal(tight.detailLines, 1);
+  assert.equal(tight.lineCount, 5);
+  assert.equal(tight.chrome, "footer");
+  const roomy = planLayout({ rows: 40, total: 3, active: 0, detailLines: 6, notice: true });
+  assert.deepEqual([roomy.chrome, roomy.detailLines, roomy.window], ["full", 6, { start: 0, end: 3 }]);
+  assert.equal(roomy.lineCount, 5 + 3 + 6 + 1);
+});
+
+test("the blocking notice survives short terminals when there are at least two rows", () => {
+  assert.equal(planLayout({ rows: 2, total: 5, active: 0, detailLines: 6, notice: true }).notice, true);
+  assert.equal(planLayout({ rows: 1, total: 5, active: 0, detailLines: 6, notice: true }).notice, false);
+});
+
+test("the fallback chain is exactly what chainFor gives spawn, for every compatible model", () => {
+  const type = roster.types.get("x")!;
+  const s = state([request("a")]);
+  const seen = new Set<string>();
+  for (let i = 0; i < type.compatible.length; i++) {
+    const d = s.currentDetails();
+    seen.add(d.model);
+    assert.deepEqual(d.fallbackChain, chainFor(roster, type, d.model));
+    s.moveModel(1);
+  }
+  assert.deepEqual([...seen].sort(), [...type.compatible].sort());
+});
+
+test("details flag unavailable fallbacks", () => {
+  const s = state([request("a")], new Set(["a/one", "c/three"]));
+  assert.deepEqual(s.currentDetails().unavailableFallbacks, ["b/two", "claude-bridge/c"]);
+});
+
+test("blocked() names the affected role and says whether any alternative exists", () => {
+  assert.equal(state([request("a")]).blocked(), undefined);
+  const s = state([request("a"), request("b")], new Set(["a/one", "c/three"]));
+  s.moveModel(1);
+  assert.deepEqual(
+    { ...s.blocked()! },
+    { index: 0, key: "a", title: "Agent a", model: "b/two", hasAlternative: true },
+  );
+  const none = state([request("z")], new Set(["e/outside"]));
+  assert.equal(none.blocked()!.hasAlternative, false);
+});
+
+test("the state copies the caller's requests", () => {
+  const requests = [request("a"), request("b")];
+  const s = state(requests);
+  requests.pop();
+  requests[0] = request("changed", { recommendedModel: "b/two" });
+  assert.equal(s.size(), 2);
+  assert.equal(s.detailsAt(0).key, "a");
+  assert.deepEqual(s.result(), [
+    { key: "a", model: "a/one" },
+    { key: "b", model: "a/one" },
+  ]);
 });
