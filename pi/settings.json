@@ -6,10 +6,13 @@
     "npm:pi-claude-bridge",
     "npm:billion-context",
     "git:github.com/obra/superpowers",
-    "npm:pi-web-access"
+    "npm:pi-web-access",
+    "npm:@juicesharp/rpiv-todo",
+    "npm:@juicesharp/rpiv-ask-user-question",
+    "npm:@nicknisi/pi-artifacts"
   ],
-  "theme": "dark",
-  "lastChangelogVersion": "1.0.0",
+  "theme": "dark/dark",
+  "lastChangelogVersion": "1.0.2",
   "enabledModels": [
     "opencode-go/minimax-m3",
     "opencode-go/qwen3.8-flash",
@@ -24,8 +27,6 @@
     "opencode-go/hy4-preview",
     "opencode-go/kimi-k2.7-code",
     "opencode-go/kimi-k3",
-    "opencode-go/longcat-2.0",
-    "opencode-go/longcat-2.5-preview-free",
     "opencode-go/mimo-v2.5",
     "opencode-go/mimo-v2.5-pro",
     "opencode-go/mimo-v2.6-flash",
@@ -34,8 +35,6 @@
     "opencode-go/qwen3.7-plus",
     "opencode-go/qwen3.8-max",
     "opencode-go/space-bunny-free",
-    "opencode-go/gpt-5.6-luna",
-    "opencode-go/gpt-6-luna",
     "opencode-go/grok-4.6",
     "opencode-go/grok-4.7",
     "opencode-go/muse-spark-1.2-contributor",
@@ -54,6 +53,17 @@
     "claude-bridge/claude-sonnet-5",
     "claude-bridge/claude-sonnet-4-6",
     "claude-bridge/claude-sonnet-4-5",
-    "claude-bridge/claude-haiku-4-5"
-  ]
+    "claude-bridge/claude-haiku-4-5",
+    "opencode-go/longcat-2.5-preview-free",
+    "opencode-go/longcat-2.0",
+    "openai/gpt-5.6-sol",
+    "openai/gpt-6.1-sol",
+    "openai/gpt-6-luna",
+    "openai/gpt-5.6-luna",
+    "openai/gpt-6-astra",
+    "openai/gpt-6-sol",
+    "openai/gpt-5.4",
+    "openai/gpt-5.4-mini"
+  ],
+  "deviceId": "3f587b3d-2fc9-4a45-8a1d-7d8dc20de02b"
 }

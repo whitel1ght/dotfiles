@@ -98,6 +98,51 @@
           }
         }
       ]
+    },
+    "longcat": {
+      "name": "LongCat",
+      "api": "anthropic-messages",
+      "baseUrl": "https://api.longcat.chat/anthropic",
+      "apiKey": "$LONGCAT_API_KEY",
+      "headers": {
+        "Authorization": "Bearer $LONGCAT_API_KEY"
+      },
+      "models": [
+        {
+          "id": "LongCat-2.5-Preview",
+          "name": "LongCat 2.5 Preview",
+          "input": [
+            "text"
+          ],
+          "reasoning": true,
+          "compat": {
+            "allowEmptySignature": true
+          },
+          "cost": {
+            "input": 0.3,
+            "output": 1.2,
+            "cacheRead": 0.006,
+            "cacheWrite": 0
+          },
+          "contextWindow": 1048576,
+          "maxTokens": 262144
+        },
+        {
+          "id": "LongCat-2.0",
+          "name": "LongCat 2.0",
+          "input": [
+            "text"
+          ],
+          "cost": {
+            "input": 0.3,
+            "output": 1.2,
+            "cacheRead": 0.006,
+            "cacheWrite": 0
+          },
+          "contextWindow": 1048576,
+          "maxTokens": 131072
+        }
+      ]
     }
   }
 }
