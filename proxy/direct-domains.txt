@@ -1,65 +1,41 @@
-# Domains routed through the VPS. Everything else goes direct.
+# Domains that stay OFF the VPS. Everything else goes through it.
 #
 # One apex domain per line. The renderer matches the apex exactly AND all of
-# its subdomains, so "anthropic.com" covers "api.anthropic.com" but does not
-# accidentally match "notanthropic.com".
+# its subdomains, so "apple.com" covers "captive.apple.com" and "push.apple.com"
+# but does not accidentally match "notapple.com".
+#
+# A single-label entry is a TLD: "ru" becomes the suffix ".ru" and sends the
+# whole TLD direct. That is deliberate here — see the RU/BY group below — but
+# it is a wide brush, so do not add one casually.
 #
 # Edit this file, then run: proxyctl reload
 
-# --- Anthropic / Claude Code ---------------------------------------------
-# api.anthropic.com, a-api., a-cdn., mcp-proxy., docs.
-anthropic.com
-# auth, downloads.claude.ai, assets., preview.
-claude.ai
-# code.claude.com, platform., releases., mcp., status., support.
-claude.com
-# artifact content
-claudeusercontent.com
+# --- Apple ------------------------------------------------------------------
+# macOS software update, the App Store, iCloud and push all work better from
+# the home IP: downloads are faster, and the App Store and iCloud keychain
+# behave oddly when the account's country and the egress country disagree.
+# captive.apple.com is what macOS asks before it shows a public-wifi login
+# page; if that answer comes from the VPS, the portal never appears.
+apple.com
+icloud.com
+mzstatic.com
+aaplimg.com
+cdn-apple.com
+apple-cloudkit.com
+itunes.com
+appstore.com
+me.com
+mac.com
 
-# --- Open AI ---------------------------------------------
-chatgpt.com
-developers.openai.com
-auth.openai.com
-
-# --- Google, all of it ----------------------------------------------------
-# The whole family, not product by product. Google's certificates cover all of
-# *.google.com, *.googleapis.com, *.gstatic.com and more, so browsers send a
-# request for one Google host over a connection already open to another
-# (connection coalescing). sing-box routes a connection by the name it saw when
-# it opened, so with only some Google hosts proxied, NotebookLM or Gemini
-# requests ended up on a direct connection opened for search or accounts, and
-# Google saw Belarus. This covers Gemini, gemini-cli (cloudcode-pa and
-# generativelanguage.googleapis.com), NotebookLM, AI Studio and YouTube's API.
-google.com
-googleapis.com
-gstatic.com
-googleusercontent.com
-ggpht.com
-gvt1.com
-gvt2.com
-withgoogle.com
-g.co
-goo.gl
-# the .google TLD: gemini.google, notebook.google, notebooklm.google, labs.google
-google
-ai.google.dev
-
-# --- opencode -------------------------------------------------------------
-# opencode's default provider is OpenCode Zen, not the google key in its
-# auth.json: models.dev gives its endpoint as https://opencode.ai/zen/v1, so
-# the actual model traffic goes here. Also covers models.opencode.ai.
-opencode.ai
-# The model catalogue opencode fetches on startup to resolve provider and
-# model ids. Reachable direct, but it decides which endpoint gets used, so it
-# belongs on the same side of the tunnel as the endpoint itself.
-models.dev
-
-# --- YouTube --------------------------------------------------------------
-youtube.com
-youtu.be
-googlevideo.com
-ytimg.com
-
-# --- JEV ------------------------------------------------------------------
-console.typesafe.ai
-typesafe.ai
+# --- Russia and Belarus -----------------------------------------------------
+# The VPS is not in either country, and plenty of RU/BY services refuse or
+# misbehave for a foreign datacenter IP: banks, government services,
+# marketplaces, and the local CDNs the big sites fall back to. Listing the
+# TLDs keeps every current and future .ru/.by host on the home IP without
+# naming them one by one.
+ru
+by
+# .su is the Soviet-era TLD still used by RU sites.
+su
+# .рф, the Cyrillic TLD. Happens to be the same suffix in punycode.
+# xn--p1ai

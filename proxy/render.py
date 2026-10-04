@@ -2,9 +2,9 @@
 """Render the sing-box config from template + domain lists + secrets.
 
 Each domain list is injected into BOTH the DNS rules and the route rules. If
-those two ever diverge, proxied traffic is tunnelled while its DNS is resolved
-locally — a silent leak returning poisoned or geo-wrong answers — and a blocked
-domain still resolves before its connection is refused.
+those two ever diverge, direct traffic goes out while its DNS is resolved
+through the tunnel — a silent leak returning poisoned or geo-wrong answers —
+and a blocked domain still resolves before its connection is refused.
 """
 import json
 import pathlib
@@ -13,7 +13,7 @@ import sys
 
 REQUIRED = ("VLESS_SERVER", "VLESS_PORT", "VLESS_UUID", "VLESS_SNI", "VLESS_PBK", "VLESS_SID")
 MARKERS = (
-    "__PROXY_EXACT__", "__PROXY_SUFFIX__",
+    "__DIRECT_EXACT__", "__DIRECT_SUFFIX__",
     "__BLOCK_EXACT__", "__BLOCK_SUFFIX__",
     "__READER_EXACT__", "__READER_SUFFIX__",
 )
@@ -37,26 +37,38 @@ def load_secrets(path):
 def drop_rules(cfg, predicate):
     """Remove matching rules from both rule sets.
 
-    An empty block or reader list is legitimate, unlike an empty proxy list.
-    Leaving "domain": [] behind would match nothing but read as though the
-    feature were configured.
+    An empty list is legitimate in all three cases — an empty direct list means
+    everything is proxied. Leaving "domain": [] behind would match nothing but
+    read as though the feature were configured.
     """
     for section in (cfg["dns"], cfg["route"]):
         section["rules"] = [r for r in section["rules"] if not predicate(r)]
 
 
-def main(template, domains, block_domains, reader_domains, secrets, out):
-    doms = load_domains(domains)
-    if not doms:
-        sys.exit(f"refusing to render: no domains in {domains} (would route everything direct)")
+def is_empty_domain_rule(rule):
+    """A rule that carries nothing but empty domain lists.
+
+    The injected rules differ in what they point at — the block rule carries an
+    action, the reader rule a process_name, the direct rule a server in the dns
+    rules and an outbound in the route rules — so rather than enumerate those
+    shapes (and get one wrong), drop any rule whose domain lists are empty. The
+    hand-written rules (sniff, hijack-dns, ip_is_private) have no domain keys
+    at all and are left alone.
+    """
+    keys = [k for k in ("domain", "domain_suffix") if k in rule]
+    return bool(keys) and all(not rule[k] for k in keys)
+
+
+def main(template, direct_domains, block_domains, reader_domains, secrets, out):
+    direct = load_domains(direct_domains)
 
     blocked = load_domains(block_domains)
 
     # Blocking is checked first, so an overlap silently disables a domain the
-    # proxy list says to tunnel. That is never intentional.
-    overlap = sorted(set(doms) & set(blocked))
+    # direct list says to keep off the VPS. That is never intentional.
+    overlap = sorted(set(direct) & set(blocked))
     if overlap:
-        sys.exit(f"domain in both {domains} and {block_domains}: {', '.join(overlap)}")
+        sys.exit(f"domain in both {direct_domains} and {block_domains}: {', '.join(overlap)}")
 
     reader = load_domains(reader_domains)
 
@@ -94,22 +106,19 @@ def main(template, domains, block_domains, reader_domains, secrets, out):
     # domain_suffix is a plain string-suffix match, so a bare "youtube.com"
     # would also match "fake-youtube.com". Match the apex exactly and
     # subdomains via a leading dot instead.
-    raw = raw.replace('"__PROXY_EXACT__"', json.dumps(doms))
-    raw = raw.replace('"__PROXY_SUFFIX__"', json.dumps(["." + d for d in doms]))
+    raw = raw.replace('"__DIRECT_EXACT__"', json.dumps(direct))
+    raw = raw.replace('"__DIRECT_SUFFIX__"', json.dumps(["." + d for d in direct]))
     raw = raw.replace('"__BLOCK_EXACT__"', json.dumps(blocked))
     raw = raw.replace('"__BLOCK_SUFFIX__"', json.dumps(["." + d for d in blocked]))
     raw = raw.replace('"__READER_EXACT__"', json.dumps(reader))
     raw = raw.replace('"__READER_SUFFIX__"', json.dumps(["." + d for d in reader]))
     cfg = json.loads(raw)
 
-    if not blocked:
-        drop_rules(cfg, lambda r: r.get("action") == "reject")
-    if not reader:
-        drop_rules(cfg, lambda r: "process_name" in r)
+    drop_rules(cfg, is_empty_domain_rule)
 
     pathlib.Path(out).write_text(json.dumps(cfg, indent=2) + "\n")
     print(
-        f"rendered {out} ({len(doms)} proxied, {len(blocked)} blocked, "
+        f"rendered {out} ({len(direct)} direct, {len(blocked)} blocked, "
         f"{len(reader)} reader exceptions)"
     )
 
@@ -117,7 +126,7 @@ def main(template, domains, block_domains, reader_domains, secrets, out):
 if __name__ == "__main__":
     if len(sys.argv) != 7:
         sys.exit(
-            "usage: render.py <template> <domains> <block-domains> "
+            "usage: render.py <template> <direct-domains> <block-domains> "
             "<reader-domains> <secrets> <out>"
         )
     main(*sys.argv[1:])

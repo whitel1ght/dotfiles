@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Render the iPhone's Happ setup from the same lists the Mac's sing-box uses.
 
-    render-happ.py routing <domains>   happ://routing/onadd/... link
-    render-happ.py json    <domains>   the routing profile, readable
+    render-happ.py routing <direct-domains>   happ://routing/onadd/... link
+    render-happ.py json    <direct-domains>   the routing profile, readable
     render-happ.py server  <secrets>   vless:// link for the VPS
 
-The routing profile mirrors sing-box's proxy split: only proxy-domains.txt goes
-through the VPS and everything else goes direct (GlobalProxy "false"). The phone
-blocks nothing: block-domains.txt and reader-domains.txt are Mac-only choices.
+The routing profile mirrors sing-box's proxy split: only direct-domains.txt
+stays off the VPS and everything else goes through it (GlobalProxy "true").
+The phone blocks nothing: block-domains.txt and reader-domains.txt are
+Mac-only choices.
 
 Domains are written as "domain:<apex>", Xray's match for the apex and its
 subdomains. A bare entry would be a substring match in Xray, so "claude.ai" would
@@ -29,16 +30,14 @@ from render import load_domains, load_secrets, REQUIRED  # noqa: E402
 PRIVATE_NETS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "127.0.0.0/8"]
 
 
-def routing_profile(domains_path):
-    doms = load_domains(domains_path)
-    if not doms:
-        sys.exit(f"refusing to render: no domains in {domains_path} (would proxy nothing)")
+def routing_profile(direct_domains_path):
+    direct = load_domains(direct_domains_path)
 
     # Happ's documented format takes every flag as a string, "true"/"false".
     return {
         "Name": "dotfiles selective",
-        "GlobalProxy": "false",
-        "RouteOrder": "proxy-direct-block",
+        "GlobalProxy": "true",
+        "RouteOrder": "direct-proxy-block",
         "RemoteDNSType": "DoH",
         "RemoteDNSDomain": "https://dns.google/dns-query",
         "RemoteDNSIP": "8.8.8.8",
@@ -46,9 +45,9 @@ def routing_profile(domains_path):
         "DomesticDNSDomain": "",
         "DomesticDNSIP": "1.1.1.1",
         "DnsHosts": {},
-        "DirectSites": [],
+        "DirectSites": [f"domain:{d}" for d in direct],
         "DirectIp": PRIVATE_NETS,
-        "ProxySites": [f"domain:{d}" for d in doms],
+        "ProxySites": [],
         "ProxyIp": [],
         "BlockSites": [],
         "BlockIp": [],

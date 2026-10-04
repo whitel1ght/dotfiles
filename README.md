@@ -736,22 +736,21 @@ Edit files directly in this repository - changes will be reflected immediately i
 
 ## Proxy routing
 
-Selective routing through a VPS: a short list of domains goes through the
-tunnel, everything else goes direct. sing-box runs as a root LaunchDaemon
+Selective routing through a VPS: everything goes through the tunnel except a
+short list of domains that go direct. sing-box runs as a root LaunchDaemon
 owning a TUN interface, so the decision happens at the network layer and **no
 application holds proxy settings** — no `HTTP_PROXY`, no `NO_PROXY`, no
 per-tool config.
 
 ```bash
-proxyctl status     # daemon state, current default route, egress IP
-proxyctl reload     # apply changes to proxy-domains.txt
-proxyctl all        # temporarily route EVERYTHING through the VPS
-proxyctl direct     # back to default-direct
+proxyctl status     # daemon state, egress IP
+proxyctl reload     # apply changes to direct-domains.txt
+proxyctl off        # stop — routing falls back to macOS
 proxyctl logs       # tail /var/log/sing-box.log
 ```
 
-To route a new domain, add its apex to
-[`proxy/proxy-domains.txt`](proxy/proxy-domains.txt) and run `proxyctl reload`.
+To keep a new site off the VPS, add its apex to
+[`proxy/direct-domains.txt`](proxy/direct-domains.txt) and run `proxyctl reload`.
 Credentials live in `~/.config/sing-box/secrets.env` and never enter this repo
 — [`proxy/secrets.env.example`](proxy/secrets.env.example) documents where each
 value comes from.

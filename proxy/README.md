@@ -1,9 +1,9 @@
 # Proxy routing (sing-box TUN)
 
-Selective routing: a short list of domains goes through a VPS, everything else
-goes straight out. The decision is made at the network layer, so **no
-application is configured for a proxy** — no `HTTP_PROXY`, no `NO_PROXY`, no
-per-tool setting in npm, git, or the JVM.
+Everything goes through a VPS except a short list of domains that go straight
+out. The decision is made at the network layer, so **no application is
+configured for a proxy** — no `HTTP_PROXY`, no `NO_PROXY`, no per-tool setting
+in npm, git, or the JVM.
 
 This document explains how that works. For the command reference, see
 [Everyday operations](#everyday-operations).
@@ -16,16 +16,17 @@ one of two outbounds:
 
 | Outbound | What goes there |
 |---|---|
-| `proxy` | VLESS + REALITY to the VPS — only domains listed in `proxy-domains.txt` |
-| `direct` | Everything else |
+| `proxy` | VLESS + REALITY to the VPS — **everything not listed below** |
+| `direct` | domains in `direct-domains.txt`, plus private and LAN addresses |
 
 Because the interception happens below the application layer, a program cannot
 opt out, cannot be misconfigured, and cannot be left pointing at a proxy port
 that no longer exists. That last failure mode is why this setup replaced a
 `HTTP_PROXY`-based one.
 
-**The default is direct.** An empty domain list would mean "proxy nothing" —
-never "proxy everything".
+**The default is the VPS.** An empty domain list would mean "proxy everything"
+— never "proxy nothing". A list that is empty by accident costs bandwidth and
+latency, not exposure, and that is the direction the mistake should point.
 
 ## How a packet decides
 
@@ -45,36 +46,41 @@ Route rules are evaluated in order; the first match wins.
                           │no
                           ▼
                  4. reader-domains.txt AND process is newsboat?
-                          │              └──yes──▶ direct (the exception)
+                          │              └──yes──▶ proxy (reaching a blocked site)
                           │no
                           ▼
                  5. domain in block-domains.txt? ──yes──▶ reject (connection refused)
                           │no
                           ▼
-                 6. domain in proxy-domains.txt? ──yes──▶ proxy  ▶ VPS
+                 6. domain in direct-domains.txt? ──yes──▶ direct
                           │no
                           ▼
-                 7. final: the "final-out" selector ──▶ direct (default)
+                 7. final: proxy  ▶ VPS   (the default)
 ```
 
-Four details that matter:
+Five details that matter:
 
 - **Step 1 has to come first.** Without sniffing, sing-box only sees a
   destination IP, and a domain rule can never match. Every domain-based
   decision in this config depends on it.
+- **Step 3 is the only direct decision that is not a domain.** LAN addresses,
+  localhost, Docker and link-local have to stay off the VPS — a printer or a
+  captive portal is not reachable through a datacenter in another country. It
+  matches on the destination address, so it needs no list entry.
 - **Step 4 comes before step 5 on purpose.** The exception has to be reachable
   before the block it is an exception to. It is narrow by construction: it
   matches on process name, so the domain stays rejected for a browser and
-  every other process. Nothing uses it right now — `reader-domains.txt` is
-  empty and the renderer drops step 4 entirely — but the ordering is what
-  makes it work when something does.
+  every other process. Its outbound is `proxy` — the same as the default —
+  because what it buys is reaching a blocked domain at all, in one program.
+  Nothing uses it right now: `reader-domains.txt` is empty and the renderer
+  drops step 4 entirely.
 - **Step 5 comes before step 6 on purpose.** First match wins, so a domain in
-  both lists would be tunnelled rather than blocked if the order were
+  both lists would go direct rather than be blocked if the order were
   reversed. `render.py` refuses to render an overlap at all, but the ordering
   is what makes blocking authoritative.
-- **Step 6 sends matched traffic straight to `proxy`, bypassing the selector.**
-  So the escape hatch below only changes what happens to *unmatched* traffic —
-  the listed domains are proxied either way.
+- **Step 7 is the default, and it is not switchable.** There is no selector
+  outbound and no Clash API — see [When you need everything
+  direct](#when-you-need-everything-direct).
 
 ## The twin-rule invariant
 
@@ -82,18 +88,20 @@ This is the single most important non-obvious property of the config.
 
 Each domain list is injected in **two** places:
 
-- `dns.rules` — resolve these domains via DoH through the tunnel (`dns-proxy`),
+- `dns.rules` — resolve these domains with the system resolver (`dns-local`),
   or refuse to resolve them at all if they are blocked
-- `route.rules` — route these domains through the tunnel (`proxy`), or reject
-  the connection if they are blocked
+- `route.rules` — route these domains direct (`direct`), or reject the
+  connection if they are blocked
 
-Everything else resolves through the system resolver (`dns-local`) and routes
-direct.
+Everything else resolves over DoH through the tunnel (`dns-proxy`) and routes
+through the tunnel (`proxy`).
 
 **If those two lists ever diverge, you get a silent failure, not an error.** A
-domain routed through the tunnel but resolved locally gets whatever answer the
-local network returns — poisoned, geo-wrong, or simply the wrong CDN edge. The
-tunnel then faithfully carries traffic to a bad address. Nothing logs an error;
+domain routed direct but resolved through the tunnel gets an answer chosen for
+the VPS's location and then connects from your ISP's — the wrong CDN edge, or a
+geo-block that makes no sense. A domain routed through the tunnel but resolved
+locally gets whatever the local network returns — poisoned or geo-wrong — and
+the tunnel faithfully carries traffic to a bad address. Nothing logs an error;
 the site is just broken in a way that looks like the proxy's fault.
 
 The same argument applies to blocking, less dangerously but just as untidily:
@@ -101,7 +109,7 @@ a domain rejected at the route but still resolved at DNS wastes a lookup and
 fails later than it should. So blocking is injected in both places too.
 
 `render.py` exists to make that divergence impossible: every rule comes from a
-single read of `proxy-domains.txt` and `block-domains.txt`. Do not hand-write
+single read of `direct-domains.txt` and `block-domains.txt`. Do not hand-write
 any of them.
 
 ## Exact vs suffix matching
@@ -119,13 +127,19 @@ So each entry in either list is expanded into two forms:
 The leading dot is what makes the suffix safe. Write apex domains only in
 either list — the renderer handles both forms.
 
+An entry may also be a bare TLD. `direct-domains.txt` uses `ru`, `by` and `su`
+to keep those countries' sites off the VPS, and that expands to
+`domain_suffix: ".ru"` — every `.ru` host. It is a wide brush: it covers a
+`.ru` site you did want tunnelled. Delete the line, or list the exception,
+rather than living with it.
+
 ## The render pipeline
 
 The running config is **generated**. Nothing is hand-edited in place.
 
 ```
 proxy/config.template.json   ──┐
-proxy/proxy-domains.txt      ──┤
+proxy/direct-domains.txt     ──┤
 proxy/block-domains.txt      ──┤
 proxy/reader-domains.txt     ──┼──▶ render.py ──▶ sing-box check ──▶ install
 ~/.config/sing-box/secrets.env ┘                        │              -m 600
@@ -139,12 +153,17 @@ proxy/reader-domains.txt     ──┼──▶ render.py ──▶ sing-box che
 
 | Guard | Why |
 |---|---|
-| proxy domain list is empty | would silently route everything direct (an empty *block* list is fine — its rules are dropped instead) |
-| a domain is in both lists | blocking wins on first match, silently disabling a domain the proxy list says to tunnel |
+| a domain is in both `direct-domains.txt` and `block-domains.txt` | blocking wins on first match, silently disabling a direct entry |
 | a reader domain is not blocked | the exception excepts nothing, so the entry does nothing at all |
 | a required secret is missing or blank | would render a structurally valid config that cannot connect |
 | a `__PLACEHOLDER__` marker is missing from the template | template drifted from the renderer |
-| any `__…__` remains after substitution | a value silently failed to substitute |
+| the template contains an unknown `__…__` | a leftover marker would be installed as a literal value |
+
+An empty list is **not** a guard. An empty `direct-domains.txt` means everything
+is proxied, which is a legitimate thing to want, so the renderer drops the rule
+rather than emit `"domain": []` — which matches nothing but reads as though
+direct routing were configured. The same goes for an empty blocklist and an
+empty reader list.
 
 Then `proxyctl` runs `sing-box check` on the result and installs it **only if
 it passes**, mode `600`, owned by `root:wheel`. A bad edit therefore cannot
@@ -168,37 +187,48 @@ never touched.
 `proxyctl` drives it with `launchctl bootstrap` (start), `bootout` (stop) and
 `kickstart -k` (restart, used by `reload`).
 
-## The escape hatch
+## When you need everything direct
 
-The `final-out` selector chooses what happens to traffic that matched no domain
-rule. It is flipped **live, without restarting the daemon**, through sing-box's
-Clash API on `127.0.0.1:9090`:
+There is no runtime switch. The setup used to have one — a `final-out`
+selector, flipped live through sing-box's Clash API on `127.0.0.1:9090` — and
+it existed to send everything through the VPS when a site was blocked and you
+didn't know which of its domains to list. That is now the default, so the
+switch lost its purpose, and with it went the Clash API: the only thing in this
+setup that accepted unauthenticated local connections.
+
+What replaces it is `proxyctl off`. Stopping the daemon hands routing back to
+macOS, so everything goes direct immediately — the same escape, without a
+second routing path to reason about:
 
 ```bash
-proxyctl all      # unmatched traffic ──▶ proxy   (everything through the VPS)
-proxyctl direct   # unmatched traffic ──▶ direct  (the default)
+proxyctl off     # everything direct, right now
+proxyctl on      # back through the VPS
 ```
 
-Use it when a site is blocked and you don't yet know which of its domains to
-add: flip everything through the VPS, get on with your work, add the proper
-rule to `proxy-domains.txt` later. It resets to `direct` whenever the daemon
-restarts, so it cannot silently become the permanent state.
+If you want the *default itself* to be direct — a policy change, not an escape
+hatch — edit `route.final` and `dns.final` in `proxy/config.template.json` to
+`direct` and `dns-local`, then `proxyctl reload`. That is a change to the
+policy, so it belongs in git like any other.
 
 ## Everyday operations
 
 ```bash
-proxyctl status     # daemon state, current default route, egress IP
+proxyctl status     # daemon state, egress IP
 proxyctl on         # render, install, start
-proxyctl off        # stop
-proxyctl reload     # re-render and restart — run after editing either domain list
-proxyctl all        # route everything through the VPS
-proxyctl direct     # back to default-direct
+proxyctl off        # stop — routing falls back to macOS
+proxyctl reload     # re-render and restart — run after editing any domain list
 proxyctl logs       # tail /var/log/sing-box.log
+proxyctl happ       # routing-profile QR for the phone
 ```
 
-**To route a new domain:** add its apex to `proxy/proxy-domains.txt`, then
-`proxyctl reload`. Commit the change — the list is the routing policy, and it
-belongs in git.
+**To keep a site off the VPS:** add its apex to `proxy/direct-domains.txt`,
+then `proxyctl reload`. Commit the change — the list is the routing policy, and
+it belongs in git. A site belongs there when it refuses datacenter IPs,
+geo-fences its content, or simply needs the address your ISP gave you.
+
+**To route a site through the VPS:** it already is. Nothing to do, unless a
+broader entry in `direct-domains.txt` covers it — a bare TLD such as `ru` will
+swallow a `.ru` host you wanted tunnelled.
 
 **To make a blocked site readable in newsboat only:** add its apex to
 `proxy/reader-domains.txt` as well as `block-domains.txt`, then `proxyctl
@@ -216,7 +246,9 @@ site.
 `proxyctl reload`. Both lists use the same apex-plus-subdomains matching, so
 one `linkedin.com` line covers `www.linkedin.com` and `api.linkedin.com` — but
 a separate registrable domain needs its own line, the way `redd.it` would not
-have been covered by a `reddit.com` entry.
+have been covered by a `reddit.com` entry. Blocking is evaluated before the
+direct list, so a block still holds inside a broad direct entry: `onliner.by`
+is blocked even though `by` is direct.
 
 Blocking is enforced by the daemon, so `proxyctl off` lifts it. That is a
 deliberate trade for keeping every domain decision in one versioned place; if
@@ -224,14 +256,15 @@ you want a block that survives the daemon being stopped, `/etc/hosts` is the
 tool for it.
 
 **To check where you're going out from:** `proxyctl status` prints the egress
-IP. If it shows your ISP, unmatched traffic is going direct, which is correct
-unless you've flipped the hatch.
+IP. It probes a domain that is not in `direct-domains.txt`, so it should show
+the VPS. If it shows your ISP, either the daemon is stopped or a broad direct
+entry covers the probe.
 
 ## iPhone (Happ)
 
-The phone runs [Happ](https://www.happ.su) with the same proxy split: only
-`proxy-domains.txt` goes through the VPS, and everything else goes direct. The phone
-blocks nothing: `block-domains.txt` and `reader-domains.txt` are Mac-only.
+The phone runs [Happ](https://www.happ.su) with the same split: only
+`direct-domains.txt` stays off the VPS, and everything else goes through it. The
+phone blocks nothing: `block-domains.txt` and `reader-domains.txt` are Mac-only.
 `render-happ.py` builds Happ's routing profile from that same list, so there is one
 list to edit for both devices.
 
@@ -290,14 +323,27 @@ proxyctl status
 installed, so the cause is usually environmental: a missing TUN permission, or
 another process holding the interface.
 
-**Everything goes direct, including listed domains** — confirm the domain is
-actually in `proxy-domains.txt` and that you ran `proxyctl reload` after
-editing — `proxyctl reload` prints the number of proxied domains it found, so
-a count that didn't change means the edit didn't land.
+**Everything goes direct** — check `proxyctl status` first. With the daemon
+stopped, macOS routes everything itself and that looks exactly like a working
+direct-only config.
 
-**A listed site loads but behaves as if you're in the wrong country** — this is
-the twin-rule invariant failing. Check that `render.py` produced both the DNS
-and the route rule for that domain; never edit the runtime config by hand.
+**A site behaves as if you're in the wrong country, or refuses datacenter
+IPs** — it is going through the VPS and the site doesn't want that. Add its
+apex to `proxy/direct-domains.txt` and `proxyctl reload`.
+
+**A `.ru`, `.by` or `.su` site you wanted tunnelled isn't** — the TLD line in
+`direct-domains.txt` covers every host under it. Delete that line if the whole
+TLD shouldn't be direct.
+
+**A site in `direct-domains.txt` still misbehaves** — this is the twin-rule
+invariant failing: the domain got a route rule but not a DNS rule, or the
+reverse, so it connects from one place with an answer from another. Check that
+`render.py` produced both rules for that domain; never edit the runtime config
+by hand.
+
+**`proxyctl reload` didn't change anything** — it prints the direct and blocked
+counts it rendered. A count that didn't move means the edit didn't land: check
+for a typo, a leading `#`, or an entry that went into the other list.
 
 **Only one TUN client at a time.** Running any other TUN VPN alongside sing-box
 means whichever connected last owns the default route — the other silently does
@@ -322,5 +368,7 @@ in a non-interactive shell. If you add a status check, don't reintroduce
 - **No per-tool proxy configuration.** npm, git, pip and the JVM all route
   through the TUN like everything else. `strict-ssl=false` and
   `-Dhttp.proxyHost=…` style settings are proxy-era residue.
+- **No runtime routing switch.** No selector outbound, no Clash API, no local
+  port that can flip the policy. `proxyctl off` is the escape hatch.
 - **No secrets in this repository.** They live in
   `~/.config/sing-box/secrets.env`, mode `600`, outside any git working tree.

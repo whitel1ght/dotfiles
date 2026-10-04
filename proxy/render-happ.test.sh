@@ -15,23 +15,40 @@ assert_contains() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3" "[$2] not in 
 
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "$SANDBOX"' EXIT
-printf '# comment\nclaude.ai\n\nyoutube.com\n' > "$SANDBOX/proxy.txt"
+printf '# comment\nclaude.ai\n\nyoutube.com\n' > "$SANDBOX/direct.txt"
 
-decode() { local l; l="$("$SCRIPT" routing "$SANDBOX/proxy.txt")"; echo "${l#happ://routing/onadd/}" | base64 -d; }
-field() { decode | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)[\"$1\"]))"; }
+# profile_field <direct-list> <key> — read one key out of the decoded profile
+profile_field() {
+    local l; l="$("$SCRIPT" routing "$1")"
+    echo "${l#happ://routing/onadd/}" | base64 -d \
+        | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)[\"$2\"]))"
+}
 
 echo "render-happ.py — routing"
-link="$("$SCRIPT" routing "$SANDBOX/proxy.txt")"
+link="$("$SCRIPT" routing "$SANDBOX/direct.txt")"
 assert_contains "$link" "happ://routing/onadd/" "emits an add-and-activate link"
-assert_eq '["domain:claude.ai", "domain:youtube.com"]' "$(field ProxySites)" "proxies the list as apex-plus-subdomain matches"
-assert_eq '[]' "$(field BlockSites)" "blocks nothing on the phone"
-assert_eq '"false"' "$(field GlobalProxy)" "everything unlisted goes direct"
+assert_eq '["domain:claude.ai", "domain:youtube.com"]' "$(profile_field "$SANDBOX/direct.txt" DirectSites)" "keeps the listed apexes and their subdomains off the VPS"
+assert_eq '[]' "$(profile_field "$SANDBOX/direct.txt" ProxySites)" "proxies nothing by name — the default covers it"
+assert_eq '[]' "$(profile_field "$SANDBOX/direct.txt" BlockSites)" "blocks nothing on the phone"
+assert_eq '"true"' "$(profile_field "$SANDBOX/direct.txt" GlobalProxy)" "everything unlisted goes through the VPS"
+assert_eq '"direct-proxy-block"' "$(profile_field "$SANDBOX/direct.txt" RouteOrder)" "checks direct, then proxy, then block"
+assert_eq '"DoU"' "$(profile_field "$SANDBOX/direct.txt" DomesticDNSType)" "unlisted DNS stays on the local resolver"
+assert_eq '["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "127.0.0.0/8"]' \
+    "$(profile_field "$SANDBOX/direct.txt" DirectIp)" "keeps the private networks off the VPS"
 
-printf '# nothing\n' > "$SANDBOX/empty.txt"
+# An empty direct list means everything is proxied, which is the intent. The
+# profile must render with no direct sites rather than refuse.
+printf '# everything through the VPS right now\n' > "$SANDBOX/empty.txt"
 "$SCRIPT" routing "$SANDBOX/empty.txt" >/dev/null 2>&1 \
-    && fail "refuses an empty proxy list" "exit 0" || pass "refuses an empty proxy list"
+    && pass "an empty direct list renders" || fail "an empty direct list renders" "non-zero exit"
+decode() { local l; l="$("$SCRIPT" routing "$SANDBOX/empty.txt")"; echo "${l#happ://routing/onadd/}" | base64 -d; }
+assert_eq '[]' "$(profile_field "$SANDBOX/empty.txt" DirectSites)" \
+    "an empty direct list keeps nothing off the VPS"
+assert_eq '"true"' "$(profile_field "$SANDBOX/empty.txt" GlobalProxy)" \
+    "an empty direct list still proxies by default"
+decode() { local l; l="$("$SCRIPT" routing "$SANDBOX/direct.txt")"; echo "${l#happ://routing/onadd/}" | base64 -d; }
 
-"$SCRIPT" routing "$TEST_DIR/proxy-domains.txt" >/dev/null \
+"$SCRIPT" routing "$TEST_DIR/direct-domains.txt" >/dev/null \
     && pass "the real list renders" || fail "the real list renders" "non-zero exit"
 
 echo "render-happ.py — server"

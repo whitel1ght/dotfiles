@@ -6,11 +6,11 @@
       { "type": "local", "tag": "dns-local" }
     ],
     "rules": [
-      { "domain": "__READER_EXACT__", "domain_suffix": "__READER_SUFFIX__", "process_name": [ "newsboat" ], "server": "dns-local" },
+      { "domain": "__READER_EXACT__", "domain_suffix": "__READER_SUFFIX__", "process_name": [ "newsboat" ], "server": "dns-proxy" },
       { "domain": "__BLOCK_EXACT__", "domain_suffix": "__BLOCK_SUFFIX__", "action": "reject" },
-      { "domain": "__PROXY_EXACT__", "domain_suffix": "__PROXY_SUFFIX__", "server": "dns-proxy" }
+      { "domain": "__DIRECT_EXACT__", "domain_suffix": "__DIRECT_SUFFIX__", "server": "dns-local" }
     ],
-    "final": "dns-local",
+    "final": "dns-proxy",
     "strategy": "prefer_ipv4"
   },
   "inbounds": [
@@ -39,23 +39,19 @@
         "reality": { "enabled": true, "public_key": "__VLESS_PBK__", "short_id": "__VLESS_SID__" }
       }
     },
-    { "type": "direct", "tag": "direct" },
-    { "type": "selector", "tag": "final-out", "outbounds": [ "direct", "proxy" ], "default": "direct" }
+    { "type": "direct", "tag": "direct" }
   ],
   "route": {
     "rules": [
       { "action": "sniff" },
       { "protocol": "dns", "action": "hijack-dns" },
       { "ip_is_private": true, "outbound": "direct" },
-      { "domain": "__READER_EXACT__", "domain_suffix": "__READER_SUFFIX__", "process_name": [ "newsboat" ], "outbound": "direct" },
+      { "domain": "__READER_EXACT__", "domain_suffix": "__READER_SUFFIX__", "process_name": [ "newsboat" ], "outbound": "proxy" },
       { "domain": "__BLOCK_EXACT__", "domain_suffix": "__BLOCK_SUFFIX__", "action": "reject" },
-      { "domain": "__PROXY_EXACT__", "domain_suffix": "__PROXY_SUFFIX__", "outbound": "proxy" }
+      { "domain": "__DIRECT_EXACT__", "domain_suffix": "__DIRECT_SUFFIX__", "outbound": "direct" }
     ],
-    "final": "final-out",
+    "final": "proxy",
     "auto_detect_interface": true,
     "default_domain_resolver": { "server": "dns-local" }
-  },
-  "experimental": {
-    "clash_api": { "external_controller": "127.0.0.1:9090" }
   }
 }

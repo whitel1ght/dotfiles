@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Control the sing-box TUN proxy.
 #
-# Routing lives in dotfiles/proxy/. Edit proxy-domains.txt (tunnelled),
+# Routing lives in dotfiles/proxy/. Edit direct-domains.txt (kept off the VPS),
 # block-domains.txt (rejected) or reader-domains.txt (blocked except for the
-# feed reader), then `proxyctl reload`.
+# feed reader), then `proxyctl reload`. Everything not listed goes through the
+# VPS; there is no runtime switch that overrides the policy.
 # Secrets live in ~/.config/sing-box/secrets.env and never enter git.
 #
-# The iPhone runs Happ with the same proxy list and blocks nothing. `proxyctl
+# The iPhone runs Happ with the same split and blocks nothing. `proxyctl
 # happ` shows its routing profile as a QR code to scan with the camera, rendered
-# from proxy-domains.txt, so re-run it after editing that list. `proxyctl happ server` shows the VPS itself, for
-# a first-time setup; that QR carries the credentials, so show it only to the phone.
+# from direct-domains.txt, so re-run it after editing that list. `proxyctl happ
+# server` shows the VPS itself, for a first-time setup; that QR carries the
+# credentials, so show it only to the phone.
 # The QR opens as an image in Preview; add --terminal to print it in the shell.
 set -euo pipefail
 
@@ -20,7 +22,6 @@ RUNTIME_DIR="/usr/local/etc/sing-box"
 RUNTIME_CFG="$RUNTIME_DIR/config.json"
 PLIST="/Library/LaunchDaemons/local.singbox.plist"
 LABEL="local.singbox"
-API="http://127.0.0.1:9090"
 LOG="/var/log/sing-box.log"
 
 die() { echo "proxyctl: $*" >&2; exit 1; }
@@ -30,25 +31,11 @@ render() {
   local tmp; tmp="$(mktemp)"
   trap 'rm -f "$tmp"' RETURN
   "$PROXY_DIR/render.py" "$PROXY_DIR/config.template.json" \
-    "$PROXY_DIR/proxy-domains.txt" "$PROXY_DIR/block-domains.txt" \
+    "$PROXY_DIR/direct-domains.txt" "$PROXY_DIR/block-domains.txt" \
     "$PROXY_DIR/reader-domains.txt" "$SECRETS" "$tmp"
   sing-box check -c "$tmp" || die "rendered config is invalid; not installing"
   sudo mkdir -p "$RUNTIME_DIR"
   sudo install -m 600 -o root -g wheel "$tmp" "$RUNTIME_CFG"
-}
-
-# Flip the default-route selector without restarting the daemon.
-selector() {
-  curl -fsS -X PUT -H 'Content-Type: application/json' \
-    -d "{\"name\":\"$1\"}" "$API/proxies/final-out" >/dev/null \
-    || die "control API unreachable — is the daemon running?"
-  echo "default route -> $1"
-}
-
-current_route() {
-  curl -fsS --max-time 3 "$API/proxies/final-out" 2>/dev/null \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("now","unknown"))' 2>/dev/null \
-    || echo "unknown"
 }
 
 case "${1:-status}" in
@@ -65,19 +52,16 @@ case "${1:-status}" in
   reload)
     render
     sudo launchctl kickstart -k "system/$LABEL"
-    # render() already printed the proxied/blocked counts; recounting here
+    # render() already printed the direct/blocked counts; recounting here
     # only creates a second number that can drift from the rendered config.
     echo "reloaded"
     ;;
   logs)   sudo tail -f "$LOG" ;;
-  all)    selector proxy ;;
-  direct) selector direct ;;
   status)
     # Deliberately sudo-free: `sudo launchctl print` fails silently in a
     # non-interactive shell and reports a running daemon as stopped.
     if pgrep -f "sing-box run -c $RUNTIME_CFG" >/dev/null 2>&1; then
       echo "daemon        : running"
-      echo "default route : $(current_route)"
       echo -n "egress        : "
       curl -s --max-time 8 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null \
         | sed -n 's/^ip=//p' || echo "unreachable"
@@ -91,8 +75,8 @@ case "${1:-status}" in
       link="$("$PROXY_DIR/render-happ.py" server "$SECRETS")"
       what="the VPS server (contains credentials; don't share or screenshot it)"
     else
-      link="$("$PROXY_DIR/render-happ.py" routing "$PROXY_DIR/proxy-domains.txt")"
-      what="the routing profile (only the proxy-domains.txt list goes through the VPS)"
+      link="$("$PROXY_DIR/render-happ.py" routing "$PROXY_DIR/direct-domains.txt")"
+      what="the routing profile (only the direct-domains.txt list stays off the VPS)"
     fi
     command -v qrencode >/dev/null || { echo "$link"; die "qrencode not installed (brew install qrencode); send the link above to the phone instead"; }
     if [ "${3:-${2:-}}" = --terminal ]; then
@@ -109,7 +93,7 @@ case "${1:-status}" in
     echo "Scan with the iPhone camera, open in Happ: $what."
     ;;
   *)
-    echo "usage: proxyctl {on|off|status|reload|logs|all|direct|happ [server] [--terminal]}" >&2
+    echo "usage: proxyctl {on|off|status|reload|logs|happ [server] [--terminal]}" >&2
     exit 1
     ;;
 esac

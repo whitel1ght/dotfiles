@@ -49,13 +49,13 @@ VLESS_SNI=example.com
 VLESS_PBK=testpublickey
 VLESS_SID=abcd
 EOF
-    printf 'anthropic.com\n' > "$ROOT/proxy.txt"
+    printf 'anthropic.com\n' > "$ROOT/direct.txt"
     printf 'reddit.com\n' > "$ROOT/block.txt"
     : > "$ROOT/reader.txt"
 }
 
 render() {
-    "$SCRIPT" "$TEMPLATE" "$ROOT/proxy.txt" "$ROOT/block.txt" "$ROOT/reader.txt" \
+    "$SCRIPT" "$TEMPLATE" "$ROOT/direct.txt" "$ROOT/block.txt" "$ROOT/reader.txt" \
         "$ROOT/secrets.env" "$OUT"
 }
 
@@ -67,6 +67,20 @@ print($1)
 " 2>&1; }
 
 echo "render.py"
+
+# --- the inversion itself ----------------------------------------------------
+# Everything not listed goes through the VPS: unmatched traffic hits the proxy
+# outbound, and unmatched DNS hits the resolver that reaches it through the
+# tunnel. There is no selector left to flip that at runtime.
+new_sandbox
+render >/dev/null 2>&1
+
+assert_eq "proxy" "$(q "c['route']['final']")" \
+    "unmatched traffic is proxied"
+assert_eq "dns-proxy" "$(q "c['dns']['final']")" \
+    "unmatched DNS goes through the tunnel"
+assert_eq "0" "$(q "len([o for o in c['outbounds'] if o['type']=='selector'])")" \
+    "no selector outbound to flip at runtime"
 
 # --- blocked domains reach both rule sets ------------------------------------
 # render.py's own docstring warns that DNS and route rules diverging is a
@@ -88,23 +102,47 @@ assert_eq "['reddit.com', 'pikabu.ru']" \
     "dns reject rule carries the apex domains"
 
 # --- first-match ordering ----------------------------------------------------
-# route.rules is first-match. A blocked domain that also matched the proxy rule
-# would be tunnelled instead of rejected if the proxy rule came first.
+# route.rules is first-match. A blocked domain that also matched the direct rule
+# would go out instead of being rejected if the direct rule came first.
 new_sandbox
 render >/dev/null 2>&1
 
 assert_eq "True" \
-    "$(q "min(i for i,r in enumerate(c['route']['rules']) if r.get('action')=='reject') < min(i for i,r in enumerate(c['route']['rules']) if r.get('outbound')=='proxy')")" \
-    "route reject rule precedes the proxy rule"
+    "$(q "min(i for i,r in enumerate(c['route']['rules']) if r.get('action')=='reject') < min(i for i,r in enumerate(c['route']['rules']) if r.get('outbound')=='direct' and 'domain' in r)")" \
+    "route reject rule precedes the direct rule"
 
 assert_eq "True" \
-    "$(q "min(i for i,r in enumerate(c['dns']['rules']) if r.get('action')=='reject') < min(i for i,r in enumerate(c['dns']['rules']) if r.get('server')=='dns-proxy')")" \
-    "dns reject rule precedes the dns-proxy rule"
+    "$(q "min(i for i,r in enumerate(c['dns']['rules']) if r.get('action')=='reject') < min(i for i,r in enumerate(c['dns']['rules']) if r.get('server')=='dns-local')")" \
+    "dns reject rule precedes the dns-local rule"
+
+# --- empty direct list -------------------------------------------------------
+# An empty direct list means everything is proxied, which is the intent. It
+# must drop the rule rather than emit "domain": [], which matches nothing but
+# invites the reader to think direct routing is configured.
+new_sandbox
+: > "$ROOT/direct.txt"
+render >/dev/null 2>&1
+
+assert_eq "0" "$(q "len([r for r in c['route']['rules'] if r.get('outbound')=='direct' and 'domain' in r])")" \
+    "empty direct list leaves no route direct rule"
+assert_eq "0" "$(q "len([r for r in c['dns']['rules'] if r.get('server')=='dns-local'])")" \
+    "empty direct list leaves no dns-local rule"
+assert_eq "True" "$(q "any(r.get('ip_is_private') for r in c['route']['rules'])")" \
+    "empty direct list leaves the private-network rule intact"
+assert_eq "proxy" "$(q "c['route']['final']")" \
+    "empty direct list still proxies by default"
+
+# A direct list of nothing but comments is the same as an empty one.
+new_sandbox
+printf '# everything through the VPS right now\n\n' > "$ROOT/direct.txt"
+render >/dev/null 2>&1
+assert_eq "0" "$(q "len([r for r in c['route']['rules'] if r.get('outbound')=='direct' and 'domain' in r])")" \
+    "comment-only direct list leaves no direct rule"
 
 # --- empty blocklist ---------------------------------------------------------
-# Unlike an empty proxy list, an empty blocklist is legitimate. It must drop
-# the rules rather than emit "domain": [], which matches nothing but invites
-# the reader to think blocking is configured.
+# An empty blocklist is legitimate. It must drop the rules rather than emit
+# "domain": [], which matches nothing but invites the reader to think blocking
+# is configured.
 new_sandbox
 : > "$ROOT/block.txt"
 render >/dev/null 2>&1
@@ -113,8 +151,8 @@ assert_eq "0" "$(q "len([r for r in c['route']['rules'] if r.get('action')=='rej
     "empty blocklist leaves no route reject rule"
 assert_eq "0" "$(q "len([r for r in c['dns']['rules'] if r.get('action')=='reject'])")" \
     "empty blocklist leaves no dns reject rule"
-assert_eq "True" "$(q "any(r.get('outbound')=='proxy' for r in c['route']['rules'])")" \
-    "empty blocklist leaves the proxy rule intact"
+assert_eq "True" "$(q "any(r.get('outbound')=='direct' and 'domain' in r for r in c['route']['rules'])")" \
+    "empty blocklist leaves the direct rule intact"
 
 # A blocklist of nothing but comments is the same as an empty one.
 new_sandbox
@@ -124,24 +162,20 @@ assert_eq "0" "$(q "len([r for r in c['route']['rules'] if r.get('action')=='rej
     "comment-only blocklist leaves no reject rule"
 
 # --- overlap between the two lists -------------------------------------------
-# Block wins on first-match, so an overlap silently disables a proxied domain.
+# Block wins on first-match, so an overlap silently disables a direct entry.
 # That is always a mistake, so refuse rather than pick a winner.
 new_sandbox
-printf 'anthropic.com\nreddit.com\n' > "$ROOT/proxy.txt"
+printf 'anthropic.com\nreddit.com\n' > "$ROOT/direct.txt"
 printf 'reddit.com\n' > "$ROOT/block.txt"
 
 assert_fails "overlapping domain refuses to render" -- render
 out="$(render 2>&1)"
 assert_contains "$out" "reddit.com" "overlap error names the offending domain"
 
-# --- the existing empty-proxy-list guard still holds --------------------------
-new_sandbox
-: > "$ROOT/proxy.txt"
-assert_fails "empty proxy list still refuses to render" -- render
-
 # --- reader exceptions -------------------------------------------------------
 # A reader domain is blocked for everything except the feed reader, so the
-# allow rule has to carry process_name and be reachable before the reject.
+# allow rule has to carry process_name, be reachable before the reject, and
+# follow the default: its traffic is tunnelled and resolved through the tunnel.
 new_sandbox
 printf 'reddit.com\n' > "$ROOT/block.txt"
 printf 'reddit.com\n' > "$ROOT/reader.txt"
@@ -156,6 +190,13 @@ assert_eq "['reddit.com']" \
 assert_eq "['newsboat']" \
     "$(q "[r for r in c['dns']['rules'] if 'process_name' in r][0]['process_name']")" \
     "dns allow rule matches on the reader process"
+
+assert_eq "proxy" \
+    "$(q "[r for r in c['route']['rules'] if 'process_name' in r][0]['outbound']")" \
+    "route allow rule follows the proxied default"
+assert_eq "dns-proxy" \
+    "$(q "[r for r in c['dns']['rules'] if 'process_name' in r][0]['server']")" \
+    "dns allow rule resolves through the tunnel"
 
 assert_eq "True" \
     "$(q "min(i for i,r in enumerate(c['route']['rules']) if 'process_name' in r) < min(i for i,r in enumerate(c['route']['rules']) if r.get('action')=='reject')")" \
@@ -191,7 +232,14 @@ assert_eq "1" "$(q "len([r for r in c['route']['rules'] if r.get('action')=='rej
 # for one key in some and rendering fine after regenerating — the worst kind of
 # intermittent.
 new_sandbox
-sed -i '' 's|^VLESS_PBK=.*|VLESS_PBK=abc__def__ghi|' "$ROOT/secrets.env"
+cat > "$ROOT/secrets.env" <<'EOF'
+VLESS_SERVER=203.0.113.10
+VLESS_PORT=443
+VLESS_UUID=00000000-0000-0000-0000-000000000000
+VLESS_SNI=example.com
+VLESS_PBK=abc__def__ghi
+VLESS_SID=abcd
+EOF
 render >/dev/null 2>&1
 assert_eq "0" "$?" "a secret containing __ still renders"
 assert_eq "abc__def__ghi" \
@@ -209,7 +257,7 @@ TEMPLATE="$TEMPLATE_ORIG"
 # --- argument handling -------------------------------------------------------
 new_sandbox
 assert_fails "wrong argument count refuses to render" -- \
-    "$SCRIPT" "$TEMPLATE" "$ROOT/proxy.txt" "$ROOT/block.txt" "$ROOT/secrets.env" "$OUT"
+    "$SCRIPT" "$TEMPLATE" "$ROOT/direct.txt" "$ROOT/block.txt" "$ROOT/secrets.env" "$OUT"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

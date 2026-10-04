@@ -599,7 +599,8 @@ if [ "${KEYBOARD_SETUP:-1}" != "0" ] && [ -x "$DOTFILES_DIR/keyboard-setup.sh" ]
 fi
 
 # --- Proxy routing (sing-box TUN) -----------------------------------------
-# All routing rules live in proxy/proxy-domains.txt; secrets stay in
+# Routing policy lives in proxy/direct-domains.txt (what stays off the VPS)
+# and proxy/block-domains.txt; secrets stay in
 # ~/.config/sing-box/secrets.env and never enter this repo. Guarded like the
 # vendor sync above: install.sh runs under `set -e`, and an unconfigured proxy
 # must not abort the remaining setup. Set PROXY_SETUP=0 to skip.

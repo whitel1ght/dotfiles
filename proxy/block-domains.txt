@@ -1,14 +1,15 @@
 # Domains rejected outright — DNS returns nothing and the connection is
 # refused. Carried over from the nekoray block_domain list.
 #
-# One apex domain per line, same matching as proxy-domains.txt: the apex
+# One apex domain per line, same matching as direct-domains.txt: the apex
 # exactly AND all of its subdomains, so "reddit.com" covers "old.reddit.com"
 # and "www.reddit.com" without matching "notreddit.com". A separate registrable
 # domain needs its own line — "redd.it" is not a subdomain of "reddit.com".
 #
-# Blocking is checked before proxying, so a domain listed here is blocked even
-# if it also appears in proxy-domains.txt. The renderer refuses that overlap
-# rather than letting it pass quietly.
+# Blocking is checked before the direct list, so a domain listed here is blocked
+# even if it also appears in direct-domains.txt — including a broad TLD entry:
+# onliner.by stays blocked although "by" is direct. The renderer refuses an
+# exact overlap between the two lists rather than letting it pass quietly.
 #
 # Edit this file, then run: proxyctl reload
 
