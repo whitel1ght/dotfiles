@@ -32,6 +32,7 @@ export interface Agent {
 export interface SpawnOptions {
   type: string;
   // Models to try, in order; the first that answers its ping and finishes wins.
+  // The extension passes exactly one, so a failure is reported, not worked around.
   chain: readonly string[];
   task: string;
   cwd: string;
@@ -225,7 +226,8 @@ export class AgentManager {
       // A model that broke mid-run must be pinged again before it is trusted.
       this.pinger.forget(model);
     }
-    this.settle(agent, "failed", `every model failed: ${agent.attempts.map((a) => `${a.model}: ${a.reason ?? a.outcome}`).join("; ")}`);
+    const why = agent.attempts.map((a) => `${a.model}: ${a.reason ?? a.outcome}`);
+    this.settle(agent, "failed", options.chain.length === 1 ? `${why[0]?.replace(": ", " failed: ")}` : `every model failed: ${why.join("; ")}`);
   }
 
   private runAttempt(agent: Agent, attempt: Attempt, options: SpawnOptions, local: boolean): Promise<AttemptOutcome> {

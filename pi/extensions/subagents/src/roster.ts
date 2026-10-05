@@ -215,7 +215,7 @@ export function describeRoster(roster: Roster): string {
   return [...roster.types.values()]
     .map((t) => {
       const tools = t.tools.length ? t.tools.join(", ") : "none";
-      return `- ${t.name}: ${t.use}\n  tools: ${tools}\n  models, best first: ${t.models.join(" → ")}`;
+      return `- ${t.name}: ${t.use}\n  tools: ${tools}`;
     })
     .join("\n");
 }

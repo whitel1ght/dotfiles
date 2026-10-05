@@ -34,8 +34,8 @@ decisions, not code.
 
 ## Picking the type
 
-Pass `type` on every `agent_spawn`. It fixes the subagent's tools and its model list,
-best first (the roster and its reasons live in `pi/subagents-research.md`):
+Pass `type` and `model` on every `agent_spawn`. The type fixes the subagent's tools; the
+model is yours to choose (see below):
 
 | Work | Type |
 |---|---|
@@ -46,15 +46,17 @@ best first (the roster and its reasons live in `pi/subagents-research.md`):
 | A genuinely hard design or diagnosis you want a second strong opinion on | `reason` — rare |
 
 Use a `profile` (the OpenCode specialist agents, e.g. `java-micronaut-dev`, `vue-expert`)
-when one matches. Pass the model chosen at the model gate (step 2) for any role that has
-one. For every other spawn leave `model` out: the extension pings each model on the type's
-list before handing over the task, and replaces one that stalls or fails, ending at
-Claude. A pinned `model` is tried first; the type's balanced list stays behind it as fallback.
-Pin one only after a subagent's answer was poor.
-**Escalate** when a subagent fails the same piece twice: re-dispatch it pinning a
-premium-tier model for that type (`model`, from the tiers in `agent_spawn`'s
-description) with what went wrong in the brief, rather than retrying the same model a
-third time.
+when one matches.
+
+**Choosing the model.** `model` is required. Call `agent_models` for the models this
+session has enabled and can reach (its scope, or everything authenticated when none is
+scoped), then pick per piece by your own judgment of its difficulty, risk and cost. Their
+strengths overlap, so there is no fixed ranking: a hard design or diagnosis usually wants a
+strong reasoning model, a well-specified change a good coding model, mechanical work an
+inexpensive one. The subagent runs on exactly that model and nothing is tried after it.
+**Escalate** when a subagent fails the same piece twice: re-dispatch it on a stronger
+model from the list, with what went wrong in the brief, rather than retrying the same
+model a third time.
 
 ## Briefs
 
@@ -100,16 +102,9 @@ and say so.
    table (piece, type, depends on) plus the key decisions, and **wait for approval**.
    This is the one planned pause.
 
-   **Model gate.** After approval and before the first Execute spawn, give the flow a
-   stable flow ID `orchestrate:<ticket-or-feature>` and one role key per piece, plus
-   `reviewer` when the plan includes the step 5 review. Call `agent_select_models` once
-   with key, title, task type, `recommendedModel` and a one-sentence recommendation for
-   each role, unless the roster is a single agent, which skips the gate. If it is
-   cancelled or errors, stop the flow and spawn nothing. Pass each returned model as that
-   spawn's `model`, and reuse it for the same known role later. Selected models override
-   the type's default list and any model you named in the plan. Later roles that were not
-   known at this point get an automatic model from the usual policy, without another
-   prompt.
+   **Models.** Before the first Execute spawn, call `agent_models` once and choose a model
+for each piece (and the step 5 `reviewer`, if the plan includes it) from that list. Re-read
+it before a later spawn, since the user can change the session's models.
 3. **Execute.** Create a separate worktree for each implementation piece with
    `wt add <repo> <ticket-or-feature> [branch]`, then give the resulting path to the
    subagent; the extension runs it with everything pasted into the task as its only

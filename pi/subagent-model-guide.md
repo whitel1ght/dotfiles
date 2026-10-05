@@ -5,7 +5,12 @@
 Evidence date: 2026-10-03
 
 Quality, speed and cost labels are operational guidance for picking a subagent model, not benchmark results or
-prices. Sources and scores are in [subagents-research.md](subagents-research.md). Models are listed best first;
+prices. Sources and scores are in [subagents-research.md](subagents-research.md).
+
+These tiers are reference notes, not rules. The parent agent chooses each subagent's model by its own judgment, from the models
+the session has enabled and can reach (`agent_models` lists them); roles overlap, and the order within a table is not a
+ranking to follow. A subagent runs on the one model it is given, with no automatic fallback.
+
 `claude-bridge/*` is Anthropic via Claude Bridge (the subscription), never the `anthropic/*` API-billed provider.
 
 ## text
