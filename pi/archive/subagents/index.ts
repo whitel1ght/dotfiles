@@ -12,17 +12,17 @@ import { parseModelPolicy } from "./src/model-policy.ts";
 import { loadProfiles, profileTools } from "./src/profiles.ts";
 import {
   LIST_DESCRIPTION,
-  MODELS_DESCRIPTION,
   OUTPUT_DESCRIPTION,
   SELECT_MODELS_DESCRIPTION,
+  SELECT_MODELS_GUIDELINES,
+  SELECT_MODELS_SNIPPET,
   SPAWN_GUIDELINES,
   SPAWN_SNIPPET,
   spawnDescription,
   STOP_DESCRIPTION,
   WAIT_DESCRIPTION,
 } from "./src/prompt.ts";
-import { describePool, resolveSpawnModel, sessionModelPool } from "./src/pool.ts";
-import { isLocal, parseRoster, type Roster } from "./src/roster.ts";
+import { isLocal, parseRoster, planSpawnChain, type Roster } from "./src/roster.ts";
 import { createModelSelector, registryModels } from "./src/select-models-tool.ts";
 import type { AgentModelSelection, ModelSelectionState } from "./src/selection.ts";
 import { ModelPicker } from "./src/ui/model-picker.ts";
@@ -113,10 +113,16 @@ export default function (pi: ExtensionAPI) {
     return agent;
   };
 
-  // The session's pool, read fresh: the user can change the scope or log in
-  // between calls.
-  const modelPool = (context: ExtensionContext) =>
-    sessionModelPool(context.scopedModels, context.modelRegistry.getAvailable());
+  // The models pi can reach whose catalog cost is zero — the subscription
+  // fallbacks. What the `free` profile runs on.
+  const freeModels = (context: ExtensionContext): ReadonlySet<string> => {
+    const free = new Set<string>();
+    for (const entry of context.modelRegistry.getAvailable()) {
+      const cost = entry.cost;
+      if (!cost.input && !cost.output && !cost.cacheRead && !cost.cacheWrite) free.add(`${entry.provider}/${entry.id}`);
+    }
+    return free;
+  };
 
   // Why `model` cannot run `task` now, or undefined when it can. Cheap checks
   // only; whether the model actually answers is what the ping is for.
@@ -137,23 +143,36 @@ export default function (pi: ExtensionAPI) {
 
   const typeNames = [...roster.types.keys()];
   const profileNames = [...profiles.keys()];
+  const modelProfileNames = [...roster.modelProfiles.keys()];
 
   pi.registerTool({
     name: "agent_spawn",
     label: "Subagent",
-    description: spawnDescription(roster),
+    description: spawnDescription(roster, policy),
     promptSnippet: SPAWN_SNIPPET,
     promptGuidelines: SPAWN_GUIDELINES,
     parameters: Type.Object({
       type: StringEnum(typeNames as [string, ...string[]], { description: "Task type; fixes the tools the subagent gets" }),
       task: Type.String({ description: "Everything the subagent needs, and what it should return. It cannot see this conversation." }),
-      model: Type.String({
-        description: "Model to run on, provider/id, chosen by you from agent_models. It is the only model tried; there is no fallback.",
-      }),
+      model: Type.Optional(
+        Type.String({
+          description:
+            "Try this compatible curated model first; the type's list stays as fallback. Use the model agent_select_models returned for this role, or leave it out.",
+        }),
+      ),
       ...(profileNames.length
         ? {
             profile: Type.Optional(
               StringEnum(profileNames as [string, ...string[]], { description: "Specialist persona to add to the subagent's system prompt" }),
+            ),
+          }
+        : {}),
+      ...(modelProfileNames.length
+        ? {
+            modelProfile: Type.Optional(
+              StringEnum(modelProfileNames as [string, ...string[]], {
+                description: "Replace the type's model list with a named profile (see this tool's description); leave it out for the type's own ranking",
+              }),
             ),
           }
         : {}),
@@ -168,28 +187,38 @@ export default function (pi: ExtensionAPI) {
       const profile = profileName ? profiles.get(profileName) : undefined;
       if (profileName && !profile) throw new Error(`unknown profile ${profileName}`);
       const parentModel = context.model ? `${context.model.provider}/${context.model.id}` : undefined;
-      const model = resolveSpawnModel(roster, type, modelPool(context), params.model);
+
+      const modelProfileName = (params as { modelProfile?: string }).modelProfile;
+      const modelProfile = modelProfileName ? roster.modelProfiles.get(modelProfileName) : undefined;
+      if (modelProfileName && !modelProfile) throw new Error(`unknown model profile ${modelProfileName}; one of: ${modelProfileNames.join(", ")}`);
+      const free = modelProfile?.freeOnly ? freeModels(context) : undefined;
+      const { chain, parentInChain } = planSpawnChain(roster, type, {
+        model: params.model,
+        modelProfile,
+        parentModel,
+        isFree: (model) => free?.has(model) ?? false,
+      });
 
       const agent = manager.spawn({
         type: type.name,
-        chain: [model],
+        chain,
         task: params.task,
         title: params.title,
         cwd: params.cwd ? resolve(context.cwd, params.cwd) : context.cwd,
         tools: profileTools(type.tools, profile),
         profile: profile && { name: profile.name, prompt: profile.prompt },
         parentModel,
-        parentInChain: true,
+        parentInChain,
         preflight: preflight(params.task, context),
       });
       return {
         content: [
           text(
-            `Started ${agent.id} (${type.name}) on ${model}; if it fails there is no fallback. ` +
+            `Started ${agent.id} (${type.name}); it will try ${chain.join(" → ")}, in that order. ` +
               `You will be woken with its result. Progress: agent_output ${agent.id}.`,
           ),
         ],
-        details: { id: agent.id, model },
+        details: { id: agent.id, chain },
       };
     },
   });
@@ -199,8 +228,8 @@ export default function (pi: ExtensionAPI) {
     name: "agent_select_models",
     label: "Select subagent models",
     description: SELECT_MODELS_DESCRIPTION,
-    // The parent chooses each model itself (agent_models); a user gate would contradict that.
-    exposure: "hidden",
+    promptSnippet: SELECT_MODELS_SNIPPET,
+    promptGuidelines: SELECT_MODELS_GUIDELINES,
     parameters: Type.Object({
       flow: Type.String({ description: "Stable ID of this flow invocation, e.g. mr-review-multi-agent:5348" }),
       agents: Type.Array(
@@ -225,18 +254,6 @@ export default function (pi: ExtensionAPI) {
           context.ui.custom<readonly AgentModelSelection[] | undefined>((tui, theme, _keys, done) => new ModelPicker(state, tui, theme, done)),
       });
       return { content: [text(message)], details };
-    },
-  });
-
-  pi.registerTool({
-    name: "agent_models",
-    label: "Subagent models",
-    description: MODELS_DESCRIPTION,
-    parameters: Type.Object({}),
-    async execute(_id, _params, _signal, _onUpdate, context) {
-      ctx = context;
-      const pool = modelPool(context);
-      return { content: [text(describePool(pool, policy))], details: { models: pool } };
     },
   });
 

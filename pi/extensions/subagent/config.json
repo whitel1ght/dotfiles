@@ -1,0 +1,6 @@
+{
+  "toolActivation": "eager",
+  "missions": { "enabled": false },
+  "scheduledRuns": { "enabled": false },
+  "orcaProgressTabs": { "enabled": false }
+}

@@ -1,39 +1,59 @@
+import { MODEL_TIERS, type ModelPolicy } from "./model-policy.ts";
 import { describeRoster, type Roster } from "./roster.ts";
 
 export const MODEL_GUIDE_PATH = "~/.pi/agent/subagent-model-guide.md";
 
-export function spawnDescription(roster: Roster): string {
+export function spawnDescription(roster: Roster, policy: ModelPolicy): string {
   const local = roster.localModel
-    ? ` The local model ${roster.localModel} is free but much weaker and cannot use tools; it suits only a simple text task when the user wants it kept local.`
+    ? ` The local model ${roster.localModel} is free but much weaker; name it only for a simple text task when the user wants it kept local.`
     : "";
   return [
     "Delegate a self-contained task to a subagent: a separate pi run with its own context and a tool set fixed by the task type.",
     "Returns at once with an id; you are woken with the result when it finishes, so keep working or end your turn instead of polling.",
     "The subagent sees only `task`, not this conversation: include every path, fact and constraint it needs, and say what to return.",
     "",
-    "The task type fixes the tools and nothing else. `model` is required: you choose it, by your judgment of the task, from the models this session has enabled and can reach. Call agent_models for that live list, with notes on each model; its roles overlap, so more than one model can fit.",
-    "The subagent runs on exactly that model, with no fallback. If it fails, stalls or does not answer, its completion notification and agent_output report the failure and nothing else is tried: decide whether to spawn again, on the same model or another from the list.",
+    "Pick the task type; the model is chosen for you. Each type's models are ranked by benchmarks for that kind of work, and each is pinged before it gets the task: one that does not answer, fails, or goes silent is replaced by the next, ending with Claude.",
     "",
     "Task types:",
     describeRoster(roster),
+    describeModelProfiles(roster),
     "",
-    `A model outside the list is refused.${local}`,
+    describeModelTiers(roster, policy),
+    "",
+    `Set \`model\` to try a compatible curated model first (the rest of the type's list stays as fallback), e.g. one the user chose with agent_select_models, or after a subagent's answer was poor.${local}`,
   ].join("\n");
 }
 
-export const SPAWN_SNIPPET = "agent_spawn: delegate a task to a subagent on a model you choose";
+// The named model profiles, as the model reads them in the spawn tool.
+export function describeModelProfiles(roster: Roster): string {
+  const profiles = [...roster.modelProfiles.values()];
+  if (!profiles.length) return "";
+  const lines = profiles.map((p) =>
+    p.freeOnly ? `- ${p.name}: only models that cost nothing (the subscription fallbacks)` : `- ${p.name}: ${p.models!.join(" → ")}`,
+  );
+  return ["", "Model profiles, to replace a type's list with `modelProfile`:", ...lines].join("\n");
+}
+
+// Every task type's models per cost tier, so a recommendation or `model` can
+// name any of them; the guide carries the dated rationale.
+export function describeModelTiers(roster: Roster, policy: ModelPolicy): string {
+  const lines = [...roster.types.keys()].flatMap((name) => {
+    const ranking = policy.rankings.get(name)!;
+    return MODEL_TIERS.map((tier) => `- ${name} ${tier}: ${ranking[tier].join(" → ")}`);
+  });
+  return [`Model tiers per type, for \`model\` and agent_select_models recommendations (rationale and dates: ${MODEL_GUIDE_PATH}):`, ...lines].join("\n");
+}
+
+export const SPAWN_SNIPPET = "agent_spawn: delegate a task to a subagent";
 
 export const SPAWN_GUIDELINES = [
   "Use agent_spawn for self-contained work that does not need this conversation: searching a codebase, a well-specified change, a review, summarising text. Run independent ones in parallel.",
-  "Choose agent_spawn's task type for the tools the subagent needs, and its `model` by your own judgment of the work: call agent_models to see the models this session may use. Their strengths overlap, so weigh the task's difficulty, risk and cost; there is no fixed ranking to follow.",
-  "A subagent runs on the one model you give it, with no automatic fallback. When one fails or answers poorly, decide yourself whether to retry on the same model or another, and put what went wrong in the new brief.",
-  "If an older workflow says to use automatic model selection, choose explicitly from agent_models instead; never omit model. The legacy agent_select_models user gate is not exposed by this extension.",
-  `The dated catalogue notes behind agent_models are in ${MODEL_GUIDE_PATH}.`,
+  "Choose agent_spawn's task type carefully; it decides the subagent's tools and models. Set `model` only to a model the user chose via agent_select_models, or after a subagent already did poorly.",
+  "Use agent_spawn's `modelProfile` to run a subagent on your own model (`current`), on free models (`free`), or locally (`local`) instead of its type's ranking.",
+  `Model tiers: budget for bounded, low-risk work, balanced for normal work (the default list), premium for ambiguity, security or architecture. Each type's models per tier are in agent_spawn's description; the dated guide is ${MODEL_GUIDE_PATH}.`,
   "Treat a subagent's result as a colleague's report: check anything you will act on.",
 ];
 
-// agent_select_models is registered hidden: the parent chooses models itself
-// (see SPAWN_GUIDELINES), so these are not shown to it. They stay with the tool.
 export const SELECT_MODELS_SNIPPET = "agent_select_models: let the user choose models for a named multi-agent flow";
 
 export const SELECT_MODELS_DESCRIPTION =
@@ -62,6 +82,3 @@ export const WAIT_DESCRIPTION =
   "Use it only when you cannot continue without them; otherwise end your turn and you will be woken.";
 
 export const STOP_DESCRIPTION = "Stop a running subagent and everything it started. It does not fall back to another model.";
-
-export const MODELS_DESCRIPTION =
-  "List the models you may give a subagent right now: those this session has enabled (its scoped models; all authenticated models when none are scoped) that pi has credentials for, with catalogue notes. Read it fresh before choosing agent_spawn's `model`; it changes when the user changes the session's models.";

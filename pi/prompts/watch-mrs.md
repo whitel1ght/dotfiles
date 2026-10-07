@@ -19,6 +19,9 @@ review.md or a source file yourself. The fixers read those.
 ~/.local/bin/mr-watch check [--since ...]  # one pass now
 ```
 
+Define `<start>` once here, as the UTC time of this first `check` (`date -u +%Y%m%dT%H%M%SZ`);
+every later round reuses it for the watch session's state paths.
+
 Mention any held rounds in one line each. If `check` exits 1, nothing is new: go
 straight to "Wait". Exit 2 means GitLab is unreachable: say so and wait.
 
@@ -34,22 +37,32 @@ directory and the **worktree**. Handle every MR in the summary, in parallel.
    - `none (clone <path>)`: create one with `wt add <repo> <TICKET> <branch>` (it
      prints the path), then use it.
 
-   **Models.** Before a round's fixer spawns, call `agent_models` and choose each fixer's
-model from that list by your own judgment of the MR's fix. Re-read it each round, since
-the user can change the session's models.
+   **Model selection.** Every request includes a `<subagent_models>` block containing the
+   live selected ∩ available exact `provider/id` list. Before each fixer launch, choose a
+   difficulty-, cost-, and capability-appropriate model solely from the current block and
+   pass it explicitly. Do not use the broader `subagent({ action: "models" })` registry as
+   eligibility, call a model gate, persist choices across rounds, omit `model`, or rely on
+   automatic fallback. If the list is empty, stop the watch loop: launch nothing, ack
+   nothing, start no wait, and tell me. See `~/.pi/agent/model-selection.md`.
 
-2. **Fixer.** One fixer per MR, all spawned in one turn: `agent_spawn` with
-   `type: "implement"` and its `model`. For
-   ecfx-backend (and other backend services) also `profile: "java-micronaut-dev"`;
-   otherwise no profile. Pass the worktree path as the spawn's `cwd`. Give each the brief below with its
-   paths filled in.
-3. **Check** each report as it lands, with cheap commands only:
+2. **Fixer.** In one turn, make one direct async call per non-DIRTY MR:
+   `subagent({ agent: "worker", task: "<filled brief>", model: "<live exact id>",
+   cwd: "<worktree>", async: true })`. Separate direct calls are required because upstream
+   workflows have one outer `cwd`; workflow children cannot each target a different
+   worktree. Specialists are read-only by default. When specialist analysis is needed,
+   run that specialist read-only first and put its concrete guidance in the `worker`
+   brief—never use a specialist as the fixer or emulate a profile overlay.
+3. **Check** each report as it lands, with cheap commands only. Completion notices wake
+   the parent; use `subagent({ action: "status", id: "<run-id>" })` for status/results and
+   `subagent({ action: "stop", id: "<run-id>" })` only to terminate a run. There is no
+   `wait` action. Then check:
    `git -C <wt> status --porcelain` (must be empty),
    `git -C <wt> log --oneline @{u}..HEAD` (the commits the report names), and that the
-   round has a `response.md`. If a fixer failed a finding (tests red, stuck), spawn a
-   fresh `implement` agent in the same worktree (same `cwd`, plus the backend `profile`
-   when it applies) with the specific failure in its brief. If that one also fails,
-   the finding becomes Deferred with the reason.
+   round has a `response.md`. If a fixer failed a finding (tests red, stuck), resume its
+   returned run id only when it is reported resumable; otherwise launch a fresh `worker`
+   in the same worktree with a model selected from the current live list and the specific
+   failure in its brief. If that attempt also fails, the finding becomes Deferred with
+   the reason.
 4. **Push**: `git -C <wt> push`. Never force. If the push is rejected, stop on this MR:
    ack the round, hold its reply and tell me.
 5. **Reply.**

@@ -8,8 +8,8 @@
 # install.sh links these too, but its create_symlink skips any target that is
 # already a symlink — even a broken one, or one pointing at the wrong place.
 # plink re-points it. Reach for it after moving the repo, or when a skill or
-# extension simply never appears. Start a new Pi session afterwards: /reload
-# rebuilds the system prompt mid-session, which pi-claude-bridge rejects.
+# extension simply never appears. Start a new Pi session afterwards to pick
+# up startup defaults and the complete resource configuration.
 #
 # Only config items are linked. ~/.pi/agent also holds auth.json, sessions/,
 # install/ and npm/, which Pi owns and which are machine-local.
@@ -111,7 +111,7 @@ fi
 
 [ "$DRY_RUN" = 1 ] || mkdir -p "$PI_DEST"
 
-for name in settings.json models.json mcp-servers.json subagents.json subagent-models.json subagent-model-guide.md subagents-research.md APPEND_SYSTEM.md; do
+for name in settings.json models.json mcp-servers.json model-selection.md APPEND_SYSTEM.md; do
     [ -f "$PI_SRC/$name" ] && link_item "$PI_SRC/$name" "$PI_DEST/$name"
 done
 
@@ -128,6 +128,23 @@ if [ -L "$old_mcp" ] && [ "$(readlink "$old_mcp")" = "$PI_SRC/mcp.json" ]; then
     CHANGED=$((CHANGED + 1))
 fi
 
+# Retire only links owned by this checkout, never user files or foreign links.
+for name in subagents.json subagent-models.json subagent-model-guide.md subagents-research.md; do
+    dest="$PI_DEST/$name"
+    if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$PI_SRC/$name" ]; then
+        if [ "$DRY_RUN" = 1 ]; then
+            log_warn "would remove retired $dest"
+        elif ! rm -f "$dest"; then
+            log_error "failed to remove $dest"
+            FAILURES=$((FAILURES + 1))
+            continue
+        else
+            log_info "removed retired $dest"
+        fi
+        CHANGED=$((CHANGED + 1))
+    fi
+done
+
 # Pi reads CLAUDE.md-style instructions from the agent dir. One file serves
 # both tools, so the Claude Code instructions are linked rather than copied.
 [ -f "$DOTFILES_DIR/claude/CLAUDE.md" ] && \
@@ -138,16 +155,21 @@ fi
     link_item "$DOTFILES_DIR/opencode/skills" "$PI_DEST/skills"
 
 # Slash commands. The shared source is claude/commands; pi/prompts holds the
-# pi-specific ports of the ones whose subagent mechanics differ (type instead of model).
+# Pi-specific ports of the ones whose subagent mechanics differ.
 if [ -d "$PI_SRC/prompts" ]; then
     link_item "$PI_SRC/prompts" "$PI_DEST/prompts"
 fi
 
-# Subagent profiles are the OpenCode agents: same markdown, same frontmatter.
-[ -d "$DOTFILES_DIR/opencode/agents" ] && \
-    link_item "$DOTFILES_DIR/opencode/agents" "$PI_DEST/agents"
+# Pi agent metadata and tool restrictions differ from OpenCode frontmatter.
+[ -d "$PI_SRC/agents" ] && \
+    link_item "$PI_SRC/agents" "$PI_DEST/agents"
 
 [ -d "$PI_SRC/extensions" ] && link_item "$PI_SRC/extensions" "$PI_DEST/extensions"
+
+# Vendored Pi packages: patched copies of upstream extensions. Pi resolves a
+# relative package path against the settings file it read, which is the link at
+# $PI_DEST/settings.json, so packages/ has to sit beside it in the agent dir.
+[ -d "$PI_SRC/packages" ] && link_item "$PI_SRC/packages" "$PI_DEST/packages"
 
 if [ "$DRY_RUN" = 1 ]; then
     log_info "$CHANGED change(s) pending (dry run)"

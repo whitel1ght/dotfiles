@@ -1,13 +1,35 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { SELECT_MODELS_DESCRIPTION, SELECT_MODELS_GUIDELINES, SPAWN_GUIDELINES, spawnDescription } from "./src/prompt.ts";
+import { describeModelProfiles, SELECT_MODELS_DESCRIPTION, SELECT_MODELS_GUIDELINES, SPAWN_GUIDELINES, spawnDescription } from "./src/prompt.ts";
 import { parseModelPolicy } from "./src/model-policy.ts";
 import { parseRoster } from "./src/roster.ts";
 
 const read = (name: string) => JSON.parse(readFileSync(new URL(`../../${name}`, import.meta.url), "utf8"));
 const committed = read("subagents.json");
 const policy = parseModelPolicy(read("subagent-models.json"));
+
+test("the spawn description lists the types and the model profiles", () => {
+  const description = spawnDescription(parseRoster(committed, policy), policy);
+  assert.match(description, /Task types:/);
+  assert.match(description, /Model profiles, to replace a type's list with `modelProfile`:/);
+  assert.match(description, /- current: @parent/);
+  assert.match(description, /- free: only models that cost nothing/);
+  assert.match(description, /- local: ollama\/qwen2\.5-coder:14b-16k/);
+  assert.match(description, /- flash: opencode-go\/glm-5\.3-flash → /);
+});
+
+test("with no profiles the description says nothing about them", () => {
+  const models = ["a/one", "b/two", "c/three", "claude-bridge/c"];
+  const tiny = parseModelPolicy({
+    evidenceDate: "2026-10-03",
+    models: Object.fromEntries(models.map((ref) => [ref, meta(ref)])),
+    rankings: { x: { budget: ["a/one"], balanced: models, premium: ["claude-bridge/c"], rationale: { budget: "b", balanced: "m", premium: "p" } } },
+  });
+  const roster = parseRoster({ localModel: "ollama/small", taskTypes: { x: { use: "u", tools: [] } } }, tiny);
+  assert.equal(describeModelProfiles(roster), "");
+  assert.doesNotMatch(spawnDescription(roster, tiny), /modelProfile/);
+});
 
 test("the selector guidance covers named flows only, once, with reuse and auto-assignment", () => {
   const guidance = SELECT_MODELS_GUIDELINES.join("\n");
@@ -25,12 +47,20 @@ test("the selector guidance covers named flows only, once, with reuse and auto-a
   assert.match(guidance, /cancelled/);
 });
 
+test("agent_spawn's model wording says to try it first, not to start further down", () => {
+  assert.match(spawnDescription(parseRoster(committed, policy), policy), /try .*first/i);
+  assert.doesNotMatch(spawnDescription(parseRoster(committed, policy), policy), /further down/);
+});
+
 function meta(ref: string) {
   return { label: ref, provider: ref.split("/")[0], quality: "q", speed: "s", cost: "c", bestFor: ["x"], strengths: ["y"], avoidFor: ["z"] };
 }
 
 const repoFile = (path: string) => readFileSync(new URL(`../../../${path}`, import.meta.url), "utf8");
 const workflows = [
+  "pi/prompts/orchestrate.md",
+  "pi/prompts/review-local.md",
+  "pi/prompts/watch-mrs.md",
   ...["mr-review-multi-agent", "backend-panel", "frontend-panel", "python-panel", "handle-ticket", "fix-jira-bug"].map(
     (s) => `opencode/skills/${s}/SKILL.md`,
   ),
@@ -50,6 +80,9 @@ const at = (text: string, marker: string) => {
 };
 // [file, marker the gate must follow, marker of the first relevant spawn it must precede]
 const placement: Record<string, [string, string]> = {
+  "pi/prompts/orchestrate.md": ["2. **Plan.**", "3. **Execute.**"],
+  "pi/prompts/review-local.md": ["## 3. Panel", "## 4. Round 1"],
+  "pi/prompts/watch-mrs.md": ["1. **Worktree.**", "2. **Fixer.**"],
   "opencode/skills/mr-review-multi-agent/SKILL.md": ["Announce the panel:", "### 3. Round 1"],
   "opencode/skills/backend-panel/SKILL.md": ["State the selection before spawning.", "### 3. Round 1"],
   "opencode/skills/frontend-panel/SKILL.md": ["State the selected panel and the reason before spawning.", "### 3. Round 1"],
@@ -139,8 +172,41 @@ test("mr-review-multi-agent gates a batch once with a batch-level flow ID", () =
   assert.match(gate, /later MRs in the batch reuse that same context, pass the same stored model for the same role and leave roles that were not selected automatic/);
 });
 
+test("watch-mrs gates after dirty filtering, once per session, with collision-free keys", () => {
+  const text = repoFile("pi/prompts/watch-mrs.md");
+  const gate = gateOf(text);
+  assert.match(text.slice(at(text, "1. **Worktree.**"), at(text, "**Model gate")), /`DIRTY`: .*leave the MR alone/s);
+  assert.match(gate, /every non-DIRTY MR/);
+  assert.match(gate, /session's first round that spawns a fixer/);
+  assert.match(gate, /stable flow ID `watch-mrs:<start>`/);
+  assert.match(gate, /UTC time of the session's first `check`.*chosen once at Start/s);
+  assert.match(gate, /\$\{XDG_STATE_HOME:-\$HOME\/\.local\/state\}\/pi\/watch-mrs\/<start>\/watch-mrs-models\.md/);
+  assert.match(gate, /re-read it after compaction/);
+  assert.match(gate, /outside every repository/);
+  assert.match(gate, /role key `fixer:<project>!<iid>` with the full project path/);
+  assert.match(gate, /one MR per key/);
+  assert.match(gate, /stop the watch loop: spawn nothing, ack nothing, start no wait, and tell me/);
+  assert.match(gate, /Later rounds reuse the recorded choice for a known role, and roles that were not selected get an automatic model from the usual policy, without another prompt/);
+});
+
+test("orchestrate skips a single-agent roster and lists every role known from the plan", () => {
+  const gate = gateOf(repoFile("pi/prompts/orchestrate.md"));
+  assert.match(gate, /unless the roster is a single agent, which skips the gate/);
+  assert.match(gate, /one role key per piece, plus `reviewer` when the plan includes the step 5 review/);
+  assert.match(gate, /Selected models override the type's default list and any model you named in the plan/);
+  assert.match(gate, /Later roles that were not known at this point get an automatic model/);
+});
+
+test("review-local replaces the skill's own gate and passes the selected model", () => {
+  const text = repoFile("pi/prompts/review-local.md");
+  const gate = gateOf(text);
+  assert.match(gate, /one role key per reviewer \(its `profile`\)/);
+  assert.match(text, /ignore its `Model gate` paragraph/);
+  assert.match(text.slice(at(text, "## 4. Round 1")), /`model` from the gate for each reviewer/);
+});
+
 test("no workflow tells the parent not to pass a model", () => {
-  for (const path of [...workflows, "pi/prompts/orchestrate.md", "pi/prompts/review-local.md", "pi/prompts/watch-mrs.md"]) {
+  for (const path of workflows) {
     const text = repoFile(path);
     assert.doesNotMatch(text, /Do not pass `model`/i, path);
     assert.doesNotMatch(text, /No model — the extension picks/, path);
@@ -158,54 +224,55 @@ test("the global guidance covers the external Superpowers flows and excludes sin
   assert.match(guidance, /superpowers:requesting-code-review/);
 });
 
+test("the parent is told the three tier rules and every tier's models for every type", () => {
+  const guidance = [...SPAWN_GUIDELINES, ...SELECT_MODELS_GUIDELINES].join("\n");
+  assert.match(guidance, /budget.*bounded.*low-risk/is);
+  assert.match(guidance, /balanced.*normal/is);
+  assert.match(guidance, /premium.*(ambigu|security|architecture)/is);
+  assert.match(guidance, /~\/\.pi\/agent\/subagent-model-guide\.md/);
+  const description = spawnDescription(parseRoster(committed, policy), policy);
+  assert.match(description, /subagent-model-guide\.md/);
+  for (const [name, ranking] of policy.rankings) {
+    for (const tier of ["budget", "balanced", "premium"] as const) {
+      const line = `${name} ${tier}: ${ranking[tier].join(" → ")}`;
+      assert.ok(description.includes(line), line);
+    }
+  }
+});
+
 test("failure guidance ties the non-TUI error to the named flow", () => {
   assert.match(SELECT_MODELS_DESCRIPTION, /named flow/);
 });
 
-test("the spawn description makes the parent choose from the live pool, with no ranking or fallback", () => {
-  const description = spawnDescription(parseRoster(committed, policy));
-  assert.match(description, /`model` is required/);
-  assert.match(description, /agent_models/);
-  assert.match(description, /your judgment/i);
-  assert.match(description, /no fallback|never switches|does not switch/i);
-  for (const stale of [/best first/i, /ranked by benchmarks/i, /replaced by the next/i, /ending with Claude/i, /stays as fallback/i, /Model tiers per type/, /modelProfile/]) {
-    assert.doesNotMatch(description, stale);
-  }
-  const guidance = SPAWN_GUIDELINES.join("\n");
-  assert.match(guidance, /agent_models/);
-  assert.match(guidance, /judgment/);
-  assert.match(guidance, /overlap/i);
-  assert.match(guidance, /no automatic fallback|does not fall back/i);
-  assert.match(guidance, /older workflow.*choose explicitly from agent_models/);
-  assert.match(guidance, /never omit model/);
-  assert.match(description, /completion notification and agent_output report the failure/);
-  for (const stale of [/budget for bounded/i, /modelProfile/, /only to a model the user chose/i, /type's ranking/i]) {
-    assert.doesNotMatch(guidance, stale);
-  }
-});
-
-test("agent_spawn takes a required model and no modelProfile; agent_select_models is not offered to the model", () => {
-  const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-  assert.match(index, /resolveSpawnModel\(/);
-  assert.match(index, /sessionModelPool\(/);
-  assert.match(index, /context\.scopedModels/);
-  assert.match(index, /name: "agent_models"/);
-  assert.match(index, /model: Type\.String\(/);
-  assert.doesNotMatch(index, /model: Type\.Optional/);
-  assert.doesNotMatch(index, /modelProfile/);
-  assert.doesNotMatch(index, /planSpawnChain|chainFor\(/);
-  assert.match(index, /name: "agent_select_models"[\s\S]*?exposure: "hidden"/);
-});
-
-test("the pi prompts leave model choice to the parent and the README no longer promises rankings or fallback", () => {
-  for (const path of ["pi/prompts/orchestrate.md", "pi/prompts/review-local.md", "pi/prompts/watch-mrs.md"]) {
-    const doc = repoFile(path);
-    assert.doesNotMatch(doc, /agent_select_models/, path);
-    assert.doesNotMatch(doc, /stays behind it as fallback|usual policy|premium-tier model/, path);
-    assert.match(doc, /agent_models/, path);
-  }
+test("model semantics in the README and orchestrate say tried first, balanced list stays", () => {
   const readme = repoFile("pi/extensions/subagents/README.md");
-  assert.match(readme, /`agent_models`/);
-  assert.doesNotMatch(readme, /models, best first|Fall back\*\* when|Selected model, then balanced fallback/);
-  assert.match(readme, /scoped models/i);
+  const orchestrate = repoFile("pi/prompts/orchestrate.md");
+  for (const doc of [readme, orchestrate]) {
+    assert.doesNotMatch(doc, /further down/);
+    assert.match(doc, /`model`[^.]*tried first/);
+    assert.match(doc, /balanced (list|fallback)/i);
+  }
+  assert.doesNotMatch(orchestrate, /one tier further/);
+  assert.match(orchestrate, /Escalate.*pinning\s+a\s+premium-tier model/s);
+});
+
+test("the README documents agent_select_models and its gate", () => {
+  const readme = repoFile("pi/extensions/subagents/README.md");
+  assert.match(readme, /\| `agent_select_models` \|/);
+  const gate = readme.slice(readme.indexOf("## Model selection gate"));
+  assert.ok(gate.length > 0 && readme.includes("## Model selection gate"));
+  assert.match(gate, /picker/i);
+  assert.match(gate, /stable\s+flow\s+ID/);
+  assert.match(gate, /session/);
+  assert.match(gate, /Escape.*caches nothing/s);
+  assert.match(gate, /unavailable/i);
+  assert.match(gate, /interactive.*(TUI|terminal)/is);
+  assert.match(gate, /selected model.*balanced/is);
+});
+
+test("index.ts routes the spawn chain through planSpawnChain", () => {
+  const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  assert.match(index, /planSpawnChain\(/);
+  assert.doesNotMatch(index, /parentInChain\s*=/);
+  assert.doesNotMatch(index, /chainFor\(/);
 });

@@ -149,7 +149,7 @@ Sequential spawning wastes wall-clock for no benefit.
 | Auth, tenancy, crypto, PII | `security-compliance-reviewer` |
 | Infra / deployment | `aws-cloud-architect`, `prod-readiness` |
 
-**Model gate (Pi, when `agent_select_models` is available; otherwise skip).** Once the Phase 1 roster is chosen and before its first spawn, use the stable flow ID `handle-ticket:<TICKET>` and one role key per Phase 1 agent (the agent's name). Call `agent_select_models` once, with one entry per role: key, title, task type, `recommendedModel` and a one-sentence recommendation. If it is cancelled or errors, stop the flow and spawn nothing. Pass each returned model as `model` on that role's spawn, and reuse it whenever the same known role is spawned again. Roles that are not known yet (implementation agents, if any, and the experts inside a nested panel or review skill) get an automatic model from the usual policy, without another prompt. When you invoke a nested panel or review skill from this flow, pass it the flow ID and the role choices and tell it not to gate itself: it must not call `agent_select_models` again.
+**Model selection (Pi).** Every request includes a `<subagent_models>` block containing the live selected ∩ available exact `provider/id` list. Before every child launch, choose a difficulty-, cost-, and capability-appropriate model solely from the current block and pass it explicitly as `model`. Named specialist agents select the prompt and read-only tools; use `worker` with their concrete guidance for implementation. Do not use the broader `subagent({ action: "models" })` registry as eligibility, call a model gate, omit `model`, reuse stale availability, or rely on automatic fallback. Nested panels and review skills make the same choice from their own current request. If the list is empty, launch nothing and ask the user to repair the session model pool. See `~/.pi/agent/model-selection.md`.
 
 Each agent brief must carry: the ticket summary and description, the file paths
 you found in orientation, the absolute repo path, and — critically — **"read
@@ -416,7 +416,7 @@ Capture the MR IID and URL from the output — Phase 8 needs both.
 
 Invoke `/mr-review-multi-agent` against the MR you just opened.
 
-Pass it this flow's established selection context — flow ID `handle-ticket:<TICKET>` and the role choices from the Phase 1 gate — and state: "Do NOT call `agent_select_models`; reuse the matching role choices as `model` and leave any other reviewer automatic."
+On Pi, tell it to choose and pass an explicit model for every reviewer from that invocation's current `<subagent_models>` block. Do not carry Phase 1 model choices forward.
 
 > ⚠️ **The review must not be posted to the MR.** That skill's default is to
 > auto-post one consolidated comment plus a verdict action and a status label.

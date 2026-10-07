@@ -12,7 +12,8 @@ the result lands in this chat and in a local file, never on GitLab. Several URLs
 feature spread across projects — review them together as one change, not one by one.
 
 You are the orchestrator and the expensive agent. Spend your context on routing and
-synthesis; let the reviewers (`review` subagents) do the reading.
+synthesis; let named specialist agents do the reading. Pi specialist agents are read-only
+by default.
 
 ## Hard rules
 
@@ -42,9 +43,7 @@ If the skill file is missing, stop and say the `mr-review-multi-agent` skill isn
 installed.
 
 Then read only the panel-selection section into your context:
-`awk '/^### 2\. /{p=1} /^### 3\. /{p=0} p' "$SKILL"`. That section ends with the skill's
-own gate for per-MR flows; ignore its `Model gate` paragraph, because step 3 below
-replaces it.
+`awk '/^### 2\. /{p=1} /^### 3\. /{p=0} p' "$SKILL"`.
 
 ## 2. Per MR (sequential shell calls — no parallel Bash)
 
@@ -83,17 +82,24 @@ the three always-on lenses plus only the specialists the diff clearly needs, acr
 MRs combined (one panel for the feature, not one per MR). Cap at 5, or 6 when the
 feature spans backend and UI. Announce the panel in one line.
 
-**Models.** After announcing the panel and before the first spawn, call `agent_models` and
-choose a model for each reviewer from that list by your own judgment of what its review
-needs. Reuse the choice for the same reviewer later (e.g. a disputed-items re-spawn).
+Every request includes a `<subagent_models>` block with the live selected ∩ available
+models. Before each panel launch, choose a difficulty-, cost-, and capability-appropriate
+exact `provider/id` for every reviewer solely from that block and pass it explicitly as
+`model`. Do not use the broader `subagent({ action: "models" })` registry as eligibility,
+call a model gate, omit the model, or rely on automatic fallback. If the list is empty,
+launch nothing and ask the user to repair the session model pool. See
+`~/.pi/agent/model-selection.md`.
 
 ## 4. Round 1 — parallel, one turn
 
-Spawn the whole panel in one turn, one `agent_spawn` per reviewer: `type: "review"` and
-`profile` set to the specialist's name from the panel section (the agent's file name
-without `.md`, e.g. `java-micronaut-dev`, `vue-expert`,
-`security-compliance-reviewer`) and `model` for each reviewer (from
-`agent_models`). Short prompt, don't inline the brief:
+Spawn the whole panel with one `subagent` workflow: write a `js workflow` block that
+returns `await runs.all([...])`, then call `subagent({ workflow: true, async: true })` in
+the same reply. Each item uses a stable `key`, the specialist's file name without `.md`
+as `agent` (for example `java-micronaut-dev`, `vue-expert`, or
+`security-compliance-reviewer`), an explicit live-list `model`, and
+`tools: ["read", "grep", "find", "ls"]`. The explicit per-call allowlist keeps this
+command read-only even if an agent's definition changes later. Use this short `task`; do
+not inline the brief:
 
 > Read `$RUN/brief.md` (your review instructions) and `$RUN/context.md` (the change).
 > Review through the <lens> lens. For MR !X the worktree is `<path>` — ignore any
@@ -105,10 +111,18 @@ without `.md`, e.g. `java-micronaut-dev`, `vue-expert`,
 
 Build the finding table in your head (dedupe, corroborated/unique). Default is no second
 round — skip it when findings agree, are lane-specific, or the verdict is already clear.
-Only when a dispute genuinely affects the verdict, re-dispatch just the one or two
-reviewers involved with only the disputed items — a fresh `agent_spawn` (same
-`type: "review"` and `profile`), since a subagent cannot be resumed. Never a fresh
-panel, never a full R2 to everyone. Max 3 rounds.
+Only when a dispute genuinely affects the verdict, continue just the one or two
+reviewers involved with only the disputed items. Prefer an awaited workflow
+`runs.run("<new-key>", { resume: "<latest-runId>", task: "<dispute>" })` when the prior
+result reports a resumable `runId`; the resumed child retains its model and read-only tool
+contract. If it is not resumable, launch the same specialist as a fresh child with a model
+from the current live list and the same read-only `tools` allowlist. Never run a fresh
+panel or a full R2. Max 3 rounds.
+
+The async workflow returns a run id, and its completion notice wakes the parent. Use
+`subagent({ action: "status", id: "<run-id>" })` for status/results and
+`subagent({ action: "stop", id: "<run-id>" })` only to terminate it. There is no `wait`
+action.
 
 Before finalising, spot-check each BLOCKER and MAJOR citation by reading only the cited
 lines (`sed -n` a small range) in the worktree. Drop or downgrade anything that doesn't

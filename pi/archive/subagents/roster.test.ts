@@ -124,11 +124,10 @@ test("a catalog model outside a task's tiers is rejected for that task", () => {
   assert.throws(() => chainFor(roster, roster.types.get("x")!, "e/five"), /not compatible with x/);
 });
 
-test("the description lists every type and its tools, and no model order", () => {
+test("the description lists every type, its tools and its chain", () => {
   const text = describeRoster(parseRoster(committed, committedPolicy));
-  assert.match(text, /- text: .*\n  tools: none\n/);
-  assert.match(text, /- implement: .*\n  tools: read, grep, find, ls, bash, edit, write(\n|$)/);
-  assert.doesNotMatch(text, /models|→/);
+  assert.match(text, /- text: .*\n  tools: none\n  models, best first: opencode-go\/glm-5\.3-flash → /);
+  assert.match(text, /- implement: .*\n  tools: read, grep, find, ls, bash, edit, write\n  models, best first: .* → claude-bridge\/claude-sonnet-5-5/);
 });
 
 test("the committed subagents.json carries the four model profiles", () => {

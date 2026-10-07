@@ -265,7 +265,7 @@ Before writing code, get a sanity check. Spawn 2–3 agents **in parallel** (a s
 | Infra/deployment | `ops:aws-cloud-architect`, `shared:prod-readiness` |
 | Anything user-facing or risky | Add `shared:prod-readiness` |
 
-**Model gate (Pi, when `agent_select_models` is available; otherwise skip).** Once the reviewers are picked and before spawning them, use the stable flow ID `fix-jira-bug:<TICKET>` and one role key per reviewer agent (the agent's name). Call `agent_select_models` once, with one entry per role: key, title, task type, `recommendedModel` and a one-sentence recommendation. If it is cancelled or errors, stop the flow and spawn nothing. Pass each returned model as `model` on that role's spawn, and reuse it whenever the same known role is spawned again, including in the Phase 10 review. A role that was not selected gets an automatic model from the usual policy, without another prompt.
+**Model selection (Pi).** Every request includes a `<subagent_models>` block containing the live selected ∩ available exact `provider/id` list. Before every reviewer launch in this phase and Phase 10, choose a difficulty-, cost-, and capability-appropriate model solely from the current block and pass it explicitly as `model`. The named specialist agent selects the prompt and read-only tools; use `worker` with specialist guidance for implementation. Do not use the broader `subagent({ action: "models" })` registry as eligibility, call a model gate, omit `model`, reuse stale availability from an earlier phase, or rely on automatic fallback. If the list is empty, launch nothing and ask the user to repair the session model pool. See `~/.pi/agent/model-selection.md`.
 
 Each agent gets the full proposal (paste it), the affected file paths, and "reply under 400 words, focused, actionable." Do NOT delegate the synthesis — read the responses yourself and decide which feedback to act on.
 
@@ -310,7 +310,7 @@ If either fails, fix it before moving on. If the failure is in an unrelated file
 
 ## Phase 10: Multi-agent review of the implementation (up to 3 rounds)
 
-Once tests pass locally, spawn the same flavor of agents you used in Phase 8, but reviewing the **actual diff** this time. Again **in parallel**, passing each role the model chosen at the Phase 8 gate (do not call `agent_select_models` again). Each agent gets:
+Once tests pass locally, spawn the same flavor of agents you used in Phase 8, but reviewing the **actual diff** this time. Again **in parallel**. On Pi, choose and pass each reviewer's explicit model from the current request's `<subagent_models>` block; do not reuse Phase 8 availability. Each agent gets:
 
 - The proposed root cause and fix summary (recap from Phase 7).
 - The exact files changed + diffs (paste).

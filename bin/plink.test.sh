@@ -19,9 +19,12 @@ HOME_DIR="$SANDBOX/home"
 DEST="$HOME_DIR/.pi/agent"
 
 mkdir -p "$DOT/pi/extensions" "$DOT/claude" "$DOT/opencode/skills/alpha" "$DOT/opencode/agents" "$HOME_DIR"
+mkdir -p "$DOT/pi/agents"
+printf '# pi agent\n' > "$DOT/pi/agents/reviewer.md"
 mkdir -p "$DOT/pi/prompts"; printf '# o\n' > "$DOT/pi/prompts/orchestrate.md"
 for f in settings.json models.json mcp-servers.json subagents.json subagent-models.json subagent-model-guide.md subagents-research.md; do printf '{}\n' > "$DOT/pi/$f"; done
 printf 'append\n' > "$DOT/pi/APPEND_SYSTEM.md"
+printf 'model policy\n' > "$DOT/pi/model-selection.md"
 printf '// ext\n'  > "$DOT/pi/extensions/tool.ts"
 printf '# me\n'    > "$DOT/claude/CLAUDE.md"
 printf '# skill\n' > "$DOT/opencode/skills/alpha/SKILL.md"
@@ -45,13 +48,13 @@ echo "plink — create"
 mkdir -p "$DEST/sessions"
 printf 'secret\n' > "$DEST/auth.json"
 run_plink >/dev/null
-for f in settings.json models.json mcp-servers.json subagents.json subagent-models.json subagent-model-guide.md subagents-research.md APPEND_SYSTEM.md; do
+for f in settings.json models.json mcp-servers.json model-selection.md APPEND_SYSTEM.md; do
     assert_link "$DEST/$f" "$DOT/pi/$f" "links $f"
 done
 assert_link "$DEST/AGENTS.md" "$DOT/claude/CLAUDE.md" "links CLAUDE.md as AGENTS.md"
 assert_link "$DEST/skills" "$DOT/opencode/skills" "links the shared skills"
 assert_link "$DEST/extensions" "$DOT/pi/extensions" "links extensions/"
-assert_link "$DEST/agents" "$DOT/opencode/agents" "links the shared agent profiles"
+assert_link "$DEST/agents" "$DOT/pi/agents" "links Pi-specific agent definitions"
 [ ! -L "$DEST/auth.json" ] && [ "$(cat "$DEST/auth.json")" = "secret" ] \
     && pass "leaves auth.json alone" || fail "leaves auth.json alone" "auth.json changed"
 [ -d "$DEST/sessions" ] && [ ! -L "$DEST/sessions" ] \
@@ -66,6 +69,27 @@ printf '{}\n' > "$DEST/mcp.json"
 run_plink >/dev/null
 [ -f "$DEST/mcp.json" ] && pass "leaves a real mcp.json alone" || fail "leaves a real mcp.json alone" "gone"
 rm -f "$DEST/mcp.json"
+
+echo "retired subagent links"
+for name in subagents.json subagent-models.json subagent-model-guide.md subagents-research.md; do
+    rm -f "$DEST/$name"
+    ln -s "$DOT/pi/$name" "$DEST/$name"
+    run_plink -n >/dev/null
+    assert_link "$DEST/$name" "$DOT/pi/$name" "dry run preserves retired $name link"
+    run_plink >/dev/null
+    [ ! -L "$DEST/$name" ] && [ ! -e "$DEST/$name" ] \
+        && pass "removes owned retired $name link" || fail "removes owned retired $name link" "still there"
+    rm -f "$DEST/$name"
+    printf 'user-owned\n' > "$DEST/$name"
+    run_plink >/dev/null
+    [ ! -L "$DEST/$name" ] && [ "$(cat "$DEST/$name")" = "user-owned" ] \
+        && pass "preserves real $name" || fail "preserves real $name" "replaced"
+    rm -f "$DEST/$name"
+    ln -s /foreign/config "$DEST/$name"
+    run_plink >/dev/null
+    assert_link "$DEST/$name" /foreign/config "preserves foreign $name link"
+    rm -f "$DEST/$name"
+done
 
 echo "idempotence"
 out="$(run_plink)"
