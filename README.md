@@ -312,10 +312,12 @@ Declared plugins:
 - [`tmux-resurrect`](https://github.com/tmux-plugins/tmux-resurrect) — save/restore
   sessions.
 - [`tmux-claude-picker`](https://github.com/whitel1ght/tmux-claude-picker) — an
-  `fzf` picker for jumping between Claude Code sessions across windows, with a
-  recap preview. Bindings (after the `` ` `` prefix): `` ` `` `j` = busy Claude
-  windows, `` ` `` `a` = all Claude windows. Requires `fzf` and `ripgrep` (both
-  in the `Brewfile`).
+  `fzf` picker for jumping between AI agent sessions across windows, with a
+  recap preview. Bindings (after the `` ` `` prefix): `` ` `` `j` = busy agent
+  windows, `` ` `` `a` = all agent windows. Requires `fzf` and `ripgrep` (both
+  in the `Brewfile`). This repo vendors the script as `bin/session-picker`
+  (symlinked to `~/.local/bin/session-picker` by `install.sh`) extended to
+  also cover pi, opencode, and codex sessions — see below.
 
 ### Opening a file path from a pane
 
@@ -325,6 +327,31 @@ pane and opens your pick in `nvim` — provided by the same
 which documents how it works. It replaces tmux's built-in prefix-`o`
 (`select-pane`), which fuzzmux's `C-p` picker already supersedes; `M-o` is not
 available because AeroSpace binds every `alt-<letter>` to a workspace.
+
+The plugin's picker only reads Claude Code session transcripts. This repo
+vendorsies its script as `bin/open-path` (symlinked to `~/.local/bin/open-path`
+by `install.sh`) with one change: it also reads pi session transcripts from
+`~/.pi/agent/sessions/<slug>/`, so paths from the current pi session show up
+alongside Claude's. `.tmux.conf` rebinds `` ` `` + <kbd>o</kbd> to the vendored
+copy after TPM loads (a later binding wins; after `` ` `` + <kbd>I</kbd> re-sources
+the plugin, run `tmux source-file ~/.tmux.conf` to restore it).
+
+### Jumping between agent sessions
+
+`` ` `` + <kbd>j</kbd> (busy) and `` ` `` + <kbd>a</kbd> (all) open an `fzf`
+picker over tmux windows running AI coding agents — Claude Code, pi, opencode,
+and codex — with a per-row preview of each session's recap. This repo vendors
+the plugin's script as `bin/session-picker` (symlinked to
+`~/.local/bin/session-picker` by `install.sh`) with these changes:
+
+- **Process matching** extended from `claude` to `claude|pi|opencode|codex`.
+- **Busy detection** extended with each agent's status-line busy indicator:
+  pi's `●` (ponytail) and `<spinner> Working`, opencode's `esc interrupt`,
+  codex's `<spinner> Working (<elapsed> • esc to interrupt)`.
+- **Titles** updated from "Claude" to "agent".
+
+`.tmux.conf` rebinds `` ` `` + <kbd>j</kbd> and `` ` `` + <kbd>a</kbd> to the
+vendored copy after TPM loads (same prefix+I caveat as above).
 
 ## superfile
 

@@ -472,6 +472,19 @@ if [ -f "$DOTFILES_DIR/bin/tmux-prune" ]; then
     create_symlink "$DOTFILES_DIR/bin/tmux-prune" "$HOME/.local/bin/tmux-prune"
 fi
 
+# open-path backs the prefix+o file picker (tmux/.tmux.conf); a vendored copy of
+# the tmux-claude-picker plugin script that also reads pi session transcripts.
+if [ -f "$DOTFILES_DIR/bin/open-path" ]; then
+    create_symlink "$DOTFILES_DIR/bin/open-path" "$HOME/.local/bin/open-path"
+fi
+
+# session-picker backs the prefix+j / prefix+a window pickers (tmux/.tmux.conf);
+# a vendored copy of the tmux-claude-picker plugin script that also covers pi,
+# opencode, and codex sessions.
+if [ -f "$DOTFILES_DIR/bin/session-picker" ]; then
+    create_symlink "$DOTFILES_DIR/bin/session-picker" "$HOME/.local/bin/session-picker"
+fi
+
 # cs launches Claude Code with a chosen skill set rather than every skill and
 # agent installed under ~/.claude. See the header of bin/cs for why that matters.
 if [ -f "$DOTFILES_DIR/bin/cs" ]; then
