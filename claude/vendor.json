@@ -7,6 +7,14 @@
       "skills": [
         "skills/productivity/teach"
       ]
+    },
+    {
+      "name": "lackeyjb",
+      "repo": "https://github.com/lackeyjb/playwright-skill.git",
+      "ref": "HEAD",
+      "skills": [
+        "skills/playwright-skill"
+      ]
     }
   ]
 }

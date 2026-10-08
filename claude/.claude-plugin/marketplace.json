@@ -13,6 +13,11 @@
       "name": "mattpocock",
       "description": "Vendored skills from mattpocock.",
       "source": "./vendor/mattpocock"
+    },
+    {
+      "name": "lackeyjb",
+      "description": "Vendored skills from lackeyjb.",
+      "source": "./vendor/lackeyjb"
     }
   ]
 }

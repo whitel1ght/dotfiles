@@ -3,11 +3,21 @@
     "mattpocock": {
       "repo": "https://github.com/mattpocock/skills.git",
       "ref": "main",
-      "resolved": "959a8e9f1edc3adbe2f7e3054bb6fbefa6696260",
-      "fetchedAt": "2026-09-16T14:38:44Z",
+      "resolved": "b0618bc436ad893b3c5e84e55fba86586d34a404",
+      "fetchedAt": "2026-10-08T11:16:43Z",
       "license": "LICENSE",
       "skills": {
         "teach": "skills/productivity/teach"
+      }
+    },
+    "lackeyjb": {
+      "repo": "https://github.com/lackeyjb/playwright-skill.git",
+      "ref": "HEAD",
+      "resolved": "dd47a6a023e249eb1b36e9e943eab89d0900865d",
+      "fetchedAt": "2026-10-08T11:36:32Z",
+      "license": "LICENSE",
+      "skills": {
+        "playwright-skill": "skills/playwright-skill"
       }
     }
   }
