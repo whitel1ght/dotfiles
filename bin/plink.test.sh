@@ -18,7 +18,7 @@ DOT="$SANDBOX/dotfiles"
 HOME_DIR="$SANDBOX/home"
 DEST="$HOME_DIR/.pi/agent"
 
-mkdir -p "$DOT/pi/extensions" "$DOT/claude" "$DOT/opencode/skills/alpha" "$DOT/opencode/agents" "$HOME_DIR"
+mkdir -p "$DOT/pi/extensions" "$DOT/claude" "$DOT/pi/skills/alpha" "$DOT/pi/modules" "$HOME_DIR"
 mkdir -p "$DOT/pi/agents"
 printf '# pi agent\n' > "$DOT/pi/agents/reviewer.md"
 mkdir -p "$DOT/pi/prompts"; printf '# o\n' > "$DOT/pi/prompts/orchestrate.md"
@@ -27,8 +27,8 @@ printf 'append\n' > "$DOT/pi/APPEND_SYSTEM.md"
 printf 'model policy\n' > "$DOT/pi/model-selection.md"
 printf '// ext\n'  > "$DOT/pi/extensions/tool.ts"
 printf '# me\n'    > "$DOT/claude/CLAUDE.md"
-printf '# skill\n' > "$DOT/opencode/skills/alpha/SKILL.md"
-printf '# agent\n' > "$DOT/opencode/agents/reviewer.md"
+printf '# skill\n' > "$DOT/pi/skills/alpha/SKILL.md"
+printf '# module\n' > "$DOT/pi/modules/ui-project-context.md"
 
 run_plink() {
     HOME="$HOME_DIR" DOTFILES_DIR="$DOT" PI_AGENT_DIR="$DEST" bash "$SCRIPT" "$@"
@@ -52,7 +52,8 @@ for f in settings.json models.json mcp-servers.json model-selection.md APPEND_SY
     assert_link "$DEST/$f" "$DOT/pi/$f" "links $f"
 done
 assert_link "$DEST/AGENTS.md" "$DOT/claude/CLAUDE.md" "links CLAUDE.md as AGENTS.md"
-assert_link "$DEST/skills" "$DOT/opencode/skills" "links the shared skills"
+assert_link "$DEST/skills" "$DOT/pi/skills" "links skills/"
+assert_link "$HOME_DIR/.agents/modules" "$DOT/pi/modules" "links modules/ into the cross-runtime ~/.agents"
 assert_link "$DEST/extensions" "$DOT/pi/extensions" "links extensions/"
 assert_link "$DEST/agents" "$DOT/pi/agents" "links Pi-specific agent definitions"
 [ ! -L "$DEST/auth.json" ] && [ "$(cat "$DEST/auth.json")" = "secret" ] \
@@ -101,7 +102,7 @@ case "$out" in *"nothing to do"*) pass "second run reports nothing to do" ;;
 echo "repair"
 ln -sfn /nonexistent/wrong "$DEST/skills"
 out="$(run_plink)"
-assert_link "$DEST/skills" "$DOT/opencode/skills" "re-points a wrong/broken link"
+assert_link "$DEST/skills" "$DOT/pi/skills" "re-points a wrong/broken link"
 case "$out" in *"re-pointed"*) pass "reports the re-point" ;;
                 *) fail "reports the re-point" "$out" ;; esac
 

@@ -18,7 +18,7 @@ enough to know that the expensive tests are not the slow ones — they are the o
 that fail for reasons unrelated to the change, and the ones that pass when the
 code is broken.
 
-**First, read `~/.config/opencode/modules/ui-project-context.md`** and follow it. It defines
+**First, read `~/.agents/modules/ui-project-context.md`** and follow it. It defines
 how you orient in the project, verify claims, and format findings. Then apply the
 lens below.
 

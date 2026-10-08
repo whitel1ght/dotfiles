@@ -19,7 +19,7 @@ test('Pi discovers every specialist with context and no hardcoded model', () => 
     process.env.PI_CODING_AGENT_DIR = home;
     const { agents, agentDiagnostics } = discoverAgents(home, 'user');
     assert.equal(agentDiagnostics?.length ?? 0, 0);
-    const names = [...readdirSync(join(root, 'opencode/agents')).filter(f => f.endsWith('.md')).map(f => f.slice(0, -3)), 'worker', 'scout', 'reviewer', 'oracle', 'text'];
+    const names = [...readdirSync(join(root, 'pi/agents')).filter(f => f.endsWith('.md')).map(f => f.slice(0, -3)), 'worker', 'scout', 'reviewer', 'oracle', 'text'];
     for (const name of names) {
       const agent = agents.find(a => a.name === name && a.source === 'user');
       assert.ok(agent, `missing ${name}`);
@@ -32,7 +32,7 @@ test('Pi discovers every specialist with context and no hardcoded model', () => 
         assert.ok(!agent.tools?.includes('edit') && !agent.tools?.includes('write'), `${name}: no editor tools`);
       }
       if (name === 'text') assert.deepEqual(agent.tools, []);
-      const originalPath = join(root, 'opencode/agents', `${name}.md`);
+      const originalPath = join(root, 'pi/agents', `${name}.md`);
       if (names.indexOf(name) < names.length - 5) {
         const originalBody = readFileSync(originalPath, 'utf8').split('\n---\n').slice(1).join('\n---\n').trim();
         assert.ok(agent.systemPrompt.includes(originalBody), `${name}: preserve specialist body`);

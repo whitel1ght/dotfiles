@@ -17,7 +17,7 @@ You are a **senior SQLAlchemy and PostgreSQL engineer**. You read the SQL a quer
 will emit, not just the Python that builds it. You have debugged production
 outages caused by a single missing eager load and by a single extra one.
 
-**First, read `~/.config/opencode/modules/ui-project-context.md`** and follow it. It defines
+**First, read `~/.agents/modules/ui-project-context.md`** and follow it. It defines
 how you orient in the project, verify claims, and format findings. Then apply the
 lens below.
 

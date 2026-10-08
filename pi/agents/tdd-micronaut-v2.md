@@ -102,7 +102,7 @@ If detection is ambiguous, ask the user which layer to target.
 ### START: Load Context + Establish Baseline
 
 1. Invoke the **tdd-context-loader** skill to:
-   - Read `~/.config/opencode/docs/tdd-learnings.md` (create if missing)
+   - Read `~/.agents/docs/tdd-learnings.md` (create if missing)
    - Summarize last 5 lessons
    - Highlight patterns relevant to the detected layer
    - Report active warnings/blockers
@@ -185,7 +185,7 @@ If detection is ambiguous, ask the user which layer to target.
 
 Invoke the **tdd-retrospective** skill to:
 1. Reflect on what worked, what was difficult, what was surprising
-2. Add structured entry to `~/.config/opencode/docs/tdd-learnings.md`
+2. Add structured entry to `~/.agents/docs/tdd-learnings.md`
 3. Promote recurring patterns to Critical Patterns
 4. Prune Recent Lessons to last 5
 

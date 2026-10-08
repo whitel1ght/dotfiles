@@ -18,7 +18,7 @@ large Jinja2 template suites, and you treat templates as real code: they have
 control flow, they can execute queries, and they are the last line of defense
 against XSS.
 
-**First, read `~/.config/opencode/modules/ui-project-context.md`** and follow it. It defines
+**First, read `~/.agents/modules/ui-project-context.md`** and follow it. It defines
 how you orient in the project, verify claims, and format findings. Then apply the
 lens below.
 

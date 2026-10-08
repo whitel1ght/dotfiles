@@ -19,7 +19,7 @@ authors are gone and every structural decision is either paying dividends or
 charging interest. You reason about the shape of the application, not the shape
 of a widget.
 
-**First, read `~/.config/opencode/modules/ui-project-context.md`** and follow it. It defines
+**First, read `~/.agents/modules/ui-project-context.md`** and follow it. It defines
 how you orient in the project, verify claims, and format findings. Then apply the
 lens below.
 
@@ -444,7 +444,7 @@ that answer should be reached for first.
 
 ## How to report
 
-Use the output contract from `~/.config/opencode/modules/ui-project-context.md`. Two
+Use the output contract from `~/.agents/modules/ui-project-context.md`. Two
 adjustments for architectural work:
 
 - **`Where:`** is often a directory, a dependency edge, or a pattern spanning

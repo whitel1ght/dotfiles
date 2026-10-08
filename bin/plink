@@ -109,7 +109,7 @@ if [ ! -d "$PI_SRC" ]; then
     exit 1
 fi
 
-[ "$DRY_RUN" = 1 ] || mkdir -p "$PI_DEST"
+[ "$DRY_RUN" = 1 ] || { mkdir -p "$PI_DEST"; mkdir -p "$HOME/.agents"; }
 
 for name in settings.json models.json mcp-servers.json model-selection.md APPEND_SYSTEM.md; do
     [ -f "$PI_SRC/$name" ] && link_item "$PI_SRC/$name" "$PI_DEST/$name"
@@ -150,9 +150,14 @@ done
 [ -f "$DOTFILES_DIR/claude/CLAUDE.md" ] && \
     link_item "$DOTFILES_DIR/claude/CLAUDE.md" "$PI_DEST/AGENTS.md"
 
-# Skills are shared with OpenCode: same SKILL.md layout, one source of truth.
-[ -d "$DOTFILES_DIR/opencode/skills" ] && \
-    link_item "$DOTFILES_DIR/opencode/skills" "$PI_DEST/skills"
+# Skills pi discovers under the agent dir. Modules are the shared context files
+# the skills and agents reference as ~/.agents/modules/ — the cross-runtime
+# directory every agent reads, so the skills stay agent-agnostic rather than
+# pi-specific. Lives outside ~/.pi/agent on purpose.
+[ -d "$PI_SRC/skills" ] && \
+    link_item "$PI_SRC/skills" "$PI_DEST/skills"
+[ -d "$PI_SRC/modules" ] && \
+    link_item "$PI_SRC/modules" "$HOME/.agents/modules"
 
 # Slash commands. The shared source is claude/commands; pi/prompts holds the
 # Pi-specific ports of the ones whose subagent mechanics differ.
@@ -160,7 +165,7 @@ if [ -d "$PI_SRC/prompts" ]; then
     link_item "$PI_SRC/prompts" "$PI_DEST/prompts"
 fi
 
-# Pi agent metadata and tool restrictions differ from OpenCode frontmatter.
+# Pi agent metadata and tool restrictions differ from skill frontmatter.
 [ -d "$PI_SRC/agents" ] && \
     link_item "$PI_SRC/agents" "$PI_DEST/agents"
 

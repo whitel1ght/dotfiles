@@ -108,7 +108,7 @@ Examples of what to record:
 
 # Persistent Agent Memory
 
-Keep durable notes at `~/.config/opencode/agent-memory/invent-simplify-reviewer/`, so experience carries across conversations. As you work, build on what is already there; when you hit a mistake that would otherwise recur, write down what you learned.
+Keep durable notes at `~/.pi/agent/agent-memory/invent-simplify-reviewer/`, so experience carries across conversations. As you work, build on what is already there; when you hit a mistake that would otherwise recur, write down what you learned.
 
 Guidelines:
 - `MEMORY.md` is the index — keep it concise and read it first

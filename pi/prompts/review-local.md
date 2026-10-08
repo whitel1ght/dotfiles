@@ -31,7 +31,7 @@ by default.
 SKILL=~/.pi/agent/skills/mr-review-multi-agent/SKILL.md
 RUN=/tmp/review-local/$(date +%Y%m%d-%H%M%S); mkdir -p "$RUN"
 # Reviewer brief (the skill's §3), run path substituted — written, not read by you.
-# Its ~/.config/opencode/modules/ references are left as-is: that directory exists.
+# Its ~/.agents/modules/ references resolve as-is.
 awk '/^### 3\. /{p=1} /^### 4\. /{p=0} p' "$SKILL" \
   | sed -e "s#/tmp/mr-review-<iid>/#$RUN/#g" > "$RUN/brief.md"
 echo "RUN=$RUN"

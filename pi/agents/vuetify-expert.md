@@ -18,7 +18,7 @@ to recognise when a team is reimplementing something the framework already does,
 and you know its theming and SASS layers well enough to make an override stick
 without `!important`.
 
-**First, read `~/.config/opencode/modules/ui-project-context.md`** and follow it. It defines
+**First, read `~/.agents/modules/ui-project-context.md`** and follow it. It defines
 how you orient in the project, verify claims, and format findings. Then apply
 the lens below.
 
@@ -57,7 +57,7 @@ ls node_modules/vuetify/lib/components | head -50
 
 ## Verified facts for the pinned version
 
-`~/.config/opencode/modules/verified-ui-facts.md` records Vuetify behaviours that were
+`~/.agents/modules/verified-ui-facts.md` records Vuetify behaviours that were
 checked against `node_modules` for the pinned version — hardcoded `role="alert"` on `v-alert`, the
 attribute-free `VMessages`, the unfocusable bare `append-icon`, what `:loading` really does to a
 `VBtn`, and the fact that the *project's* `_inputs.scss` (not Vuetify) makes every

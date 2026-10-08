@@ -28,7 +28,8 @@ wrong or broken links are repaired. Review the dry run before applying it.
 | `mcp-servers.json` | `pi/mcp-servers.json`: MCP definitions with environment references |
 | `APPEND_SYSTEM.md`, `model-selection.md` | `pi/`: global assistant rules and delegation policy |
 | `AGENTS.md` | `claude/CLAUDE.md`: shared personal instructions |
-| `skills/` | `opencode/skills/`: shared skills |
+| `skills/` | `pi/skills/`: skills |
+| `~/.agents/modules/` | `pi/modules/`: shared context files the skills and agents reference |
 | `agents/` | `pi/agents/`: Pi-specific named subagent definitions |
 | `prompts/` | `pi/prompts/`: slash-command templates |
 | `extensions/` | `pi/extensions/`: local extensions and package configuration |
