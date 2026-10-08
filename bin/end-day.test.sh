@@ -1,10 +1,10 @@
 #!/bin/bash
-# Tests for bin/daily-report save. Works on a sandbox DIARY_DIR; collect talks to
+# Tests for bin/end-day save. Works on a sandbox DIARY_DIR; collect talks to
 # GitLab and Jira and is exercised by running it, not here.
 set -uo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT="$TEST_DIR/daily-report"
+SCRIPT="$TEST_DIR/end-day"
 PASS=0
 FAIL=0
 
@@ -20,7 +20,7 @@ printf '## habits\n\n- [ ] x\n\n## Work\n\n### ECFX\n' > "$SANDBOX/template.md"
 save() { printf '%s\n' "$2" | "$SCRIPT" save "$1" >/dev/null; }
 block() { sed -n '/daily-report:start/,/daily-report:end/p' "$SANDBOX/$1.md" | sed '1d;$d'; }
 
-echo "daily-report save — existing entry"
+echo "end-day save — existing entry"
 cat > "$SANDBOX/2026-01-05.md" <<'EOF'
 # Mon Jan  5 09:00:00 +03 2026
 
@@ -44,13 +44,13 @@ awk '/### ECFX/{e=1} /daily-report:start/{if(e && !p) ok=1} /### Personal/{p=1} 
     && pass "lands inside ### ECFX, before the next section" || fail "lands inside ### ECFX, before the next section" "$(cat "$SANDBOX/2026-01-05.md")"
 grep -qx -- '- \[ \] groceries' "$SANDBOX/2026-01-05.md" && pass "leaves later sections alone" || fail "leaves later sections alone" "lost"
 
-echo "daily-report save — new entry"
+echo "end-day save — new entry"
 save 2026-01-06 "- fresh"
 head -1 "$SANDBOX/2026-01-06.md" | grep -q '^# ' && pass "creates the entry with a date heading" || fail "creates the entry with a date heading" "$(head -1 "$SANDBOX/2026-01-06.md")"
 grep -qx '## habits' "$SANDBOX/2026-01-06.md" && pass "fills it from template.md" || fail "fills it from template.md" "no template"
 assert_eq "- fresh" "$(block 2026-01-06)" "writes the block into it"
 
-echo "daily-report save --plan"
+echo "end-day save --plan"
 save_plan() { printf '%s\n' "$2" | "$SCRIPT" save "$1" --plan >/dev/null; }
 plan() { sed -n '/start-day:start/,/start-day:end/p' "$SANDBOX/$1.md" | sed '1d;$d'; }
 save_plan 2026-01-05 "- [ ] plan one"
@@ -62,7 +62,7 @@ assert_eq "- [ ] plan two" "$(plan 2026-01-05)" "a re-run replaces the plan"
 assert_eq "- second" "$(block 2026-01-05)" "leaves the report block alone"
 grep -qxF -- '- [X] my own line' "$SANDBOX/2026-01-05.md" && pass "keeps my own lines beside the plan" || fail "keeps my own lines beside the plan" "lost"
 
-echo "daily-report — input checks"
+echo "end-day — input checks"
 printf '' | "$SCRIPT" save 2026-01-07 >/dev/null 2>&1 && fail "refuses an empty report" "exit 0" || pass "refuses an empty report"
 "$SCRIPT" collect 26-1-1 >/dev/null 2>&1 && fail "rejects a malformed date" "exit 0" || pass "rejects a malformed date"
 

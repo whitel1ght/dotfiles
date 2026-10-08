@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Gather a day's work for /daily-report, and file the written report in the diary.
+# Gather a day's work for /end-day, and file the written report in the diary.
 #
-#   daily-report collect [DATE]   print a compact digest of the day's work
-#   daily-report save [DATE]      read a report on stdin into that day's diary
-#   daily-report save [DATE] --plan   same for /start-day's plan, at the top of ### ECFX
+#   end-day collect [DATE]   print a compact digest of the day's work
+#   end-day save [DATE]      read a report on stdin into that day's diary
+#   end-day save [DATE] --plan   same for /start-day's plan, at the top of ### ECFX
 #
 # DATE is YYYY-MM-DD or "yesterday"; default today.
 #
@@ -39,7 +39,7 @@ case "${1:-}" in
   "") day=$(date +%F) ;;
   yesterday) day=$(date -v-1d +%F 2>/dev/null || date -d yesterday +%F) ;;
   [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) day="$1" ;;
-  *) echo "daily-report: DATE must be YYYY-MM-DD or yesterday" >&2; exit 1 ;;
+  *) echo "end-day: DATE must be YYYY-MM-DD or yesterday" >&2; exit 1 ;;
 esac
 
 epoch() { date -j -f '%Y-%m-%d %H:%M:%S' "$1 00:00:00" +%s 2>/dev/null || date -d "$1" +%s; }
@@ -127,13 +127,15 @@ collect_claude() {
 
 save() {
   local file="$DIARY_DIR/$day.md" block name=daily-report position=bottom
+  # The marker name stays "daily-report": diary files already carry those markers,
+  # and renaming it would orphan blocks written before the end-day rename.
   case "${1:-}" in
     --plan) name=start-day; position=top ;;
     "") ;;
-    *) echo "daily-report: unknown save option $1" >&2; exit 1 ;;
+    *) echo "end-day: unknown save option $1" >&2; exit 1 ;;
   esac
   block=$(cat)
-  [ -n "$block" ] || { echo "daily-report: nothing on stdin" >&2; exit 1; }
+  [ -n "$block" ] || { echo "end-day: nothing on stdin" >&2; exit 1; }
   mkdir -p "$DIARY_DIR"
   if [ ! -f "$file" ]; then
     { printf '# %s\n\n' "$(date)"; cat "$DIARY_DIR/template.md" 2>/dev/null || printf '## Work\n\n### ECFX\n'; } > "$file"
@@ -176,5 +178,5 @@ case "$cmd" in
     collect_commits; collect_gitlab; collect_jira; collect_claude ;;
   save) save $save_opt ;;
   -h|--help|"") sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; [ -n "$cmd" ] ;;
-  *) echo "daily-report: unknown command $cmd" >&2; exit 1 ;;
+  *) echo "end-day: unknown command $cmd" >&2; exit 1 ;;
 esac

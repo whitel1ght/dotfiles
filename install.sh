@@ -434,9 +434,9 @@ if [ -f "$DOTFILES_DIR/bin/clean-worktrees" ]; then
     create_symlink "$DOTFILES_DIR/bin/clean-worktrees" "$HOME/.local/bin/clean-worktrees"
 fi
 
-# daily-report gathers the day's work for /daily-report and files it in the diary.
-if [ -f "$DOTFILES_DIR/bin/daily-report" ]; then
-    create_symlink "$DOTFILES_DIR/bin/daily-report" "$HOME/.local/bin/daily-report"
+# end-day gathers the day's work for /end-day and files it in the diary.
+if [ -f "$DOTFILES_DIR/bin/end-day" ]; then
+    create_symlink "$DOTFILES_DIR/bin/end-day" "$HOME/.local/bin/end-day"
 fi
 
 # start-day gathers overnight activity for /start-day and files the plan in the diary.

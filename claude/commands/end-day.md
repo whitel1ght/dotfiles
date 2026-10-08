@@ -1,16 +1,19 @@
 ---
-description: Standup report of the day's work across commits, MRs, Jira and sessions, filed in the diary
-argument-hint: "[yesterday | YYYY-MM-DD]"
+description: Standup report of the day's work across commits, MRs, Jira and all Claude sessions, filed in the diary
+argument-hint: [yesterday | YYYY-MM-DD]
+model: sonnet
+allowed-tools: Bash(~/.local/bin/end-day:*)
+disable-model-invocation: true
 ---
 
 Collect the day's work:
 
 ```bash
-~/.local/bin/daily-report collect $ARGUMENTS
+~/.local/bin/end-day collect $ARGUMENTS
 ```
 
 The digest has four sections: commits, GitLab activity (each MR marked as mine or a
-review for someone else), Jira status changes, and sessions (my prompts and each
+review for someone else), Jira status changes, and Claude sessions (my prompts and each
 session's last reply). A line in brackets means that source was unavailable; mention it
 in one line at the end of the report rather than guessing its contents.
 
@@ -71,7 +74,7 @@ Print the report in the chat, then save the same text into the diary. Use a quot
 heredoc so nothing in the report gets expanded:
 
 ```bash
-~/.local/bin/daily-report save $ARGUMENTS <<'REPORT'
+~/.local/bin/end-day save $ARGUMENTS <<'REPORT'
 <the report>
 REPORT
 ```
