@@ -4,6 +4,7 @@
 #   end-day collect [DATE]   print a compact digest of the day's work
 #   end-day save [DATE]      read a report on stdin into that day's diary
 #   end-day save [DATE] --plan   same for /start-day's plan, at the top of ### ECFX
+#   end-day touched [DATE]   list the wiki projects with a log entry or decision dated DATE
 #
 # DATE is YYYY-MM-DD or "yesterday"; default today.
 #
@@ -27,6 +28,7 @@ set -euo pipefail
 
 JIRA_BASE="${JIRA_BASE:-https://ecfxdev.atlassian.net}"
 DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
+WIKI_DIR="${WIKI_DIR:-$HOME/wiki}"
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
 BUILTINS="usage|context|exit|model|clear|compact|cost|help|config|status|resume|rewind|login|logout|doctor|memory|permissions|hooks|agents|mcp|plugin|ide|theme|vim|fast|effort|tasks|rename|export|init|bug|feedback"
 HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
@@ -172,11 +174,24 @@ PY
   echo "$file"
 }
 
+# The projects /end-day has to consolidate: those whose log/ has a "## DATE <title>"
+# entry, or whose decisions/ has a file with "date: DATE" in its frontmatter.
+touched() {
+  local dir
+  for dir in "$WIKI_DIR"/projects/*/; do
+    [ -d "$dir" ] || continue
+    if grep -qs "^## $day " "$dir"log/*.md || grep -qs "^date: $day[[:space:]]*$" "$dir"decisions/*.md; then
+      basename "$dir"
+    fi
+  done
+}
+
 case "$cmd" in
   collect)
     printf '# Work digest for %s\n' "$day"
     collect_commits; collect_gitlab; collect_jira; collect_claude ;;
   save) save $save_opt ;;
+  touched) touched ;;
   -h|--help|"") sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; [ -n "$cmd" ] ;;
   *) echo "end-day: unknown command $cmd" >&2; exit 1 ;;
 esac

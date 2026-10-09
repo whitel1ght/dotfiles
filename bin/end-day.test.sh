@@ -66,6 +66,22 @@ echo "end-day — input checks"
 printf '' | "$SCRIPT" save 2026-01-07 >/dev/null 2>&1 && fail "refuses an empty report" "exit 0" || pass "refuses an empty report"
 "$SCRIPT" collect 26-1-1 >/dev/null 2>&1 && fail "rejects a malformed date" "exit 0" || pass "rejects a malformed date"
 
+echo "end-day touched"
+WIKI="$SANDBOX/wiki"
+mkdir -p "$WIKI/projects/ecfx/log" "$WIKI/projects/ecfx/decisions" "$WIKI/projects/epicmax/log" "$WIKI/projects/epicmax/decisions" "$WIKI/projects/personal/log"
+printf -- '---\nproject: ecfx\n---\n\n## 2026-10-07 earlier work\n\ntext\n\n## 2026-10-08 retry button\n\ntext\n' > "$WIKI/projects/ecfx/log/2026-Q4.md"
+printf -- '---\nproject: epicmax\ntype: decision\ndate: 2026-10-08\n---\n# 0003 pick x\n' > "$WIKI/projects/epicmax/decisions/0003-pick-x.md"
+printf -- '---\nproject: personal\ndate: 2026-10-07\n---\n' > "$WIKI/projects/personal/log/2026-Q4.md"
+touched() { WIKI_DIR="$WIKI" "$SCRIPT" touched "$@"; }
+assert_eq "ecfx
+epicmax" "$(touched 2026-10-08)" "lists projects with a log entry or a decision on that date, one per line"
+assert_eq "ecfx" "$(touched 2026-10-07)" "an entry dated the 7th only counts for the 7th (a frontmatter date alone in a log file is not an entry)"
+assert_eq "" "$(touched 2026-10-09)" "nothing touched prints nothing"
+touched 2026-10-09 >/dev/null; assert_eq "0" "$?" "and exits 0"
+assert_eq "" "$(WIKI_DIR="$SANDBOX/nowhere" "$SCRIPT" touched 2026-10-08)" "a missing wiki is empty, not an error"
+(cd "$SANDBOX" && WIKI_DIR="$WIKI" "$SCRIPT" touched yesterday >/dev/null 2>&1); assert_eq "0" "$?" "accepts yesterday"
+assert_eq "yes" "$("$SCRIPT" --help | grep -q 'touched' && echo yes || echo no)" "--help mentions it"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
