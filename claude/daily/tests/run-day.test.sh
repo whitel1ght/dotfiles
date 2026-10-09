@@ -57,4 +57,15 @@ has "$F" "handling any other event or agent report" "checks the inbox on every e
 has "$F" "/loop 5m" "no-mod fallback polls the inbox"
 has "$F" "owner=main" "a handback returns the item to the main session"
 
+echo "== fix round 1 =="
+has "$F" "not mentioned in any output, even if they appear in \`ls\`" "non-message files are never named in output"
+has "$F" "merged in the UI by you" "dry run states merge rows are merged in the UI"
+has "$F" 'with the branch from `glab mr view`' "wt add with the MR branch for items that have one"
+has "$F" "an old decision's \`status\` (only to \`superseded\`)" "write rules allow superseding an old decision"
+has "$F" "\`done\` replaces any existing" "done replaces earlier evidence suffixes"
+has "$F" "no run-state line" "inbox keys without a run-state line"
+has "$F" "comes from the agent's \`discussion:\` report line" "discussion id source"
+has "$F" "grep -c '{{'\` on the filled review-round brief" "review-round brief leftover check"
+has "$F" "{{REPLY_FILE}}, {{REPO}}, {{WORKTREE}}" "lists all ten placeholders"
+
 finish

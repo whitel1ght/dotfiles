@@ -19,7 +19,7 @@ Paths used below (`T` is today's date, `date +%F`):
 ## Write rules (never break these)
 
 - Subagents never write to `~/wiki`. This session is the only writer during the day.
-- This session edits only: diary lines inside the plan block, the run-state file, inbox files it moves to `inbox/done/<T>/` or `inbox/bad/`, `~/wiki/projects/<p>/log/<YYYY>-Q<N>.md` (append), `~/wiki/projects/<p>/decisions/NNNN-<slug>.md` (create). It never edits project code (`/orchestrate`: that goes to subagents).
+- This session edits only: diary lines inside the plan block, the run-state file, inbox files it moves to `inbox/done/<T>/` or `inbox/bad/`, `~/wiki/projects/<p>/log/<YYYY>-Q<N>.md` (append), `~/wiki/projects/<p>/decisions/NNNN-<slug>.md` (create; and an old decision's `status` (only to `superseded`), section 4). It never edits project code (`/orchestrate`: that goes to subagents).
 - Never merge, mark an MR ready, transition a Jira ticket, post to Slack or post a comment without asking. The one exception is a review round (below), which has its own single confirmation.
 - Every MR number in text you show the user is a markdown link with the repo in the link text, e.g. `[dashboard!2202](https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2202)`, never a bare `!2202`. Known paths: `ecfx/ecfx-backend`, `ecfx/ecfx-dashboard`, `ecfx/ecfx-admin`, `ecfx/ecfx-protobufs`, `ecfx/claude-components`.
 - A GitLab API merge returns 405 on these repos: for a merge item, give the user the MR link to merge in the UI.
@@ -46,7 +46,7 @@ Classify every open item (`[ ]`, `[/]`, `[!]`; skip `[x]` and `[>]`):
 
 Get what you need for each auto item from the plan line (ticket key, MR links name the repo) and `jira-api GET issue/<KEY>` (summary, description). Show one table: item, class, repo(s), model, depends on. A multi-repo ticket is one item on the heavy route. If you cannot tell the repo, class it `me` and say why. **Wait for approval or edits.**
 
-With `--dry`: stop after printing the table, then print for each auto item the `wt add` command and the filled-in brief (step 2), and a closing line `dry run: nothing created`. Create no worktree, no agent, no run-state file, and edit nothing.
+With `--dry`: stop after printing the table (a merge-class `me` row says: merged in the UI by you, with the MR link, because the API merge returns 405), then print for each auto item the `wt add` command and the filled-in brief (step 2), and a closing line `dry run: nothing created`. Create no worktree, no agent, no run-state file, and edit nothing.
 
 ## 2. Dispatch
 
@@ -73,7 +73,7 @@ changes-since --cursor run-day >/dev/null
    If it exits non-zero, tell the user in one line and carry on: the watcher reports the failure itself once.
 
    The key is the lowercase ticket key from the plan line. Items without a ticket key are not tracked in this file.
-2. For each auto item, in plan order, while fewer than **3** ticket agents are running (review-round agents count): `wt add <repo> <KEY>` (KEY uppercase, e.g. `ECFX-18169`), fill `${CLAUDE_PLUGIN_ROOT}/templates/ticket-brief.md` (replace every `{{...}}` placeholder; `grep -c '{{'` on the filled brief must print 0), save it in the scratchpad as `brief-<key>.md`, and spawn a background `sonnet` subagent: `Agent` with `run_in_background: true`, `model: "sonnet"`, `description: "<KEY> <three words>"`, the repo's specialist `subagent_type` when one exists, and a prompt that points at the brief file. Skip items whose run state says `owner=external:<KEY>`. Queue the rest in plan order; start the next as one finishes.
+2. For each auto item, in plan order, while fewer than **3** ticket agents are running (review-round agents count): `wt add <repo> <KEY> <branch>` with the branch from `glab mr view` when the item already has an MR or branch, else `wt add <repo> <KEY>` (KEY uppercase, e.g. `ECFX-18169`), fill `${CLAUDE_PLUGIN_ROOT}/templates/ticket-brief.md` (replace every `{{...}}` placeholder; `grep -c '{{'` on the filled brief must print 0), save it in the scratchpad as `brief-<key>.md`, and spawn a background `sonnet` subagent: `Agent` with `run_in_background: true`, `model: "sonnet"`, `description: "<KEY> <three words>"`, the repo's specialist `subagent_type` when one exists, and a prompt that points at the brief file. Skip items whose run state says `owner=external:<KEY>`. Queue the rest in plan order; start the next as one finishes.
 3. Record the agent id the `Agent` call returned, the worktree and `needs_you=no` in the run-state line. Set the diary line to `[/]`.
 
 ## 3. Diary markers and check-before-tick
@@ -124,7 +124,7 @@ ENC="${PROJECT_PATH//\//%2F}"
 
    `<urlencoded path>` below means `$ENC`, `{{PROJECT_PATH}}` is `$PROJECT_PATH`, `{{MR_IID}}` is `$IID`. If the url is `-` or does not match, use the `mr=<group>/<repo>!<iid>` field of the item's run-state line instead; if that is empty too, ask the user for the MR link.
    Find the item's worktree in the run-state file. If it has none, get the branch with `glab api "projects/$ENC/merge_requests/$IID" | jq -r .source_branch` and run `wt add <repo> <KEY> <branch>`.
-2. Spawn a background `sonnet` subagent (counts toward the cap of 3) with `${CLAUDE_PLUGIN_ROOT}/templates/review-round-brief.md` filled in. `{{REPLY_FILE}}` is `<scratchpad>/round-<repo>-<iid>.md`. The agent fixes (commits locally, no push) or declines or defers every finding and drafts the reply; `shared:mr-review-response` has no draft-only mode, so the brief stops it before its post step.
+2. Spawn a background `sonnet` subagent (counts toward the cap of 3) with `${CLAUDE_PLUGIN_ROOT}/templates/review-round-brief.md` filled in. `{{REPLY_FILE}}` is `<scratchpad>/round-<repo>-<iid>.md`. The template's ten placeholders are {{BRANCH}}, {{EVENT_LINE}}, {{KEY}}, {{MR_IID}}, {{MR_URL}}, {{PROJECT_PATH}}, {{PROJECT}}, {{REPLY_FILE}}, {{REPO}}, {{WORKTREE}} (the template is the source of truth); `grep -c '{{'` on the filled review-round brief must print 0. The agent fixes (commits locally, no push) or declines or defers every finding and drafts the reply; `shared:mr-review-response` has no draft-only mode, so the brief stops it before its post step.
 3. When it reports: run the check from step 3 on the diff and tests. Set `needs_you=yes`. Show the user: the findings with their status and SHAs, `git log --oneline` of the new commits, and the full draft reply (`cat` the reply file). Ask: `yes` / `edit` / `no`.
 4. `yes`: `git -C <worktree> push`, then post the reply into the review's discussion:
 
@@ -132,7 +132,7 @@ ENC="${PROJECT_PATH//\//%2F}"
 glab api --method POST "projects/<urlencoded path>/merge_requests/<iid>/discussions/<discussion id>/notes" -F "body=@<reply file>"
 ```
 
-   Then set `needs_you=no`, apply the `memory:` block, and say that a Jira one-liner with the new head SHA is available (post it only if the user says so, through the `jira-write` skill).
+   `<discussion id>` comes from the agent's `discussion:` report line. Then set `needs_you=no`, apply the `memory:` block, and say that a Jira one-liner with the new head SHA is available (post it only if the user says so, through the `jira-write` skill).
    `edit`: apply the user's changes to the reply file or send the agent back (`SendMessage`) and show again. `no`: push and post nothing; leave the commits in the worktree; set the item `[!]` with `· note: review round declined by user` only if the user says to.
 
 ## 6. Other events
@@ -154,7 +154,7 @@ T="$(date +%F)"
 ls -1 "$INBOX" 2>/dev/null | grep -E '^[0-9]{8}T[0-9]{6}-[A-Za-z0-9-]+-[A-Za-z0-9]{4}\.md$' | sort
 ```
 
-Only names of that shape are messages (the same rule as the mod); `*.tmp`, `done/`, `bad/` and any other file are ignored, never moved, never reported. `$f` in the commands below is `$INBOX/<name>`.
+Only names of that shape are messages (the same rule as the mod); `*.tmp`, `done/`, `bad/` and any other file are ignored, never moved, and not mentioned in any output, even if they appear in `ls`. `$f` in the commands below is `$INBOX/<name>`.
 
 File names start with a timestamp, so that order is **oldest first**. Handle one file completely before the next. A message is frontmatter between two `---` lines, one summary paragraph, then a `memory:` block (the four fields of an agent report):
 
@@ -185,8 +185,9 @@ mkdir -p "$INBOX/bad"; mv "$f" "$INBOX/bad/"
    Tell the user in one line (file name and the reason), then carry on with the next file. Never repair a file, never stop the queue.
 2. **Find the item.** `<key>` is the lowercase `key`. The plan line is the one inside the start-day block whose ticket key equals it exactly, ignoring case (`ecfx-1816` does not match `ecfx-18169`); the run-state line has the same key. A key that is not on the plan, and an empty key, make the message off-plan work whatever its `kind` says (except `handback`, below).
 3. **Apply by kind.** For every `[x]` you write, the tick guard needs an MR link, `merged` or `· note: <why>`; the *summary clip* below is the first sentence of the summary, at most 100 characters, with any ` · ` replaced by ` - `. When the message has an `mr`, the run-state `mr=` becomes `<group>/<repo>!<iid>` (derive the path and iid from the url as in section 5).
-   - `done`, key on the plan: run the check of section 3 as far as it can be run: `git -C <worktree> diff --stat` when the run-state worktree exists, the MR pipeline status when `mr` is set, the tests the summary names. What cannot be checked (no worktree, no MR) is named to the user as unverified. Checks pass or cannot run: tick `[x]` with `· MR [<repo>!<iid>](<url>)` when `mr` is set, otherwise `· note: <summary clip>`; set `owner=main` and `needs_you=no`. A check fails: do not tick, keep `[/]`, set `needs_you=yes`, tell the user what failed (no agent exists to retry). A line that is already `[x]` stays as it is; never downgrade a ticked line.
-   - `progress`, key on the plan: `[/]` (never downgrade a ticked line), suffix `· progress: <summary clip>` (after `· with you: <KEY>` when the owner is external); `owner` stays.
+   - `done`, key on the plan: run the check of section 3 as far as it can be run: `git -C <worktree> diff --stat` when the run-state worktree exists, the MR pipeline status when `mr` is set, the tests the summary names. What cannot be checked (no worktree, no MR) is named to the user as unverified. Checks pass or cannot run: tick `[x]` with `· MR [<repo>!<iid>](<url>)` when `mr` is set, otherwise `· note: <summary clip>` (`done` replaces any existing `· with you:` / `· progress:` suffix); set `owner=main` and `needs_you=no`. A check fails: do not tick, keep `[/]`, set `needs_you=yes`, tell the user what failed (no agent exists to retry). A line that is already `[x]` stays as it is; never downgrade a ticked line.
+   - `progress`, key on the plan: `[/]`, suffix `· progress: <summary clip>` (after `· with you: <KEY>` when the owner is external); `owner` stays. A line that is already `[x]` is left entirely as it is (a late `progress` is a no-op; never downgrade a ticked line).
+   - A key with no run-state line (a `me` item, or one added to the plan later): skip every run-state edit, apply only the diary line and the memory block.
    - `handback`, key on the plan: `owner=main`, `agent=-`, `needs_you=no`, marker `[ ]`, suffix `· handed back: <summary clip>`; the item goes back into the dispatch queue (section 2.2) in plan order. When it is dispatched, append the message body to the filled brief as a `## Hand-back note` section so the agent starts from it. If `test -d <worktree>` fails, the worktree is gone: take the branch from `~/.local/state/run-day/handoff/<KEY>.md` or from the MR (`glab api "projects/$ENC/merge_requests/$IID" | jq -r .source_branch`) and run `wt add <repo> <KEY> <branch>`; if no branch can be found, mark `[!]` with `· blocked: worktree is gone and the branch was not found`, `needs_you=yes`, and tell the user. Tell the user the item was re-queued. A `handback` for a key that is not on the plan, or with an empty key, has no item to queue: tell the user and only apply its memory block.
    - `offplan`, or `done` / `progress` for a key that is not on the plan, or an empty key: write one line under the `**Unplanned**` group, the last group of the block. Unplanned lines always go immediately above `<!-- start-day:end -->`; when the group does not exist yet, create it in the same Edit (old_string `<!-- start-day:end -->`):
 
