@@ -88,9 +88,71 @@ feed_jira() {
   done
 }
 
-# --- gitlab feeds ---
+gitlab_json() { glab api --paginate "$1" | jq -s 'add // []'; }
+
+feed_gitlab_todos() {
+  local todos
+  todos=$(gitlab_json 'todos?state=pending&per_page=100') || return 1
+  jq -c --arg since "$SINCE" --arg jp "$JIRA_PROJECT" "$JQ_DEFS"'
+    def kind: {assigned: "assigned", review_requested: "assigned", approval_required: "assigned",
+               mentioned: "mention", directly_addressed: "mention", build_failed: "pipeline_failed",
+               review_submitted: "review"}[.] // "mention";
+    .[] | (.created_at | utc) as $at | select($at >= $since)
+    | (.project.path_with_namespace // "") as $path
+    | (if .target_type == "MergeRequest" then .target.iid else null end) as $iid
+    | ([((.target.source_branch // "") + " " + (.target.title // "")) | capture("(?<k>(?i:" + $jp + ")-[0-9]+)").k | ascii_upcase][0]) as $ticket
+    | {kind: (.action_name | kind),
+       project: (if ($path | split("/")[0]) == "ecfx" then "ecfx" else null end),
+       ticket: $ticket, mr: $iid, repo: (if $path == "" then null else ($path | split("/") | last) end),
+       summary: "@\(.author.username // "?") \(.action_name | gsub("_"; " ")): \(.target.title // .body)",
+       url: (.target_url // .target.web_url), at: $at}' <<<"$todos" >> "$EVENTS"
+}
+
+feed_gitlab_mrs() {
+  local me mrs pid iid detail notes pipelines
+  me=$(glab api user | jq -er .username) || return 1
+  mrs=$(gitlab_json "merge_requests?scope=created_by_me&state=all&updated_after=$SINCE&per_page=100") || return 1
+  while IFS=$'\t' read -r pid iid; do
+    detail=$(glab api "projects/$pid/merge_requests/$iid") || return 1
+    notes=$(glab api "projects/$pid/merge_requests/$iid/notes?sort=desc&order_by=created_at&per_page=100") || return 1
+    pipelines='[]'
+    # The previous pipeline only matters when the head one just went green.
+    if jq -e --arg since "$SINCE" "$JQ_DEFS"'.state == "opened" and .head_pipeline.status == "success" and (.head_pipeline.updated_at | utc) >= $since' <<<"$detail" >/dev/null; then
+      pipelines=$(glab api "projects/$pid/merge_requests/$iid/pipelines") || return 1
+    fi
+    jq -c --arg since "$SINCE" --arg me "$me" --arg jp "$JIRA_PROJECT" --argjson notes "$notes" --argjson pipelines "$pipelines" "$JQ_DEFS"'
+      def latest: map(.created_at | utc) | max;
+      def names: map("@" + .author.username) | unique | join(", ");
+      (.references.full | sub("!.*$"; "")) as $path
+      | ([((.source_branch // "") + " " + (.title // "")) | capture("(?<k>(?i:" + $jp + ")-[0-9]+)").k | ascii_upcase][0]) as $ticket
+      | . as $d
+      | def ev($kind; $summary; $at): {kind: $kind, project: (if ($path | split("/")[0]) == "ecfx" then "ecfx" else null end),
+          ticket: $ticket, mr: $d.iid, repo: ($path | split("/") | last), summary: $summary, url: $d.web_url, at: $at};
+      ($notes | map(select(.author.username != $me and (.created_at | utc) >= $since))) as $new
+      | ($new | map(select(.system | not))) as $human
+      | ($human | map(select(.type == "DiffNote"))) as $inline
+      | ($human | map(select(.type != "DiffNote"))) as $plain
+      | ($new | map(select(.system and (.body | test("^approved this merge request"))))) as $approvals
+      | ($d.head_pipeline // null) as $hp
+      | ( if ($d.state == "merged" and (($d.merged_at // "") | length) > 0 and ($d.merged_at | utc) >= $since)
+            then ev("merged"; "merged: \($d.title)"; $d.merged_at | utc) else empty end ),
+        ( if ($inline | length) > 0
+            then ev("review"; "\($inline | names): \($inline | length) inline comment(s) on \($d.title)"; $inline | latest) else empty end ),
+        ( if ($plain | length) > 0
+            then ev("comment"; "\($plain | names): \($plain | length) comment(s) on \($d.title)"; $plain | latest) else empty end ),
+        ( if ($approvals | length) > 0
+            then ev("approved"; "\($approvals | names) approved \($d.title)"; $approvals | latest) else empty end ),
+        ( if $d.state == "opened" and $hp != null and $hp.status == "failed" and ($hp.updated_at | utc) >= $since
+            then ev("pipeline_failed"; "pipeline failed on \($d.title)"; $hp.updated_at | utc) else empty end ),
+        ( if $d.state == "opened" and $hp != null and $hp.status == "success" and ($hp.updated_at | utc) >= $since
+              and ($pipelines | length) > 1 and $pipelines[1].status == "failed"
+            then ev("pipeline_fixed"; "pipeline green again on \($d.title)"; $hp.updated_at | utc) else empty end )' <<<"$detail" >> "$EVENTS" || return 1
+  done < <(jq -r '.[] | [.project_id, .iid] | @tsv' <<<"$mrs")
+}
 
 feed_jira || die "Jira unavailable (is JIRA_EMAIL/JIRA_API_TOKEN set? are they still valid?)"
+feed_gitlab_todos || die "GitLab to-dos unavailable"
+feed_gitlab_mrs || die "GitLab MRs unavailable"
 
 out=$(jq -sc '
   (map(select(.kind == "assigned" and .mr == null) | .ticket)) as $assigned
