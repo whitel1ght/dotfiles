@@ -414,6 +414,11 @@ if [ -f "$DOTFILES_DIR/bin/changes-since" ]; then
     create_symlink "$DOTFILES_DIR/bin/changes-since" "$HOME/.local/bin/changes-since"
 fi
 
+# day-note leaves a message in the run-day inbox (hand-offs, report-backs, off-plan work).
+if [ -f "$DOTFILES_DIR/bin/day-note" ]; then
+    create_symlink "$DOTFILES_DIR/bin/day-note" "$HOME/.local/bin/day-note"
+fi
+
 # mr-watch finds new review notes on my MRs and posts the replies; driven by /watch-mrs.
 if [ -f "$DOTFILES_DIR/bin/mr-watch" ]; then
     create_symlink "$DOTFILES_DIR/bin/mr-watch" "$HOME/.local/bin/mr-watch"

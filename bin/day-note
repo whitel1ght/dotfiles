@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Leave a note in the run-day inbox for the main /run-day session.
+#
+#   day-note [--kind K] [--project P] [--repo R] [--mr URL] [--session S] [KEY] "summary"
+#
+#   KEY       Jira key, e.g. ECFX-18169; omit it for work without a ticket
+#   --kind    done | progress | handback | offplan. Default: offplan when there is
+#             no KEY or KEY is not on today's plan (inside the start-day block of
+#             $DIARY_DIR/<today>.md, matched case-insensitively), else done
+#   --project wiki project, used when the KEY does not say (default personal);
+#             a KEY starting with ECFX- is always ecfx
+#   --session free text naming this session (default terminal)
+#
+# Writes one file, YYYYMMDDTHHMMSS-<KEY|offplan>-<rand4>.md, to $INBOX_DIR
+# (default ~/.local/state/run-day/inbox): frontmatter (key, kind, session,
+# repo and mr when given, at), the summary as one paragraph, and a memory block
+# whose log is the summary. The file is written as *.tmp and renamed, so a reader
+# never sees half a message. Prints the path.
+set -euo pipefail
+
+INBOX_DIR="${INBOX_DIR:-$HOME/.local/state/run-day/inbox}"
+DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
+
+die() { echo "day-note: $*" >&2; exit 1; }
+need() { [ $# -ge 2 ] || die "$1 needs a value"; }
+one_line() { tr '\n\r\t' '   ' <<<"$1" | sed 's/  */ /g; s/^ //; s/ $//'; }
+scalar() { if [[ "$1" =~ ^[A-Za-z0-9._/:@#?=%+-]+$ ]]; then printf '%s' "$1"; else jq -Rn --arg v "$1" '$v'; fi; }
+
+kind="" project="" repo="" mr="" session=terminal pos=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --kind) need "$@"; kind="$2"; shift ;;
+    --project) need "$@"; project="$2"; shift ;;
+    --repo) need "$@"; repo="$2"; shift ;;
+    --mr) need "$@"; mr="$2"; shift ;;
+    --session) need "$@"; session="$2"; shift ;;
+    -h|--help) sed -n '2,4p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --) shift; pos+=("$@"); break ;;
+    -*) die "unknown option $1" ;;
+    *) pos+=("$1") ;;
+  esac
+  shift
+done
+
+key=""
+case ${#pos[@]} in
+  1) summary="${pos[0]}" ;;
+  2) key="$(tr '[:lower:]' '[:upper:]' <<<"${pos[0]}")"; summary="${pos[1]}"
+     [[ "$key" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]] || die "KEY must look like ECFX-18169, got ${pos[0]}" ;;
+  *) die "usage: day-note [--kind K] [--project P] [--repo R] [--mr URL] [--session S] [KEY] \"summary\"" ;;
+esac
+summary=$(one_line "$summary")
+[ -n "$summary" ] || die "the summary is empty"
+case "$kind" in ""|done|progress|handback|offplan) ;; *) die "--kind must be done, progress, handback or offplan, got $kind" ;; esac
+
+on_plan() {
+  local f="$DIARY_DIR/$(date +%F).md"
+  [ -n "$key" ] && [ -f "$f" ] || return 1
+  sed -n '/<!-- start-day:start -->/,/<!-- start-day:end -->/p' "$f" | grep -Eiq "(^|[^A-Za-z0-9-])$key([^A-Za-z0-9-]|$)"
+}
+if [ -z "$kind" ]; then
+  if on_plan; then kind=done; else kind=offplan; fi
+fi
+if [[ "$key" == ECFX-* ]]; then project=ecfx; else project="${project:-personal}"; fi
+case "$project" in ecfx|epicmax|personal) ;; *) die "--project must be ecfx, epicmax or personal, got $project" ;; esac
+
+stamp=$(date +%Y%m%dT%H%M%S)
+at=$(date +%Y-%m-%dT%H:%M:%S%z | sed 's/\(..\)$/:\1/')
+mkdir -p "$INBOX_DIR"
+while :; do
+  file="$stamp-${key:-offplan}-$(printf '%04x' "$RANDOM").md"
+  [ -e "$INBOX_DIR/$file" ] || break
+done
+
+{
+  echo "---"
+  echo "key: $key"
+  echo "kind: $kind"
+  echo "session: $(scalar "$(one_line "$session")")"
+  [ -z "$repo" ] || echo "repo: $(scalar "$(one_line "$repo")")"
+  [ -z "$mr" ] || echo "mr: $(scalar "$(one_line "$mr")")"
+  echo "at: $at"
+  echo "---"
+  echo "$summary"
+  echo
+  echo "memory:"
+  echo "  project: $(scalar "$(one_line "$project")")"
+  echo "  log: $(jq -Rn --arg v "$summary" '$v')"
+  echo "  decision: none"
+  echo "  state_change: none"
+} > "$INBOX_DIR/$file.tmp"
+mv "$INBOX_DIR/$file.tmp" "$INBOX_DIR/$file"
+echo "$INBOX_DIR/$file"
