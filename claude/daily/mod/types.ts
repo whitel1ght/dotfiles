@@ -35,8 +35,6 @@ export type Row = {
 
 export type PanelRow = { marker: Marker; text: string; badges: string[]; needsYou: boolean }
 export type PanelGroup = { group: string; rows: PanelRow[] }
-export type BandRow = { kind: 'group' | 'item'; marker: Marker; text: string; needsYou: boolean }
-export type Band = { header: string; rows: BandRow[]; offset: number; maxOffset: number }
 export type ViewState = DailyView
 export type InboxState = DailyInbox
 
