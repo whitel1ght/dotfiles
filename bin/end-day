@@ -172,6 +172,7 @@ else:
     text = text[:m.end()] + (body + "\n\n" if body.strip() else "\n") + block + "\n" + ("\n" + text[cut:] if nxt else "")
 open(path, "w").write(text)
 PY
+  "$HERE/diary-links" "$file" || echo "end-day: diary-links failed on $file" >&2
   echo "$file"
 }
 

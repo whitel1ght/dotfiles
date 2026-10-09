@@ -212,6 +212,16 @@ reset
 echo '{"message":"401 Unauthorized"}' > "$FIX/todos.json"
 assert_eq "(none)" "$(todos "$(run collect --since 2026-09-20T00:00:00Z)")" "an unexpected non-array body is treated as none, not a crash"
 
+echo "start-day save — trailing diary refs"
+reset
+printf '%s\n' '- [ ] ECFX-1 thing [dashboard!1](https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/1)' \
+  | (PATH="$STUBS:$PATH" DIARY_DIR="$DIARY" START_DAY_STATE="$STATE" "$SCRIPT" save >/dev/null)
+saved=$(sed -n '/start-day:start/,/start-day:end/p' "$DIARY/$(date +%F).md" | sed '1d;$d')
+assert_eq "- [ ] ECFX-1 thing dashboard!1  [↗][dashboard!1]
+
+[dashboard!1]: https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/1" "$saved" "save files the plan with trailing refs"
+rm -f "$DIARY/$(date +%F).md"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

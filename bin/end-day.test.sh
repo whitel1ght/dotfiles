@@ -62,6 +62,17 @@ assert_eq "- [ ] plan two" "$(plan 2026-01-05)" "a re-run replaces the plan"
 assert_eq "- second" "$(block 2026-01-05)" "leaves the report block alone"
 grep -qxF -- '- [X] my own line' "$SANDBOX/2026-01-05.md" && pass "keeps my own lines beside the plan" || fail "keeps my own lines beside the plan" "lost"
 
+echo "end-day save — trailing diary refs"
+D=https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests
+save 2026-01-09 "- [x] fix [dashboard!1]($D/1)"
+assert_eq "- [x] fix dashboard!1  [↗][dashboard!1]
+
+[dashboard!1]: $D/1" "$(block 2026-01-09)" "save moves inline links to trailing refs"
+printf '%s\n' "- [ ] plan [dashboard!2]($D/2)" | "$SCRIPT" save 2026-01-09 --plan >/dev/null
+assert_eq "- [ ] plan dashboard!2  [↗][dashboard!2]
+
+[dashboard!2]: $D/2" "$(sed -n '/start-day:start/,/start-day:end/p' "$SANDBOX/2026-01-09.md" | sed '1d;$d')" "--plan converts its block too"
+
 echo "end-day — input checks"
 printf '' | "$SCRIPT" save 2026-01-07 >/dev/null 2>&1 && fail "refuses an empty report" "exit 0" || pass "refuses an empty report"
 "$SCRIPT" collect 26-1-1 >/dev/null 2>&1 && fail "rejects a malformed date" "exit 0" || pass "rejects a malformed date"

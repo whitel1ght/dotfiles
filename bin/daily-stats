@@ -12,7 +12,9 @@
 #   items.planned   every plan line in the range (the same item on two days counts twice)
 #   items.open      todo + in progress
 #   repeat_deferred text deferred ([>]) on 2+ different days, same text each day
-#   done_mr_links   gitlab.com MR urls on done lines, grouped by repo name
+#   done_mr_links   gitlab.com MR urls on done lines, grouped by repo name; a url is
+#                   inline or a trailing "[↗][label]" resolved through the block's
+#                   "[label]: url" definitions
 #   merged_mrs      my MRs merged in the range, from GitLab
 #
 # A GitLab failure is an error (exit 1, nothing on stdout): the numbers are
@@ -44,6 +46,8 @@ START, END = "<!-- start-day:start -->", "<!-- start-day:end -->"
 LINE = re.compile(r"^\s*[-*]\s+\[([ xX/!>])\]\s+(.*\S)\s*$")
 MR = re.compile(r"https://gitlab\.com/([^\s)\]>]+?)/-/merge_requests/(\d+)")
 LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+REF = re.compile(r"\[↗\]\[([^\]]+)\]")
+DEF = re.compile(r"^\[([^\]]+)\]:\s*(\S+)\s*$")
 STATE = {" ": "open", "/": "open", "x": "done", "X": "done", "!": "blocked", ">": "deferred"}
 days = 0
 items = {"planned": 0, "done": 0, "blocked": 0, "deferred": 0, "open": 0}
@@ -59,7 +63,9 @@ for name in names:
     if s < 0 or e < s:
         continue
     days += 1
-    for raw in text[s + len(START):e].splitlines():
+    block = text[s + len(START):e].splitlines()
+    defs = {m.group(1): m.group(2) for m in map(DEF.match, block) if m}
+    for raw in block:
         m = LINE.match(raw)
         if not m:
             continue
@@ -68,12 +74,13 @@ for name in names:
         items["planned"] += 1
         items[state] += 1
         if state == "deferred":
-            shown = re.sub(r"\s+", " ", LINK.sub(r"\1", body))
+            shown = re.sub(r"\s+", " ", REF.sub("", LINK.sub(r"\1", body))).strip()
             key = re.sub(r"\s+", " ", re.sub(r"https?://\S+", "", shown)).lower()
             entry = deferred.setdefault(key, {"text": shown, "days": set()})
             entry["days"].add(day)
         if state == "done":
-            for path, iid in MR.findall(raw):
+            urls = " ".join([raw] + [defs.get(r, "") for r in REF.findall(raw)])
+            for path, iid in MR.findall(urls):
                 repo = path.split("/")[-1]
                 links.setdefault(repo, set()).add((int(iid), f"https://gitlab.com/{path}/-/merge_requests/{iid}"))
 repeat = sorted(({"text": v["text"], "times": len(v["days"])} for v in deferred.values() if len(v["days"]) >= 2),

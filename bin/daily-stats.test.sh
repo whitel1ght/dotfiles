@@ -101,6 +101,35 @@ assert_contains "$(cat "$FIX/glab.log")" "merged_after=2026-10-05T00%3A00%3A00%2
 assert_contains "$(cat "$FIX/glab.log")" "merged_after=2026-10-25T00%3A00%3A00%2B02%3A00" "DST day: the offset is read at midnight (+02:00), not at the current time of day"
 assert_contains "$(cat "$FIX/glab.log")" "merged_before=2026-10-26T00%3A00%3A00%2B01%3A00" "and the next midnight, after the switch, is +01:00"
 
+echo "daily-stats — trailing refs"
+D=https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests
+day 2026-10-12 <<EOF2
+- [x] ECFX-1 fix dashboard!2231 and admin!305  [↗][dashboard!2231] [↗][admin!305]
+- [x] again dashboard!2231  [↗][dashboard!2231]
+- [x] other repo dashboard!9  [↗][dashboard!9~2]
+- [ ] open dashboard!7  [↗][dashboard!7]
+- [x] old style [dashboard!2240]($D/2240)
+
+[dashboard!2231]: $D/2231
+[admin!305]: https://gitlab.com/ecfx/ecfx-admin/-/merge_requests/305
+[dashboard!9~2]: $D/9
+[dashboard!7]: $D/7
+EOF2
+day 2026-10-13 <<EOF2
+- [>] ecfx-5 later dashboard!7  [↗][dashboard!7]
+
+[dashboard!7]: $D/7
+EOF2
+day 2026-10-14 <<EOF2
+- [>] ecfx-5 later dashboard!7  [↗][dashboard!7]
+
+[dashboard!7]: $D/7
+EOF2
+out=$(out_only 2026-10-12 2026-10-14)
+assert_eq '{"ecfx-admin":["https://gitlab.com/ecfx/ecfx-admin/-/merge_requests/305"],"ecfx-dashboard":["'$D'/9","'$D'/2231","'$D'/2240"]}' "$(jqf '.done_mr_links' "$out")" "refs resolve through the block's defs, mix with inline links, dedupe, skip open lines"
+assert_eq '[{"text":"ecfx-5 later dashboard!7","times":2}]' "$(jqf '.repeat_deferred' "$out")" "trailing refs are not part of a deferred item's text"
+rm -f "$DIARY/2026-10-1"[234].md
+
 echo "daily-stats — help"
 assert_contains "$("$SCRIPT" --help)" "daily-stats <from YYYY-MM-DD> <to YYYY-MM-DD>" "--help prints the usage line"
 

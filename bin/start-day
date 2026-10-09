@@ -352,7 +352,8 @@ case "${1:-}" in
     printf '# Since %s (%s local)\n' "$SINCE" "$(date -r "$(epoch_of "$SINCE")" '+%a %H:%M' 2>/dev/null || echo ?)"
     collect_carryover; collect_my_mrs; collect_ready_to_merge; collect_review_queue; collect_gitlab_todos; collect_jira ;;
   save)
-    "$HERE/end-day" save "$(date +%F)" --plan
+    file=$("$HERE/end-day" save "$(date +%F)" --plan)
+    "$HERE/diary-links" "$file" || echo "start-day: diary-links failed on $file" >&2
     if [ -s "$STATE_DIR/pending" ]; then mv "$STATE_DIR/pending" "$STATE_DIR/last-run"; fi ;;
   -h|--help|"") sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
   *) echo "start-day: unknown command $1" >&2; exit 1 ;;
