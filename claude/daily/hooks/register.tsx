@@ -51,7 +51,7 @@ async function load($: EngineInterface) {
   return { day, active: true as const, items: parseItems(diary), runs: parseRunState(state) }
 }
 
-const flags = { lastNeeds: null as Set<string> | null, isWatching: false, hasWatchFailed: false, isListing: false }
+const flags = { lastNeeds: null as Set<string> | null, isWatching: false, hasWatchFailed: false, hasRefreshFailed: false, isListing: false }
 
 async function refresh($: EngineInterface) {
   const ctx = await load($)
@@ -71,6 +71,16 @@ async function refresh($: EngineInterface) {
   if (fresh.length > 0) {
     $.ui.toast(`needs you: ${fresh.join(', ')}`)
     await $.audio.play({ asset: 'sounds/needs-you.wav' }).catch(() => undefined)
+  }
+}
+
+async function safeRefresh($: EngineInterface) {
+  try {
+    await refresh($)
+    flags.hasRefreshFailed = false
+  } catch (err) {
+    if (!flags.hasRefreshFailed) $.ui.toast(`daily refresh: ${err instanceof Error ? err.message : String(err)}`)
+    flags.hasRefreshFailed = true
   }
 }
 
@@ -101,15 +111,22 @@ async function watch($: EngineInterface) {
       ticketKeys: new Set(ctx.items.map(i => ticketKey(i.text)).filter(k => k !== '')),
     }
     const prompts: string[] = []
+    const notes: string[] = []
     for (const ev of events) {
       $.ui.toast(formatToast(ev))
-      if (classify(ev, eventCtx) === 'prompt') {
-        prompts.push(formatPrompt(ev))
-      } else {
-        await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: formatNote(ev) }] } })
+      if (classify(ev, eventCtx) === 'prompt') prompts.push(formatPrompt(ev))
+      else notes.push(formatNote(ev))
+    }
+    if (prompts.length > 0) {
+      void $.prompt.submit({ text: prompts.join('\n') }).catch(() => $.ui.toast('daily watcher: prompt submit failed'))
+    }
+    for (const text of notes) {
+      try {
+        await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } })
+      } catch {
+        $.ui.toast(text)
       }
     }
-    if (prompts.length > 0) void $.prompt.submit({ text: prompts.join('\n') })
   } catch (err) {
     if (!flags.hasWatchFailed) $.ui.toast(`daily watcher: ${err instanceof Error ? err.message : String(err)}`)
     flags.hasWatchFailed = true
@@ -131,7 +148,7 @@ async function watchInbox($: EngineInterface) {
     await update($, inbox, () => state)
     if (fresh.length > 0) {
       $.ui.toast(`inbox: ${fresh.length} new`)
-      void $.prompt.submit({ text: inboxPrompt(fresh.length) })
+      void $.prompt.submit({ text: inboxPrompt(fresh.length) }).catch(() => $.ui.toast('daily inbox: prompt submit failed'))
     }
   } catch {
     return
@@ -144,7 +161,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'plan', description: 'Toggle the run-day plan panel' })
     $.clock.every(REFRESH_MS, () => {
-      void refresh($).catch(() => undefined)
+      void safeRefresh($)
     })
     $.clock.every(WATCH_MS, () => {
       void watch($)
@@ -164,7 +181,7 @@ export const register: Register = on => {
     await refresh($)
     await $.ui.open({ id: PANE, title: 'Plan' })
     return { text: 'Plan panel opened.' }
-  })
+  }).catch(() => ({ text: 'Plan panel failed to open.' }))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
@@ -201,6 +218,6 @@ export const register: Register = on => {
       if (after === null) return next(e)
       const verdict = checkTicks(current, after)
       return verdict.ok ? next(e) : { deny: denyMessage(verdict.lines) }
-    }).catch(($, e, next) => (next(e)))
+    }).catch(($, e, next) => next(e))
   }
 }
