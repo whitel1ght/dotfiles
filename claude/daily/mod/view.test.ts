@@ -70,3 +70,32 @@ test('an item handed to a side session carries an external badge and is not runn
   expect(panelGroups(rows).find(g => g.group === 'If time')?.rows[0].badges.join('|')).toBe('↗ with you')
   expect(rows.find(r => r.key === 'ecfx-18171')?.running).toBe(false)
 })
+
+test('an external-owned item is never running, even with a live joined agent', async () => {
+  const ext = [{ ...runs[0], owner: 'external:ECFX-18169' }]
+  const byId = joinRows(items, ext, [{ id: 'a1b2c3', description: '', status: 'running' }])
+  const byDesc = joinRows(items, [{ ...ext[0], agent: '' }], [{ id: 'zzz', description: 'ECFX-18169 fix', status: 'running' }])
+  for (const rows of [byId, byDesc]) {
+    expect(rows.find(r => r.key === 'ecfx-18169')?.running).toBe(false)
+    expect(statusLine(rows).includes('running')).toBe(false)
+  }
+})
+
+test('description fallback matches the ticket key on a boundary only', async () => {
+  const run = { ...runs[0], key: 'ecfx-1817', agent: '' }
+  const it = [{ ...items[0], text: 'ECFX-1817 thing' }]
+  const join = (d: string) => joinRows(it, [run], [{ id: 'x', description: d, status: 'running' }])[0].agent
+  expect(join('ECFX-18171 other')).toBe(null)
+  expect(join('preECFX-1817')).toBe(null)
+  expect(join('ECFX-1817 fix')?.id).toBe('x')
+  expect(join('fix (ECFX-1817)')?.id).toBe('x')
+})
+
+test('description fallback prefers a live agent among several with the same key', async () => {
+  const run = { ...runs[0], agent: '' }
+  const rows = joinRows(items, [run], [
+    { id: 'old', description: 'ECFX-18169 first', status: 'completed' },
+    { id: 'live', description: 'ECFX-18169 second', status: 'running' },
+  ])
+  expect(rows.find(r => r.key === 'ecfx-18169')?.agent?.id).toBe('live')
+})
