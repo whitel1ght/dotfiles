@@ -5,6 +5,6 @@ export type DailyInbox = { pending: number; seen: string[] }
 
 declare module 'claude-code' {
   interface PluginState {
-    daily: { view: DailyView; inbox: DailyInbox; isExpanded: boolean }
+    daily: { view: DailyView; inbox: DailyInbox; isExpanded: boolean; bandOffset: number | null }
   }
 }

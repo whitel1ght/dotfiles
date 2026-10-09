@@ -2,7 +2,7 @@ import { ticketKey, UNPLANNED } from './diary.ts'
 import type { AgentLite, Band, Item, PanelGroup, Row, RunItem } from './types.ts'
 
 const LIVE = new Set(['pending', 'running', 'waiting'])
-export const BAND_MAX_ROWS = 12
+export const BAND_WINDOW_ROWS = 16
 const ORDER = ['Merge', 'First', 'Today', 'If time', UNPLANNED]
 
 function byKey(agents: AgentLite[], key: string): AgentLite | null {
@@ -65,22 +65,37 @@ export function panelGroups(rows: Row[]): PanelGroup[] {
   }))
 }
 
-export function bandRows(groups: PanelGroup[], max = BAND_MAX_ROWS): Band {
-  const all = groups.flatMap(g => g.rows)
-  const done = all.filter(r => r.marker === 'x').length
-  const open = groups.flatMap(g =>
-    g.rows
-      .filter(r => r.marker !== 'x' && r.marker !== '>')
-      .map((r, i) => ({ group: i === 0 ? g.group : '', marker: r.marker, text: r.text, needsYou: r.needsYou })),
-  )
-  const room = max - 1
-  const fits = open.length <= room
-  const shown = fits ? open : open.slice(0, room - 1)
-  return {
-    header: `plan · ${done}/${all.length} done`,
-    rows: shown,
-    footer: fits ? null : `+${open.length - shown.length} more · /plan to hide`,
-  }
+const MD_LINK = /\[([^\]]*)\]\([^)\s]*\)/g
+
+export function shortenLinks(text: string): string {
+  return text.replace(MD_LINK, '$1')
+}
+
+const isOpen = (marker: string) => marker !== 'x' && marker !== '>'
+
+export function planRows(groups: PanelGroup[]): BandRow[] {
+  return groups.flatMap(g => [
+    { kind: 'group' as const, marker: ' ' as const, text: g.group, needsYou: false },
+    ...g.rows.map(r => ({ kind: 'item' as const, marker: r.marker, text: shortenLinks(r.text), needsYou: r.needsYou })),
+  ])
+}
+
+export function initialOffset(rows: BandRow[]): number {
+  const at = rows.findIndex(r => r.kind === 'item' && isOpen(r.marker))
+  if (at < 0) return 0
+  for (let i = at; i >= 0; i--) if (rows[i].kind === 'group') return i
+  return 0
+}
+
+export function bandRows(groups: PanelGroup[], offset: number | null = null, max = BAND_WINDOW_ROWS): Band {
+  const rows = planRows(groups)
+  const items = rows.filter(r => r.kind === 'item')
+  const done = items.filter(r => r.marker === 'x').length
+  const maxOffset = Math.max(0, rows.length - max)
+  const start = Math.min(maxOffset, Math.max(0, offset ?? initialOffset(rows)))
+  const shown = rows.slice(start, start + max)
+  const position = rows.length > max ? ` · ${start + 1}-${start + shown.length} of ${rows.length} ↕` : ''
+  return { header: `plan · ${done}/${items.length} done${position}`, rows: shown, offset: start, maxOffset }
 }
 
 export function newlyNeedsYou(before: Set<string>, rows: Row[]): string[] {

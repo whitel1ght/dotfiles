@@ -1,7 +1,7 @@
 import { test, expect } from 'claude-code/testing'
 import { parseItems } from './diary.ts'
 import { parseRunState } from './runstate.ts'
-import { bandRows, joinRows, newlyNeedsYou, panelGroups, statusLine } from './view.ts'
+import { BAND_WINDOW_ROWS, bandRows, initialOffset, joinRows, newlyNeedsYou, panelGroups, planRows, shortenLinks, statusLine } from './view.ts'
 import { DIARY, DIARY_UNPLANNED, RUN_STATE } from './fixtures.ts'
 
 const items = parseItems(DIARY)
@@ -105,29 +105,60 @@ const pg = (group: string, rows: Array<[string, string, boolean?]>) => ({
   rows: rows.map(([marker, text, needsYou]) => ({ marker: marker as never, text, needsYou: needsYou ?? false, badges: [] })),
 })
 
-test('bandRows with everything done or deferred is the header only', async () => {
-  const band = bandRows([pg('Merge', [['x', 'a'], ['>', 'b']]), pg('Today', [['x', 'c']])])
-  expect(band).toEqual({ header: 'plan · 2/3 done', rows: [], footer: null })
+const labels = (band: ReturnType<typeof bandRows>) => band.rows.map(r => (r.kind === 'group' ? `# ${r.text}` : `[${r.marker}] ${r.text}`))
+const many = (n: number, group = 'Today') => pg(group, Array.from({ length: n }, (_, i): [string, string] => [' ', `t${i}`]))
+
+test('shortenLinks keeps the label of a markdown link and leaves bare text alone', async () => {
+  expect(shortenLinks('x [dashboard!2237](https://gitlab.com/a/b/-/merge_requests/2237) y [b](u)')).toBe('x dashboard!2237 y b')
+  expect(shortenLinks('plain [x] text (not a link) https://a.b')).toBe('plain [x] text (not a link) https://a.b')
 })
 
-test('bandRows lists only open items and prefixes the group on the first of each group', async () => {
-  const band = bandRows([pg('Merge', [['x', 'a'], ['/', 'b'], ['!', 'c']]), pg('Today', [['>', 'd'], [' ', 'e']])])
-  expect(band.rows.map(r => `${r.group}|${r.marker}|${r.text}`)).toEqual(['Merge|/|b', '|!|c', 'Today| |e'])
-  expect(band.footer).toBeNull()
+test('bandRows lists the whole plan in order with a header row per group', async () => {
+  const band = bandRows([pg('Merge', [['x', 'a'], ['/', 'b']]), pg('Today', [['>', 'd'], [' ', 'e', true], ['!', 'f']])])
+  expect(band.header).toBe('plan · 1/5 done')
+  expect(labels(band)).toEqual(['# Merge', '[x] a', '[/] b', '# Today', '[>] d', '[ ] e', '[!] f'])
+  expect(band.rows.map(r => r.needsYou)).toEqual([false, false, false, false, false, true, false])
 })
 
-test('bandRows keeps the needsYou flag', async () => {
-  const band = bandRows([pg('Today', [[' ', 'a'], [' ', 'b', true]])])
-  expect(band.rows.map(r => r.needsYou)).toEqual([false, true])
+test('bandRows shortens links in item text', async () => {
+  const band = bandRows([pg('Merge', [[' ', 'MR [dashboard!1](https://x/1)']])])
+  expect(band.rows[1].text).toBe('MR dashboard!1')
 })
 
-test('bandRows fits 11 open items and caps 12 rows with a +K more footer above that', async () => {
-  const mk = (n: number) => [pg('Today', Array.from({ length: n }, (_, i): [string, string] => [' ', `t${i}`]))]
-  const eleven = bandRows(mk(11))
-  expect(eleven.rows.length).toBe(11)
-  expect(eleven.footer).toBeNull()
-  const fifteen = bandRows(mk(15))
-  expect(fifteen.rows.length).toBe(10)
-  expect(fifteen.footer).toBe('+5 more · /plan to hide')
-  expect(1 + fifteen.rows.length + 1).toBe(12)
+test('bandRows has no position text when the plan fits the window', async () => {
+  const band = bandRows([many(15)])
+  expect(band.rows.length).toBe(16)
+  expect(band.header).toBe('plan · 0/15 done')
+  expect(band.maxOffset).toBe(0)
+})
+
+test('bandRows windows a long plan and shows the position', async () => {
+  const band = bandRows([many(21)], 0)
+  expect(band.rows.length).toBe(BAND_WINDOW_ROWS)
+  expect(band.header).toBe('plan · 0/21 done · 1-16 of 22 ↕')
+  const next = bandRows([many(21)], 3)
+  expect(next.header).toBe('plan · 0/21 done · 4-19 of 22 ↕')
+  expect(labels(next)[0]).toBe('[ ] t2')
+})
+
+test('bandRows clamps the offset below 0 and beyond the end', async () => {
+  expect(bandRows([many(21)], -5).offset).toBe(0)
+  const end = bandRows([many(21)], 99)
+  expect(end.offset).toBe(6)
+  expect(end.maxOffset).toBe(6)
+  expect(end.header).toBe('plan · 0/21 done · 7-22 of 22 ↕')
+})
+
+test('initialOffset puts the first group with an open item at the top', async () => {
+  const rows = planRows([pg('Merge', [['x', 'a'], ['>', 'b']]), pg('First', [['x', 'c'], [' ', 'd']]), pg('Today', [[' ', 'e']])])
+  expect(initialOffset(rows)).toBe(3)
+  expect(initialOffset(planRows([pg('Merge', [[' ', 'a']])]))).toBe(0)
+  expect(initialOffset(planRows([pg('Merge', [['x', 'a']])]))).toBe(0)
+})
+
+test('bandRows starts at the first open group when no offset is given', async () => {
+  const done = pg('Merge', Array.from({ length: 10 }, (_, i): [string, string] => ['x', `m${i}`]))
+  const band = bandRows([done, many(16)])
+  expect(band.offset).toBe(11)
+  expect(labels(band)[0]).toBe('# Today')
 })

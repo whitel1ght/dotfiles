@@ -8,7 +8,7 @@ import { applyEdit, checkTicks, denyMessage, isTodaysDiary } from '../mod/guard.
 import type { EditInput } from '../mod/guard.ts'
 import { parseRunState } from '../mod/runstate.ts'
 import type { InboxState, ViewState } from '../mod/types.ts'
-import { bandRows, joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts'
+import { BAND_WINDOW_ROWS, bandRows, joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts'
 
 const REFRESH_MS = 5_000
 const WATCH_MS = 180_000
@@ -17,6 +17,7 @@ const INBOX_LS = 'ls -1 "$HOME/.local/state/run-day/inbox" 2>/dev/null; true'
 const EMPTY: ViewState = { active: false, status: '', groups: [] }
 const view = atom({ plugin: 'daily', key: 'view' } as const, EMPTY)
 const isExpanded = atom({ plugin: 'daily', key: 'isExpanded' } as const, false)
+const bandOffset = atom({ plugin: 'daily', key: 'bandOffset' } as const, null as number | null)
 const inbox = atom({ plugin: 'daily', key: 'inbox' } as const, EMPTY_INBOX as InboxState)
 
 type Day = { home: string; today: string; diaryPath: string; statePath: string }
@@ -182,6 +183,7 @@ export const register: Register = on => {
   on('command.run', { command: 'plan' }, async $ => {
     const next = !(await read($, isExpanded))
     await update($, isExpanded, () => next)
+    await update($, bandOffset, () => null)
     return { text: next ? 'Plan band expanded.' : 'Plan band collapsed.' }
   }).catch(() => ({ text: 'Plan band toggle failed.' }))
 
@@ -189,24 +191,40 @@ export const register: Register = on => {
     const v = await read($, view)
     if (e.props.hasSurvey || !v.active || !(await read($, isExpanded))) return next(e)
     const { Box, Text } = $.ui.resolve(e)
-    const band = bandRows(v.groups)
+    const band = bandRows(v.groups, await read($, bandOffset))
     return (
       <Box flexDirection="column">
         <Text bold wrap="truncate">
           {band.header}
         </Text>
-        {band.rows.map((r, i) => (
-          <Text key={i} color={r.needsYou ? 'yellow' : undefined} wrap="truncate">
-            {r.group !== '' ? <Text dimColor>{r.group} </Text> : null}[{r.marker}] {r.text}
-          </Text>
-        ))}
-        {band.footer !== null ? (
-          <Text dimColor wrap="truncate">
-            {band.footer}
-          </Text>
-        ) : null}
+        {band.rows.map((r, i) =>
+          r.kind === 'group' ? (
+            <Text key={i} bold wrap="truncate">
+              {r.text}
+            </Text>
+          ) : (
+            <Text
+              key={i}
+              color={r.needsYou ? 'yellow' : undefined}
+              dimColor={r.marker === 'x' || r.marker === '>'}
+              wrap="truncate"
+            >
+              [{r.marker}] {r.text}
+            </Text>
+          ),
+        )}
       </Box>
     )
+  })
+
+  on('ui.scroll', { component: 'AbovePrompt' }, async ($, e) => {
+    const v = await read($, view)
+    if (!v.active || !(await read($, isExpanded))) return {}
+    const band = bandRows(v.groups, await read($, bandOffset))
+    const to = Math.min(band.maxOffset, Math.max(0, band.offset + e.by))
+    await update($, bandOffset, () => to)
+    $.ui.invalidate('ui.render')
+    return {}
   })
 
   for (const tool of ['Edit', 'Write'] as const) {
