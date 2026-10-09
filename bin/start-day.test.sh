@@ -30,6 +30,7 @@ cat > "$STUBS/glab" <<'EOF'
 FIX="${FIX:?}"
 case "$*" in
     "api user") echo '{"username":"me"}' ;;
+    *todos*) cat "$FIX/todos.json" 2>/dev/null || echo '[]' ;;
     *merge_requests\?scope=created_by_me\&state=opened*) cat "$FIX/mrs.json" ;;
     *merge_requests/*/blocks)
         id=$(echo "$*" | sed -E 's#.*merge_requests/([0-9]+)/blocks.*#\1#')
@@ -188,6 +189,27 @@ assert_contains "$out" "## Ready to merge" "the section heading still prints"
 assert_contains "$(ready "$out")" "(GitLab unavailable)" "Ready to merge reports GitLab unavailable"
 assert_contains "$out" "## Review queue" "collect keeps running the rest of the digest"
 assert_contains "$out" "## Jira" "including the final section"
+
+todos() { awk '/^## GitLab to-dos/{f=1;next} /^## /{if(f)exit} f' <<<"$1" | sed '/./,$!d'; }
+
+echo "start-day — GitLab to-dos"
+reset
+cat > "$FIX/todos.json" <<'JSON'
+[{"id":2,"project":{"id":2,"path_with_namespace":"ecfx/ecfx-dashboard"},"author":{"username":"smtsuchi"},"action_name":"mentioned","target_type":"MergeRequest","target":{"iid":2227,"title":"Notice case number","web_url":"https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2227"},"target_url":"https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2227#note_2","body":"@dmitry thoughts?","created_at":"2026-10-08T07:40:00.000Z"},
+ {"id":1,"project":{"id":3,"path_with_namespace":"ecfx/ecfx-backend"},"author":{"username":"bkeeling"},"action_name":"review_requested","target_type":"MergeRequest","target":{"iid":6610,"title":"Delete Retrieve request","web_url":"https://gitlab.com/ecfx/ecfx-backend/-/merge_requests/6610"},"target_url":"https://gitlab.com/ecfx/ecfx-backend/-/merge_requests/6610","body":"Delete Retrieve request","created_at":"2026-10-08T06:00:00.000Z"},
+ {"id":3,"project":{"id":9,"path_with_namespace":"epicmax/site"},"author":{"username":"x"},"action_name":"assigned","target_type":"Issue","target":{"iid":3,"title":"Site copy","web_url":"https://gitlab.com/epicmax/site/-/issues/3"},"target_url":"https://gitlab.com/epicmax/site/-/issues/3","body":"Site copy","created_at":"2026-10-08T08:00:00.000Z"}]
+JSON
+out=$(todos "$(run collect --since 2026-09-20T00:00:00Z)")
+assert_eq "- [review requested] ecfx/ecfx-backend!6610 Delete Retrieve request — @bkeeling — https://gitlab.com/ecfx/ecfx-backend/-/merge_requests/6610
+- [mentioned] ecfx/ecfx-dashboard!2227 Notice case number — @smtsuchi — https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2227#note_2
+- [assigned] epicmax/site#3 Site copy — @x — https://gitlab.com/epicmax/site/-/issues/3" "$out" "one line per pending to-do, oldest first, MR as path!iid and issue as path#iid, with its url"
+echo '[]' > "$FIX/todos.json"
+assert_eq "(none)" "$(todos "$(run collect --since 2026-09-20T00:00:00Z)")" "no to-dos prints (none)"
+out=$(GLAB_DOWN=1 run collect --since 2026-09-20T00:00:00Z)
+assert_eq "(GitLab unavailable)" "$(todos "$out")" "GitLab down is noted, and the digest keeps going"
+assert_contains "$out" "## Jira" "including the final section"
+reset
+assert_eq "(none)" "$(todos "$(run collect --since 2026-09-20T00:00:00Z)")" "an unexpected non-array body is treated as none, not a crash"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

@@ -18,7 +18,9 @@
 #                 another of my own open MRs (stacked branch, GitLab /blocks, or
 #                 same ticket in an upstream repo), in merge order
 #   review queue  MRs waiting on me, from mr-review-queue's triage script
-#   jira          tickets newly assigned to me, my tickets others touched, and
+#   gitlab to-dos GitLab's pending to-dos (assigned, mentioned, review requested,
+#                 failed pipelines), one line each, oldest first
+#   jira         tickets newly assigned to me, my tickets others touched, and
 #                 my To-Do backlog
 # Slack and the calendar come through claude.ai connectors, which the command
 # reads itself; there's no script access to either.
@@ -309,6 +311,16 @@ collect_review_queue() {
     || echo "(triage failed)"
 }
 
+collect_gitlab_todos() {
+  section "GitLab to-dos (pending)"
+  local todos
+  todos=$(glab api --paginate 'todos?state=pending&per_page=100' | jq -s 'add // []') || { echo "(GitLab unavailable)"; return; }
+  jq -r 'if type == "array" and length > 0 then
+      sort_by(.created_at)[]
+      | "- [\(.action_name | gsub("_"; " "))] \(.project.path_with_namespace // "?")\(if .target_type == "MergeRequest" then "!" else "#" end)\(.target.iid // "?") \(.target.title // .body) — @\(.author.username // "?") — \(.target_url // .target.web_url // "")"
+    else "(none)" end' <<<"$todos"
+}
+
 collect_jira() {
   section "Jira"
   [ -n "${JIRA_EMAIL:-}" ] && [ -n "${JIRA_API_TOKEN:-}" ] || { echo "(JIRA_EMAIL/JIRA_API_TOKEN unset)"; return; }
@@ -338,7 +350,7 @@ case "${1:-}" in
     else SINCE=$(iso $((now - 86400 - 10#$(date +%H) * 3600 - 10#$(date +%M) * 60 - 10#$(date +%S) + 8 * 3600))); fi
     mkdir -p "$STATE_DIR"; iso "$now" > "$STATE_DIR/pending"
     printf '# Since %s (%s local)\n' "$SINCE" "$(date -r "$(epoch_of "$SINCE")" '+%a %H:%M' 2>/dev/null || echo ?)"
-    collect_carryover; collect_my_mrs; collect_ready_to_merge; collect_review_queue; collect_jira ;;
+    collect_carryover; collect_my_mrs; collect_ready_to_merge; collect_review_queue; collect_gitlab_todos; collect_jira ;;
   save)
     "$HERE/end-day" save "$(date +%F)" --plan
     if [ -s "$STATE_DIR/pending" ]; then mv "$STATE_DIR/pending" "$STATE_DIR/last-run"; fi ;;
