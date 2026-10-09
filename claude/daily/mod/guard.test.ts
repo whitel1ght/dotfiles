@@ -12,6 +12,17 @@ test('ticking with an MR link is allowed', async () => {
   expect(checkTicks(DIARY, after).ok).toBe(true)
 })
 
+test('ticking with a trailing [↗][repo!N] ref is allowed', async () => {
+  const ref = '- [x] ecfx-6659 sync with @smtsuchi · draft MR dashboard!2240  [↗][dashboard!2240]'
+  expect(checkTicks(DIARY, tick('- [ ] ecfx-6659 sync with @smtsuchi', ref)).ok).toBe(true)
+  const collided = '- [x] ecfx-6659 sync with @smtsuchi  [↗][dashboard!2240~2]'
+  expect(checkTicks(DIARY, tick('- [ ] ecfx-6659 sync with @smtsuchi', collided)).ok).toBe(true)
+})
+
+test('a [↗] ref that is not an MR does not count as evidence', async () => {
+  expect(checkTicks(DIARY, tick('- [ ] ecfx-6659 sync with @smtsuchi', '- [x] ecfx-6659 sync with @smtsuchi  [↗][ECFX-6659]')).ok).toBe(false)
+})
+
 test('ticking with "merged" or "· note:" is allowed', async () => {
   expect(checkTicks(DIARY, tick('- [ ] ecfx-6659 sync with @smtsuchi', '- [x] ecfx-6659 sync with @smtsuchi · merged')).ok).toBe(true)
   expect(checkTicks(DIARY, tick('- [ ] ecfx-6659 sync with @smtsuchi', '- [x] ecfx-6659 sync with @smtsuchi · note: agreed to ship')).ok).toBe(true)

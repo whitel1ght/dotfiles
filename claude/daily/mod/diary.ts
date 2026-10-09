@@ -6,6 +6,7 @@ const ITEM = /^- \[([ xX/!>])\] (.*)$/
 const GROUP = /^\*\*(.+?)\*\*\s*$/
 const TICKET = /\b([a-z]{2,10}-\d{2,6})\b/i
 const MR_LINK = /\/([^/\s)]+)\/-\/merge_requests\/(\d+)/g
+const MR_REF = /\[↗\]\[([^\]~]+)(?:~\d+)?\]/g
 
 export const UNPLANNED = 'Unplanned'
 
@@ -61,6 +62,10 @@ export function mrKey(repo: string, mr: number | string): string {
 export function mrKeysOf(text: string): string[] {
   const out: string[] = []
   for (const m of text.matchAll(MR_LINK)) out.push(mrKey(m[1], m[2]))
+  for (const m of text.matchAll(MR_REF)) {
+    const k = mrKeyFromRef(m[1])
+    if (k !== '') out.push(k)
+  }
   return out
 }
 

@@ -2,7 +2,7 @@
 description: Hand a ticket that a /run-day agent is working over to a Claude session you drive yourself
 argument-hint: KEY
 disable-model-invocation: true
-allowed-tools: Bash(git -C:*), Bash(mkdir:*), Bash(date:*), Bash(ls:*), Read, Edit, Write, TaskStop
+allowed-tools: Bash(diary-links:*), Bash(git -C:*), Bash(mkdir:*), Bash(date:*), Bash(ls:*), Read, Edit, Write, TaskStop
 ---
 
 # Hand off a ticket
@@ -46,7 +46,7 @@ MR: <url or none>
 ```
 
 5. Run state: set `agent=-`, `needs_you=no`, `owner=external:<KEY>` on the line; leave `class`, `worktree`, `mr`, `retries`.
-6. Diary: set the item's line to `[/]` and put `· with you: <KEY>` first in its evidence, keeping any MR evidence after it (for example `- [/] ecfx-18169 fix the 3 majors · with you: ECFX-18169 · draft MR [dashboard!2231](url)`). Edit only that line.
+6. Diary: set the item's line to `[/]` and put `· with you: <KEY>` first in its evidence, keeping any MR evidence after it (for example `- [/] ecfx-18169 fix the 3 majors · with you: ECFX-18169 · draft MR dashboard!2231  [↗][dashboard!2231]`). Edit only that line, keep its trailing refs last, then run `diary-links ~/wiki/diary/$(date +%F).md`.
 7. Print, and tell the user to run `/report-back done` (or `handback`) in that session when they stop:
 
 ```

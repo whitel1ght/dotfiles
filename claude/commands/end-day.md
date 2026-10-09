@@ -2,7 +2,7 @@
 description: Standup report of the day's work across commits, MRs, Jira and all Claude sessions, filed in the diary, then folded into the project memory in ~/wiki
 argument-hint: [yesterday | YYYY-MM-DD]
 model: sonnet
-allowed-tools: Bash(~/.local/bin/end-day:*), Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Bash(fd:*), Bash(grep:*), Bash(glab api:*), Bash(jq:*), Bash(printf:*), Bash(cat:*), Bash(wc:*), Bash([:*), Bash(test:*), Bash(git -C * diff:*), Bash(wt add:*), Read, Edit, Write
+allowed-tools: Bash(~/.local/bin/end-day:*), Bash(~/.local/bin/diary-links:*), Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Bash(fd:*), Bash(grep:*), Bash(glab api:*), Bash(jq:*), Bash(printf:*), Bash(cat:*), Bash(wc:*), Bash([:*), Bash(test:*), Bash(git -C * diff:*), Bash(wt add:*), Read, Edit, Write
 disable-model-invocation: true
 ---
 
@@ -91,7 +91,7 @@ REPORT
 ```
 
 `save` replaces the block it wrote on an earlier run and never touches my own lines, so
-running it again the same day is safe. When the diary already has a `<!-- daily-report:start -->` block for the day, read it first and build on it: keep every Done line that carries an MR link or other evidence, and only add new material or move a line forward. Never regress a line, for example `Done` to `In progress`, because this run's digest is thinner than the earlier one. Note the path it printed, then continue with the next section.
+running it again the same day is safe. When the diary already has a `<!-- daily-report:start -->` block for the day, read it first and build on it: keep every Done line that carries an MR link or other evidence, and only add new material or move a line forward. Never regress a line, for example `Done` to `In progress`, because this run's digest is thinner than the earlier one. Links in the report may be written inline or as trailing `[↗][label]` refs; `save` converts them to refs. Note the path it printed, then continue with the next section.
 
 ## Unreported activity
 
@@ -106,7 +106,7 @@ printf '%s\n' "$PLAN" | rg -o 'merge_requests/[0-9]+' | sort -u
 
 Compare the digest's four sections with those two lists. A digest item is **unreported** when its ticket key is not among the plan's keys and, for an MR, its `merge_requests/<n>` is not among the plan's MR numbers. Items with neither a key nor an MR (a commit or a session without a ticket) are grouped per repo or session topic and shown for the user to judge; drop obvious noise (merge commits, the edits made by this very report). Only the plan block counts, never the diary's report block.
 
-If nothing is unreported, say so in one line. Otherwise show a short list, one line each: `<key or topic> - <one-line summary> - <evidence: MR link or commit>`. Ask which to add, then stop and wait for the user's answer (yes or no per item), and do not continue until answered. Do not go on to "Consolidate memory", and do not add anything, before the answer arrives. For each yes, add one line under the plan block's `**Unplanned**` group (create the group as the last group, just above `<!-- start-day:end -->`, when it is missing): `- [x] <key> <summary> · MR [<repo>!<iid>](<url>)`, or `· note: <summary>` when there is no MR, because the diary's tick guard refuses an `[x]` without an MR link, `merged` or `· note:`. Use `[/]` for work that is clearly unfinished. Never add a line the user did not approve and never edit a line outside the block.
+If nothing is unreported, say so in one line. Otherwise show a short list, one line each: `<key or topic> - <one-line summary> - <evidence: MR link or commit>`. Ask which to add, then stop and wait for the user's answer (yes or no per item), and do not continue until answered. Do not go on to "Consolidate memory", and do not add anything, before the answer arrives. For each yes, add one line under the plan block's `**Unplanned**` group (create the group as the last group, just above `<!-- start-day:end -->`, when it is missing): `- [x] <key> <summary> · MR <repo>!<iid>  [↗][<repo>!<iid>]` (the URL goes in a `[<repo>!<iid>]: <url>` line above the end marker; an inline `[<repo>!<iid>](<url>)` is fine too), or `· note: <summary>` when there is no MR, because the diary's tick guard refuses an `[x]` without an MR link, `merged` or `· note:`. Use `[/]` for work that is clearly unfinished. After the edits run `~/.local/bin/diary-links ~/wiki/diary/$DAY.md`. Never add a line the user did not approve and never edit a line outside the block.
 
 ## Consolidate memory
 

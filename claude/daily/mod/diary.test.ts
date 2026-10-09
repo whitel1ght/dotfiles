@@ -62,4 +62,5 @@ test('parseItems reads the Unplanned group like any other and leaves the planned
   expect(unplanned.map(i => i.marker).join('')).toBe('x/')
   expect(unplanned[0].evidence.startsWith('MR [dashboard!2250]')).toBe(true)
   expect(mrKeysOf(unplanned[0].line).join(',')).toBe('dashboard!2250')
+  expect(mrKeysOf('- [x] a dashboard!2231 and admin!305  [↗][dashboard!2231] [↗][admin!305] [↗][dashboard!9~2] [↗][ECFX-1]').join(',')).toBe('dashboard!2231,admin!305,dashboard!9')
 })

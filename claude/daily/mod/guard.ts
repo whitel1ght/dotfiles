@@ -1,7 +1,7 @@
 import { extractBlock, parseItems } from './diary.ts'
 import type { Marker } from './types.ts'
 
-const EVIDENCE = /merge_requests\/\d+|\bmerged\b|· note:/i
+const EVIDENCE = /merge_requests\/\d+|\[↗\]\[[^\]]*![0-9]+[^\]]*\]|\bmerged\b|· note:/i
 
 export type GuardResult = { ok: true } | { ok: false; lines: string[] }
 export type EditInput =
@@ -36,5 +36,5 @@ export function checkTicks(before: string, after: string): GuardResult {
 }
 
 export function denyMessage(lines: string[]): string {
-  return `daily: refusing to tick [x] without evidence (an MR link, "merged", or "· note: <why>"):\n${lines.join('\n')}`
+  return `daily: refusing to tick [x] without evidence (an MR link or [↗][repo!N] ref, "merged", or "· note: <why>"):\n${lines.join('\n')}`
 }

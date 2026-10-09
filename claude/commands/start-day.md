@@ -132,6 +132,8 @@ Print the plan in the chat, then save it:
 PLAN
 ```
 
+Link an MR as plain text with a trailing `[↗][label]` ref, or inline `[dashboard!940](url)`; `save` converts inline links to trailing refs with the URLs listed below the plan.
+
 This puts it at the top of today's `### ECFX` section, creating today's diary entry from
 my template if needed. Running it again the same day replaces the plan and nothing else.
 It also records this run's time, so tomorrow's window starts here. End with the
