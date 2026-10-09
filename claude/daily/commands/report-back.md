@@ -14,11 +14,12 @@ Arguments: $ARGUMENTS
 git branch --show-current
 git rev-parse --show-toplevel
 glab mr view -F json | jq -r '.web_url // empty'
+glab mr view -F json | jq -r '.state // empty'
 ```
 
-   KEY: pipe the branch through `rg -io '[a-z]+-[0-9]+' | head -1 | tr a-z A-Z` (`printf '%s' "<branch>" | rg ...`); empty when the branch has no ticket key. REPO: when the toplevel path matches `.../worktrees/<repo>/<name>`, `<repo>` is `basename "$(dirname <toplevel>)"`, otherwise `basename <toplevel>`. MR: the `web_url` printed, empty when `glab` fails or there is no MR.
+   KEY: pipe the branch through `rg -io '[a-z]+-[0-9]+' | head -1 | tr a-z A-Z` (`printf '%s' "<branch>" | rg ...`); empty when the branch has no ticket key. REPO: when the toplevel path matches `.../worktrees/<repo>/<name>`, `<repo>` is `basename "$(dirname <toplevel>)"`, otherwise `basename <toplevel>`. MR: the `web_url` printed, empty when `glab` fails or there is no MR. MR_STATE: the `state` printed (`merged`, `opened`, ...), empty likewise.
    No key: ask whether this is off-plan work (then the kind is `offplan` and the KEY argument is left out) or which key it is. Not a git repository: same question, and leave `--repo` and `--mr` out.
-2. Kind and summary. If the first word of the arguments is `done`, `progress` or `handback`, it is the kind and the rest is the summary. No kind means `progress`, and all the arguments are the summary; `done` is used only when the user asks for it explicitly. Never infer the kind from the conversation or the MR state. With no summary, ask the user for one line and wait. An explicit kind with no key still goes to `day-note` with that kind: without a key a `handback` cannot put an item back in the queue, so the day session only logs it.
+2. Kind and summary. If the first word of the arguments is `done`, `progress` or `handback`, it is the kind and the rest is the summary. No kind: all the arguments are the summary, and the kind is `done` when MR_STATE is `merged`; otherwise (open MR, no MR, `glab` failed) ask the user ONE question, `done | progress | handback`, and wait for the answer. Never infer the kind from the conversation. With no summary, ask the user for one line and wait. An explicit kind with no key still goes to `day-note` with that kind: without a key a `handback` cannot put an item back in the queue, so the day session only logs it.
 3. Write the message. The kind is always passed explicitly. PROJECT: from the repo name: starting `ecfx-` means `ecfx`; a repo that belongs to epicmax means `epicmax`; anything else, ask the user (`personal` is the other choice). A KEY starting `ECFX-` already implies `ecfx`, so the question is only for repos that are not clearly one of these. Leave `--mr` out when the MR is empty, `--repo` out when the repo is empty. Pass the summary through a quoted heredoc so backticks, `$` and quotes in it are never interpreted by the shell:
 
 ```bash
