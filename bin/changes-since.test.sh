@@ -37,6 +37,7 @@ cat > "$STUBS/glab" <<'STUB'
 #!/bin/bash
 echo "$*" >> "${FIX:?}/glab.log"
 [ -n "${GLAB_FAIL:-}" ] && case "$*" in *"$GLAB_FAIL"*) exit 1 ;; esac
+[ -n "${GLAB_FAIL_EXACT:-}" ] && [ "$*" = "$GLAB_FAIL_EXACT" ] && exit 1
 case "$*" in
     "api user") echo '{"username":"me"}' ;;
     *todos*) cat "$FIX/todos.json" ;;
@@ -208,7 +209,15 @@ out=$(run)
 assert_eq "pipeline_fixed" "$(jq -r .kind <<<"$out")" "green head pipeline right after a red one is pipeline_fixed"
 assert_eq "1" "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" "and only that"
 echo '[{"id":52,"status":"success","updated_at":"2026-10-08T09:00:00.000Z"},{"id":50,"status":"success","updated_at":"2026-10-08T06:00:00.000Z"}]' > "$FIX/pipelines-2-2231.json"
+cursor 2026-10-08T07:00:00Z
 assert_eq "" "$(run)" "green after green is nothing"
+echo '[{"id":53,"status":"success","updated_at":"2026-10-08T09:30:00.000Z"},{"id":52,"status":"success","updated_at":"2026-10-08T09:00:00.000Z"},{"id":51,"status":"failed","updated_at":"2026-10-08T08:05:00.000Z"}]' > "$FIX/pipelines-2-2231.json"
+cursor 2026-10-08T07:00:00Z
+out=$(run)
+assert_eq "pipeline_fixed" "$(jq -r .kind <<<"$out")" "the previous pipeline is the first older one (51), even with a newer pipeline 53 at the top of the list"
+echo '[{"id":53,"status":"success","updated_at":"2026-10-08T09:30:00.000Z"},{"id":52,"status":"success","updated_at":"2026-10-08T09:00:00.000Z"},{"id":50,"status":"success","updated_at":"2026-10-08T06:00:00.000Z"}]' > "$FIX/pipelines-2-2231.json"
+cursor 2026-10-08T07:00:00Z
+assert_eq "" "$(run)" "only an older success before the head: nothing"
 
 echo "changes-since — merging the feeds"
 reset; cursor 2026-10-08T07:00:00Z
@@ -229,11 +238,57 @@ assert_eq "1" "$rc" "to-dos endpoint fails: exit 1"
 assert_eq "" "$out" "nothing printed, not even the Jira event that did work"
 assert_contains "$(errs)" "GitLab to-dos unavailable" "stderr names the source"
 assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor unchanged"
-out=$(GLAB_FAIL='merge_requests/2/' run); rc=$?
-assert_eq "1" "$rc" "a per-MR call fails: exit 1"
+base_mr() { # a valid fixture for every per-MR call; each failure case injects one failure into it
+  reset; cursor 2026-10-08T07:00:00Z
+  echo '[{"id":10,"iid":2231,"project_id":2,"references":{"full":"ecfx/ecfx-dashboard!2231"}}]' > "$FIX/mrs.json"
+  echo '{"iid":2231,"title":"ECFX-18169 majors","state":"opened","merged_at":null,"source_branch":"b","web_url":"u","references":{"full":"ecfx/ecfx-dashboard!2231"},"head_pipeline":{"id":52,"status":"success","updated_at":"2026-10-08T09:00:00.000Z"}}' > "$FIX/detail-2-2231.json"
+  echo '[]' > "$FIX/notes-2-2231.json"
+  echo '[{"id":52,"status":"success","updated_at":"2026-10-08T09:00:00.000Z"},{"id":51,"status":"failed","updated_at":"2026-10-08T08:05:00.000Z"}]' > "$FIX/pipelines-2-2231.json"
+}
+base_mr
+out=$(run); rc=$?
+assert_eq "0" "$rc" "the base per-MR fixtures succeed without any injected failure (so the failure cases below fail only because of the injection)"
+assert_eq "pipeline_fixed" "$(jq -r .kind <<<"$out")" "and give their event"
+
+base_mr
+out=$(GLAB_FAIL_EXACT='api projects/2/merge_requests/2231' run); rc=$?
+assert_eq "1" "$rc" "MR detail call fails: exit 1"
+assert_eq "" "$out" "nothing printed"
+assert_contains "$(errs)" "GitLab MRs unavailable" "stderr names the source"
+assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor unchanged"
+
+base_mr
+out=$(GLAB_FAIL='/notes' run); rc=$?
+assert_eq "1" "$rc" "MR notes call fails: exit 1"
 assert_eq "" "$out" "nothing printed"
 assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor unchanged"
-out=$(GLAB_FAIL='merge_requests/2/' run --peek); assert_eq "1" "$?" "--peek fails the same way"
+
+base_mr
+out=$(GLAB_FAIL='/pipelines' run); rc=$?
+assert_eq "1" "$rc" "MR pipelines call fails: exit 1"
+assert_eq "" "$out" "nothing printed"
+assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor unchanged"
+
+base_mr
+out=$(GLAB_FAIL_EXACT='api projects/2/merge_requests/2231' run --peek); rc=$?
+assert_eq "1" "$rc" "--peek fails the same way"
+assert_eq "" "$out" "--peek: nothing printed"
+assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "--peek: cursor unchanged"
+
+reset; cursor 2026-10-08T07:00:00Z
+echo '{"message":"401 Unauthorized"}' > "$FIX/mrs.json"
+out=$(run); rc=$?
+assert_eq "1" "$rc" "an error object where the MR list should be: exit 1"
+assert_eq "" "$out" "nothing printed"
+assert_contains "$(errs)" "GitLab MRs unavailable" "stderr names the source"
+assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor unchanged"
+
+echo "changes-since — a build_failed to-do after the cursor"
+reset; cursor 2026-10-08T07:00:00Z
+echo '[{"id":4,"project":{"id":3,"path_with_namespace":"ecfx/ecfx-backend"},"author":{"username":"me"},"action_name":"build_failed","target_type":"MergeRequest","target":{"iid":6576,"title":"names","source_branch":"dmitry/ECFX-9190_be","web_url":"u"},"target_url":"u/pipelines/9","body":"names","created_at":"2026-10-08T09:00:00.000Z"}]' > "$FIX/todos.json"
+out=$(run)
+assert_eq "pipeline_failed" "$(jq -r .kind <<<"$out")" "build_failed to-do is a pipeline_failed event"
+assert_eq "ECFX-9190" "$(jq -r .ticket <<<"$out")" "with the ticket from the branch"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

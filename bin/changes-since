@@ -112,6 +112,7 @@ feed_gitlab_mrs() {
   local me mrs pid iid detail notes pipelines
   me=$(glab api user | jq -er .username) || return 1
   mrs=$(gitlab_json "merge_requests?scope=created_by_me&state=all&updated_after=$SINCE&per_page=100") || return 1
+  jq -e 'type == "array"' <<<"$mrs" >/dev/null || return 1
   while IFS=$'\t' read -r pid iid; do
     detail=$(glab api "projects/$pid/merge_requests/$iid") || return 1
     notes=$(glab api "projects/$pid/merge_requests/$iid/notes?sort=desc&order_by=created_at&per_page=100") || return 1
@@ -145,7 +146,7 @@ feed_gitlab_mrs() {
         ( if $d.state == "opened" and $hp != null and $hp.status == "failed" and ($hp.updated_at | utc) >= $since
             then ev("pipeline_failed"; "pipeline failed on \($d.title)"; $hp.updated_at | utc) else empty end ),
         ( if $d.state == "opened" and $hp != null and $hp.status == "success" and ($hp.updated_at | utc) >= $since
-              and ($pipelines | length) > 1 and $pipelines[1].status == "failed"
+              and ([$pipelines[] | select(.id < $hp.id)][0].status == "failed")
             then ev("pipeline_fixed"; "pipeline green again on \($d.title)"; $hp.updated_at | utc) else empty end )' <<<"$detail" >> "$EVENTS" || return 1
   done < <(jq -r '.[] | [.project_id, .iid] | @tsv' <<<"$mrs")
 }
