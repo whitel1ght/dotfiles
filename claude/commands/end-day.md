@@ -35,9 +35,15 @@ sessions. They care about outcomes, not mechanics. So "Export keeps the column o
 users set (backend and dashboard MRs up for review)" rather than "address review round 3
 (O3, N9, N10)".
 
-Use this shape, and leave out any section that would be empty:
+Use this shape, and leave out any section that would be empty. The report opens with a
+standup summary (always present), then the sections:
 
 ```markdown
+**Standup**
+Merged ECFX-1001 (backend!6613, tickets In QA). ECFX-1003 is in review on both repos.
+Bulk archive (ECFX-1007) waits on product to decide whether it notifies clients. Tomorrow:
+start on the ECFX-1004 calendar fix.
+
 **Done**
 - ECFX-1001 CSV export keeps column order — merged, ticket In QA
 - Reviewed @alice's ECFX-1002 audit-log MR — approved
@@ -55,6 +61,16 @@ Use this shape, and leave out any section that would be empty:
 
 These tickets are made up to show the shape. Every line you write must come from the
 digest.
+
+The **Standup** paragraph is what I paste into the standup thread:
+
+- One paragraph, at most 5 sentences, plain text after the `**Standup**` line.
+- Highlight what matters, not a rewrite of the list: what shipped or merged (ticket keys
+  and MR ids as plain text, like `backend!6613`), what is in flight and its state,
+  blockers or anything waiting on others, key decisions, and the first focus for
+  tomorrow. Skip routine items.
+- No markdown links in the paragraph (`diary-links` would add trailing refs to it), no
+  bullets, no headings, no emoji.
 
 How to get there:
 
@@ -81,7 +97,7 @@ How to get there:
 
 ## File it
 
-Print the report in the chat, then save the same text into the diary. Use a quoted
+Print the report in the chat, then save the same text into the diary, Standup first. Use a quoted
 heredoc so nothing in the report gets expanded:
 
 ```bash
@@ -91,7 +107,7 @@ REPORT
 ```
 
 `save` replaces the block it wrote on an earlier run and never touches my own lines, so
-running it again the same day is safe. When the diary already has a `<!-- daily-report:start -->` block for the day, read it first and build on it: keep every Done line that carries an MR link or other evidence, and only add new material or move a line forward. Never regress a line, for example `Done` to `In progress`, because this run's digest is thinner than the earlier one. Links in the report may be written inline or as trailing `[↗][label]` refs; `save` converts them to refs. Note the path it printed, then continue with the next section.
+running it again the same day is safe. When the diary already has a `<!-- daily-report:start -->` block for the day, read it first and build on it: keep every Done line that carries an MR link or other evidence, and only add new material or move a line forward. Never regress a line, for example `Done` to `In progress`, because this run's digest is thinner than the earlier one. When the diary's block already has a `**Standup**` paragraph, rewrite it for the whole day rather than appending. Links in the report may be written inline or as trailing `[↗][label]` refs; `save` converts them to refs. Note the path it printed, then continue with the next section.
 
 ## Unreported activity
 
@@ -151,4 +167,4 @@ d=$(date +%-d); w=$(date +%u)
 if { [ "$d" -eq 1 ] && [ "$w" -le 5 ]; } || { [ "$w" -eq 1 ] && [ "$d" -le 3 ]; }; then echo "offer: /review month"; fi
 ```
 
-Friday offers `/review week`; the first workday of a month offers `/review month`. Print nothing if neither line appears. End with the diary path, the projects consolidated, and the commit.
+Friday offers `/review week`; the first workday of a month offers `/review month`. Print nothing if neither line appears. End with the diary path, the projects consolidated, and the commit, then print the Standup paragraph once more (the `**Standup**` line and the paragraph, nothing else) as the very last thing, so I can copy it.

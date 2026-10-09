@@ -73,6 +73,21 @@ assert_eq "- [ ] plan dashboard!2  [↗][dashboard!2]
 
 [dashboard!2]: $D/2" "$(sed -n '/start-day:start/,/start-day:end/p' "$SANDBOX/2026-01-09.md" | sed '1d;$d')" "--plan converts its block too"
 
+echo "end-day save — standup paragraph"
+STANDUP='**Standup**
+Merged backend!6613 for ECFX-1001. ECFX-1003 is in review. Waiting on product for ECFX-1007. Tomorrow: ECFX-1004 first.'
+REPORT="$STANDUP
+
+**Done**
+- ECFX-1001 CSV export keeps column order"
+save 2026-01-10 "$REPORT"
+assert_eq "$REPORT" "$(block 2026-01-10)" "a report with the Standup paragraph round-trips"
+save 2026-01-10 "$REPORT"
+assert_eq "$REPORT" "$(block 2026-01-10)" "and a re-run leaves it unchanged (diary-links adds no refs)"
+assert_eq "**Standup**" "$(block 2026-01-10 | head -1)" "Standup stays first in the block"
+WIKI_DIR="$SANDBOX/nowhere" "$SCRIPT" touched 2026-01-10 >/dev/null; assert_eq "0" "$?" "touched is unaffected by a diary with a Standup"
+assert_eq "" "$(WIKI_DIR="$SANDBOX/nowhere" "$SCRIPT" entries 2026-01-10 ecfx)" "entries is unaffected by a diary with a Standup"
+
 echo "end-day — input checks"
 printf '' | "$SCRIPT" save 2026-01-07 >/dev/null 2>&1 && fail "refuses an empty report" "exit 0" || pass "refuses an empty report"
 "$SCRIPT" collect 26-1-1 >/dev/null 2>&1 && fail "rejects a malformed date" "exit 0" || pass "rejects a malformed date"

@@ -222,6 +222,27 @@ EOF2
 cp "$f" "$SANDBOX/before"; "$SCRIPT" "$f"
 assert_eq "$(cat "$SANDBOX/before")" "$(cat "$f")" "unreferenced defs are kept"
 
+echo "link-free standup paragraph"
+f=$(plan <<EOF2 | fixture standup
+**Standup**
+Merged backend!6613 for ECFX-1001. ECFX-1003 is in review; tomorrow ECFX-1004 first.
+
+**Done**
+- ECFX-1001 export [dashboard!1]($D/1)
+EOF2
+)
+"$SCRIPT" "$f"
+assert_eq "$(plan <<EOF2
+**Standup**
+Merged backend!6613 for ECFX-1001. ECFX-1003 is in review; tomorrow ECFX-1004 first.
+
+**Done**
+- ECFX-1001 export dashboard!1  [↗][dashboard!1]
+
+[dashboard!1]: $D/1
+EOF2
+)" "$(cat "$f")" "a paragraph without links is left untouched"
+
 echo "file handling"
 out=$("$SCRIPT" "$SANDBOX/missing.md" 2>&1); rc=$?
 assert_eq 1 "$rc" "missing file exits 1"
