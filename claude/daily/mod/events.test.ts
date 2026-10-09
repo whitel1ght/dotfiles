@@ -66,3 +66,11 @@ test('formatNote uses the info tag; formatToast is short and readable', async ()
   expect(formatToast({ kind: 'pipeline_failed' })).toBe('pipeline failed')
   expect(formatToast({ ...review, summary: 'y'.repeat(500) }).length <= 140).toBe(true)
 })
+
+test('a malformed event does not throw in classify or the formatters', async () => {
+  const bad = { kind: 'review', ticket: 42, mr: 2231, repo: 'ecfx/ecfx-dashboard', summary: { x: 1 }, url: 7 } as never
+  expect(classify(bad, ctx)).toBe('prompt')
+  expect(formatPrompt(bad)).toContain('[daily-event] review | dashboard!2231 | 42 |')
+  expect(formatToast(bad)).toContain('review')
+  expect(formatNote({ kind: 'assigned', ticket: 5, summary: 9 } as never)).toContain('[daily-event:info] assigned')
+})

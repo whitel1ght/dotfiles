@@ -2,7 +2,7 @@
 description: Standup report of the day's work across commits, MRs, Jira and all Claude sessions, filed in the diary, then folded into the project memory in ~/wiki
 argument-hint: [yesterday | YYYY-MM-DD]
 model: sonnet
-allowed-tools: Bash(~/.local/bin/end-day:*), Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Read, Edit, Write
+allowed-tools: Bash(~/.local/bin/end-day:*), Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Bash(fd:*), Bash(grep:*), Bash(glab api:*), Bash(jq:*), Bash(printf:*), Bash(cat:*), Bash(wc:*), Bash([:*), Bash(test:*), Bash(git -C * diff:*), Bash(wt add:*), Read, Edit, Write
 disable-model-invocation: true
 ---
 
@@ -22,11 +22,11 @@ in one line at the end of the report rather than guessing its contents.
 Define the day first:
 
 ```bash
-DAY="$(case "$ARGUMENTS" in yesterday) date -v-1d +%F ;; 20??-??-??) echo "$ARGUMENTS" ;; *) date +%F ;; esac)"
-ls ~/.local/state/run-day/inbox/*.md 2>/dev/null
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+fd -d 1 -e md . ~/.local/state/run-day/inbox 2>/dev/null | sort
 ```
 
-Then process any messages waiting in `~/.local/state/run-day/inbox/*.md` the way the `/run-day` command's Inbox section says (the `daily` plugin's `commands/run-day.md`, section 7), before the report is written, so that what was reported counts as reported. This happens whether or not the day has a plan: a missing `<!-- start-day:start -->` block only skips the comparison under "Unreported activity", never this step.
+Then process any messages waiting in `~/.local/state/run-day/inbox/*.md` the way the `/run-day` command's Inbox section says (section 7 of the `daily` plugin's `commands/run-day.md`). This is a user-level command, so `CLAUDE_PLUGIN_ROOT` is not set: find that file with `fd -g run-day.md ~/.claude/plugins/cache` (the glob `~/.claude/plugins/cache/*/daily/*/commands/run-day.md`) and read it first; when the plugin is not installed, read `~/projects/dotfiles/claude/daily/commands/run-day.md` in the main checkout instead, before the report is written, so that what was reported counts as reported. This happens whether or not the day has a plan: a missing `<!-- start-day:start -->` block only skips the comparison under "Unreported activity", never this step.
 
 ## Write the report
 
@@ -98,6 +98,7 @@ running it again the same day is safe. When the diary already has a `<!-- daily-
 The safety net for work nobody wrote into the plan. Skip the comparison, in one line, when `~/wiki/diary/$DAY.md` has no `<!-- start-day:start -->` block (nothing to compare with). The inbox was already processed above. Otherwise take the ticket keys and MR numbers the plan already mentions, the plan being the start-day block only (its `**Unplanned**` group included):
 
 ```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
 PLAN="$(awk '/<!-- start-day:start -->/{f=1;next} /<!-- start-day:end -->/{f=0} f' ~/wiki/diary/$DAY.md)"
 printf '%s\n' "$PLAN" | rg -oi '\b[a-z]{2,10}-[0-9]{2,6}\b' | tr 'A-Z' 'a-z' | sort -u
 printf '%s\n' "$PLAN" | rg -o 'merge_requests/[0-9]+' | sort -u
@@ -109,12 +110,12 @@ If nothing is unreported, say so in one line. Otherwise show a short list, one l
 
 ## Consolidate memory
 
-Skip this whole step, and say so in one line, when `~/wiki/projects` does not exist or the day has no log entries below. It is the only place project `state.md` files change; during the day `/run-day` only appends logs and decisions.
+Skip this step, and say so in one line, when `~/wiki/projects` does not exist or the day has no log entries below (the commit and the end of the run below still happen). It is the only place project `state.md` files change; during the day `/run-day` only appends logs and decisions.
 
 `$DAY` was defined above (set it again in each command, since shell state may not carry over). Find which projects were touched. The scripts do this (`end-day touched` prints, one project name per line, the projects with a `## <day> <title>` log entry or a decision dated `<day>`; empty output means none):
 
 ```bash
-DAY="$(case "$ARGUMENTS" in yesterday) date -v-1d +%F ;; 20??-??-??) echo "$ARGUMENTS" ;; *) date +%F ;; esac)"
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
 ~/.local/bin/end-day touched "$DAY"
 ```
 
@@ -124,9 +125,12 @@ For each project `<p>` it prints:
 2. Rewrite `state.md` in full from the old state plus those: current focus, open threads (drop what finished, add what started), links to existing notes. Keep the file's frontmatter and headings, set its `date` to `$DAY`, and keep it at **60 lines or fewer** (`wc -l` it). It is a snapshot, not a history: history lives in the log.
 3. If the project's one-line focus changed, update its line in the `## Long-term memory (projects)` section of `~/wiki/index.md` (the existing vault index; edit only that section).
 
-Then index and commit:
+## Index, commit and end the run
+
+This always runs, even when the memory step was skipped: the report and the diary edits still get committed. Set `DAY` again here (new shell):
 
 ```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
 qmd update && qmd embed
 git -C ~/wiki add -A -- diary projects index.md
 [ -d ~/wiki/reviews ] && git -C ~/wiki add -A -- reviews

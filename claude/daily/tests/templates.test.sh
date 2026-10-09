@@ -10,6 +10,7 @@ FAIL=0
 
 pass() { PASS=$((PASS + 1)); echo "  ok   - $1"; }
 fail() { FAIL=$((FAIL + 1)); echo "  FAIL - $1"; echo "         $2"; }
+lacks() { grep -qF -- "$2" "$1" && fail "$3" "[$2] unexpectedly in $1" || pass "$3"; }
 has() { grep -qF -- "$2" "$1" && pass "$3" || fail "$3" "[$2] missing from $1"; }
 
 BRIEF_KEYS="KEY SUMMARY REPO WORKTREE BRANCH DESCRIPTION DONE_WHEN PROJECT"
@@ -36,6 +37,8 @@ f="$T/review-round-brief.md"
 for k in $ROUND_KEYS; do has "$f" "{{$k}}" "has {{$k}}"; done
 [ -z "$(unknown "$f" "$ROUND_KEYS")" ] && pass "no unknown placeholders" || fail "unknown placeholders" "$(unknown "$f" "$ROUND_KEYS")"
 has "$f" "shared:mr-review-response" "names the reply skill"
+lacks "$f" "Claude Opus 5.5" "no hard-coded model in the commit trailer"
+has "$f" "commit trailer" "trailer follows the repo or session convention"
 has "$f" "Stop before its step 5" "stops before the post step"
 has "$f" "discussion:" "reports the discussion id"
 has "$f" "reply_file:" "reports the reply file"

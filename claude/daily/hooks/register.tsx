@@ -113,9 +113,16 @@ async function watch($: EngineInterface) {
     const prompts: string[] = []
     const notes: string[] = []
     for (const ev of events) {
-      $.ui.toast(formatToast(ev))
-      if (classify(ev, eventCtx) === 'prompt') prompts.push(formatPrompt(ev))
-      else notes.push(formatNote(ev))
+      try {
+        const toast = formatToast(ev)
+        const isPrompt = classify(ev, eventCtx) === 'prompt'
+        const text = isPrompt ? formatPrompt(ev) : formatNote(ev)
+        $.ui.toast(toast)
+        if (isPrompt) prompts.push(text)
+        else notes.push(text)
+      } catch {
+        $.ui.toast('daily watcher: skipped a malformed event')
+      }
     }
     if (prompts.length > 0) {
       void $.prompt.submit({ text: prompts.join('\n') }).catch(() => $.ui.toast('daily watcher: prompt submit failed'))

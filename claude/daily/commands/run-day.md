@@ -22,6 +22,7 @@ Paths used below (`T` is today's date, `date +%F`):
 - This session edits only: diary lines inside the plan block, the run-state file, inbox files it moves to `inbox/done/<T>/` or `inbox/bad/`, `~/wiki/projects/<p>/log/<YYYY>-Q<N>.md` (append), `~/wiki/projects/<p>/decisions/NNNN-<slug>.md` (create; and an old decision's `status` (only to `superseded`), section 4). It never edits project code (`/orchestrate`: that goes to subagents).
 - Never merge, mark an MR ready, transition a Jira ticket, post to Slack or post a comment without asking. The one exception is a review round (below), which has its own single confirmation.
 - Every MR number in text you show the user is a markdown link with the repo in the link text, e.g. `[dashboard!2202](https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2202)`, never a bare `!2202`. Known paths: `ecfx/ecfx-backend`, `ecfx/ecfx-dashboard`, `ecfx/ecfx-admin`, `ecfx/ecfx-protobufs`, `ecfx/claude-components`.
+- Each Bash call is a new shell: re-set the variables a block uses in that same call, or use literal values. Nothing set in an earlier block is still there.
 - A GitLab API merge returns 405 on these repos: for a merge item, give the user the MR link to merge in the UI.
 
 ## 0. Start
@@ -101,6 +102,8 @@ NEXT="$(printf '%04d' $((10#${LAST:-0} + 1)))"
 - **log**: append to `~/wiki/projects/$P/log/$Q.md` a `## YYYY-MM-DD <short title>` heading and the paragraph (100 to 300 words; shorten a longer one). A new file starts with the frontmatter that `~/wiki/_templates/log-entry.md` prescribes (`project`, `type: log`, `date` of its first entry), then a blank line:
 
 ```bash
+P=ecfx
+Q="$(date +%Y)-Q$(( (10#$(date +%m) + 2) / 3 ))"
 LOGF=~/wiki/projects/$P/log/$Q.md
 [ -f "$LOGF" ] || printf -- '---\nproject: %s\ntype: log\ndate: %s\n---\n\n' "$P" "$(date +%F)" > "$LOGF"
 ```
@@ -120,10 +123,11 @@ URL='<url from the event line>'
 PROJECT_PATH="$(printf '%s' "$URL" | sed -E 's#^https?://[^/]+/(.+)/-/merge_requests/[0-9]+.*$#\1#')"
 IID="$(printf '%s' "$URL" | sed -E 's#^.*/merge_requests/([0-9]+).*$#\1#')"
 ENC="${PROJECT_PATH//\//%2F}"
+printf '%s %s %s\n' "$PROJECT_PATH" "$IID" "$ENC"
 ```
 
-   `<urlencoded path>` below means `$ENC`, `{{PROJECT_PATH}}` is `$PROJECT_PATH`, `{{MR_IID}}` is `$IID`. If the url is `-` or does not match, use the `mr=<group>/<repo>!<iid>` field of the item's run-state line instead; if that is empty too, ask the user for the MR link.
-   Find the item's worktree in the run-state file. If it has none, get the branch with `glab api "projects/$ENC/merge_requests/$IID" | jq -r .source_branch` and run `wt add <repo> <KEY> <branch>`.
+   `<urlencoded path>` below means the `$ENC` value printed by this block (write it out literally in later calls, or derive it again in the same call), `{{PROJECT_PATH}}` is `$PROJECT_PATH`, `{{MR_IID}}` is `$IID`. If the url is `-` or does not match, use the `mr=<group>/<repo>!<iid>` field of the item's run-state line instead; if that is empty too, ask the user for the MR link.
+   Find the item's worktree in the run-state file. If it has none, get the branch with `glab api "projects/<urlencoded path>/merge_requests/<iid>" | jq -r .source_branch` and run `wt add <repo> <KEY> <branch>`.
 2. Spawn a background `sonnet` subagent (counts toward the cap of 3) with `${CLAUDE_PLUGIN_ROOT}/templates/review-round-brief.md` filled in. `{{REPLY_FILE}}` is `<scratchpad>/round-<repo>-<iid>.md`. The template's ten placeholders are {{BRANCH}}, {{EVENT_LINE}}, {{KEY}}, {{MR_IID}}, {{MR_URL}}, {{PROJECT_PATH}}, {{PROJECT}}, {{REPLY_FILE}}, {{REPO}}, {{WORKTREE}} (the template is the source of truth); `grep -c '{{'` on the filled review-round brief must print 0. The agent fixes (commits locally, no push) or declines or defers every finding and drafts the reply; `shared:mr-review-response` has no draft-only mode, so the brief stops it before its post step.
 3. When it reports: run the check from step 3 on the diff and tests. Set `needs_you=yes`. Show the user: the findings with their status and SHAs, `git log --oneline` of the new commits, and the full draft reply (`cat` the reply file). Ask: `yes` / `edit` / `no`.
 4. `yes`: `git -C <worktree> push`, then post the reply into the review's discussion:
@@ -179,6 +183,8 @@ memory:
 1. **Validate.** The message is malformed when: the frontmatter is missing or has no closing `---`; `kind` is not one of `done`, `progress`, `handback`, `offplan`; `key` (compare case-insensitively; `day-note` upper-cases it) is not `[A-Za-z][A-Za-z0-9]*-[0-9]+` (an empty key is fine for any kind, it makes the message off-plan work, step 2); the summary is empty; or the `memory:` block names a `project` other than `ecfx`, `epicmax` or `personal`. A message with no `memory:` block is not malformed, there is just nothing to apply. A malformed file goes to `~/.local/state/run-day/inbox/bad/`:
 
 ```bash
+INBOX=~/.local/state/run-day/inbox
+f="$INBOX/<name>"
 mkdir -p "$INBOX/bad"; mv "$f" "$INBOX/bad/"
 ```
 
@@ -188,7 +194,7 @@ mkdir -p "$INBOX/bad"; mv "$f" "$INBOX/bad/"
    - `done`, key on the plan: run the check of section 3 as far as it can be run: `git -C <worktree> diff --stat` when the run-state worktree exists, the MR pipeline status when `mr` is set, the tests the summary names. What cannot be checked (no worktree, no MR) is named to the user as unverified. Checks pass or cannot run: tick `[x]` with `· MR [<repo>!<iid>](<url>)` when `mr` is set, otherwise `· note: <summary clip>` (`done` replaces any existing `· with you:` / `· progress:` suffix); set `owner=main` and `needs_you=no`. A check fails: do not tick, keep `[/]`, set `needs_you=yes`, tell the user what failed (no agent exists to retry). A line that is already `[x]` stays as it is; never downgrade a ticked line.
    - `progress`, key on the plan: `[/]`, suffix `· progress: <summary clip>` (after `· with you: <KEY>` when the owner is external); `owner` stays. A line that is already `[x]` is left entirely as it is (a late `progress` is a no-op; never downgrade a ticked line).
    - A key with no run-state line (a `me` item, or one added to the plan later): skip every run-state edit, apply only the diary line and the memory block.
-   - `handback`, key on the plan: `owner=main`, `agent=-`, `needs_you=no`, marker `[ ]`, suffix `· handed back: <summary clip>`; the item goes back into the dispatch queue (section 2.2) in plan order. When it is dispatched, append the message body to the filled brief as a `## Hand-back note` section so the agent starts from it. If `test -d <worktree>` fails, the worktree is gone: take the branch from `~/.local/state/run-day/handoff/<KEY>.md` or from the MR (`glab api "projects/$ENC/merge_requests/$IID" | jq -r .source_branch`) and run `wt add <repo> <KEY> <branch>`; if no branch can be found, mark `[!]` with `· blocked: worktree is gone and the branch was not found`, `needs_you=yes`, and tell the user. Tell the user the item was re-queued. A `handback` for a key that is not on the plan, or with an empty key, has no item to queue: tell the user and only apply its memory block.
+   - `handback`, key on the plan: `owner=main`, `agent=-`, `needs_you=no`, marker `[ ]`, suffix `· handed back: <summary clip>`; the item goes back into the dispatch queue (section 2.2) in plan order. When it is dispatched, append the message body to the filled brief as a `## Hand-back note` section so the agent starts from it. If `test -d <worktree>` fails, the worktree is gone: take the branch from `~/.local/state/run-day/handoff/<KEY>.md` or from the MR (`glab api "projects/<urlencoded path>/merge_requests/<iid>" | jq -r .source_branch`) and run `wt add <repo> <KEY> <branch>`; if no branch can be found, mark `[!]` with `· blocked: worktree is gone and the branch was not found`, `needs_you=yes`, and tell the user. Tell the user the item was re-queued. A `handback` for a key that is not on the plan, or with an empty key, has no item to queue: tell the user and only apply its memory block.
    - `offplan`, or `done` / `progress` for a key that is not on the plan, or an empty key: write one line under the `**Unplanned**` group, the last group of the block. Unplanned lines always go immediately above `<!-- start-day:end -->`; when the group does not exist yet, create it in the same Edit (old_string `<!-- start-day:end -->`):
 
 ```
@@ -204,6 +210,9 @@ mkdir -p "$INBOX/bad"; mv "$f" "$INBOX/bad/"
 5. **File it away.** Once steps 3 and 4 succeeded, move the file to `~/.local/state/run-day/inbox/done/$T/` (today's date, not the message's):
 
 ```bash
+INBOX=~/.local/state/run-day/inbox
+T="$(date +%F)"
+f="$INBOX/<name>"
 mkdir -p "$INBOX/done/$T"; mv "$f" "$INBOX/done/$T/"
 ```
 

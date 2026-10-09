@@ -68,4 +68,13 @@ has "$F" "comes from the agent's \`discussion:\` report line" "discussion id sou
 has "$F" "grep -c '{{'\` on the filled review-round brief" "review-round brief leftover check"
 has "$F" "{{REPLY_FILE}}, {{REPO}}, {{WORKTREE}}" "lists all ten placeholders"
 
+echo "== shell state: every Bash call is a new shell =="
+has "$F" "Each Bash call is a new shell" "states the fresh-shell rule"
+# every fenced block that uses a variable must also set it
+block_sets() { awk -v use="$2" -v set="$3" '/^```/{if(inb){if(u&&!d)bad=1;inb=0;u=d=0}else inb=1;next} inb&&index($0,use){u=1} inb&&index($0,set){d=1} END{exit bad}' "$1"; }
+for pair in 'LOGF=|P=' 'LOGF=|Q=' '$ENC|ENC=' '$IID|IID=' '$INBOX|INBOX=' '$T/|T=' '$f"|f='; do
+  u="${pair%%|*}"; d="${pair##*|}"
+  block_sets "$F" "$u" "$d" && pass "blocks using $u set $d" || fail "blocks using $u set $d" "a Bash block relies on $d from another call"
+done
+
 finish

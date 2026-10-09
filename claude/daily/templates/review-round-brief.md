@@ -13,7 +13,7 @@ You address a code review on a merge request. Work in the worktree below. Nothin
 
 ## Steps
 1. Read the review. Number every finding (use the reviewer's IDs if it has them).
-2. For each finding decide: **fix**, **decline** (with a reason and what would change your mind) or **defer** (with where it is tracked). For a fix, write a test that fails before the fix and passes after it where that is possible, make the fix, and commit locally. One commit per finding or group of findings, Conventional Commits, message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Do not push.
+2. For each finding decide: **fix**, **decline** (with a reason and what would change your mind) or **defer** (with where it is tracked). For a fix, write a test that fails before the fix and passes after it where that is possible, make the fix, and commit locally. One commit per finding or group of findings, Conventional Commits, message ends with the commit trailer the repo or session convention prescribes (the same attribution line your session instructions give for commits). Do not push.
 3. Read the `shared:mr-review-response` skill and follow its steps 1 to 4 exactly (enumerate, classify, attach evidence, state the head). **Stop before its step 5**: do not run `curl`, `glab mr note` or `glab api` to post, do not post a Jira comment, do not change labels or approvals. Every finding appears in the reply, declined and deferred ones included.
 4. Write the reply, in that skill's table format, to `{{REPLY_FILE}}`. Where the skill says to take the token from `/run/secrets/git_credentials`, use `glab` instead; you only need read access here. Record the discussion id of the review note.
 

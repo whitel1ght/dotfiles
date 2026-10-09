@@ -35,7 +35,9 @@ has "$R" "must appear in \`daily-stats\` output" "every MR link must come from s
 has "$R" "links its decision file or is omitted" "decisions lines link a file"
 has "$R" "nothing to commit" "identical regeneration is fine"
 lacks "$R" "ls ~/wiki/diary" "no failing diary glob"
-for c in "$TEST_DIR"/../commands/*.md "$TEST_DIR"/../../commands/end-day.md; do
+has "$R" 'Copy `<scratchpad>/review-<id>.full.md` to' "copy step names the file literally, not \$OUT"
+has "$R" "merged_mrs\` fields of STATS" "subagent gets merged_mrs with the other stats fields"
+for c in "$TEST_DIR"/../commands/*.md "$TEST_DIR"/../skills/*/SKILL.md "$TEST_DIR"/../../commands/end-day.md; do
   [ -f "$c" ] || continue
   if grep -nE '\$[0-9]' "$c" >/dev/null; then fail "$(basename "$c") has no \$0-\$9" "$(grep -nE '\$[0-9]' "$c" | head -3)"; else pass "$(basename "$c") has no \$0-\$9"; fi
 done

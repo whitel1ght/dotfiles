@@ -28,11 +28,11 @@ export function parseEvents(stdout: string): { events: DayEvent[]; bad: number }
 export function eventMrKey(ev: DayEvent): string {
   if (ev.mr === undefined || ev.mr === null || ev.mr === '' || !ev.repo) return ''
   const iid = Number(String(ev.mr).replace(/^!/, ''))
-  return Number.isFinite(iid) ? mrKey(ev.repo, iid) : ''
+  return Number.isFinite(iid) ? mrKey(str(ev.repo), iid) : ''
 }
 
 export function classify(ev: DayEvent, ctx: EventContext): Disposition {
-  const ticket = (ev.ticket ?? '').toLowerCase()
+  const ticket = str(ev.ticket).toLowerCase()
   if (ev.kind === 'assigned') return ticket !== '' && ctx.ticketKeys.has(ticket) ? 'note' : 'prompt'
   if (!THREAD_KINDS.has(ev.kind)) return 'note'
   const key = eventMrKey(ev)
@@ -40,14 +40,16 @@ export function classify(ev: DayEvent, ctx: EventContext): Disposition {
   return ticket !== '' && ctx.ticketKeys.has(ticket) ? 'prompt' : 'note'
 }
 
-const clean = (s: string, max: number): string => {
-  const one = s.replace(/\s*\|\s*/g, ' / ').replace(/\s+/g, ' ').trim()
+const str = (x: unknown): string => String(x ?? '')
+
+const clean = (s: unknown, max: number): string => {
+  const one = str(s).replace(/\s*\|\s*/g, ' / ').replace(/\s+/g, ' ').trim()
   return one.length > max ? `${one.slice(0, max - 1)}…` : one
 }
 
 export function formatPrompt(ev: DayEvent, tag = 'daily-event'): string {
   const mr = eventMrKey(ev) || '-'
-  return `[${tag}] ${ev.kind} | ${mr} | ${ev.ticket || '-'} | ${clean(ev.summary ?? '', 160)} | ${ev.url || '-'}`
+  return `[${tag}] ${ev.kind} | ${mr} | ${str(ev.ticket) || '-'} | ${clean(ev.summary, 160)} | ${str(ev.url) || '-'}`
 }
 
 export function formatNote(ev: DayEvent): string {
@@ -55,8 +57,8 @@ export function formatNote(ev: DayEvent): string {
 }
 
 export function formatToast(ev: DayEvent): string {
-  const where = [ev.ticket, eventMrKey(ev)].filter(Boolean).join(' ')
+  const where = [str(ev.ticket), eventMrKey(ev)].filter(Boolean).join(' ')
   const head = `${ev.kind.replace(/_/g, ' ')}${where ? ` ${where}` : ''}`
-  const text = ev.summary ? `${head}: ${clean(ev.summary, 100)}` : head
+  const text = str(ev.summary) ? `${head}: ${clean(ev.summary, 100)}` : head
   return text.length > 140 ? `${text.slice(0, 139)}…` : text
 }

@@ -73,4 +73,17 @@ has "$R" "owner=external:<KEY>" "run-day reads the owner /handoff writes"
 has "$R" "handoff/<KEY>.md" "run-day knows the hand-off note path"
 has "$R" "kind: done | progress | handback | offplan" "run-day reads the kinds /report-back writes"
 
+echo "== fix wave: project inference, allowed-tools =="
+has "$F" "--project" "report-back passes --project"
+has "$F" "starting \`ecfx-\`" "project from the repo name"
+has "$F" '--session <KEY> -- "$KEY" "$SUMMARY"' "-- guards the positional args"
+lacks "$F" "Bash(git:*)" "no blanket git"
+has "$F" "Bash(git branch:*)" "allows git branch"
+has "$F" "Bash(git rev-parse:*)" "allows git rev-parse"
+J="$TEST_DIR/../skills/jira-write/SKILL.md"
+grep -qx "allowed-tools: Bash" "$J" && fail "jira-write is not unscoped Bash" "unscoped Bash" || pass "jira-write is not unscoped Bash"
+has "$J" "allowed-tools: Bash(*/jira-write --dry-run:*)" "only the dry run is pre-approved"
+lacks "$J" '"${CLAUDE_PLUGIN_ROOT}' "script path is unquoted so the allow rule matches"
+lacks "$J" '"$S"' "no variable carried between Bash calls"
+
 finish
