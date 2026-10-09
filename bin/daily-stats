@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Count a date range of the diary for /review, as one JSON object.
+#
+#   daily-stats <from YYYY-MM-DD> <to YYYY-MM-DD>   inclusive
+#
+# Reads only the lines inside each day's <!-- start-day:start/end --> block; a
+# diary file without one is skipped, and `days` counts the files that had one.
+# A plan line is "- [m] text" (any indent, "*" too) with m one of: space todo,
+# / in progress, x or X done, ! blocked, > deferred. A line's trailing
+# " · evidence" is not part of its text.
+#
+#   items.planned   every plan line in the range (the same item on two days counts twice)
+#   items.open      todo + in progress
+#   repeat_deferred text deferred ([>]) on 2+ different days, same text each day
+#   done_mr_links   gitlab.com MR urls on done lines, grouped by repo name
+#   merged_mrs      my MRs merged in the range, from GitLab
+#
+# A GitLab failure is an error (exit 1, nothing on stdout): the numbers are
+# quoted verbatim in reviews, so a silently empty merged list would mislead.
+set -euo pipefail
+
+DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
+
+die() { echo "daily-stats: $*" >&2; exit 1; }
+valid_date() { [ "$(date -j -f %F "$1" +%F 2>/dev/null || date -d "$1" +%F 2>/dev/null)" = "$1" ]; }
+shift_day() { date -j -v"$2"d -f %F "$1" +%F 2>/dev/null || date -d "$1 $2 day" +%F; }
+tz_offset() { local o; o=$(date -j -f %F "$1" +%z 2>/dev/null || date -d "$1" +%z); echo "${o:0:3}:${o:3:2}"; }
+enc() { jq -rn --arg v "$1" '$v | @uri'; }
+
+case "${1:-}" in
+  -h|--help) sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+[ $# -eq 2 ] || die "usage: daily-stats <from YYYY-MM-DD> <to YYYY-MM-DD>"
+from="$1" to="$2"
+valid_date "$from" || die "from must be YYYY-MM-DD, got $from"
+valid_date "$to" || die "to must be YYYY-MM-DD, got $to"
+[[ ! "$from" > "$to" ]] || die "from is after to"
+
+diary_stats() {
+  python3 - "$from" "$to" "$DIARY_DIR" <<'PY'
+import json, os, re, sys
+lo, hi, diary = sys.argv[1:4]
+START, END = "<!-- start-day:start -->", "<!-- start-day:end -->"
+LINE = re.compile(r"^\s*[-*]\s+\[([ xX/!>])\]\s+(.*\S)\s*$")
+MR = re.compile(r"https://gitlab\.com/([^\s)\]>]+?)/-/merge_requests/(\d+)")
+LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+STATE = {" ": "open", "/": "open", "x": "done", "X": "done", "!": "blocked", ">": "deferred"}
+days = 0
+items = {"planned": 0, "done": 0, "blocked": 0, "deferred": 0, "open": 0}
+deferred = {}
+links = {}
+names = sorted(n for n in os.listdir(diary) if re.fullmatch(r"\d{4}-\d{2}-\d{2}\.md", n)) if os.path.isdir(diary) else []
+for name in names:
+    day = name[:-3]
+    if not lo <= day <= hi:
+        continue
+    text = open(os.path.join(diary, name), encoding="utf-8").read()
+    s, e = text.find(START), text.find(END)
+    if s < 0 or e < s:
+        continue
+    days += 1
+    for raw in text[s + len(START):e].splitlines():
+        m = LINE.match(raw)
+        if not m:
+            continue
+        state = STATE[m.group(1)]
+        body = m.group(2).split(" · ")[0].strip()
+        items["planned"] += 1
+        items[state] += 1
+        if state == "deferred":
+            shown = re.sub(r"\s+", " ", LINK.sub(r"\1", body))
+            key = re.sub(r"\s+", " ", re.sub(r"https?://\S+", "", shown)).lower()
+            entry = deferred.setdefault(key, {"text": shown, "days": set()})
+            entry["days"].add(day)
+        if state == "done":
+            for path, iid in MR.findall(raw):
+                repo = path.split("/")[-1]
+                links.setdefault(repo, set()).add((int(iid), f"https://gitlab.com/{path}/-/merge_requests/{iid}"))
+repeat = sorted(({"text": v["text"], "times": len(v["days"])} for v in deferred.values() if len(v["days"]) >= 2),
+                key=lambda r: (-r["times"], r["text"]))
+print(json.dumps({
+    "from": lo, "to": hi, "days": days, "items": items, "repeat_deferred": repeat,
+    "done_mr_links": {r: [u for _, u in sorted(links[r])] for r in sorted(links)},
+}))
+PY
+}
+
+merged_mrs() {
+  local after before
+  after="${from}T00:00:00$(tz_offset "$from")"
+  before="$(shift_day "$to" +1)T00:00:00$(tz_offset "$(shift_day "$to" +1)")"
+  glab api --paginate "merge_requests?scope=created_by_me&state=merged&merged_after=$(enc "$after")&merged_before=$(enc "$before")&per_page=100" \
+    | jq -sc 'add // [] | map({repo: (.references.full | sub("!.*$"; "")), iid, title, url: .web_url, merged_at})
+        | sort_by(.merged_at)'
+}
+
+stats=$(diary_stats)
+merged=$(merged_mrs) || die "GitLab unavailable, merged_mrs cannot be computed"
+jq -c --argjson merged "$merged" '. + {merged_mrs: $merged}' <<<"$stats"
