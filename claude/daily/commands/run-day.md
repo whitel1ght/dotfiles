@@ -12,7 +12,7 @@ You are the orchestrator of today's plan. Follow `/orchestrate`'s rules (`~/.cla
 
 Paths used below (`T` is today's date, `date +%F`):
 - Diary: `~/wiki/diary/T.md`. The plan is the block between `<!-- start-day:start -->` and `<!-- start-day:end -->`. Only lines inside it are ever edited.
-- Run state: `~/.local/state/run-day/T.md`. While it exists the SessionStart hook, the full plan band (`/plan`, scrolls with the wheel) and the watcher are active.
+- Run state: `~/.local/state/run-day/T.md`. While it exists the SessionStart hook, the full plan band (`/plan-band`, scrolls with the wheel) and the watcher are active.
 - Vault: `~/wiki`. Rules: `~/wiki/AGENTS.md`.
 - Inbox: `~/.local/state/run-day/inbox/`. Other sessions leave messages there (section 7).
 

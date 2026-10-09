@@ -167,7 +167,7 @@ async function watchInbox($: EngineInterface) {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'plan', description: 'Toggle the run-day plan band above the prompt' })
+    await $.command.register({ name: 'plan-band', description: 'Toggle the run-day plan band above the prompt' })
     $.clock.every(REFRESH_MS, () => {
       void safeRefresh($)
     })
@@ -180,7 +180,7 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'plan' }, async $ => {
+  on('command.run', { command: 'plan-band' }, async $ => {
     const next = !(await read($, isExpanded))
     await update($, isExpanded, () => next)
     await update($, bandOffset, () => null)
