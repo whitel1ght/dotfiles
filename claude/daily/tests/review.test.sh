@@ -48,5 +48,12 @@ has "$A" "at most 200 words" "answer length cap"
 has "$A" "qmd query" "uses qmd"
 has "$A" "Never write anything." "read-only"
 has "$A" "values from step 2 of the ask procedure" "takes -n and -l from the vault's AGENTS.md"
+has "$A" "qmd://<collection>/<relpath>" "names the qmd path form from --files"
+has "$A" "~/wiki/projects/<collection>/<relpath>" "maps ecfx, epicmax and personal under projects/"
+has "$A" "~/wiki/<collection>/<relpath>" "maps diary, reviews and notes at the vault top"
+has "$A" "Never cite a \`qmd://\` path" "forbids citing qmd paths"
+has "$A" "ecfx, epicmax, personal, diary, reviews, notes" "lists all six collections"
+has "$A" "does not contain it" "no-answer case says memory lacks it"
+has "$A" "Do not offer further searches" "no-answer case offers no extra searches"
 
 finish
