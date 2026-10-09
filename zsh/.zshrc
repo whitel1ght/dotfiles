@@ -303,3 +303,8 @@ export PATH="$HOME/bin:$PATH"
 # Qwen Code PATH block begin
 export PATH='/Users/dmitry/.local/bin':$PATH
 # Qwen Code PATH block end
+
+# Added by LM Studio CLI (lms)
+export PATH="$PATH:/Users/dmitry/.lmstudio/bin"
+# End of LM Studio CLI section
+
