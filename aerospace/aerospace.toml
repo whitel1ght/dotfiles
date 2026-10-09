@@ -194,3 +194,16 @@ alt-shift-j = ['join-with down', 'mode main']
 alt-shift-k = ['join-with up', 'mode main']
 alt-shift-l = ['join-with right', 'mode main']
 
+
+# Chrome gets workspace C to itself, as an accordion, so every window there is full-size
+# instead of splitting whatever workspace was focused when the window opened (Claude in
+# Chrome opens new windows for its tab group).
+[[on-window-detected]]
+if.app-id = 'com.google.Chrome'
+run = ['move-node-to-workspace C', 'layout accordion']
+
+# Playwright's "Google Chrome for Testing" windows float at the size the test asks for,
+# so a headed run never re-tiles the terminal it was started from.
+[[on-window-detected]]
+if.app-id = 'com.google.chrome.for.testing'
+run = 'layout floating'
