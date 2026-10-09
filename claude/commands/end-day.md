@@ -17,6 +17,17 @@ review for someone else), Jira status changes, and Claude sessions (my prompts a
 session's last reply). A line in brackets means that source was unavailable; mention it
 in one line at the end of the report rather than guessing its contents.
 
+## Process the inbox first
+
+Define the day first:
+
+```bash
+DAY="$(case "$ARGUMENTS" in yesterday) date -v-1d +%F ;; 20??-??-??) echo "$ARGUMENTS" ;; *) date +%F ;; esac)"
+ls ~/.local/state/run-day/inbox/*.md 2>/dev/null
+```
+
+Then process any messages waiting in `~/.local/state/run-day/inbox/*.md` the way the `/run-day` command's Inbox section says (the `daily` plugin's `commands/run-day.md`, section 7), before the report is written, so that what was reported counts as reported. This happens whether or not the day has a plan: a missing `<!-- start-day:start -->` block only skips the comparison under "Unreported activity", never this step.
+
 ## Write the report
 
 Write for a teammate at standup: someone who knows the product but wasn't in my
@@ -80,16 +91,13 @@ REPORT
 ```
 
 `save` replaces the block it wrote on an earlier run and never touches my own lines, so
-running it again the same day is safe. Note the path it printed, then continue with the next section.
+running it again the same day is safe. When the diary already has a `<!-- daily-report:start -->` block for the day, read it first and build on it: keep every Done line that carries an MR link or other evidence, and only add new material or move a line forward. Never regress a line, for example `Done` to `In progress`, because this run's digest is thinner than the earlier one. Note the path it printed, then continue with the next section.
 
 ## Unreported activity
 
-The safety net for work nobody wrote into the plan. Skip this step, in one line, when `~/wiki/diary/$DAY.md` has no `<!-- start-day:start -->` block (nothing to compare with).
-
-First process any messages waiting in `~/.local/state/run-day/inbox/*.md` the way the `/run-day` command's Inbox section says (the `daily` plugin's `commands/run-day.md`, section 7), so that what was reported counts as reported. Then take the ticket keys and MR numbers the plan already mentions, the plan being the start-day block only (its `**Unplanned**` group included):
+The safety net for work nobody wrote into the plan. Skip the comparison, in one line, when `~/wiki/diary/$DAY.md` has no `<!-- start-day:start -->` block (nothing to compare with). The inbox was already processed above. Otherwise take the ticket keys and MR numbers the plan already mentions, the plan being the start-day block only (its `**Unplanned**` group included):
 
 ```bash
-DAY="$(case "$ARGUMENTS" in yesterday) date -v-1d +%F ;; 20??-??-??) echo "$ARGUMENTS" ;; *) date +%F ;; esac)"
 PLAN="$(awk '/<!-- start-day:start -->/{f=1;next} /<!-- start-day:end -->/{f=0} f' ~/wiki/diary/$DAY.md)"
 printf '%s\n' "$PLAN" | rg -oi '\b[a-z]{2,10}-[0-9]{2,6}\b' | tr 'A-Z' 'a-z' | sort -u
 printf '%s\n' "$PLAN" | rg -o 'merge_requests/[0-9]+' | sort -u
@@ -97,13 +105,13 @@ printf '%s\n' "$PLAN" | rg -o 'merge_requests/[0-9]+' | sort -u
 
 Compare the digest's four sections with those two lists. A digest item is **unreported** when its ticket key is not among the plan's keys and, for an MR, its `merge_requests/<n>` is not among the plan's MR numbers. Items with neither a key nor an MR (a commit or a session without a ticket) are grouped per repo or session topic and shown for the user to judge; drop obvious noise (merge commits, the edits made by this very report). Only the plan block counts, never the diary's report block.
 
-If nothing is unreported, say so in one line. Otherwise show a short list, one line each: `<key or topic> - <one-line summary> - <evidence: MR link or commit>`. Ask which to add. For each yes, add one line under the plan block's `**Unplanned**` group (create the group as the last group, just above `<!-- start-day:end -->`, when it is missing): `- [x] <key> <summary> · MR [<repo>!<iid>](<url>)`, or `· note: <summary>` when there is no MR, because the diary's tick guard refuses an `[x]` without an MR link, `merged` or `· note:`. Use `[/]` for work that is clearly unfinished. Never add a line the user did not approve and never edit a line outside the block.
+If nothing is unreported, say so in one line. Otherwise show a short list, one line each: `<key or topic> - <one-line summary> - <evidence: MR link or commit>`. Ask which to add, then stop and wait for the user's answer (yes or no per item), and do not continue until answered. Do not go on to "Consolidate memory", and do not add anything, before the answer arrives. For each yes, add one line under the plan block's `**Unplanned**` group (create the group as the last group, just above `<!-- start-day:end -->`, when it is missing): `- [x] <key> <summary> · MR [<repo>!<iid>](<url>)`, or `· note: <summary>` when there is no MR, because the diary's tick guard refuses an `[x]` without an MR link, `merged` or `· note:`. Use `[/]` for work that is clearly unfinished. Never add a line the user did not approve and never edit a line outside the block.
 
 ## Consolidate memory
 
 Skip this whole step, and say so in one line, when `~/wiki/projects` does not exist or the day has no log entries below. It is the only place project `state.md` files change; during the day `/run-day` only appends logs and decisions.
 
-Work out the day, then which projects were touched. The scripts do this (`end-day touched` prints, one project name per line, the projects with a `## <day> <title>` log entry or a decision dated `<day>`; empty output means none):
+`$DAY` was defined above (set it again in each command, since shell state may not carry over). Find which projects were touched. The scripts do this (`end-day touched` prints, one project name per line, the projects with a `## <day> <title>` log entry or a decision dated `<day>`; empty output means none):
 
 ```bash
 DAY="$(case "$ARGUMENTS" in yesterday) date -v-1d +%F ;; 20??-??-??) echo "$ARGUMENTS" ;; *) date +%F ;; esac)"
@@ -120,7 +128,8 @@ Then index and commit:
 
 ```bash
 qmd update && qmd embed
-git -C ~/wiki add diary projects reviews index.md
+git -C ~/wiki add -A -- diary projects index.md
+[ -d ~/wiki/reviews ] && git -C ~/wiki add -A -- reviews
 git -C ~/wiki diff --cached --quiet || git -C ~/wiki commit -m "wiki: $DAY day"
 ```
 

@@ -189,7 +189,11 @@ touched() {
 
 # The "## DAY <title>" entries of one project's logs, each running to the next "## " heading.
 entries() {
-  local project="${1:?end-day: entries needs a project}"
+  local project="${1:-}"
+  [ -n "$project" ] || { echo "end-day: entries needs a project" >&2; exit 1; }
+  case "$project" in
+    */*|*..*) echo "end-day: entries: project must be a plain name, not a path ($project)" >&2; exit 1 ;;
+  esac
   awk -v d="$day" '/^## /{on=index($0,"## " d " ")==1} on' "$WIKI_DIR/projects/$project"/log/*.md 2>/dev/null || true
 }
 

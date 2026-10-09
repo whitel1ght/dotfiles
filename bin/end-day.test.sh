@@ -88,6 +88,11 @@ assert_eq "## 2026-10-08 retry button
 text" "$(WIKI_DIR="$WIKI" "$SCRIPT" entries 2026-10-08 ecfx)" "prints only that day's entries, up to the next heading"
 assert_eq "" "$(WIKI_DIR="$WIKI" "$SCRIPT" entries 2026-10-08 personal)" "a project without an entry prints nothing"
 assert_eq "" "$(WIKI_DIR="$WIKI" "$SCRIPT" entries 2026-10-08 nope)" "a missing project is empty, not an error"
+out=$(WIKI_DIR="$WIKI" "$SCRIPT" entries 2026-10-08 ../x 2>&1); assert_eq "1" "$?" "entries rejects .. in the project (exit 1)"
+assert_eq "yes" "$(grep -q 'end-day: entries: project must be a plain name' <<<"$out" && echo yes || echo no)" "and says why on stderr"
+WIKI_DIR="$WIKI" "$SCRIPT" entries 2026-10-08 a/b >/dev/null 2>&1; assert_eq "1" "$?" "entries rejects a slash in the project"
+out=$(WIKI_DIR="$WIKI" "$SCRIPT" entries 2026-10-08 2>&1); assert_eq "1" "$?" "entries without a project exits 1"
+assert_eq "end-day: entries needs a project" "$out" "with an explicit message"
 
 echo
 echo "passed: $PASS  failed: $FAIL"
