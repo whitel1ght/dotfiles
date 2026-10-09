@@ -409,6 +409,11 @@ if [ -f "$DOTFILES_DIR/bin/daily-stats" ]; then
     create_symlink "$DOTFILES_DIR/bin/daily-stats" "$HOME/.local/bin/daily-stats"
 fi
 
+# diary-links moves the inline links in diary plan/report blocks to trailing refs.
+if [ -f "$DOTFILES_DIR/bin/diary-links" ]; then
+    create_symlink "$DOTFILES_DIR/bin/diary-links" "$HOME/.local/bin/diary-links"
+fi
+
 # changes-since prints what changed on my tickets and MRs since the last look, as JSON lines.
 if [ -f "$DOTFILES_DIR/bin/changes-since" ]; then
     create_symlink "$DOTFILES_DIR/bin/changes-since" "$HOME/.local/bin/changes-since"
