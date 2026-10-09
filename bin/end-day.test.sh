@@ -82,6 +82,13 @@ assert_eq "" "$(WIKI_DIR="$SANDBOX/nowhere" "$SCRIPT" touched 2026-10-08)" "a mi
 (cd "$SANDBOX" && WIKI_DIR="$WIKI" "$SCRIPT" touched yesterday >/dev/null 2>&1); assert_eq "0" "$?" "accepts yesterday"
 assert_eq "yes" "$("$SCRIPT" --help | grep -q 'touched' && echo yes || echo no)" "--help mentions it"
 
+echo "end-day entries"
+assert_eq "## 2026-10-08 retry button
+
+text" "$(WIKI_DIR="$WIKI" "$SCRIPT" entries 2026-10-08 ecfx)" "prints only that day's entries, up to the next heading"
+assert_eq "" "$(WIKI_DIR="$WIKI" "$SCRIPT" entries 2026-10-08 personal)" "a project without an entry prints nothing"
+assert_eq "" "$(WIKI_DIR="$WIKI" "$SCRIPT" entries 2026-10-08 nope)" "a missing project is empty, not an error"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

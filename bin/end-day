@@ -5,6 +5,7 @@
 #   end-day save [DATE]      read a report on stdin into that day's diary
 #   end-day save [DATE] --plan   same for /start-day's plan, at the top of ### ECFX
 #   end-day touched [DATE]   list the wiki projects with a log entry or decision dated DATE
+#   end-day entries DATE PROJECT   print PROJECT's "## DATE <title>" log entries
 #
 # DATE is YYYY-MM-DD or "yesterday"; default today.
 #
@@ -186,12 +187,19 @@ touched() {
   done
 }
 
+# The "## DAY <title>" entries of one project's logs, each running to the next "## " heading.
+entries() {
+  local project="${1:?end-day: entries needs a project}"
+  awk -v d="$day" '/^## /{on=index($0,"## " d " ")==1} on' "$WIKI_DIR/projects/$project"/log/*.md 2>/dev/null || true
+}
+
 case "$cmd" in
   collect)
     printf '# Work digest for %s\n' "$day"
     collect_commits; collect_gitlab; collect_jira; collect_claude ;;
   save) save $save_opt ;;
   touched) touched ;;
-  -h|--help|"") sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; [ -n "$cmd" ] ;;
+  entries) entries "${2:-}" ;;
+  -h|--help|"") sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; [ -n "$cmd" ] ;;
   *) echo "end-day: unknown command $cmd" >&2; exit 1 ;;
 esac
