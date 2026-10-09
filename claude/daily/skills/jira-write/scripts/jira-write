@@ -19,18 +19,29 @@ cmd="$1"; key="$2"; arg="$3"
 [[ "$key" =~ ^[A-Za-z][A-Za-z0-9]+-[0-9]+$ ]] || { echo "jira-write: bad issue key: $key" >&2; exit 2; }
 key="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')"
 
-check_response() {
-  local out="$1"
-  [ -n "$out" ] || return 0
-  if printf '%s' "$out" | jq -e '((.errorMessages // []) | length > 0) or ((.errors // {}) | length > 0)' >/dev/null 2>&1; then
-    echo "jira-write: Jira refused: $out" >&2
+# jira_call METHOD PATH [BODY] sets REPLY to the response body. jira-api exits 0 on HTTP
+# errors, so a non-zero exit here means the call itself failed.
+jira_call() {
+  local rc=0
+  REPLY="$("$JIRA_API" "$@")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    [ -n "$REPLY" ] && printf '%s\n' "$REPLY" >&2
+    echo "jira-write: jira-api failed on $1 $2; nothing was written" >&2
     exit 1
   fi
 }
 
+refused() {
+  echo "jira-write: Jira did not confirm the change; nothing was written. Response:" >&2
+  printf '%s\n' "$1" >&2
+  exit 1
+}
+
 case "$cmd" in
   transition)
-    resp="$("$JIRA_API" GET "issue/$key/transitions")"
+    jira_call GET "issue/$key/transitions"
+    resp="$REPLY"
+    printf '%s' "$resp" | jq -e '(.transitions | type) == "array"' >/dev/null 2>&1 || refused "$resp"
     id="$(printf '%s' "$resp" | jq -r --arg n "$arg" \
       '[.transitions[]? | select((.name | ascii_downcase) == ($n | ascii_downcase))] | first | .id // empty')"
     if [ -z "$id" ]; then
@@ -42,8 +53,8 @@ case "$cmd" in
       echo "would move $key to \"$arg\" (transition id $id)"
       exit 0
     fi
-    out="$("$JIRA_API" POST "issue/$key/transitions" "$(jq -nc --arg id "$id" '{transition: {id: $id}}')")"
-    check_response "$out"
+    jira_call POST "issue/$key/transitions" "$(jq -nc --arg id "$id" '{transition: {id: $id}}')"
+    [ -z "$REPLY" ] || refused "$REPLY"
     echo "$key -> $arg"
     ;;
   comment)
@@ -56,8 +67,9 @@ case "$cmd" in
       cat "$arg"
       exit 0
     fi
-    out="$("$JIRA_API" POST "issue/$key/comment" "$(printf '%s' "$body" | jq -c .)")"
-    check_response "$out"
+    jira_call POST "issue/$key/comment" "$(printf '%s' "$body" | jq -c .)"
+    printf '%s' "$REPLY" | jq -e '((.errorMessages // []) | length) == 0 and ((.errors // {}) | length) == 0 and .id != null' >/dev/null 2>&1 \
+      || refused "$REPLY"
     echo "commented on $key"
     ;;
   *) usage ;;
