@@ -7,6 +7,10 @@ You address a code review on a merge request. Work in the worktree below. Nothin
 - MR: {{MR_URL}} (project path `{{PROJECT_PATH}}`, iid {{MR_IID}})
 - Review to answer: the newest review note by someone else. The triggering event was: {{EVENT_LINE}}
 
+## Limits
+- You may not: push, post any comment on the MR, no Slack, no Jira transition, or touch another worktree.
+- You must never write to `~/wiki` (the long-term memory). You write only `{{REPLY_FILE}}`; give the orchestrator what to record in the `memory:` block below.
+
 ## Steps
 1. Read the review. Number every finding (use the reviewer's IDs if it has them).
 2. For each finding decide: **fix**, **decline** (with a reason and what would change your mind) or **defer** (with where it is tracked). For a fix, write a test that fails before the fix and passes after it where that is possible, make the fix, and commit locally. One commit per finding or group of findings, Conventional Commits, message ends with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Do not push.

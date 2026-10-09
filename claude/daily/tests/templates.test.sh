@@ -40,6 +40,8 @@ has "$f" "Stop before its step 5" "stops before the post step"
 has "$f" "discussion:" "reports the discussion id"
 has "$f" "reply_file:" "reports the reply file"
 has "$f" "memory:" "ends with the memory block"
+has "$f" "never write to \`~/wiki\`" "forbids vault writes"
+has "$f" "no Slack, no Jira transition" "forbids Slack posts and Jira transitions"
 
 echo
 echo "passed: $PASS  failed: $FAIL"
