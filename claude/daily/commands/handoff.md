@@ -25,7 +25,7 @@ git -C "$W" status --short
 ```
 
 3. If the line has an agent id (`agent=` not `-`) and the agent is still running, stop it with `TaskStop` (load it with ToolSearch first if it is deferred). The worktree is kept exactly as the agent left it. If the agent already finished, skip this step.
-4. Write the hand-off note (create the directory). Original brief: the scratchpad file `brief-<key>.md` from dispatch when it exists, otherwise the plan line plus the Jira summary (`jira-api GET issue/<KEY>`). Open questions: what the agent's last report in this session said it could not decide, or `none recorded`.
+4. Write the hand-off note (create the directory). `<repo>` is the name from the git remote, or, with no remote, the `<repo>` in the worktree path `.../worktrees/<repo>/<KEY>`. Original brief: the scratchpad file `brief-<key>.md` from dispatch when it exists, otherwise the plan line plus the Jira summary (`jira-api GET issue/<KEY>`). Open questions: what the agent's last report in this session said it could not decide, or `none recorded`.
 
 ```
 # Hand-off: <KEY> — <summary>
