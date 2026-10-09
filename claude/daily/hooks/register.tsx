@@ -8,7 +8,7 @@ import { applyEdit, checkTicks, denyMessage, isTodaysDiary } from '../mod/guard.
 import type { EditInput } from '../mod/guard.ts'
 import { parseRunState } from '../mod/runstate.ts'
 import type { InboxState, ViewState } from '../mod/types.ts'
-import { BAND_WINDOW_ROWS, bandRows, joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts'
+import { BAND_WINDOW_ROWS, bandRows, joinRows, newlyNeedsYou, ownsScroll, panelGroups, statusLine } from '../mod/view.ts'
 
 const REFRESH_MS = 5_000
 const WATCH_MS = 180_000
@@ -217,10 +217,10 @@ export const register: Register = on => {
     )
   })
 
-  on('ui.scroll', { component: 'AbovePrompt' }, async ($, e) => {
+  on('ui.scroll', { component: 'AbovePrompt' }, async ($, e, next) => {
     const v = await read($, view)
-    if (!v.active || !(await read($, isExpanded))) return {}
     const band = bandRows(v.groups, await read($, bandOffset))
+    if (!ownsScroll(v.active, await read($, isExpanded), band.maxOffset)) return next(e)
     const to = Math.min(band.maxOffset, Math.max(0, band.offset + e.by))
     await update($, bandOffset, () => to)
     $.ui.invalidate('ui.render')

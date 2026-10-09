@@ -1,7 +1,7 @@
 import { test, expect } from 'claude-code/testing'
 import { parseItems } from './diary.ts'
 import { parseRunState } from './runstate.ts'
-import { BAND_WINDOW_ROWS, bandRows, initialOffset, joinRows, newlyNeedsYou, panelGroups, planRows, shortenLinks, statusLine } from './view.ts'
+import { BAND_WINDOW_ROWS, bandRows, initialOffset, joinRows, ownsScroll, newlyNeedsYou, panelGroups, planRows, shortenLinks, statusLine } from './view.ts'
 import { DIARY, DIARY_UNPLANNED, RUN_STATE } from './fixtures.ts'
 
 const items = parseItems(DIARY)
@@ -161,4 +161,11 @@ test('bandRows starts at the first open group when no offset is given', async ()
   const band = bandRows([done, many(16)])
   expect(band.offset).toBe(11)
   expect(labels(band)[0]).toBe('# Today')
+})
+
+test('ownsScroll only when active, expanded and the plan is taller than the window', async () => {
+  expect(ownsScroll(true, true, 6)).toBe(true)
+  expect(ownsScroll(false, true, 6)).toBe(false)
+  expect(ownsScroll(true, false, 6)).toBe(false)
+  expect(ownsScroll(true, true, 0)).toBe(false)
 })

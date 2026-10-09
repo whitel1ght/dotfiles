@@ -87,6 +87,10 @@ export function initialOffset(rows: BandRow[]): number {
   return 0
 }
 
+export function ownsScroll(isActive: boolean, isExpanded: boolean, maxOffset: number): boolean {
+  return isActive && isExpanded && maxOffset > 0
+}
+
 export function bandRows(groups: PanelGroup[], offset: number | null = null, max = BAND_WINDOW_ROWS): Band {
   const rows = planRows(groups)
   const items = rows.filter(r => r.kind === 'item')
