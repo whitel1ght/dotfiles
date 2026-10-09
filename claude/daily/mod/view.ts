@@ -1,7 +1,8 @@
 import { ticketKey, UNPLANNED } from './diary.ts'
-import type { AgentLite, Item, PanelGroup, Row, RunItem } from './types.ts'
+import type { AgentLite, Band, Item, PanelGroup, Row, RunItem } from './types.ts'
 
 const LIVE = new Set(['pending', 'running', 'waiting'])
+export const BAND_MAX_ROWS = 12
 const ORDER = ['Merge', 'First', 'Today', 'If time', UNPLANNED]
 
 function byKey(agents: AgentLite[], key: string): AgentLite | null {
@@ -62,6 +63,24 @@ export function panelGroups(rows: Row[]): PanelGroup[] {
         ],
       })),
   }))
+}
+
+export function bandRows(groups: PanelGroup[], max = BAND_MAX_ROWS): Band {
+  const all = groups.flatMap(g => g.rows)
+  const done = all.filter(r => r.marker === 'x').length
+  const open = groups.flatMap(g =>
+    g.rows
+      .filter(r => r.marker !== 'x' && r.marker !== '>')
+      .map((r, i) => ({ group: i === 0 ? g.group : '', marker: r.marker, text: r.text, needsYou: r.needsYou })),
+  )
+  const room = max - 1
+  const fits = open.length <= room
+  const shown = fits ? open : open.slice(0, room - 1)
+  return {
+    header: `plan · ${done}/${all.length} done`,
+    rows: shown,
+    footer: fits ? null : `+${open.length - shown.length} more · /plan to hide`,
+  }
 }
 
 export function newlyNeedsYou(before: Set<string>, rows: Row[]): string[] {

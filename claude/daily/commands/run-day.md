@@ -12,7 +12,7 @@ You are the orchestrator of today's plan. Follow `/orchestrate`'s rules (`~/.cla
 
 Paths used below (`T` is today's date, `date +%F`):
 - Diary: `~/wiki/diary/T.md`. The plan is the block between `<!-- start-day:start -->` and `<!-- start-day:end -->`. Only lines inside it are ever edited.
-- Run state: `~/.local/state/run-day/T.md`. While it exists the SessionStart hook, the plan panel and the watcher are active.
+- Run state: `~/.local/state/run-day/T.md`. While it exists the SessionStart hook, the plan band (`/plan`) and the watcher are active.
 - Vault: `~/wiki`. Rules: `~/wiki/AGENTS.md`.
 - Inbox: `~/.local/state/run-day/inbox/`. Other sessions leave messages there (section 7).
 
@@ -79,7 +79,7 @@ changes-since --cursor run-day >/dev/null
 
 ## 3. Diary markers and check-before-tick
 
-Markers: `[ ]` todo, `[/]` in progress, `[x]` done, `[!]` blocked, `[>]` deferred to tomorrow. Evidence goes after ` · ` at the end of the line, e.g. `· draft MR [dashboard!2240](url)` or `· blocked: <reason>`. Edit one line at a time with the Edit tool. The plan panel's tick guard refuses an `[x]` that carries no MR link, `merged` or `· note: <why>`; for a `me` item you ticked on the user's word, write `· note: <what the user said>`.
+Markers: `[ ]` todo, `[/]` in progress, `[x]` done, `[!]` blocked, `[>]` deferred to tomorrow. Evidence goes after ` · ` at the end of the line, e.g. `· draft MR [dashboard!2240](url)` or `· blocked: <reason>`. Edit one line at a time with the Edit tool. The tick guard refuses an `[x]` that carries no MR link, `merged` or `· note: <why>`; for a `me` item you ticked on the user's word, write `· note: <what the user said>`.
 
 When a ticket agent reports:
 1. Read its report. Run `git -C <worktree> diff --stat` and check it matches what the report claims.
@@ -146,7 +146,7 @@ glab api --method POST "projects/<urlencoded path>/merge_requests/<iid>/discussi
 - `[daily-event:info] ...` lines: no action. Mention them only if the user asks what changed.
 - `inbox: <N> new` (from the mod): process the inbox, section 7.
 - Before handling any other event or agent report, list the inbox (section 7) and process what is waiting. Then re-read the plan block: the user edits the diary too. An item they ticked or removed is theirs; do not touch it.
-- No mod (the status line and the plan panel stay empty): there is no watcher and no inbox listing. Start `/loop 5m` with the prompt `check the run-day inbox (section 7), then run changes-since --cursor run-day and handle each line it prints as an event`, and keep the rule above.
+- No mod (the status line and the plan band stay empty): there is no watcher and no inbox listing. Start `/loop 5m` with the prompt `check the run-day inbox (section 7), then run changes-since --cursor run-day and handle each line it prints as an event`, and keep the rule above.
 
 ## 7. Inbox (hand-offs, report-backs, off-plan work)
 

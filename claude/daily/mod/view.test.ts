@@ -1,7 +1,7 @@
 import { test, expect } from 'claude-code/testing'
 import { parseItems } from './diary.ts'
 import { parseRunState } from './runstate.ts'
-import { joinRows, newlyNeedsYou, panelGroups, statusLine } from './view.ts'
+import { bandRows, joinRows, newlyNeedsYou, panelGroups, statusLine } from './view.ts'
 import { DIARY, DIARY_UNPLANNED, RUN_STATE } from './fixtures.ts'
 
 const items = parseItems(DIARY)
@@ -98,4 +98,36 @@ test('description fallback prefers a live agent among several with the same key'
     { id: 'live', description: 'ECFX-18169 second', status: 'running' },
   ])
   expect(rows.find(r => r.key === 'ecfx-18169')?.agent?.id).toBe('live')
+})
+
+const pg = (group: string, rows: Array<[string, string, boolean?]>) => ({
+  group,
+  rows: rows.map(([marker, text, needsYou]) => ({ marker: marker as never, text, needsYou: needsYou ?? false, badges: [] })),
+})
+
+test('bandRows with everything done or deferred is the header only', async () => {
+  const band = bandRows([pg('Merge', [['x', 'a'], ['>', 'b']]), pg('Today', [['x', 'c']])])
+  expect(band).toEqual({ header: 'plan · 2/3 done', rows: [], footer: null })
+})
+
+test('bandRows lists only open items and prefixes the group on the first of each group', async () => {
+  const band = bandRows([pg('Merge', [['x', 'a'], ['/', 'b'], ['!', 'c']]), pg('Today', [['>', 'd'], [' ', 'e']])])
+  expect(band.rows.map(r => `${r.group}|${r.marker}|${r.text}`)).toEqual(['Merge|/|b', '|!|c', 'Today| |e'])
+  expect(band.footer).toBeNull()
+})
+
+test('bandRows keeps the needsYou flag', async () => {
+  const band = bandRows([pg('Today', [[' ', 'a'], [' ', 'b', true]])])
+  expect(band.rows.map(r => r.needsYou)).toEqual([false, true])
+})
+
+test('bandRows fits 11 open items and caps 12 rows with a +K more footer above that', async () => {
+  const mk = (n: number) => [pg('Today', Array.from({ length: n }, (_, i): [string, string] => [' ', `t${i}`]))]
+  const eleven = bandRows(mk(11))
+  expect(eleven.rows.length).toBe(11)
+  expect(eleven.footer).toBeNull()
+  const fifteen = bandRows(mk(15))
+  expect(fifteen.rows.length).toBe(10)
+  expect(fifteen.footer).toBe('+5 more · /plan to hide')
+  expect(1 + fifteen.rows.length + 1).toBe(12)
 })

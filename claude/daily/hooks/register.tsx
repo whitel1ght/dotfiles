@@ -8,15 +8,15 @@ import { applyEdit, checkTicks, denyMessage, isTodaysDiary } from '../mod/guard.
 import type { EditInput } from '../mod/guard.ts'
 import { parseRunState } from '../mod/runstate.ts'
 import type { InboxState, ViewState } from '../mod/types.ts'
-import { joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts'
+import { bandRows, joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts'
 
-const PANE = 'run-day-plan'
 const REFRESH_MS = 5_000
 const WATCH_MS = 180_000
 const INBOX_MS = 30_000
 const INBOX_LS = 'ls -1 "$HOME/.local/state/run-day/inbox" 2>/dev/null; true'
 const EMPTY: ViewState = { active: false, status: '', groups: [] }
 const view = atom({ plugin: 'daily', key: 'view' } as const, EMPTY)
+const isExpanded = atom({ plugin: 'daily', key: 'isExpanded' } as const, false)
 const inbox = atom({ plugin: 'daily', key: 'inbox' } as const, EMPTY_INBOX as InboxState)
 
 type Day = { home: string; today: string; diaryPath: string; statePath: string }
@@ -166,7 +166,7 @@ async function watchInbox($: EngineInterface) {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'plan', description: 'Toggle the run-day plan panel' })
+    await $.command.register({ name: 'plan', description: 'Toggle the run-day plan band above the prompt' })
     $.clock.every(REFRESH_MS, () => {
       void safeRefresh($)
     })
@@ -180,36 +180,31 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'plan' }, async $ => {
-    const isOpen = (await $.ui.panes()).some(p => p.id === PANE)
-    if (isOpen) {
-      await $.ui.close({ id: PANE })
-      return { text: 'Plan panel closed.' }
-    }
-    await refresh($)
-    await $.ui.open({ id: PANE, title: 'Plan' })
-    return { text: 'Plan panel opened.' }
-  }).catch(() => ({ text: 'Plan panel failed to open.' }))
+    const next = !(await read($, isExpanded))
+    await update($, isExpanded, () => next)
+    return { text: next ? 'Plan band expanded.' : 'Plan band collapsed.' }
+  }).catch(() => ({ text: 'Plan band toggle failed.' }))
 
-  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text } = $.ui.resolve(e)
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const v = await read($, view)
-    if (!v.active) return <Text dimColor>No /run-day in progress for today.</Text>
+    if (e.props.hasSurvey || !v.active || !(await read($, isExpanded))) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    const band = bandRows(v.groups)
     return (
       <Box flexDirection="column">
-        <Text bold>{v.status}</Text>
-        {v.groups.map(g => (
-          <Box flexDirection="column" key={g.group}>
-            <Text bold dimColor>
-              {g.group}
-            </Text>
-            {g.rows.map((r, i) => (
-              <Text key={`${g.group}-${i}`} color={r.needsYou ? 'yellow' : undefined} dimColor={r.marker === 'x'} wrap="truncate">
-                [{r.marker}] {r.text}
-                {r.badges.length > 0 ? `  ${r.badges.join(' · ')}` : ''}
-              </Text>
-            ))}
-          </Box>
+        <Text bold wrap="truncate">
+          {band.header}
+        </Text>
+        {band.rows.map((r, i) => (
+          <Text key={i} color={r.needsYou ? 'yellow' : undefined} wrap="truncate">
+            {r.group !== '' ? <Text dimColor>{r.group} </Text> : null}[{r.marker}] {r.text}
+          </Text>
         ))}
+        {band.footer !== null ? (
+          <Text dimColor wrap="truncate">
+            {band.footer}
+          </Text>
+        ) : null}
       </Box>
     )
   })
