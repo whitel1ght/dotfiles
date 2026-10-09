@@ -1,4 +1,4 @@
-import { parseItems } from './diary.ts'
+import { extractBlock, parseItems } from './diary.ts'
 import type { Marker } from './types.ts'
 
 const EVIDENCE = /merge_requests\/\d+|\bmerged\b|· note:/i
@@ -14,13 +14,16 @@ export function isTodaysDiary(path: string, today: string): boolean {
 
 export function applyEdit(current: string, input: EditInput): string | null {
   if (input.tool === 'Write') return input.content
-  if (!current.includes(input.old_string)) return null
+  if (input.old_string === '' || !current.includes(input.old_string)) return null
   return input.replace_all
     ? current.split(input.old_string).join(input.new_string)
     : current.replace(input.old_string, () => input.new_string)
 }
 
 export function checkTicks(before: string, after: string): GuardResult {
+  if (extractBlock(before) !== null && extractBlock(after) === null) {
+    return { ok: false, lines: ['the start-day block markers (<!-- start-day:start --> / <!-- start-day:end -->) are broken or missing'] }
+  }
   const pool = new Map<string, Marker[]>()
   for (const it of parseItems(before)) pool.set(it.text, [...(pool.get(it.text) ?? []), it.marker])
   const bad: string[] = []

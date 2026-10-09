@@ -75,3 +75,27 @@ test('an Unplanned line ticked with a note or an MR link passes, a bare one does
   expect(checkTicks(DIARY_UNPLANNED, DIARY_UNPLANNED.replace(open, '- [x] retro prep · note: outline done')).ok).toBe(true)
   expect(checkTicks(DIARY, DIARY_UNPLANNED).ok).toBe(true)
 })
+
+const END_MARK = '<!-- start-day:end -->'
+const START_MARK = '<!-- start-day:start -->'
+
+test('deleting the end marker together with a bare tick is refused', async () => {
+  const after = tick('- [ ] ecfx-6659 sync with @smtsuchi', '- [x] ecfx-6659 sync with @smtsuchi').replace(END_MARK, '')
+  const res = checkTicks(DIARY, after)
+  expect(res.ok).toBe(false)
+  if (!res.ok) expect(res.lines.join('|').includes('markers')).toBe(true)
+})
+
+test('deleting a marker without any tick change is refused too', async () => {
+  expect(checkTicks(DIARY, DIARY.replace(END_MARK, '')).ok).toBe(false)
+  expect(checkTicks(DIARY, DIARY.replace(START_MARK, '')).ok).toBe(false)
+})
+
+test('a diary with no valid block before still passes', async () => {
+  expect(checkTicks('# no block\n- [ ] a', '# no block\n- [x] a').ok).toBe(true)
+  expect(checkTicks(`${START_MARK}\n- [ ] a`, '- [x] a').ok).toBe(true)
+})
+
+test('applyEdit with an empty old_string returns null', async () => {
+  expect(applyEdit(DIARY, { tool: 'Edit', old_string: '', new_string: 'x' })).toBe(null)
+})
