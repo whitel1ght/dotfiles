@@ -3,8 +3,8 @@
     "mattpocock": {
       "repo": "https://github.com/mattpocock/skills.git",
       "ref": "main",
-      "resolved": "b0618bc436ad893b3c5e84e55fba86586d34a404",
-      "fetchedAt": "2026-10-08T11:16:43Z",
+      "resolved": "49dd158d1076134a641b33efb035946536778336",
+      "fetchedAt": "2026-10-09T11:37:43Z",
       "license": "LICENSE",
       "skills": {
         "teach": "skills/productivity/teach"
