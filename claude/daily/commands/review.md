@@ -20,7 +20,9 @@ It prints one JSON object: `level`, `id`, `from`, `to`, `file` (relative to `~/w
 
 ## 2. Find what is missing
 
-A review is built from the level below it: week from diary files, log entries and decisions; month from its weeks; quarter from its months; year from its quarters. Make a list of the periods to generate, children first: for the period and then recursively for each child, include it when `~/wiki/<file>` does not exist (always include the requested period, replacing an existing file only after the user says so). If the list has more than 4 periods, show it and ask before going on.
+A review is built from the level below it: week from diary files, log entries and decisions; month from its weeks; quarter from its months; year from its quarters. `review-period` returns one level of `children`: for each child run `review-period <child level> <child id>` to get its own children (quarter to month to week; year to quarter to month to week), and so on down to weeks. Month and quarter children are ISO weeks by their Thursday, so a month's first or last days may fall outside its week children; those days are covered by the period's own `daily-stats` range.
+
+Make a list of the periods to generate, lowest level first: skip children whose file already exists under `~/wiki` (their file is read as an input as it stands); include each child whose file is missing; always include the requested period, replacing its existing file only after the user says so. If the list has more than 4 missing lower-level periods (excluding the requested period itself), show it and ask before going on.
 
 ## 3. Generate each period, in list order
 
@@ -34,33 +36,36 @@ printf '%s' "$STATS" | jq -r '"## Numbers\n\n\(.from) to \(.to): \(.days) planne
 ```
 
    If `daily-stats` fails, stop and show its error: never estimate numbers.
-2. Inputs, as a list of paths (the subagent reads them itself):
-   - week: diary files in range (`ls ~/wiki/diary/20??-??-??.md | awk -F/ -v from=<from> -v to=<to> '{n=$NF; sub(/\.md$/,"",n); if (n>=from && n<=to) print}'`)
-   - month, quarter, year: the child review files, in full.
-   - every level: log entries dated in range, and decisions dated in range:
+2. Inputs, as a list of paths (the subagent reads them itself). Write the extraction output to scratchpad files, not the terminal:
 
 ```bash
-awk -v from="<from>" -v to="<to>" '/^## 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]/ { d = substr($2,1,10); on = (d >= from && d <= to); if (on) print "--- " FILENAME } on' ~/wiki/projects/*/log/*.md
-for f in ~/wiki/projects/*/decisions/*.md; do d="$(sed -n 's/^date: *//p' "$f" | head -1)"; if [[ "$d" > "<from>" || "$d" == "<from>" ]] && [[ "$d" < "<to>" || "$d" == "<to>" ]]; then echo "$f"; fi; done
+X="${CLAUDE_PLUGIN_ROOT}/scripts/review-extract"
+"$X" logs ~/wiki <from> <to> > <scratchpad>/logs-<id>.txt
+"$X" decisions ~/wiki <from> <to> > <scratchpad>/decisions-<id>.txt
+"$X" diary ~/wiki <from> <to> > <scratchpad>/diary-<id>.txt
 ```
+
+   - week: the paths in `diary-<id>.txt`.
+   - month, quarter, year: the child review files, in full (existing ones as they stand, the ones just generated included).
+   - every level: `logs-<id>.txt` (its first line gives the date range and paths, then each file under a `--- path` line) and the decision files listed in `decisions-<id>.txt`.
 
 3. Spawn a `sonnet` subagent (foreground) with this brief, filled in:
 
-> Write the `<level>` review `<id>` (<from> to <to>) for the user's own retrospective. Read `~/wiki/AGENTS.md` and `~/wiki/_templates/review-<level>.md` first and follow the template's section headings and order. Do not write frontmatter, a title or a Numbers section: this session adds them. Read these inputs: <paths>. The numbers are already written in `<scratchpad>/numbers-<id>.md`: do not state any count that is not in that file or in the inputs you can count directly. Output only these sections, with these exact `## ` headings, in this order: **Shipped** (merged and draft MRs as markdown links, `[repo!iid](url)`), **Per project** (one short paragraph each for ecfx, epicmax, personal where there is anything), **Decisions** (links to the decision files, one line each), **Carry-over & time sinks** (items deferred two or more times, and where time went, from the stats below), **Brag bullets** (3 to 7, impact-phrased: what changed for whom). Plain, specific, no filler; every claim traceable to an input. Write the result to `<scratchpad>/review-<id>.md` and reply with only that path. Repeat-deferred items and MR links from `daily-stats`: <the `repeat_deferred` and `done_mr_links` fields of STATS>.
+> Write the `<level>` review `<id>` (<from> to <to>) for the user's own retrospective. Read `~/wiki/AGENTS.md` and `~/wiki/_templates/review-<level>.md` first and follow the template's section headings and order. Do not write frontmatter, a title or a Numbers section: this session adds them. Read these inputs: <paths>. The numbers are already written in `<scratchpad>/numbers-<id>.md`: do not state any count that is not in that file or in the inputs you can count directly. Output only these sections, with these exact `## ` headings, in this order: **Shipped** (MRs as markdown links, `[repo!iid](url)`, only those in the `done_mr_links` or `merged_mrs` of the stats below), **Per project** (one short paragraph each for ecfx, epicmax, personal where there is anything), **Decisions** (one line each; every line links its decision file or is omitted), **Carry-over & time sinks** (items deferred two or more times, and where time went, from the stats below), **Brag bullets** (3 to 7, impact-phrased: what changed for whom). Every MR link anywhere in the file must appear in `daily-stats` output below or in a decision or log file you were given: never construct a link. When there are no inputs at all, still write every section, each as `Nothing this period.`; do not ask or stop. Plain, specific, no filler; every claim traceable to an input. Write the result to `<scratchpad>/review-<id>.md` and reply with only that path. Repeat-deferred items and MR links from `daily-stats`: <the `repeat_deferred` and `done_mr_links` fields of STATS>.
 
 4. Assemble and check. The review's shape is fixed by `~/wiki/_templates/review-<level>.md` (plan-wiki Task 3): frontmatter, then `# {{period}} review`, then `## Numbers`, then the five sections. This session fills the template's tokens and builds the file; the subagent contributes only the sections after Numbers:
 
 ```bash
 TPL=~/wiki/_templates/review-<level>.md
 OUT=<scratchpad>/review-<id>.full.md
-awk 'NR==1 && $0=="---"{f=1} f{print} f && NR>1 && $0=="---"{exit}' "$TPL" | sed "s/{{date}}/<to>/; s/{{period}}/<id>/" > "$OUT"
+"${CLAUDE_PLUGIN_ROOT}/scripts/review-extract" frontmatter "$TPL" <to> <id> > "$OUT"
 printf '\n# <id> review\n\n' >> "$OUT"
 cat <scratchpad>/numbers-<id>.md >> "$OUT"
 printf '\n' >> "$OUT"
 cat <scratchpad>/review-<id>.md >> "$OUT"
 ```
 
-   `{{date}}` is the period's end date (`to`), `{{period}}` its id; any extra frontmatter keys the template carries (a `qmd.metadata` block) are kept. Verify each of these and fix or re-brief if one fails: the frontmatter has `type: review`, `date` and `period`, and no `{{` remains in the file; the `## Numbers` heading appears once and its figures equal `jq '.items'` of STATS; every `[...](https://...)` link in Shipped appears in `done_mr_links` or `merged_mrs`; no section is empty (write `Nothing this period.` instead). Copy `$OUT` to `~/wiki/<file>` (`mkdir -p ~/wiki/reviews` first).
+   `{{date}}` is the period's end date (`to`), `{{period}}` its id; any extra frontmatter keys the template carries (a `qmd.metadata` block) are kept. Verify each of these and fix or re-brief if one fails: the frontmatter has `type: review`, `date` and `period`, and no `{{` remains in the file; the `## Numbers` heading appears once and its figures equal `jq '.items'` of STATS; every `[...](https://...)` link anywhere in the file appears in `done_mr_links` or `merged_mrs` or in a decision or log file given to the subagent; no section is empty (write `Nothing this period.` instead). A period with no inputs is still written, without asking: zeros in Numbers and `Nothing this period.` in every section. Copy `$OUT` to `~/wiki/<file>` (`mkdir -p ~/wiki/reviews` first).
 
 ## 4. Index and commit
 
@@ -69,5 +74,7 @@ qmd update && qmd embed
 git -C ~/wiki add reviews
 git -C ~/wiki commit -m "wiki: review <id>[, <id>...]"
 ```
+
+When a regenerated review is identical to the committed one, nothing to commit is fine: say so and go on.
 
 If `qmd` fails, say so in one line and still commit. Print the path of the requested review and its Brag bullets.
