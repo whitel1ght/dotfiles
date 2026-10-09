@@ -209,6 +209,7 @@ out=$(GLAB_DOWN=1 run collect --since 2026-09-20T00:00:00Z)
 assert_eq "(GitLab unavailable)" "$(todos "$out")" "GitLab down is noted, and the digest keeps going"
 assert_contains "$out" "## Jira" "including the final section"
 reset
+echo '{"message":"401 Unauthorized"}' > "$FIX/todos.json"
 assert_eq "(none)" "$(todos "$(run collect --since 2026-09-20T00:00:00Z)")" "an unexpected non-array body is treated as none, not a crash"
 
 echo
