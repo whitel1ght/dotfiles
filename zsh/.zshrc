@@ -77,6 +77,11 @@ alias push_notes='notes push'
 # context files either: they would take ~10k of its 16k window.
 alias pil='pi --model ollama/qwen2.5-coder:14b-16k --no-tools -ns -nc -np'
 
+# Local Pi agent on Qwen3-Coder 30B 3-bit in LM Studio (16k, pi/models.json).
+# It can use the built-in tools, but extensions, skills, MCP and context files
+# are off: with them Pi sends ~40k tokens before the first message.
+alias pilm='pi --model lmstudio/qwen3-coder-30b-a3b-instruct --models lmstudio/qwen3-coder-30b-a3b-instruct -ne -ns -np -nc --no-mcp'
+
 # Free Pi session, with Longcat as the only scoped model.
 alias pifree='pi --model opencode-go/longcat-2.5-preview-free --models opencode-go/longcat-2.5-preview-free'
 

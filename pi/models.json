@@ -98,6 +98,26 @@
           }
         }
       ]
+    },
+    "lmstudio": {
+      "api": "openai-completions",
+      "apiKey": "lmstudio",
+      "baseUrl": "http://127.0.0.1:1234/v1",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "qwen3-coder-30b-a3b-instruct",
+          "name": "Qwen3 Coder 30B A3B 3-bit (16k, LM Studio)",
+          "input": [
+            "text"
+          ],
+          "contextWindow": 16384,
+          "maxTokens": 4096
+        }
+      ]
     }
   }
 }
