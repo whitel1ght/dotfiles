@@ -10,6 +10,11 @@
       "source": "./personal"
     },
     {
+      "name": "daily",
+      "description": "Daily workflow: /run-day, /review, /ask-wiki, jira-write and the plan panel.",
+      "source": "./daily"
+    },
+    {
       "name": "mattpocock",
       "description": "Vendored skills from mattpocock.",
       "source": "./vendor/mattpocock"

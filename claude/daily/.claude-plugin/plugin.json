@@ -1,0 +1,7 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "daily",
+  "version": "0.1.0",
+  "description": "Daily workflow: /run-day, /review, /ask-wiki, the jira-write skill and the run-day plan panel.",
+  "author": { "name": "Dmitry" }
+}

@@ -477,5 +477,21 @@ assert_eq "yes" "$(is_file "$ROOT/dotfiles/vendor/fix/skills/grilling/SKILL.md")
     "unreachable remote leaves committed copy intact"
 
 echo
+echo "== hand-written daily plugin in the marketplace =="
+
+new_sandbox
+mkdir -p "$ROOT/dotfiles/daily/.claude-plugin"
+echo '{"name":"daily","version":"0.1.0","description":"x"}' > "$ROOT/dotfiles/daily/.claude-plugin/plugin.json"
+call_sync_fn write_marketplace >/dev/null 2>&1
+MP="$ROOT/dotfiles/.claude-plugin/marketplace.json"
+assert_eq "./daily" "$(jq -r '.plugins[] | select(.name=="daily") | .source' "$MP")" \
+    "marketplace lists the daily plugin when claude/daily has a manifest"
+
+new_sandbox
+call_sync_fn write_marketplace >/dev/null 2>&1
+assert_eq "" "$(jq -r '.plugins[] | select(.name=="daily") | .name' "$ROOT/dotfiles/.claude-plugin/marketplace.json")" \
+    "marketplace omits daily when there is no daily plugin"
+
+echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
