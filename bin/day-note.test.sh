@@ -79,6 +79,12 @@ f=$(run --session 'my: "odd" session' --repo 'a b' ECFX-18169 "x")
 assert_eq '"my: \"odd\" session"' "$(field "$f" session)" "a session with a colon or quotes is quoted"
 assert_eq '"a b"' "$(field "$f" repo)" "so is a repo with a space"
 f=$(run "Ünïcode ✓ summary"); assert_contains "$(cat "$f")" 'log: "Ünïcode ✓ summary"' "non-ASCII passes through"
+f=$(run -- "---"); assert_eq "2" "$(grep -c '^---$' "$f")" "a summary of --- alone cannot add a third --- line"
+assert_eq "1" "$(grep -c '^memory:$' "$f")" "a summary of --- alone keeps one memory block"
+assert_eq '  log: "---"' "$(sed -n '/^  log: /p' "$f")" "and log still holds the summary as typed"
+f=$(run "memory:"); assert_eq "1" "$(grep -c '^memory:$' "$f")" "a summary of memory: alone cannot fake a second memory block"
+assert_eq "2" "$(grep -c '^---$' "$f")" "and keeps two --- lines"
+f=$(run -- "-e"); assert_eq "-e" "$(sed -n '7p' "$f")" "a summary of -e is written as the paragraph, not swallowed by echo"
 
 echo "day-note — diary edge cases"
 rm -f "${DIARY:?}/${TODAY:?}.md"

@@ -81,7 +81,9 @@ done
   [ -z "$mr" ] || echo "mr: $(scalar "$(one_line "$mr")")"
   echo "at: $at"
   echo "---"
-  echo "$summary"
+  paragraph="$summary"
+  case "$summary" in ---|memory:) paragraph=" $summary" ;; esac
+  printf '%s\n' "$paragraph"
   echo
   echo "memory:"
   echo "  project: $(scalar "$(one_line "$project")")"
