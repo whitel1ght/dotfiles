@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# What changed on my tickets and MRs since I last looked, one JSON event per line.
+#
+#   changes-since [--cursor NAME] [--peek]
+#
+# Event: {kind, project, ticket, mr, repo, summary, url, at}
+#   kind     review | comment | pipeline_failed | pipeline_fixed | assigned |
+#            ticket_updated | mention | approved | merged
+#   project  "ecfx" for Jira keys of $JIRA_PROJECT and GitLab paths under ecfx/, else null
+#   ticket   Jira key, or null; mr the MR iid, or null; repo the GitLab repo name
+#            (last path segment, e.g. ecfx-dashboard), or null
+#   at       UTC, second precision, e.g. 2026-10-08T07:12:33Z
+# Events are sorted by `at`. Per run there is at most one event per kind per MR,
+# and one per kind per ticket for Jira events.
+#
+# Sources: Jira (assigned to me; updated, where I am assignee, reporter or
+# watcher), GitLab pending to-dos, and my MRs updated since: new notes from
+# others (inline diff notes make a `review`, others a `comment`), approvals,
+# merges, and head-pipeline failures and recoveries.
+#
+# The cursor is a UTC timestamp in ~/.local/state/changes-since/NAME (default
+# "default"); events are those at or after it. With no cursor file, since
+# local midnight. It moves to this run's start time only after every source
+# answered and the events were printed, so a failure loses nothing, and --peek
+# never moves it. A failing source is an error: exit 1, nothing on stdout.
+# Nothing changed: exit 0 and no output.
+#
+# Needs jira-api (JIRA_EMAIL/JIRA_API_TOKEN), glab and jq.
+set -euo pipefail
+
+JIRA_BASE="${JIRA_BASE:-https://ecfxdev.atlassian.net}"
+JIRA_PROJECT="${JIRA_PROJECT:-ECFX}"
+JIRA_API="${JIRA_API:-jira-api}"
+STATE_DIR="${CHANGES_SINCE_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/changes-since}"
+
+die() { echo "changes-since: $*" >&2; exit 1; }
+iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+epoch_of() { date -j -u -f %Y-%m-%dT%H:%M:%SZ "$1" +%s 2>/dev/null || date -u -d "$1" +%s; }
+
+name=default peek=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --cursor) shift; name="${1:-}"; [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || die "--cursor needs a name of letters, digits, . _ -" ;;
+    --peek) peek=1 ;;
+    -h|--help) sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown option $1" ;;
+  esac
+  shift
+done
+
+now=$(date +%s); NOW=$(iso "$now")
+if [ -s "$STATE_DIR/$name" ]; then
+  SINCE=$(cat "$STATE_DIR/$name")
+  [[ "$SINCE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || die "cursor $STATE_DIR/$name is not a UTC timestamp: $SINCE"
+else
+  SINCE=$(iso $((now - 10#$(date +%H) * 3600 - 10#$(date +%M) * 60 - 10#$(date +%S))))
+fi
+
+# Timestamps from GitLab and Jira, as UTC to the second, so they compare as strings.
+JQ_DEFS='
+def utc: if test("Z$") or test("\\+00:?00$") then sub("\\.[0-9]+"; "") | sub("\\+00:?00$"; "Z")
+  else capture("^(?<t>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<s>[+-])(?<h>[0-9]{2}):?(?<m>[0-9]{2})$")
+    | ((.t + "Z") | fromdateiso8601) - ((.s + "1" | tonumber) * ((.h | tonumber) * 3600 + (.m | tonumber) * 60)) | todate end;
+'
+EVENTS="$(mktemp)"; trap 'rm -f "$EVENTS"' EXIT
+
+feed_jira() {
+  local jql_since assigned updated
+  jql_since=$(date -r "$(epoch_of "$SINCE")" '+%Y/%m/%d %H:%M' 2>/dev/null || date -d "$SINCE" '+%Y/%m/%d %H:%M')
+  jira_issues() {
+    local resp
+    resp=$("$JIRA_API" POST search/jql "$(jq -cn --arg jql "$1" \
+      '{jql: $jql, fields: ["summary", "status", "updated"], maxResults: 100}')") || return 1
+    jq -e '.issues | type == "array"' <<<"$resp" >/dev/null || return 1
+    jq -c .issues <<<"$resp"
+  }
+  # The JQL window is minute-granular and the cursor is not, so jq filters exactly.
+  assigned=$(jira_issues "assignee = currentUser() AND assignee CHANGED TO currentUser() AFTER \"$jql_since\"") || return 1
+  updated=$(jira_issues "(assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser()) AND updated >= \"$jql_since\" ORDER BY updated DESC") || return 1
+  local kind issues
+  for kind in assigned ticket_updated; do
+    if [ "$kind" = assigned ]; then issues="$assigned"; else issues="$updated"; fi
+    jq -c --arg kind "$kind" --arg since "$SINCE" --arg base "$JIRA_BASE" --arg jp "$JIRA_PROJECT" "$JQ_DEFS"'
+      .[] | (.fields.updated | utc) as $at | select($at >= $since)
+      | {kind: $kind, project: (if (.key | sub("-.*$"; "")) == $jp then "ecfx" else null end), ticket: .key,
+         mr: null, repo: null, summary: "\(.fields.summary) [\(.fields.status.name)]",
+         url: "\($base)/browse/\(.key)", at: $at}' <<<"$issues" >> "$EVENTS" || return 1
+  done
+}
+
+# --- gitlab feeds ---
+
+feed_jira || die "Jira unavailable (is JIRA_EMAIL/JIRA_API_TOKEN set? are they still valid?)"
+
+out=$(jq -sc '
+  (map(select(.kind == "assigned" and .mr == null) | .ticket)) as $assigned
+  | map(select(.kind != "ticket_updated" or (.ticket as $t | $assigned | index($t) | not)))
+  | group_by([.kind, .repo, .mr, (if .mr == null then .ticket else null end)])
+  | map(max_by(.at)) | sort_by(.at, .kind) | .[]' "$EVENTS") || die "could not assemble events"
+[ -z "$out" ] || printf '%s\n' "$out"
+if [ "$peek" -eq 0 ]; then
+  mkdir -p "$STATE_DIR"
+  printf '%s\n' "$NOW" > "$STATE_DIR/$name.tmp" && mv "$STATE_DIR/$name.tmp" "$STATE_DIR/$name"
+fi

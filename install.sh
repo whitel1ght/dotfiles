@@ -409,6 +409,11 @@ if [ -f "$DOTFILES_DIR/bin/daily-stats" ]; then
     create_symlink "$DOTFILES_DIR/bin/daily-stats" "$HOME/.local/bin/daily-stats"
 fi
 
+# changes-since prints what changed on my tickets and MRs since the last look, as JSON lines.
+if [ -f "$DOTFILES_DIR/bin/changes-since" ]; then
+    create_symlink "$DOTFILES_DIR/bin/changes-since" "$HOME/.local/bin/changes-since"
+fi
+
 # mr-watch finds new review notes on my MRs and posts the replies; driven by /watch-mrs.
 if [ -f "$DOTFILES_DIR/bin/mr-watch" ]; then
     create_symlink "$DOTFILES_DIR/bin/mr-watch" "$HOME/.local/bin/mr-watch"
