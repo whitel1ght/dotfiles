@@ -42,7 +42,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --cursor) shift; name="${1:-}"; [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || die "--cursor needs a name of letters, digits, . _ -" ;;
     --peek) peek=1 ;;
-    -h|--help) sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,4p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown option $1" ;;
   esac
   shift
@@ -65,8 +65,10 @@ def utc: if test("Z$") or test("\\+00:?00$") then sub("\\.[0-9]+"; "") | sub("\\
 EVENTS="$(mktemp)"; trap 'rm -f "$EVENTS"' EXIT
 
 feed_jira() {
-  local jql_since assigned updated
-  jql_since=$(date -r "$(epoch_of "$SINCE")" '+%Y/%m/%d %H:%M' 2>/dev/null || date -d "$SINCE" '+%Y/%m/%d %H:%M')
+  local jql_since assigned updated tz
+  # JQL reads dates in the Jira profile's time zone, not this machine's.
+  tz=$("$JIRA_API" GET myself | jq -er .timeZone) || return 1
+  jql_since=$(TZ="$tz" date -r "$(epoch_of "$SINCE")" '+%Y/%m/%d %H:%M' 2>/dev/null || TZ="$tz" date -d "$SINCE" '+%Y/%m/%d %H:%M')
   jira_issues() {
     local resp
     resp=$("$JIRA_API" POST search/jql "$(jq -cn --arg jql "$1" \
@@ -93,6 +95,7 @@ gitlab_json() { glab api --paginate "$1" | jq -s 'add // []'; }
 feed_gitlab_todos() {
   local todos
   todos=$(gitlab_json 'todos?state=pending&per_page=100') || return 1
+  jq -e 'type == "array"' <<<"$todos" >/dev/null || return 1
   jq -c --arg since "$SINCE" --arg jp "$JIRA_PROJECT" "$JQ_DEFS"'
     def kind: {assigned: "assigned", review_requested: "assigned", approval_required: "assigned",
                mentioned: "mention", directly_addressed: "mention", build_failed: "pipeline_failed",

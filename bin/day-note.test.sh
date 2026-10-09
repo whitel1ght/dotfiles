@@ -54,9 +54,15 @@ f=$(run ECFX-99 "Unplanned ticket"); assert_eq "offplan" "$(field "$f" kind)" "k
 assert_eq "yes" "$([[ "$(basename "$f")" == *-ECFX-99-* ]] && echo yes || echo no)" "an off-plan message that has a key still names the key in the file"
 f=$(run "Quick favour for a teammate"); assert_eq "offplan" "$(field "$f" kind)" "no KEY means offplan"
 assert_eq "" "$(field "$f" key)" "and an empty key"
+assert_eq "key:" "$(sed -n 2p "$f")" "written as exactly key: with no trailing space"
 assert_eq "yes" "$([[ "$(basename "$f")" =~ ^[0-9]{8}T[0-9]{6}-offplan-[0-9a-f]{4}\.md$ ]] && echo yes || echo no)" "file name uses offplan in place of the key"
 f=$(run --kind progress ECFX-99 "Half way"); assert_eq "progress" "$(field "$f" kind)" "--kind overrides the default"
 f=$(run --kind handback ECFX-18169 "Back to you"); assert_eq "handback" "$(field "$f" kind)" "handback accepted"
+
+f=$(run 'memory: fake'); assert_eq "yes" "$([ "$(grep -c '^memory:' "$f")" = 1 ] && echo yes || echo no)" "a summary starting with memory: is not a line starting with memory:, so only the real block is one"
+assert_eq " memory: fake" "$(sed -n 7p "$f")" "the paragraph is indented, not read as a block"
+f=$(run ECFX-1 'memory:'); assert_eq "1" "$(grep -c '^memory:' "$f")" "a bare memory: summary is neutralised too"
+run A1B-12 "x" >/dev/null 2>&1; assert_eq "1" "$?" "a KEY with a digit in the prefix (A1B-12) is rejected"
 
 echo "day-note — project"
 f=$(run ECFX-1 "x"); assert_eq "ecfx" "$(memf "$f" project)" "ECFX- key gives project ecfx"

@@ -46,7 +46,7 @@ key=""
 case ${#pos[@]} in
   1) summary="${pos[0]}" ;;
   2) key="$(tr '[:lower:]' '[:upper:]' <<<"${pos[0]}")"; summary="${pos[1]}"
-     [[ "$key" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]] || die "KEY must look like ECFX-18169, got ${pos[0]}" ;;
+     [[ "$key" =~ ^[A-Z]+-[0-9]+$ ]] || die "KEY must look like ECFX-18169, got ${pos[0]}" ;;
   *) die "usage: day-note [--kind K] [--project P] [--repo R] [--mr URL] [--session S] [KEY] \"summary\"" ;;
 esac
 summary=$(one_line "$summary")
@@ -74,7 +74,7 @@ done
 
 {
   echo "---"
-  echo "key: $key"
+  echo "key:${key:+ $key}"
   echo "kind: $kind"
   echo "session: $(scalar "$(one_line "$session")")"
   [ -z "$repo" ] || echo "repo: $(scalar "$(one_line "$repo")")"
@@ -82,7 +82,7 @@ done
   echo "at: $at"
   echo "---"
   paragraph="$summary"
-  case "$summary" in ---|memory:) paragraph=" $summary" ;; esac
+  case "$summary" in ---|memory:*) paragraph=" $summary" ;; esac
   printf '%s\n' "$paragraph"
   echo
   echo "memory:"

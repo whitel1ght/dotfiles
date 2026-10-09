@@ -24,11 +24,11 @@ DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
 die() { echo "daily-stats: $*" >&2; exit 1; }
 valid_date() { [ "$(date -j -f %F "$1" +%F 2>/dev/null || date -d "$1" +%F 2>/dev/null)" = "$1" ]; }
 shift_day() { date -j -v"$2"d -f %F "$1" +%F 2>/dev/null || date -d "$1 $2 day" +%F; }
-tz_offset() { local o; o=$(date -j -f %F "$1" +%z 2>/dev/null || date -d "$1" +%z); echo "${o:0:3}:${o:3:2}"; }
+tz_offset() { local o; o=$(date -j -f '%F %T' "$1 00:00:00" +%z 2>/dev/null || date -d "$1 00:00:00" +%z); echo "${o:0:3}:${o:3:2}"; }
 enc() { jq -rn --arg v "$1" '$v | @uri'; }
 
 case "${1:-}" in
-  -h|--help) sed -n '2,3p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,4p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
 esac
 [ $# -eq 2 ] || die "usage: daily-stats <from YYYY-MM-DD> <to YYYY-MM-DD>"
 from="$1" to="$2"

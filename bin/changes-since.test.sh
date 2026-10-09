@@ -19,10 +19,13 @@ trap 'rm -rf "$SANDBOX"' EXIT
 STUBS="$SANDBOX/stubs"; FIX="$SANDBOX/fixtures"; STATE="$SANDBOX/state"
 mkdir -p "$STUBS"
 
-# jira-api <METHOD> <path> [body]: picks the fixture by what the JQL asks for.
+# jira-api <METHOD> <path> [body]: GET myself answers the profile zone (JIRA_TZ,
+# default UTC; JIRA_MYSELF_FAIL=1 fails it); otherwise picks the fixture by what
+# the JQL asks for.
 cat > "$STUBS/jira-api" <<'STUB'
 #!/bin/bash
 echo "$*" >> "${FIX:?}/jira.log"
+[ "$1 $2" = "GET myself" ] && { [ -n "${JIRA_MYSELF_FAIL:-}" ] && exit 1; printf '{"timeZone":"%s"}\n' "${JIRA_TZ:-UTC}"; exit 0; }
 [ -n "${JIRA_DOWN:-}" ] && { echo '{"errorMessages":["Unauthorized"]}'; exit 0; }
 case "$3" in
     *"CHANGED TO currentUser()"*) cat "$FIX/jira-assigned.json" ;;
@@ -289,6 +292,30 @@ echo '[{"id":4,"project":{"id":3,"path_with_namespace":"ecfx/ecfx-backend"},"aut
 out=$(run)
 assert_eq "pipeline_failed" "$(jq -r .kind <<<"$out")" "build_failed to-do is a pipeline_failed event"
 assert_eq "ECFX-9190" "$(jq -r .ticket <<<"$out")" "with the ticket from the branch"
+
+echo "changes-since — Jira time zone"
+reset; cursor 2026-10-08T07:00:00Z
+JIRA_TZ=Asia/Tbilisi run >/dev/null
+assert_contains "$(cat "$FIX/jira.log")" "GET myself" "asks Jira for the profile zone"
+assert_contains "$(cat "$FIX/jira.log")" "AFTER \\\"2026/10/08 11:00\\\"" "JQL window is in the Jira zone (cursor 07:00Z, Asia/Tbilisi +04 => 11:00), not the machine's UTC"
+assert_contains "$(cat "$FIX/jira.log")" "updated >= \\\"2026/10/08 11:00\\\"" "also for the updated query"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(JIRA_MYSELF_FAIL=1 run); rc=$?
+assert_eq "1" "$rc" "failing GET myself: exit 1"
+assert_eq "" "$out" "and nothing on stdout"
+assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "and the cursor is unchanged"
+assert_contains "$(errs)" "Jira unavailable" "stderr names the source"
+
+echo "changes-since — to-dos shape"
+reset; cursor 2026-10-08T07:00:00Z; echo '{}' > "$FIX/todos.json"
+out=$(run); rc=$?
+assert_eq "1" "$rc" "a non-array to-dos body: exit 1"
+assert_eq "" "$out" "and nothing on stdout"
+assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "and the cursor is unchanged"
+assert_contains "$(errs)" "GitLab to-dos unavailable" "stderr names the source"
+
+echo "changes-since — help"
+assert_contains "$("$SCRIPT" --help)" "changes-since [--cursor NAME] [--peek]" "--help prints the usage line"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

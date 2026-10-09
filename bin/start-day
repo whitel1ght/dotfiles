@@ -20,7 +20,7 @@
 #   review queue  MRs waiting on me, from mr-review-queue's triage script
 #   gitlab to-dos GitLab's pending to-dos (assigned, mentioned, review requested,
 #                 failed pipelines), one line each, oldest first
-#   jira         tickets newly assigned to me, my tickets others touched, and
+#   jira          tickets newly assigned to me, my tickets others touched, and
 #                 my To-Do backlog
 # Slack and the calendar come through claude.ai connectors, which the command
 # reads itself; there's no script access to either.

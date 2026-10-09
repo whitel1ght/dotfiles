@@ -96,6 +96,14 @@ assert_contains "$(cat "$FIX/glab.log")" "scope=created_by_me" "only my MRs"
 (TZ=Etc/GMT-3 PATH="$STUBS:$PATH" FIX="$FIX" DIARY_DIR="$DIARY" "$SCRIPT" 2026-10-05 2026-10-05 >/dev/null 2>&1)
 assert_contains "$(cat "$FIX/glab.log")" "merged_after=2026-10-05T00%3A00%3A00%2B03%3A00" "the day boundaries are local midnight, in the local UTC offset"
 
+: > "$FIX/glab.log"
+(TZ=Europe/Berlin PATH="$STUBS:$PATH" FIX="$FIX" DIARY_DIR="$DIARY" "$SCRIPT" 2026-10-25 2026-10-25 >/dev/null 2>&1)
+assert_contains "$(cat "$FIX/glab.log")" "merged_after=2026-10-25T00%3A00%3A00%2B02%3A00" "DST day: the offset is read at midnight (+02:00), not at the current time of day"
+assert_contains "$(cat "$FIX/glab.log")" "merged_before=2026-10-26T00%3A00%3A00%2B01%3A00" "and the next midnight, after the switch, is +01:00"
+
+echo "daily-stats — help"
+assert_contains "$("$SCRIPT" --help)" "daily-stats <from YYYY-MM-DD> <to YYYY-MM-DD>" "--help prints the usage line"
+
 echo "daily-stats — edges"
 out=$(out_only 2026-10-08 2026-10-08)
 assert_eq '{"from":"2026-10-08","to":"2026-10-08","days":0,"items":{"planned":0,"done":0,"blocked":0,"deferred":0,"open":0},"repeat_deferred":[],"done_mr_links":{},"merged_mrs":[{"repo":"ecfx/ecfx-dashboard","iid":2185,"title":"Nits","url":"https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2185","merged_at":"2026-10-06T08:00:00.000Z"},{"repo":"ecfx/ecfx-backend","iid":6576,"title":"Retrieve names","url":"https://gitlab.com/ecfx/ecfx-backend/-/merge_requests/6576","merged_at":"2026-10-07T09:00:00.000Z"}]}' "$out" "a range with no start-day block is all zeros (days 0), never an error"
