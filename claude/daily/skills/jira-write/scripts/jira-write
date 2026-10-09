@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# jira-write: move a Jira issue to a status or add a comment, over jira-api.
+# Usage: jira-write [--dry-run] transition KEY "<status name>"
+#        jira-write [--dry-run] comment KEY <file>
+# --dry-run resolves everything and prints what would be sent, without sending.
+set -euo pipefail
+
+JIRA_API="${JIRA_API:-$HOME/bin/jira-api}"
+DRY=0
+if [ "${1:-}" = "--dry-run" ]; then DRY=1; shift; fi
+
+usage() {
+  echo 'usage: jira-write [--dry-run] transition KEY "<status>" | comment KEY <file>' >&2
+  exit 2
+}
+[ $# -eq 3 ] || usage
+cmd="$1"; key="$2"; arg="$3"
+
+[[ "$key" =~ ^[A-Za-z][A-Za-z0-9]+-[0-9]+$ ]] || { echo "jira-write: bad issue key: $key" >&2; exit 2; }
+key="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')"
+
+check_response() {
+  local out="$1"
+  [ -n "$out" ] || return 0
+  if printf '%s' "$out" | jq -e '((.errorMessages // []) | length > 0) or ((.errors // {}) | length > 0)' >/dev/null 2>&1; then
+    echo "jira-write: Jira refused: $out" >&2
+    exit 1
+  fi
+}
+
+case "$cmd" in
+  transition)
+    resp="$("$JIRA_API" GET "issue/$key/transitions")"
+    id="$(printf '%s' "$resp" | jq -r --arg n "$arg" \
+      '[.transitions[]? | select((.name | ascii_downcase) == ($n | ascii_downcase))] | first | .id // empty')"
+    if [ -z "$id" ]; then
+      echo "jira-write: no transition named \"$arg\" for $key. Available:" >&2
+      printf '%s' "$resp" | jq -r '.transitions[]? | "  - \(.name)"' >&2
+      exit 3
+    fi
+    if [ "$DRY" = 1 ]; then
+      echo "would move $key to \"$arg\" (transition id $id)"
+      exit 0
+    fi
+    out="$("$JIRA_API" POST "issue/$key/transitions" "$(jq -nc --arg id "$id" '{transition: {id: $id}}')")"
+    check_response "$out"
+    echo "$key -> $arg"
+    ;;
+  comment)
+    [ -f "$arg" ] || { echo "jira-write: no such file: $arg" >&2; exit 2; }
+    body="$(jq -Rs '{body: {type: "doc", version: 1, content: (split("\n\n") | map(select(test("\\S"))) | map({type: "paragraph", content: [{type: "text", text: sub("\\n+$"; "")}]}))}}' "$arg")"
+    n="$(printf '%s' "$body" | jq '.body.content | length')"
+    [ "$n" -gt 0 ] || { echo "jira-write: $arg has no text" >&2; exit 2; }
+    if [ "$DRY" = 1 ]; then
+      echo "would comment on $key ($n paragraph(s)):"
+      cat "$arg"
+      exit 0
+    fi
+    out="$("$JIRA_API" POST "issue/$key/comment" "$(printf '%s' "$body" | jq -c .)")"
+    check_response "$out"
+    echo "commented on $key"
+    ;;
+  *) usage ;;
+esac
