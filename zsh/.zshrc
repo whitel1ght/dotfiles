@@ -83,6 +83,10 @@ alias pil='pi --model ollama/qwen2.5-coder:14b-16k --no-tools -ns -nc -np'
 # context files are off: with them Pi sends ~40k tokens before the first message.
 alias pilm='pi --model lmstudio/qwen/qwen2.5-coder-14b --models lmstudio/qwen/qwen2.5-coder-14b -ne -ns -np -nc --no-mcp'
 
+# Same lean setup on Gemma 4 E4B (8-bit MLX, vision + native tool calls). Load it
+# with `lms load gemma-4-e4b-it-mlx -c 32768 --parallel 1`; ~8.4 GB resident.
+alias pigm='pi --model lmstudio/gemma-4-e4b-it-mlx --models lmstudio/gemma-4-e4b-it-mlx -ne -ns -np -nc --no-mcp'
+
 # Free Pi session, with Longcat as the only scoped model.
 alias pifree='pi --model opencode-go/longcat-2.5-preview-free --models opencode-go/longcat-2.5-preview-free'
 

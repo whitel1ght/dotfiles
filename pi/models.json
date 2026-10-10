@@ -127,6 +127,13 @@
           ],
           "contextWindow": 16384,
           "maxTokens": 4096
+        },
+        {
+          "id": "gemma-4-e4b-it-mlx",
+          "name": "Gemma 4 E4B MLX 8bit (32k, LM Studio)",
+          "input": ["text", "image"],
+          "contextWindow": 32768,
+          "maxTokens": 8192
         }
       ]
     }
