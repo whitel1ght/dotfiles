@@ -29,9 +29,8 @@
   "theme": "dark/dark",
   "lastChangelogVersion": "1.1.0",
   "enabledModels": [
-    "openai/gpt-6-luna",
-    "openai/gpt-6-sol",
-    "openai/gpt-6.1-sol"
+    "openai/gpt-6.1-sol",
+    "ollama/qwen2.5-coder:14b-16k"
   ],
   "deviceId": "3f587b3d-2fc9-4a45-8a1d-7d8dc20de02b"
 }

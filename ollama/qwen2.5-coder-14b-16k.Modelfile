@@ -6,4 +6,4 @@
 # too much next to everything else on a 24GB machine. Same weights, no copy.
 # Built by install.sh (OLLAMA_SETUP); Pi uses it via pi/models.json.
 FROM qwen2.5-coder:14b
-PARAMETER num_ctx 16384
+PARAMETER num_ctx 12288

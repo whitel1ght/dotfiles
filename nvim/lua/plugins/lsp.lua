@@ -42,7 +42,8 @@ return {
           'elixirls',
           'pyright',
           'jinja_lsp',
-          'gopls'
+          'gopls',
+          'rust_analyzer',
         },
         automatic_enable = false,
       })
@@ -77,7 +78,6 @@ return {
       end
 
       -- ts_ls (TypeScript Language Server) configuration
-      -- Adds 'vue' to filetypes so ts_ls attaches to .vue files (required for vue_ls v3 hybrid mode)
       vim.lsp.config('ts_ls', {
         capabilities = capabilities,
         filetypes = { 'javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'vue' },
@@ -92,8 +92,6 @@ return {
       vim.lsp.enable('ts_ls')
 
       -- Vue Language Server v3 configuration (hybrid mode)
-      -- The critical on_init handler that bridges vue_ls <-> ts_ls is provided by
-      -- nvim-lspconfig's lsp/vue_ls.lua and merged automatically via vim.lsp.config()
       vim.lsp.config('vue_ls', {
         capabilities = capabilities,
         settings = {
@@ -226,12 +224,7 @@ return {
       })
       vim.lsp.enable('jinja_lsp')
 
-      -- gopls (Go). Needed for ~/projects/mrglass; nothing here configured a Go
-      -- server before, so editing it had no completion or diagnostics at all.
-      --
-      -- root_markers leads with go.work: in a multi-module workspace gopls must
-      -- be rooted at the workspace, not at whichever go.mod is nearest, or it
-      -- indexes one module and reports the rest as unresolved imports.
+      -- gopls (Go)
       vim.lsp.config('gopls', {
         capabilities = capabilities,
         settings = {
@@ -263,6 +256,16 @@ return {
         root_markers = { 'elm.json', '.git' },
       })
       vim.lsp.enable('elmls')
+
+      -- 🚀 RUST ANALYZER CONFIGURATION
+      vim.lsp.config('rust_analyzer', {
+        capabilities = capabilities,
+        on_attach = lsp_attach,
+        -- Rust files are typically recognized by the 'rust' filetype
+        filetypes = { 'rust', 'rs' },
+      })
+      vim.lsp.enable('rust_analyzer')
+
     end
   },
   {
@@ -271,11 +274,6 @@ return {
     config = function()
       -- Mason package names, not lspconfig names ('elmls'), which
       -- mason-lspconfig's ensure_installed does not resolve.
-      --
-      -- This list was previously split across two setup() calls — this one and
-      -- after/plugin/mason-tool-installer.lua. The second ran later and
-      -- REPLACED this list rather than extending it, so elm-language-server
-      -- was silently never installed despite being declared here.
       require('mason-tool-installer').setup({
         ensure_installed = {
           'elm-language-server',

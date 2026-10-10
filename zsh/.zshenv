@@ -29,3 +29,4 @@ deadline() {
     exit $? >> 8;
   ' -- "$@"
 }
+. "$HOME/.cargo/env"

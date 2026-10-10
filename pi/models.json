@@ -16,7 +16,10 @@
             "text"
           ],
           "contextWindow": 16384,
-          "maxTokens": 4096
+          "maxTokens": 4096,
+          "samplingParams": {
+            "temperature": 0
+          }
         },
         {
           "_launch": true,
@@ -108,6 +111,14 @@
         "supportsReasoningEffort": false
       },
       "models": [
+        {
+          "id": "qwen/qwen2.5-coder-14b",
+          "name": "Qwen2.5 Coder 14B MLX 4bit (16k, LM Studio)",
+          "input": ["text"],
+          "contextWindow": 16384,
+          "maxTokens": 4096,
+          "samplingParams": {"temperature": 0}
+        },
         {
           "id": "qwen3-coder-30b-a3b-instruct",
           "name": "Qwen3 Coder 30B A3B 3-bit (16k, LM Studio)",
