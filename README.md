@@ -486,6 +486,27 @@ not the archived custom runtime or Claude Bridge.
 See [pi/README.md](pi/README.md) for the configuration map, authentication,
 model-selection policy, extensions, relinking instructions, and verification.
 
+## Open WebUI
+
+`bin/webui` runs [Open WebUI](https://openwebui.com) — browser chat, voice,
+documents, separate accounts — against LM Studio's server on `127.0.0.1:1234`.
+It holds about 1.5 GB while up, so it runs on demand rather than at login.
+
+```bash
+webui install   # once: Python 3.11 venv in ~/.local/share/open-webui
+webui           # start if needed, open http://127.0.0.1:8080
+webui stop
+webui status
+webui logs
+```
+
+Chats, accounts and settings live in `~/.local/share/open-webui/data`, outside
+git. The LM Studio connection is passed as env on start but only seeds the first
+run; after that Open WebUI keeps its settings in its own database (Admin Panel >
+Settings). The first account created becomes the admin. LM Studio must be
+serving (`lms server start`) for models to appear. Run `bin/webui.test.sh` to
+test the script; it uses a stub server and never touches the real install.
+
 ## Adding New Configs
 
 1. Create a directory for the tool: `mkdir newtool`

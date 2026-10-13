@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Run Open WebUI on demand against LM Studio: chat, voice, documents, per-user
+# accounts. It holds ~1.5 GB while up, so it is started by hand, not at login.
+#
+#   webui            start (if needed) and open it in the browser
+#   webui stop       stop it
+#   webui status     running or not, and where
+#   webui logs       follow the log
+#   webui install    create/upgrade its venv (Python 3.11, public PyPI)
+#
+# Chats, accounts and settings live in $WEBUI_HOME/data, outside git. The
+# connection env below only seeds the first start; after that Open WebUI keeps
+# its settings in its own database (Admin Panel > Settings).
+set -euo pipefail
+
+WEBUI_HOME="${WEBUI_HOME:-$HOME/.local/share/open-webui}"
+WEBUI_PORT="${WEBUI_PORT:-8080}"
+WEBUI_BIN="${WEBUI_BIN:-$WEBUI_HOME/venv/bin/open-webui}"
+WEBUI_WAIT="${WEBUI_WAIT:-120}"
+PIDFILE="$WEBUI_HOME/webui.pid"
+LOG="$WEBUI_HOME/webui.log"
+URL="http://127.0.0.1:$WEBUI_PORT"
+
+die() { echo "webui: $*" >&2; exit 1; }
+
+pid() {
+  local p
+  p="$(cat "$PIDFILE" 2>/dev/null)" || return 1
+  kill -0 "$p" 2>/dev/null && echo "$p"
+}
+
+healthy() { curl -sf -m 1 "$URL/health" >/dev/null; }
+
+cmd_install() {
+  command -v python3.11 >/dev/null || die "python3.11 not found (brew install python@3.11)"
+  [ -d "$WEBUI_HOME/venv" ] || python3.11 -m venv "$WEBUI_HOME/venv"
+  # The global pip config points at the work CodeArtifact index; this is a public package.
+  PIP_CONFIG_FILE=/dev/null "$WEBUI_HOME/venv/bin/pip" install -q --upgrade \
+    --index-url https://pypi.org/simple pip open-webui
+  echo "installed: $("$WEBUI_HOME/venv/bin/pip" show open-webui | sed -n 's/^Version: //p')"
+}
+
+cmd_start() {
+  if pid >/dev/null; then
+    echo "already running at $URL"
+    return
+  fi
+  [ -x "$WEBUI_BIN" ] || die "not installed; run 'webui install'"
+  mkdir -p "$WEBUI_HOME/data"
+  (
+    cd "$WEBUI_HOME"
+    DATA_DIR="$WEBUI_HOME/data" \
+    OPENAI_API_BASE_URL=http://127.0.0.1:1234/v1 OPENAI_API_KEY=lmstudio \
+    ENABLE_OLLAMA_API=false \
+    SCARF_NO_ANALYTICS=true DO_NOT_TRACK=true ANONYMIZED_TELEMETRY=false \
+      nohup "$WEBUI_BIN" serve --host 127.0.0.1 --port "$WEBUI_PORT" >"$LOG" 2>&1 &
+    echo $! >"$PIDFILE"
+  )
+  printf 'starting'
+  local i
+  for ((i = 0; i < WEBUI_WAIT; i++)); do
+    if healthy; then
+      echo " - up at $URL"
+      return
+    fi
+    pid >/dev/null || { echo; tail -20 "$LOG" >&2; die "exited during startup (log: $LOG)"; }
+    printf '.'
+    sleep 1
+  done
+  echo
+  die "no answer on $URL after ${WEBUI_WAIT}s (log: $LOG)"
+}
+
+cmd_stop() {
+  local p
+  if ! p="$(pid)"; then
+    rm -f "$PIDFILE"
+    echo "not running"
+    return
+  fi
+  kill "$p"
+  local i
+  for ((i = 0; i < 20; i++)); do
+    kill -0 "$p" 2>/dev/null || break
+    sleep 0.5
+  done
+  kill -0 "$p" 2>/dev/null && kill -9 "$p"
+  rm -f "$PIDFILE"
+  echo "stopped"
+}
+
+cmd_status() {
+  local p
+  if p="$(pid)"; then
+    echo "running at $URL (pid $p)"
+  else
+    echo "not running"
+  fi
+}
+
+case "${1:-open}" in
+  open)
+    cmd_start
+    [ -n "${WEBUI_NO_BROWSER:-}" ] || open "$URL"
+    ;;
+  start) cmd_start ;;
+  stop) cmd_stop ;;
+  status) cmd_status ;;
+  logs) tail -f "$LOG" ;;
+  install) cmd_install ;;
+  -h | --help | help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command: $1 (try 'webui help')" ;;
+esac

@@ -452,6 +452,11 @@ if [ -f "$DOTFILES_DIR/bin/dev" ]; then
     create_symlink "$DOTFILES_DIR/bin/dev" "$HOME/.local/bin/dev"
 fi
 
+# webui runs Open WebUI against LM Studio on demand; `webui install` builds its venv.
+if [ -f "$DOTFILES_DIR/bin/webui" ]; then
+    create_symlink "$DOTFILES_DIR/bin/webui" "$HOME/.local/bin/webui"
+fi
+
 # tmux-prune closes idle tmux windows; bound to prefix+X in tmux/.tmux.conf.
 if [ -f "$DOTFILES_DIR/bin/tmux-prune" ]; then
     create_symlink "$DOTFILES_DIR/bin/tmux-prune" "$HOME/.local/bin/tmux-prune"
