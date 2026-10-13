@@ -510,10 +510,10 @@ run; after that Open WebUI keeps its settings in its own database (Admin Panel >
 Settings). The first account created becomes the admin. LM Studio must be
 serving (`lms server start`) for models to appear.
 
-Voice is local: speech-to-text is Open WebUI's built-in Whisper `small` (on CPU,
-~2 s per sentence; `base` drops too many Russian words), and speech output is the
-browser's Web Speech API with the macOS voice Milena. Kokoro is not an option
-here: it has no Russian. Run `bin/webui.test.sh` to
+Voice is local and English: speech-to-text is Open WebUI's built-in Whisper
+`base` (on CPU, ~0.5 s per sentence), speech output the browser's Web Speech API
+with the macOS voice Samantha. Russian was tried and dropped: auto-detect mishears
+short Russian phrases, and forcing `ru` garbles English. Run `bin/webui.test.sh` to
 test the script; it uses a stub server and never touches the real install.
 
 ## Adding New Configs
