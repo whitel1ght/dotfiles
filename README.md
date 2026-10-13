@@ -488,6 +488,10 @@ model-selection policy, extensions, relinking instructions, and verification.
 
 ## Open WebUI
 
+`localai` starts the whole local stack in one go — LM Studio server, Gemma (chat),
+Qwen coder 1.5B (nvim autocomplete), Open WebUI — and `localai stop` tears it all
+down; `localai status` shows what is up. Tested by `bin/localai.test.sh`.
+
 `bin/webui` runs [Open WebUI](https://openwebui.com) — browser chat, voice,
 documents, separate accounts — against LM Studio's server on `127.0.0.1:1234`.
 It holds about 1.5 GB while up, so it runs on demand rather than at login.
@@ -504,7 +508,12 @@ Chats, accounts and settings live in `~/.local/share/open-webui/data`, outside
 git. The LM Studio connection is passed as env on start but only seeds the first
 run; after that Open WebUI keeps its settings in its own database (Admin Panel >
 Settings). The first account created becomes the admin. LM Studio must be
-serving (`lms server start`) for models to appear. Run `bin/webui.test.sh` to
+serving (`lms server start`) for models to appear.
+
+Voice is local: speech-to-text is Open WebUI's built-in Whisper `small` (on CPU,
+~2 s per sentence; `base` drops too many Russian words), and speech output is the
+browser's Web Speech API with the macOS voice Milena. Kokoro is not an option
+here: it has no Russian. Run `bin/webui.test.sh` to
 test the script; it uses a stub server and never touches the real install.
 
 ## Adding New Configs

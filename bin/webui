@@ -52,6 +52,7 @@ cmd_start() {
     DATA_DIR="$WEBUI_HOME/data" \
     OPENAI_API_BASE_URL=http://127.0.0.1:1234/v1 OPENAI_API_KEY=lmstudio \
     ENABLE_OLLAMA_API=false \
+    WHISPER_MODEL=small AUDIO_TTS_VOICE=Milena \
     SCARF_NO_ANALYTICS=true DO_NOT_TRACK=true ANONYMIZED_TELEMETRY=false \
       nohup "$WEBUI_BIN" serve --host 127.0.0.1 --port "$WEBUI_PORT" >"$LOG" 2>&1 &
     echo $! >"$PIDFILE"

@@ -457,6 +457,11 @@ if [ -f "$DOTFILES_DIR/bin/webui" ]; then
     create_symlink "$DOTFILES_DIR/bin/webui" "$HOME/.local/bin/webui"
 fi
 
+# localai starts/stops the whole local AI stack: LM Studio, its models, Open WebUI.
+if [ -f "$DOTFILES_DIR/bin/localai" ]; then
+    create_symlink "$DOTFILES_DIR/bin/localai" "$HOME/.local/bin/localai"
+fi
+
 # tmux-prune closes idle tmux windows; bound to prefix+X in tmux/.tmux.conf.
 if [ -f "$DOTFILES_DIR/bin/tmux-prune" ]; then
     create_symlink "$DOTFILES_DIR/bin/tmux-prune" "$HOME/.local/bin/tmux-prune"

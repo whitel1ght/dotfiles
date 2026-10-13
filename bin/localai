@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Start and stop the whole local AI stack in one go:
+# LM Studio server + Gemma (chat, voice) + Qwen coder 1.5B (nvim autocomplete)
+# + Open WebUI. Everything together holds ~13 GB, so stop it when done.
+#
+#   localai          start everything and open Open WebUI in the browser
+#   localai stop     stop Open WebUI, unload all models, stop the LM Studio server
+#   localai status   what is up and what is loaded
+set -euo pipefail
+
+LMS="${LMS:-$HOME/.lmstudio/bin/lms}"
+WEBUI="${WEBUI:-$(dirname "$(readlink -f "$0")")/webui}"
+LMS_URL="${LMS_URL:-http://127.0.0.1:1234}"
+CHAT_MODEL=gemma-4-e4b-it-mlx
+COMPLETE_MODEL=qwen2.5-coder-1.5b
+
+die() { echo "localai: $*" >&2; exit 1; }
+
+loaded() {
+  curl -sf -m 1 "$LMS_URL/api/v0/models/$1" | grep -q '"state": *"loaded"'
+}
+
+load() {
+  local model="$1"; shift
+  if loaded "$model"; then
+    echo "  $model already loaded"
+  else
+    echo "  loading $model"
+    local out
+    out="$("$LMS" load "$model" "$@" -y 2>&1)" || { echo "$out" >&2; die "could not load $model"; }
+  fi
+}
+
+cmd_start() {
+  [ -x "$LMS" ] || die "lms not found at $LMS (open LM Studio once to install it)"
+  echo "LM Studio server"
+  local out
+  out="$("$LMS" server start 2>&1)" || { echo "$out" >&2; die "LM Studio server did not start"; }
+  echo "Models"
+  # Same load flags as the CodeCompanion and minuet configs expect.
+  load "$CHAT_MODEL" -c 32768 --parallel 1
+  load "$COMPLETE_MODEL" -c 4096
+  echo "Open WebUI"
+  if [ -n "${LOCALAI_NO_BROWSER:-}" ]; then "$WEBUI" start; else "$WEBUI"; fi
+  cat <<EOF
+
+Ready. Chat and voice: http://127.0.0.1:8080
+nvim: autocomplete is on in new nvim windows; in an open one press <Space>ac.
+Stop everything with: localai stop
+EOF
+}
+
+cmd_stop() {
+  "$WEBUI" stop
+  if [ -x "$LMS" ]; then
+    "$LMS" unload --all >/dev/null 2>&1 || true
+    "$LMS" server stop >/dev/null 2>&1 || true
+  fi
+  echo "models unloaded, LM Studio server stopped"
+}
+
+cmd_status() {
+  if curl -sf -m 1 "$LMS_URL/v1/models" >/dev/null; then
+    echo "LM Studio server: up"
+    local m
+    for m in "$CHAT_MODEL" "$COMPLETE_MODEL"; do
+      if loaded "$m"; then echo "  $m: loaded"; else echo "  $m: not loaded"; fi
+    done
+  else
+    echo "LM Studio server: down"
+  fi
+  printf 'Open WebUI: '
+  "$WEBUI" status
+}
+
+case "${1:-start}" in
+  start) cmd_start ;;
+  stop) cmd_stop ;;
+  status) cmd_status ;;
+  -h | --help | help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) die "unknown command: $1 (try 'localai help')" ;;
+esac
