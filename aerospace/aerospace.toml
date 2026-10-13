@@ -202,6 +202,21 @@ alt-shift-l = ['join-with right', 'mode main']
 if.app-id = 'com.google.Chrome'
 run = ['move-node-to-workspace C', 'layout accordion']
 
+# Zoom always lands on workspace Z, whatever workspace was focused when it opens.
+[[on-window-detected]]
+if.app-id = 'us.zoom.xos'
+run = 'move-node-to-workspace Z'
+
+# Slack and Docker get workspaces S and D respectively, whatever workspace was focused
+# when their windows open.
+[[on-window-detected]]
+if.app-id = 'com.tinyspeck.slackmacgap'
+run = 'move-node-to-workspace S'
+
+[[on-window-detected]]
+if.app-id = 'com.docker.docker'
+run = 'move-node-to-workspace D'
+
 # Playwright's "Google Chrome for Testing" windows float at the size the test asks for,
 # so a headed run never re-tiles the terminal it was started from.
 [[on-window-detected]]
