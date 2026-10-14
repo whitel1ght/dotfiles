@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# inventory: every Claude Code workflow surface and its pi counterpart, one line each.
+#   <kind>  <name>  <status>  <claude source>
+# status: ported (pi has a prompt, skill or agent of that name), accepted (parity.md says
+# where it lives in pi or why it is not ported), MISSING (neither), disabled (an installed
+# plugin settings.json does not enable; its contents are not listed). Hooks never have a
+# same-name counterpart, so each one is MISSING until parity.md accounts for it.
+# Read-only. Env overrides for tests: CLAUDE_DIR, PI_DIR, PI_HOME, PARITY.
+set -euo pipefail
+
+CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
+PI_DIR="${PI_DIR:-$HOME/.pi/agent}"
+PARITY="${PARITY:-$(cd "$(dirname "$0")/.." && pwd)/parity.md}"
+PLUGINS="$CLAUDE_DIR/plugins/installed_plugins.json"
+
+# Every skill name pi can load: its own skills dir plus git and npm packages.
+# PI_HOME is where pi installs packages, even when PI_DIR points at the dotfiles' pi/.
+PI_HOME="${PI_HOME:-$HOME/.pi/agent}"
+PI_SKILLS="$(find -L "$PI_DIR" "$PI_HOME" -maxdepth 8 -name SKILL.md 2>/dev/null \
+  | awk -F/ '{print $(NF-1)}' | sort -u)"
+has_skill() { printf '%s\n' "$PI_SKILLS" | grep -qx "$1"; }
+
+# A parity.md line "- `<kind>:<name>` — reason" marks a deliberate gap.
+accepted() { [ -f "$PARITY" ] && grep -qF -- "- \`$1:$2\` " "$PARITY"; }
+
+row() { # kind name pi-path source
+  local status
+  if [ -e "$3" ] || { [ "$1" = skill ] && has_skill "$2"; }; then status=ported
+  elif accepted "$1" "$2"; then status=accepted
+  else status=MISSING; fi
+  printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$status" "$4"
+}
+
+# Installed plugins that settings.json enables; the rest are listed once as disabled.
+plugin_roots() {
+  [ -f "$PLUGINS" ] || return 0
+  local enabled='{}'
+  [ -f "$CLAUDE_DIR/settings.json" ] && enabled="$(jq -c '.enabledPlugins // {}' "$CLAUDE_DIR/settings.json")"
+  jq -r --argjson on "$enabled" '.plugins | to_entries[]
+    | if $on[.key] == true then "\(.key)\t\(.value[0].installPath)"
+      else "-\t\(.key)" end' "$PLUGINS"
+}
+
+# Commands: user-level, then each plugin's.
+for f in "$CLAUDE_DIR"/commands/*.md; do
+  [ -e "$f" ] || continue
+  n="$(basename "$f" .md)"; row command "$n" "$PI_DIR/prompts/$n.md" "$(readlink "$f" || echo "$f")"
+done
+while IFS=$'\t' read -r plugin root; do
+  if [ "$plugin" = - ]; then printf 'plugin\t%s\tdisabled\t%s\n' "$root" "$PLUGINS"; continue; fi
+  for f in "$root"/commands/*.md; do
+    [ -e "$f" ] || continue
+    n="$(basename "$f" .md)"; row command "$n" "$PI_DIR/prompts/$n.md" "$plugin"
+  done
+  for d in "$root"/skills/*/; do
+    [ -f "$d/SKILL.md" ] || continue
+    n="$(basename "$d")"; row skill "$n" "$PI_DIR/skills/$n/SKILL.md" "$plugin"
+  done
+  for f in "$root"/agents/*.md; do
+    [ -e "$f" ] || continue
+    n="$(basename "$f" .md)"; row agent "$n" "$PI_DIR/agents/$n.md" "$plugin"
+  done
+  for h in "$root"/hooks/hooks.json; do
+    [ -f "$h" ] || continue
+    jq -r 'try ((.hooks // {}) | to_entries[] | "\(.key)\t\([.value[].matcher // "*"] | join(","))") catch empty' "$h" |
+      while IFS=$'\t' read -r ev m; do row hook "${plugin%%@*}/$ev[$m]" /nonexistent "$plugin"; done
+    jq -r 'try (.modules // [])[] catch empty' "$h" |
+      while read -r m; do row hook "${plugin%%@*}/module:${m#./}" /nonexistent "$plugin"; done
+  done
+done < <(plugin_roots)
+
+# User-level skills. synced/ holds claude.ai account skills, one copy per account: list
+# each name once.
+seen=" "
+for d in "$CLAUDE_DIR"/skills/*/ "$CLAUDE_DIR"/skills/synced/*/*/; do
+  [ -f "$d/SKILL.md" ] || continue
+  n="$(basename "$d")"
+  case "$seen" in *" $n "*) continue ;; esac
+  seen="$seen$n "
+  case "$d" in */synced/*) src="claude.ai synced" ;; *) src="$d" ;; esac
+  row skill "$n" "$PI_DIR/skills/$n/SKILL.md" "$src"
+done
+
+# User-level hooks.
+if [ -f "$CLAUDE_DIR/settings.json" ]; then
+  jq -r 'try (.hooks | to_entries[] | "\(.key)\t\([.value[].hooks[].command] | join(" ; "))") catch empty' \
+    "$CLAUDE_DIR/settings.json" | while IFS=$'\t' read -r ev cmd; do
+    row hook "user/$ev" /nonexistent "$cmd"
+  done
+fi
