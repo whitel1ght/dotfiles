@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -67,22 +67,57 @@ test("newId sorts by time", () => {
   cleanup(root);
 });
 
-test("writeMeta is atomic (no partial file visible)", () => {
+test("atomicWrite: unique tmp name per write, nothing partial, tmp cleaned on failure", () => {
   const root = sandbox();
   const first = meta();
   writeMeta(first);
   assert.deepEqual(readMeta(first.id), first);
 
-  // A tmp file that cannot be written simulates a write interrupted mid-flight:
-  // the previous complete meta.json must stay untouched for readers.
+  // A concurrent writer's tmp file (a directory, so writing that exact name
+  // would fail) never blocks this write: every write picks a unique tmp name.
   const id = "20261014-101500-00bb";
-  mkdirSync(join(stateDir(), id), { recursive: true });
-  mkdirSync(join(stateDir(), id, "meta.json.tmp"));
-  assert.throws(() => writeMeta(meta({ id })));
+  const dir = join(stateDir(), id);
+  mkdirSync(dir, { recursive: true });
+  mkdirSync(join(dir, "meta.json.99999.concurrent.tmp"));
+  writeMeta(meta({ id }));
+  assert.deepEqual(readMeta(id), meta({ id }));
+  assert.ok(existsSync(join(dir, "meta.json.99999.concurrent.tmp")), "the other writer's tmp is untouched");
+
+  // A rename onto an occupied path fails; the write's own tmp is cleaned up.
+  const blocked = "20261014-101500-00cc";
+  mkdirSync(join(stateDir(), blocked), { recursive: true });
+  mkdirSync(join(stateDir(), blocked, "meta.json"));
+  assert.throws(() => writeMeta(meta({ id: blocked })));
+  assert.deepEqual(readdirSync(join(stateDir(), blocked)).filter((f) => f.endsWith(".tmp")), []);
 
   writeMeta(first); // still readable, and no tmp residue on the good path
   assert.deepEqual(readMeta(first.id), first);
-  assert.ok(!existsSync(join(stateDir(), first.id, "meta.json.tmp")));
+  assert.deepEqual(readdirSync(join(stateDir(), first.id)).filter((f) => f.endsWith(".tmp")), []);
+  cleanup(root);
+});
+
+test("listAgents skips an agent whose meta.json is missing or unparseable", () => {
+  const root = sandbox();
+  const good = meta({ id: "20261014-101500-01aa" });
+  const corrupt = meta({ id: "20261014-101500-02bb" });
+  const empty = meta({ id: "20261014-101500-03cc" });
+  writeMeta(good);
+  writeMeta(corrupt);
+  writeFileSync(join(stateDir(), corrupt.id, "meta.json"), "{ half-written");
+  mkdirSync(join(stateDir(), empty.id), { recursive: true }); // dir with no meta.json
+  assert.deepEqual(listAgents().map((m) => m.id), [good.id]);
+  cleanup(root);
+});
+
+test("readExit returns undefined for an unparseable exit.json", () => {
+  const root = sandbox();
+  const m = meta();
+  writeMeta(m);
+  writeExit(m.id, { code: 0, signal: null, ended_at: "2026-10-14T10:20:00Z", how: "done" });
+  assert.ok(readExit(m.id) !== undefined);
+  // A half-written exit.json is not an exit: the agent is still running.
+  writeFileSync(join(stateDir(), m.id, "exit.json"), `{"how":"done","cod`);
+  assert.equal(readExit(m.id), undefined);
   cleanup(root);
 });
 

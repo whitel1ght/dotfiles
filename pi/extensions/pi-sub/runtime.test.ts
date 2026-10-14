@@ -123,32 +123,39 @@ test("wakeText formats done, failed, and stopped", () => {
     const m = meta();
     const dir = join(stateDir(), m.id);
     writeMeta(m);
+    const paths = `result: ${dir}/result.md   activity: ${dir}/events.jsonl`;
     assert.equal(
       wakeText(m, { code: 0, signal: null, ended_at: "2026-10-14T10:04:12Z", how: "done" }, 1),
-      `pi-sub #1 worker (prov/model) "implement runtime" finished in 4m12s. Result: ${dir}/result.md`,
+      `[pi-sub] #1 worker (prov/model) done in 4m12s · implement runtime\n${paths}`,
     );
     writeStderr(m.id, "starting\n\nboom happened\n");
     assert.equal(
       wakeText(m, { code: 1, signal: null, ended_at: "2026-10-14T10:04:12Z", how: "failed" }, 2),
-      `pi-sub #2 worker (prov/model) "implement runtime" failed (exit 1) after 4m12s: boom happened. Result: ${dir}/result.md`,
+      `[pi-sub] #2 worker (prov/model) failed (exit 1) in 4m12s · implement runtime\nerror: boom happened\n${paths}`,
     );
     assert.equal(
       wakeText(m, { code: null, signal: "SIGTERM", ended_at: "2026-10-14T10:04:12Z", how: "failed" }, 3),
-      `pi-sub #3 worker (prov/model) "implement runtime" failed (exit SIGTERM) after 4m12s: boom happened. Result: ${dir}/result.md`,
+      `[pi-sub] #3 worker (prov/model) failed (exit SIGTERM) in 4m12s · implement runtime\nerror: boom happened\n${paths}`,
     );
     assert.equal(
       wakeText(m, { code: 0, signal: null, ended_at: "2026-10-14T10:04:12Z", how: "stopped", by: "user" }, 1),
-      `pi-sub #1 worker (prov/model) "implement runtime" stopped by user after 4m12s.`,
+      `[pi-sub] #1 worker (prov/model) stopped by user after 4m12s · implement runtime\n${paths}`,
     );
-    // No stderr at all: the exit's own error text carries the reason.
+    // The exit's own error text wins over stderr.
     assert.equal(
       wakeText(m, { code: null, signal: null, ended_at: "2026-10-14T10:04:12Z", how: "failed", error: "wrapper vanished" }, 1),
-      `pi-sub #1 worker (prov/model) "implement runtime" failed (exit unknown) after 4m12s: wrapper vanished. Result: ${dir}/result.md`,
+      `[pi-sub] #1 worker (prov/model) failed (exit unknown) in 4m12s · implement runtime\nerror: wrapper vanished\n${paths}`,
+    );
+    // No stderr at all: the fallback text carries the reason.
+    rmSync(join(dir, "stderr.log"));
+    assert.equal(
+      wakeText(m, { code: 1, signal: null, ended_at: "2026-10-14T10:04:12Z", how: "failed" }, 1),
+      `[pi-sub] #1 worker (prov/model) failed (exit 1) in 4m12s · implement runtime\nerror: no stderr output\n${paths}`,
     );
     // The stderr line is capped at 200 characters.
     writeStderr(m.id, `${"x".repeat(300)}\n`);
     const failed = wakeText(m, { code: 1, signal: null, ended_at: "2026-10-14T10:04:12Z", how: "failed" }, 1);
-    assert.ok(failed.includes(`after 4m12s: ${"x".repeat(200)}. Result:`), failed);
+    assert.ok(failed.includes(`error: ${"x".repeat(200)}\n`), failed);
   } finally {
     cleanup(root);
   }
@@ -158,14 +165,17 @@ test("flagText and idleText formats", () => {
   const root = sandbox();
   try {
     const m = meta();
+    const dir = join(stateDir(), m.id);
     assert.equal(
-      flagText(m, 3, "look at line 40"),
-      `pi-sub #3 worker (prov/model) "implement runtime" flagged by user: look at line 40`,
+      flagText(m, 3, "look at line 40", Date.parse("2026-10-14T10:04:40Z")),
+      `[pi-sub flag] user flagged #3 worker (prov/model, running 4m40s): "look at line 40" — activity: ${dir}/events.jsonl`,
     );
     assert.equal(
       idleText(m, 3, 10),
-      `pi-sub #3 worker (prov/model) "implement runtime" has produced no events for 10 min (still running). Stop it with subagent_stop or let it continue.`,
+      `[pi-sub idle] #3 worker quiet for 10m · activity: ${dir}/events.jsonl`,
     );
+    // flagText defaults `now` to the real clock.
+    assert.match(flagText(m, 1, "note"), /running \d+m\d+s/);
   } finally {
     cleanup(root);
   }
@@ -293,7 +303,7 @@ test("deliverPending skips other owners, running agents, and the delivered", () 
   }
 });
 
-test("deliverPending marks delivered immediately, so a mid-loop crash never re-sends", () => {
+test("deliverPending is at-least-once: an already-marked agent is never re-sent", () => {
   const root = sandbox();
   try {
     const first = meta({ id: "20261014-101500-01aa" });
@@ -310,10 +320,11 @@ test("deliverPending marks delivered immediately, so a mid-loop crash never re-s
       }),
     );
     assert.equal(calls, 2);
-    // The first message went out and was marked delivered; the second did not.
+    // The first message went out and was marked; the second was sent but not
+    // marked — a crash between send and mark can send that one message twice.
     assert.ok(isDelivered(first.id));
     assert.ok(!isDelivered(second.id));
-    // After the crash the second (and only the second) is still pending.
+    // After the crash the second (and only the second) is pending again.
     const sent: string[] = [];
     deliverPending("sess-a", (t) => sent.push(t));
     assert.equal(sent.length, 1);
@@ -407,7 +418,11 @@ test("Watcher delivers an exit that appears while it runs", async () => {
       assert.equal(sent.length, 0);
       writeExit(m.id, { code: 0, signal: null, ended_at: "2026-10-14T10:04:12Z", how: "done" });
       await waitFor("delivery", () => sent.length === 1);
-      assert.match(sent[0], /finished in \d+m\d+s\. Result: /);
+      assert.equal(
+        sent[0],
+        `[pi-sub] #1 worker (prov/model) done in 4m12s · implement runtime\n` +
+          `result: ${join(stateDir(), m.id, "result.md")}   activity: ${join(stateDir(), m.id, "events.jsonl")}`,
+      );
       assert.ok(isDelivered(m.id));
       assert.ok(changes > 0, "onChange fired");
     } finally {
@@ -439,7 +454,10 @@ test("Watcher flags an idle agent once per quiet spell, re-arming on a new event
     try {
       watcher.start();
       await waitFor("first idle flag", () => sent.length === 1);
-      assert.match(sent[0], /pi-sub #1 worker \(prov\/model\) "implement runtime" has produced no events for \d+ min \(still running\)\. Stop it with subagent_stop or let it continue\./);
+      assert.equal(
+        sent[0],
+        `[pi-sub idle] #1 worker quiet for 0m · activity: ${join(stateDir(), m.id, "events.jsonl")}`,
+      );
       // Still quiet: no second flag for the same quiet spell.
       await sleep(700);
       assert.equal(sent.length, 1);
@@ -495,6 +513,7 @@ test("Watcher treats a vanished wrapper as ended and delivers the failure", asyn
       pollMs: 40,
       ps: () => "",
       graceMs: 200,
+      now: () => Date.parse("2026-10-14T10:04:12Z"),
     });
     try {
       watcher.start();
@@ -506,7 +525,12 @@ test("Watcher treats a vanished wrapper as ended and delivers the failure", asyn
       assert.equal(exit.error, "wrapper vanished");
       assert.ok(!Number.isNaN(Date.parse(exit.ended_at)), "ended_at is a valid timestamp");
       await waitFor("vanish delivery", () => sent.length === 1);
-      assert.match(sent[0], /failed \(exit unknown\) after .*: wrapper vanished\. Result: /);
+      assert.equal(
+        sent[0],
+        `[pi-sub] #1 worker (prov/model) failed (exit unknown) in 4m12s · implement runtime\n` +
+          `error: wrapper vanished\n` +
+          `result: ${join(stateDir(), m.id, "result.md")}   activity: ${join(stateDir(), m.id, "events.jsonl")}`,
+      );
       assert.ok(isDelivered(m.id));
     } finally {
       watcher.stop();
@@ -535,6 +559,256 @@ test("Watcher ignores other sessions' agents", async () => {
       assert.ok(!isDelivered(foreign.id));
     } finally {
       watcher.stop();
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("Watcher: a corrupt meta.json or truncated exit.json never stops delivery of the good agent", async () => {
+  const root = sandbox();
+  try {
+    const good = meta({ id: "20261014-101500-01aa", pid: 4194304, pgid: 4194304 });
+    const brokenMeta = meta({ id: "20261014-101500-02bb", pid: 4194305, pgid: 4194305 });
+    const truncated = meta({ id: "20261014-101500-03cc", pid: 4194306, pgid: 4194306, idle_minutes: 0, max_minutes: 0 });
+    for (const m of [good, brokenMeta, truncated]) writeMeta(m);
+    // Half-written meta.json: listAgents must skip this dir, not throw.
+    writeFileSync(join(stateDir(), brokenMeta.id, "meta.json"), "{ half-written");
+    writeExit(good.id, { code: 0, signal: null, ended_at: "2026-10-14T10:04:12Z", how: "done" });
+    // Half-written exit.json: not an exit, so the agent is still "running".
+    writeFileSync(join(stateDir(), truncated.id, "exit.json"), `{"how":"done","cod`);
+    touchEvents(truncated.id);
+    const pidToId = new Map<number, string>([
+      [good.pid, good.id],
+      [brokenMeta.pid, brokenMeta.id],
+      [truncated.pid, truncated.id],
+    ]);
+    const sent: string[] = [];
+    const errors: unknown[] = [];
+    const watcher = new Watcher("sess-a", () => {}, (t) => sent.push(t), {
+      pollMs: 40,
+      ps: (pid) => `node -e sleeper PI_SUB_ID=${pidToId.get(pid) ?? "none"}`,
+      graceMs: 200,
+      onError: (e) => errors.push(e),
+    });
+    try {
+      watcher.start();
+      await waitFor("good agent delivered", () => sent.length === 1);
+      assert.ok(isDelivered(good.id));
+      assert.ok(sent[0].includes("01aa"));
+      // The truncated exit is not an exit and the agent stays undelivered.
+      assert.ok(!isDelivered(truncated.id));
+      // The corrupt dir never threw: watching stayed alive for the good agent.
+      assert.deepEqual(errors, []);
+    } finally {
+      watcher.stop();
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("Watcher: a throwing send for agent A still delivers agent B", async () => {
+  const root = sandbox();
+  try {
+    const a = meta({ id: "20261014-101500-01aa", pid: 4194304, pgid: 4194304 });
+    const b = meta({ id: "20261014-101500-02bb", pid: 4194305, pgid: 4194305 });
+    for (const m of [a, b]) {
+      writeMeta(m);
+      writeExit(m.id, { code: 0, signal: null, ended_at: "2026-10-14T10:04:12Z", how: "done" });
+    }
+    const sent: string[] = [];
+    const errors: unknown[] = [];
+    const watcher = new Watcher("sess-a", () => {}, (t) => {
+      if (t.includes("01aa")) throw new Error("send channel broken");
+      sent.push(t);
+    }, {
+      pollMs: 40,
+      ps: () => "",
+      graceMs: 200,
+      onError: (e) => errors.push(e),
+    });
+    try {
+      watcher.start();
+      await waitFor("agent B delivered", () => sent.length === 1);
+      assert.ok(sent[0].includes("02bb"));
+      assert.ok(isDelivered(b.id));
+      // A's send failed before its mark, so it stays pending (at-least-once)
+      // and the failure was reported instead of killing the sweep.
+      assert.ok(!isDelivered(a.id));
+      assert.ok(errors.length >= 1);
+      assert.match(String(errors[0]), /send channel broken/);
+    } finally {
+      watcher.stop();
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("Watcher does not re-enter the timeout stop while one is in flight", async () => {
+  const root = sandbox();
+  let child: ReturnType<typeof spawnSleeper> | undefined;
+  try {
+    // Started 5 s ago with a 0.6 s cap: over on the first sweep.
+    const m = meta({
+      id: "20261014-101500-tmo1",
+      pid: 0,
+      pgid: 0,
+      idle_minutes: 0,
+      max_minutes: 0.01,
+      started_at: new Date(Date.now() - 5000).toISOString(),
+    });
+    writeMeta(m);
+    touchEvents(m.id);
+    // Ignores SIGTERM, so the stop stays in flight through the grace period.
+    const ready = join(root, "ready");
+    child = spawnSleeper(m.id, true, 60, ready);
+    m.pid = child.pid!;
+    m.pgid = child.pid!;
+    writeMeta(m);
+    await waitFor("sleeper ready", () => existsSync(ready));
+    let psCalls = 0; // watcher cache probe + one ownership check per stop()
+    const watcher = new Watcher("sess-a", () => {}, () => {}, {
+      pollMs: 40,
+      graceMs: 1200,
+      ps: (pid) => {
+        psCalls++;
+        return `node -e sleeper PI_SUB_ID=${m.id}`;
+      },
+    });
+    try {
+      watcher.start();
+      await sleep(500);
+      // Exactly one cached probe plus one stop: later sweeps must skip the
+      // agent until the in-flight stop settles.
+      assert.equal(psCalls, 2);
+      assert.ok(existsSync(join(stateDir(), m.id, "stop-request.json")));
+    } finally {
+      watcher.stop();
+    }
+  } finally {
+    if (child?.pid && isAlive(child.pid)) process.kill(-child.pid, "SIGKILL");
+    cleanup(root);
+  }
+});
+
+test("Watcher reports a failing timeout stop to onError", async () => {
+  const root = sandbox();
+  try {
+    const m = meta({
+      id: "20261014-101500-err1",
+      pid: 4194304,
+      pgid: 4194304,
+      idle_minutes: 0,
+      max_minutes: 5,
+      started_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+    });
+    writeMeta(m);
+    touchEvents(m.id);
+    const errors: unknown[] = [];
+    let psCalls = 0;
+    const watcher = new Watcher("sess-a", () => {}, () => {}, {
+      pollMs: 40,
+      graceMs: 200,
+      // The watcher's first (cached) probe says the pid is ours, so it starts
+      // a timeout stop; every later probe says it is not, so stop() refuses.
+      ps: () => (psCalls++ === 0 ? `node -e sleeper PI_SUB_ID=${m.id}` : ""),
+      onError: (e) => errors.push(e),
+    });
+    try {
+      watcher.start();
+      await waitFor("stop failure reported", () => errors.length >= 1);
+      assert.match(String(errors[0]), /is not agent 20261014-101500-err1/);
+    } finally {
+      watcher.stop();
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("Watcher caches the ps ownership probe for 30 s per live agent", async () => {
+  const root = sandbox();
+  let child: ReturnType<typeof spawnSleeper> | undefined;
+  try {
+    const m = meta({ id: "20261014-101500-psc1", pid: 0, pgid: 0, idle_minutes: 0, max_minutes: 0 });
+    writeMeta(m);
+    child = spawnSleeper(m.id);
+    m.pid = child.pid!;
+    m.pgid = child.pid!;
+    writeMeta(m);
+    await waitFor("sleeper alive", () => isAlive(child!.pid!));
+    touchEvents(m.id);
+    let t = Date.now();
+    let psCalls = 0;
+    const watcher = new Watcher("sess-a", () => {}, () => {}, {
+      pollMs: 40,
+      now: () => t,
+      ps: () => {
+        psCalls++;
+        return `node -e sleeper PI_SUB_ID=${m.id}`;
+      },
+    });
+    try {
+      watcher.start();
+      await sleep(300); // many sweeps, one cached probe
+      assert.equal(psCalls, 1);
+      // Inside the 30 s window the cached answer is reused.
+      t += 29_000;
+      await sleep(200);
+      assert.equal(psCalls, 1);
+      // Past the window the probe runs again.
+      t += 2000;
+      await sleep(200);
+      assert.equal(psCalls, 2);
+      // A dead pid is always probed immediately, cache or not.
+      process.kill(child.pid!, "SIGKILL");
+      await waitFor("sleeper dead", () => !isAlive(child!.pid!));
+      await sleep(200);
+      assert.ok(psCalls >= 3);
+    } finally {
+      watcher.stop();
+      if (child?.pid && isAlive(child.pid)) process.kill(child.pid, "SIGKILL");
+    }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("Watcher prunes per-agent bookkeeping for agents that are no longer listed", async () => {
+  const root = sandbox();
+  let child: ReturnType<typeof spawnSleeper> | undefined;
+  try {
+    const m = meta({ id: "20261014-101500-pru1", pid: 0, pgid: 0, idle_minutes: 0, max_minutes: 0 });
+    writeMeta(m);
+    child = spawnSleeper(m.id);
+    m.pid = child.pid!;
+    m.pgid = child.pid!;
+    writeMeta(m);
+    await waitFor("sleeper alive", () => isAlive(child!.pid!));
+    touchEvents(m.id);
+    let psCalls = 0;
+    const watcher = new Watcher("sess-a", () => {}, () => {}, {
+      pollMs: 40,
+      ps: () => {
+        psCalls++;
+        return `node -e sleeper PI_SUB_ID=${m.id}`;
+      },
+    });
+    try {
+      watcher.start();
+      await waitFor("cache primed", () => psCalls === 1);
+      // The agent dir disappears (e.g. cleaned up): its map entries are
+      // pruned, so a re-listed agent gets a fresh probe, not a stale cache.
+      rmSync(join(stateDir(), m.id), { recursive: true, force: true });
+      await sleep(150);
+      writeMeta(m);
+      touchEvents(m.id);
+      await waitFor("fresh probe after re-list", () => psCalls === 2);
+    } finally {
+      watcher.stop();
+      if (child?.pid && isAlive(child.pid)) process.kill(child.pid, "SIGKILL");
     }
   } finally {
     cleanup(root);

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -56,9 +57,13 @@ function agentDir(id: string): string {
   return join(stateDir(), id);
 }
 
-/** Write via a tmp file + rename, so readers never see a partial file. */
+/**
+ * Write via a tmp file + rename, so readers never see a partial file. The
+ * tmp name is unique per write (pid + uuid), so two concurrent writers never
+ * clobber each other's tmp file.
+ */
 export function atomicWrite(path: string, data: string): void {
-  const tmp = `${path}.tmp`;
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
     writeFileSync(tmp, data);
     renameSync(tmp, path);
@@ -79,7 +84,13 @@ export function readMeta(id: string): Meta {
 
 export function readExit(id: string): Exit | undefined {
   const path = join(agentDir(id), "exit.json");
-  return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as Exit) : undefined;
+  if (!existsSync(path)) return undefined;
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as Exit;
+  } catch {
+    // A half-written exit.json is not an exit: the agent is still running.
+    return undefined;
+  }
 }
 
 export function isDelivered(id: string): boolean {
@@ -93,10 +104,16 @@ export function markDelivered(id: string): void {
 export function listAgents(): Meta[] {
   const dir = stateDir();
   if (!existsSync(dir)) return [];
-  return readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && existsSync(join(dir, e.name, "meta.json")))
-    .map((e) => readMeta(e.name))
-    .sort((a, b) => a.id.localeCompare(b.id));
+  const metas: Meta[] = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (!e.isDirectory()) continue;
+    try {
+      metas.push(readMeta(e.name));
+    } catch {
+      // A missing or half-written meta.json must not hide the other agents.
+    }
+  }
+  return metas.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export function owned(all: Meta[], session: string): Meta[] {

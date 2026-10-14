@@ -39,6 +39,8 @@ export type WatcherOpts = {
   graceMs?: number;
   ps?: PsRunner;
   now?: () => number;
+  /** Receives errors the watcher survives (a bad agent dir, a failing send or stop). Default: ignore. */
+  onError?: (e: unknown) => void;
 };
 
 const defaultPs: PsRunner = (pid) => {
@@ -49,6 +51,9 @@ const defaultPs: PsRunner = (pid) => {
 function agentDir(id: string): string {
   return join(stateDir(), id);
 }
+
+/** How long a cached ps ownership answer is trusted for a live pid. */
+const PS_CACHE_MS = 30_000;
 
 /** `4m12s` / `2h03m04s` — minutes unpadded, seconds always two digits. */
 export function formatDur(ms: number): string {
@@ -65,8 +70,9 @@ function elapsed(m: Meta, endedAt: string): number {
   return Date.parse(endedAt) - Date.parse(m.started_at);
 }
 
-function head(m: Meta, ordinal: number): string {
-  return `pi-sub #${ordinal} ${m.role} (${m.model}) "${m.label}"`;
+/** The `result:`/`activity:` footer line of a wake message (absolute paths). */
+function pathsLine(m: Meta): string {
+  return `result: ${join(agentDir(m.id), "result.md")}   activity: ${join(agentDir(m.id), "events.jsonl")}`;
 }
 
 /** Last non-empty stderr.log line, capped; undefined when there is none. */
@@ -83,31 +89,34 @@ function lastStderrLine(id: string): string | undefined {
   return undefined;
 }
 
-/** The wake message for a finished run: one line plus the result path. */
+/**
+ * The wake message for a finished run: the head line, an `error:` line for a
+ * failure, then the result and activity paths on their own line.
+ */
 export function wakeText(m: Meta, x: Exit, ordinal: number): string {
   const dur = formatDur(elapsed(m, x.ended_at));
-  const result = `Result: ${join(agentDir(m.id), "result.md")}`;
   if (x.how === "done") {
-    return `${head(m, ordinal)} finished in ${dur}. ${result}`;
+    return `[pi-sub] #${ordinal} ${m.role} (${m.model}) done in ${dur} · ${m.label}\n${pathsLine(m)}`;
   }
   if (x.how === "stopped") {
-    return `${head(m, ordinal)} stopped by ${x.by ?? "unknown"} after ${dur}.`;
+    return `[pi-sub] #${ordinal} ${m.role} (${m.model}) stopped by ${x.by ?? "unknown"} after ${dur} · ${m.label}\n${pathsLine(m)}`;
   }
   const exit = x.code !== null ? x.code : x.signal ?? "unknown";
   // A wrapper that vanished (SIGKILL'd) has no exit code and maybe stale
   // stderr: its own error text is the real reason.
   const detail = x.error ?? lastStderrLine(m.id) ?? "no stderr output";
-  return `${head(m, ordinal)} failed (exit ${exit}) after ${dur}: ${detail}. ${result}`;
+  return `[pi-sub] #${ordinal} ${m.role} (${m.model}) failed (exit ${exit}) in ${dur} · ${m.label}\nerror: ${detail}\n${pathsLine(m)}`;
 }
 
-/** A user flag forwarded to the main session. */
-export function flagText(m: Meta, ordinal: number, note: string): string {
-  return `${head(m, ordinal)} flagged by user: ${note}`;
+/** A user flag forwarded to the main session, with how long the agent ran. */
+export function flagText(m: Meta, ordinal: number, note: string, now: number = Date.now()): string {
+  const running = formatDur(now - Date.parse(m.started_at));
+  return `[pi-sub flag] user flagged #${ordinal} ${m.role} (${m.model}, running ${running}): "${note}" — activity: ${join(agentDir(m.id), "events.jsonl")}`;
 }
 
 /** An idle agent has produced nothing for `minutes`. */
 export function idleText(m: Meta, ordinal: number, minutes: number): string {
-  return `${head(m, ordinal)} has produced no events for ${minutes} min (still running). Stop it with subagent_stop or let it continue.`;
+  return `[pi-sub idle] #${ordinal} ${m.role} quiet for ${minutes}m · activity: ${join(agentDir(m.id), "events.jsonl")}`;
 }
 
 /**
@@ -172,8 +181,9 @@ export async function stop(id: string, by: "user" | "main" | "timeout", opts: St
 
 /**
  * Deliver every owned, exited, undelivered agent, oldest first: `send` the
- * wake message, then mark delivered — immediately, so a crash mid-loop never
- * re-delivers an already-sent one. Returns the messages that were sent.
+ * wake message, then mark delivered — at-least-once: an already-marked agent
+ * is never re-sent, but a crash between send and mark can send that one
+ * message twice. Returns the messages that were sent.
  */
 export function deliverPending(session: string, send: Send): string[] {
   const mine = owned(listAgents(), session);
@@ -230,12 +240,16 @@ export class Watcher {
   private readonly graceMs: number;
   private readonly ps: PsRunner;
   private readonly now: () => number;
+  private readonly onError: (e: unknown) => void;
   private started = false;
   private sweeping = false;
   private interval?: ReturnType<typeof setInterval>;
   private fw?: ReturnType<typeof watch>;
   private readonly flagged = new Map<string, number>();
   private readonly seen = new Map<string, string>();
+  private readonly psCache = new Map<string, { at: number; owned: boolean }>();
+  /** Ids whose timeout stop is in flight: later sweeps skip them until it settles. */
+  private readonly stopping = new Set<string>();
 
   constructor(session: string, onChange: () => void, send: Send, opts: WatcherOpts = {}) {
     this.session = session;
@@ -245,6 +259,7 @@ export class Watcher {
     this.graceMs = opts.graceMs ?? 5000;
     this.ps = opts.ps ?? defaultPs;
     this.now = opts.now ?? Date.now;
+    this.onError = opts.onError ?? (() => {});
   }
 
   start(): void {
@@ -252,13 +267,13 @@ export class Watcher {
     this.started = true;
     mkdirSync(stateDir(), { recursive: true });
     try {
-      this.fw = watch(stateDir(), () => void this.sweep());
+      this.fw = watch(stateDir(), () => this.safeSweep());
       this.fw.on("error", () => {}); // the poll below is the fallback
     } catch {
       // No fs.watch (or the dir vanished): the poll covers everything.
     }
-    this.interval = setInterval(() => void this.sweep(), this.pollMs);
-    void this.sweep();
+    this.interval = setInterval(() => this.safeSweep(), this.pollMs);
+    this.safeSweep();
   }
 
   /** Clears every timer and watcher; safe to call repeatedly. */
@@ -273,6 +288,71 @@ export class Watcher {
     }
   }
 
+  /** Never let a rejection escape to an unhandled-rejection crash. */
+  private safeSweep(): void {
+    this.sweep().catch((e) => this.report(e));
+  }
+
+  /** onError may itself throw; a reporting failure is never fatal either. */
+  private report(e: unknown): void {
+    try {
+      this.onError(e);
+    } catch {
+      // Nothing more we can do with an error about reporting an error.
+    }
+  }
+
+  /**
+   * Is `m`'s wrapper pid still ours? Liveness is probed with kill(pid, 0)
+   * (cheap) every sweep; the ps-based check runs at most once per
+   * `PS_CACHE_MS` per agent — except for a dead pid, which is always checked
+   * immediately, because its pid may have been reused by then.
+   */
+  private isWrapperOurs(m: Meta, now: number): boolean {
+    if (!isPidAlive(m.pid)) return ownsPid(m.pid, m.id, this.ps);
+    const cached = this.psCache.get(m.id);
+    if (cached !== undefined && now - cached.at < PS_CACHE_MS) return cached.owned;
+    const owned = ownsPid(m.pid, m.id, this.ps);
+    this.psCache.set(m.id, { at: now, owned });
+    return owned;
+  }
+
+  /**
+   * One owned agent's slice of a sweep: deliver its exit (writing one for a
+   * vanished wrapper first), flag idleness, or start the timeout stop.
+   * Returns whether anything changed. Errors propagate to the per-agent
+   * catch in `sweep`, so one bad agent never stops the others.
+   */
+  private handleAgent(m: Meta, ordinal: number, now: number): boolean {
+    let x = readExit(m.id);
+    if (x === undefined && !this.stopping.has(m.id)) {
+      if (this.isWrapperOurs(m, now)) {
+        const limits = checkLimits(m, lastEventAt(m), now, this.flagged.get(m.id));
+        if (limits.timeout) {
+          this.stopping.add(m.id);
+          // Fire and forget: the next sweeps deliver the exit the wrapper
+          // writes. A failing stop is reported, never swallowed.
+          stop(m.id, "timeout", { graceMs: this.graceMs, ps: this.ps })
+            .catch((e) => this.report(e))
+            .finally(() => this.stopping.delete(m.id));
+          return true;
+        }
+        if (limits.idle) {
+          this.flagged.set(m.id, now);
+          const minutes = Math.max(0, Math.floor((now - lastEventAt(m)) / 60_000));
+          this.send(idleText(m, ordinal, minutes));
+          return true;
+        }
+        return false;
+      }
+      x = recordWrapperVanished(m.id, new Date(now));
+    }
+    if (x === undefined || isDelivered(m.id)) return false;
+    this.send(wakeText(m, x, ordinal));
+    markDelivered(m.id);
+    return true;
+  }
+
   private async sweep(): Promise<void> {
     if (this.sweeping) return;
     this.sweeping = true;
@@ -281,35 +361,32 @@ export class Watcher {
       const now = this.now();
       const mine = owned(listAgents(), this.session);
       mine.forEach((m, index) => {
-        const ordinal = index + 1;
-        if (readExit(m.id) !== undefined) return; // handled by deliverPending below
-        if (!ownsPid(m.pid, m.id, this.ps)) {
-          recordWrapperVanished(m.id, new Date(now));
-          return;
-        }
-        const last = lastEventAt(m);
-        const limits = checkLimits(m, last, now, this.flagged.get(m.id));
-        if (limits.timeout) {
-          // Fire and forget: the next sweep delivers the exit the wrapper writes.
-          stop(m.id, "timeout", { graceMs: this.graceMs, ps: this.ps }).catch(() => {});
-          changed = true;
-        } else if (limits.idle) {
-          this.flagged.set(m.id, now);
-          const minutes = Math.max(0, Math.floor((now - last) / 60_000));
-          this.send(idleText(m, ordinal, minutes));
-          changed = true;
+        // One bad agent dir (corrupt files, a throwing send) must not stop
+        // the others.
+        try {
+          if (this.handleAgent(m, index + 1, now)) changed = true;
+        } catch (e) {
+          this.report(e);
         }
       });
-      if (deliverPending(this.session, this.send).length > 0) changed = true;
       // Anything new (events, exits, deliveries, idle flags) notifies the UI.
       for (const m of mine) {
-        const sig = `${lastEventAt(m)}|${readExit(m.id)?.how ?? "run"}|${isDelivered(m.id)}`;
+        if (isDelivered(m.id)) continue;
+        const sig = `${lastEventAt(m)}|${readExit(m.id)?.how ?? "run"}`;
         if (this.seen.get(m.id) !== sig) {
           this.seen.set(m.id, sig);
           changed = true;
         }
       }
+      // Prune the per-agent bookkeeping for agents that are delivered or no
+      // longer listed: these maps must not grow for the life of the session.
+      const active = new Set(mine.filter((m) => !isDelivered(m.id)).map((m) => m.id));
+      for (const map of [this.flagged, this.seen, this.psCache]) {
+        for (const id of map.keys()) if (!active.has(id)) map.delete(id);
+      }
       if (changed) this.onChange();
+    } catch (e) {
+      this.report(e); // watching must survive anything a single sweep hits
     } finally {
       this.sweeping = false;
     }
