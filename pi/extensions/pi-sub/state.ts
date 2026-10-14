@@ -36,6 +36,7 @@ export type Exit = {
   ended_at: string;
   how: "done" | "failed" | "stopped";
   by?: "user" | "main" | "timeout";
+  error?: string;
 };
 
 export function stateDir(): string {
