@@ -2,6 +2,8 @@
 // (deliver pending runs, watch owned agents, report orphans), and keeps the
 // acp_delegate tools out of the model's hands — pi-sub replaces them.
 
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -24,10 +26,12 @@ import {
   type ResultParams,
   type SubagentParams,
 } from "./helpers.ts";
+import { keyName, type Action } from "./keys.ts";
 import { launch } from "./launch.ts";
 import { loadRole } from "./roles.ts";
-import { deliverPending, isPidAlive, stop, Watcher } from "./runtime.ts";
+import { deliverPending, flagText, isPidAlive, stop, Watcher } from "./runtime.ts";
 import { isDelivered, listAgents, orphans, owned, readExit, writeMeta } from "./state.ts";
+import { AgentsOverlay, footerText, visibleRows } from "./ui.ts";
 import { liveModels } from "../session-models/index.ts";
 
 const WAKE_TYPE = "pi-sub";
@@ -48,26 +52,51 @@ const DEFAULT_LINES = 40;
 
 const text = (value: string) => ({ type: "text" as const, text: value });
 
+const HOTKEY = "ctrl+space";
+
+/** `piSub.keys` from pi's settings: overlay key rebinds, { "<default>": "<yours>" }. */
+function rebinds(): Record<string, string> {
+  const dir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+  try {
+    const keys = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8"))?.piSub?.keys;
+    if (keys && typeof keys === "object") {
+      return Object.fromEntries(Object.entries(keys).filter(([, v]) => typeof v === "string")) as Record<string, string>;
+    }
+  } catch {
+    // No settings or unreadable: defaults.
+  }
+  return {};
+}
+
 export default function piSub(pi: ExtensionAPI) {
   // We are a subagent child (launch sets PI_SUBAGENT): no tools, no watcher.
   if (process.env.PI_SUBAGENT === "1") return;
 
   let watcher: Watcher | undefined;
+  let session = "";
+  let refreshFooter: () => void = () => {};
 
   const send = (text: string) => {
     pi.sendMessage({ customType: WAKE_TYPE, content: text, display: true }, { triggerTurn: true, deliverAs: "followUp" });
   };
 
   pi.on("session_start", (_event, ctx) => {
-    const session = ctx.sessionManager.getSessionId();
+    session = ctx.sessionManager.getSessionId();
+    refreshFooter = () => {
+      if (!ctx.hasUI) return;
+      const mine = visibleRows(listAgents(), session, { showFinished: false, filter: "" }, new Date(), isPidAlive)
+        .filter((r) => !r.orphan);
+      ctx.ui.setStatus("pi-sub", footerText(mine, HOTKEY));
+    };
     // A reload fires session_start again: stop and clear any watcher from a
     // previous start so its timers are never orphaned.
     watcher?.stop();
     watcher = undefined;
     // Exits recorded while this session was down are delivered right away.
     deliverPending(session, send);
-    watcher = new Watcher(session, () => {}, send);
+    watcher = new Watcher(session, () => refreshFooter(), send);
     watcher.start();
+    refreshFooter();
     const found = orphans(listAgents(), session, isPidAlive);
     if (found.length > 0) {
       const lines = found.map((m) => `- ${m.id} ${m.role} (${m.model}) · ${m.label}`);
@@ -85,6 +114,69 @@ export default function piSub(pi: ExtensionAPI) {
   pi.on("session_shutdown", () => {
     watcher?.stop();
     watcher = undefined;
+    refreshFooter = () => {};
+  });
+
+  const onAction = (ctx: { ui: { notify(msg: string, type?: "info" | "warning" | "error"): void } }) => (a: Action) => {
+    if (a.stop) {
+      stop(a.stop, "user")
+        .then(() => refreshFooter())
+        .catch((err: unknown) => ctx.ui.notify(String((err as Error)?.message ?? err), "error"));
+    }
+    if (a.flag) {
+      const m = listAgents().find((x) => x.id === a.flag!.id);
+      if (m) send(flagText(m, ordinalOf(session, m.id), a.flag.note || "(no note)"));
+    }
+  };
+
+  const openOverlay = async (ctx: any, openId?: string) => {
+    if (!ctx.hasUI) return;
+    await ctx.ui.custom(
+      (tui: any, _theme: unknown, _kb: unknown, done: (r: undefined) => void) =>
+        new AgentsOverlay(
+          {
+            session,
+            agents: listAgents,
+            alive: isPidAlive,
+            events: readEvents,
+            result: (id) => readFileOrNull(join(agentFolder(id), "result.md")),
+            parse: keyName,
+            rebinds: rebinds(),
+            rowsOnScreen: () => Math.max(10, Math.floor((tui.terminal?.rows ?? 30) * 0.8)),
+            onAction: onAction(ctx),
+            done: () => done(undefined),
+            requestRender: () => tui.requestRender(),
+          },
+          openId,
+        ),
+      { overlay: true, overlayOptions: { width: "90%", maxHeight: "80%", anchor: "center" } },
+    );
+    refreshFooter();
+  };
+
+  pi.registerShortcut(HOTKEY, {
+    description: "Subagents: list, open, stop, flag",
+    handler: (ctx) => openOverlay(ctx),
+  });
+
+  pi.registerCommand("agents", {
+    description: "Subagents overlay; `/agents <id>` opens one, `/agents adopt <session>` adopts a handoff",
+    handler: async (args: string, ctx: any) => {
+      const [first, second] = args.trim().split(/\s+/).filter(Boolean);
+      if (first === "adopt") {
+        if (!second) return ctx.ui.notify("usage: /agents adopt <session id>", "warning");
+        const moved = listAgents()
+          .filter((m) => m.handoff_from === second || (m.owner_session === second && m.handoff_from !== undefined))
+          .map((m) => reown(m, session));
+        ctx.ui.notify(moved.length ? `Adopted ${moved.length} agent(s) from ${second}` : `No handed-off agents from ${second}`);
+        refreshFooter();
+        return;
+      }
+      if (first && !listAgents().some((m) => m.id === first)) {
+        return ctx.ui.notify(`pi-sub: no agent ${first}`, "warning");
+      }
+      await openOverlay(ctx, first);
+    },
   });
 
   pi.registerTool({

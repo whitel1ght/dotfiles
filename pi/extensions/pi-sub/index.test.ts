@@ -45,9 +45,13 @@ function stubPi() {
   const handlers: Record<string, any> = {};
   const sent: { message: any; options: any }[] = [];
   const setActiveCalls: string[][] = [];
+  const shortcuts: Record<string, any> = {};
+  const commands: Record<string, any> = {};
   let active: string[] = [];
   const pi: any = {
     registerTool: (t: any) => tools.push(t),
+    registerShortcut: (key: string, opts: any) => (shortcuts[key] = opts),
+    registerCommand: (name: string, opts: any) => (commands[name] = opts),
     on: (event: string, handler: any) => {
       handlers[event] = handler;
     },
@@ -58,7 +62,7 @@ function stubPi() {
       active = [...names];
     },
   };
-  return { pi, tools, handlers, sent, setActiveCalls, setActive: (names: string[]) => (active = [...names]) };
+  return { pi, tools, handlers, sent, setActiveCalls, shortcuts, commands, setActive: (names: string[]) => (active = [...names]) };
 }
 
 const model = (provider: string, id: string) => ({ provider, id });
@@ -546,5 +550,86 @@ test("session_shutdown stops the watcher and leaves children running", async (t)
         return true;
       }
     });
+  }
+});
+
+/** Stub UI ctx recording setStatus/notify and the component custom() was given. */
+function uiCtx(root: string) {
+  const status: (string | undefined)[] = [];
+  const notes: string[] = [];
+  const shown: any[] = [];
+  const ctx = stubCtx(root, {
+    hasUI: true,
+    ui: {
+      setStatus: (_k: string, v: string | undefined) => status.push(v),
+      notify: (m: string) => notes.push(m),
+      custom: async (factory: any, options: any) => {
+        let closed = false;
+        const c = factory({ requestRender() {}, terminal: { rows: 30 } }, {}, {}, () => (closed = true));
+        shown.push({ c, options, closed: () => closed });
+        c.handleInput("q");
+        return undefined;
+      },
+    },
+  });
+  return { ctx, status, notes, shown };
+}
+
+test("registers ctrl+space and /agents", (t) => {
+  clearSubagentEnv(t);
+  const { pi, shortcuts, commands } = stubPi();
+  piSub(pi);
+  assert.equal(typeof shortcuts["ctrl+space"]?.handler, "function");
+  assert.equal(typeof commands.agents?.handler, "function");
+});
+
+test("session_start sets the footer from this session's agents", (t) => {
+  const root = sandbox(t);
+  const { pi, handlers } = stubPi();
+  piSub(pi);
+  writeMeta(meta({ id: "20261014-100000-30f", pid: DEAD_PID }));
+  mark("20261014-100000-30f", { exit: { ...exit("done"), ended_at: new Date().toISOString() } });
+  const { ctx, status } = uiCtx(root);
+  try {
+    handlers.session_start({}, ctx);
+    assert.match(status[status.length - 1] ?? "", /^subagents ●0 run ✓1 ✗0 ■0  ctrl\+space$/);
+  } finally {
+    handlers.session_shutdown({});
+  }
+});
+
+test("the shortcut opens a centred overlay that q closes", async (t) => {
+  const root = sandbox(t);
+  const { pi, handlers, shortcuts } = stubPi();
+  piSub(pi);
+  const { ctx, shown } = uiCtx(root);
+  try {
+    handlers.session_start({}, ctx);
+    await shortcuts["ctrl+space"].handler(ctx);
+    assert.equal(shown.length, 1);
+    assert.equal(shown[0].options.overlay, true);
+    assert.equal(shown[0].options.overlayOptions.anchor, "center");
+    assert.ok(shown[0].closed());
+    assert.match(shown[0].c.render(100)[0], /Subagents · session sess-mai/);
+  } finally {
+    handlers.session_shutdown({});
+  }
+});
+
+test("/agents adopt moves a handed-off session's agents here", async (t) => {
+  const root = sandbox(t);
+  const { pi, handlers, commands } = stubPi();
+  piSub(pi);
+  writeMeta(meta({ id: "20261014-100000-31h", owner_session: "sess-old", handoff_from: "sess-old" }));
+  const { ctx, notes } = uiCtx(root);
+  try {
+    handlers.session_start({}, ctx);
+    await commands.agents.handler("adopt sess-old", ctx);
+    assert.match(notes.join("\n"), /Adopted 1 agent/);
+    assert.equal(readMeta("20261014-100000-31h").owner_session, "sess-main");
+    await commands.agents.handler("nope-id", ctx);
+    assert.match(notes.join("\n"), /no agent nope-id/);
+  } finally {
+    handlers.session_shutdown({});
   }
 });
