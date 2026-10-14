@@ -2,7 +2,7 @@
 // (deliver pending runs, watch owned agents, report orphans), and keeps the
 // acp_delegate tools out of the model's hands — pi-sub replaces them.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -53,6 +53,18 @@ const DEFAULT_LINES = 40;
 const text = (value: string) => ({ type: "text" as const, text: value });
 
 const HOTKEY = "ctrl+space";
+
+/**
+ * pi's --skill wants a path. A bare name means a skill installed in pi's own
+ * skills dir; anything with a slash is a path relative to the session cwd.
+ */
+export function resolveSkill(skill: string, cwd: string): string {
+  const path = skill.includes("/")
+    ? resolve(cwd, skill)
+    : join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "skills", skill);
+  if (!existsSync(path)) throw new Error(`pi-sub: skill not found: ${skill} (looked at ${path})`);
+  return path;
+}
 
 /** `piSub.keys` from pi's settings: overlay key rebinds, { "<default>": "<yours>" }. */
 function rebinds(): Record<string, string> {
@@ -192,7 +204,7 @@ export default function piSub(pi: ExtensionAPI) {
         model: str('Model id, "provider/model", from this session\'s live model list; pass it explicitly'),
         task: str("Complete task instructions for the subagent"),
         cwd: str("Working directory (default: this session's cwd)"),
-        skills: strArr("Skill names to enable in the child"),
+        skills: strArr("Skills to enable in the child: a name from ~/.pi/agent/skills, or a path"),
         with: strArr('Extra capabilities: "web" (web access) or "playwright" (browser)'),
         label: str("Short label shown in wake messages"),
         idle_minutes: num("Flag this session when the agent has been quiet this long (default 10; 0 disables it)"),
@@ -221,7 +233,7 @@ export default function piSub(pi: ExtensionAPI) {
         label: p.label ?? (p.task.split("\n")[0].slice(0, 60) || "subagent task"),
         task: p.task,
         cwd: p.cwd ? resolve(ctx.cwd, p.cwd) : ctx.cwd,
-        skills: p.skills ?? [],
+        skills: (p.skills ?? []).map((sk) => resolveSkill(sk, ctx.cwd)),
         extras: p.with ?? [],
         ownerSession: session,
         ownerPid: process.pid,

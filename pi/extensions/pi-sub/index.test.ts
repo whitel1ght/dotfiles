@@ -211,6 +211,30 @@ test("rejects an extra outside web and playwright", async (t) => {
   assert.equal(listAgents().length, 0);
 });
 
+test("skills resolve by name from pi's skills dir or as paths; unknown ones fail", async (t) => {
+  const root = sandbox(t);
+  const agentDir = join(root, "agent");
+  mkdirSync(join(agentDir, "skills", "commit-msg"), { recursive: true });
+  mkdirSync(join(root, "local-skill"));
+  const saved = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  t.after(() => {
+    if (saved === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = saved;
+  });
+  const { pi, tools } = stubPi();
+  piSub(pi);
+  await assert.rejects(
+    exec(tools[0], { role: "worker", model: "p/m", task: "t", skills: ["nope"] }, stubCtx(root)),
+    /skill not found: nope/,
+  );
+  assert.equal(listAgents().length, 0);
+  await exec(tools[0], { role: "worker", model: "p/m", task: "t", skills: ["commit-msg", "./local-skill"] }, stubCtx(root));
+  const m = listAgents()[0];
+  assert.deepEqual(m.skills, [join(agentDir, "skills", "commit-msg"), join(root, "local-skill")]);
+  await waitForExit(m.id);
+});
+
 test("rejects a missing cwd without spawning", async (t) => {
   const root = sandbox(t);
   const { pi, tools } = stubPi();
