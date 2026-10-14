@@ -2,6 +2,7 @@
 # Gather a day's work for /end-day, and file the written report in the diary.
 #
 #   end-day collect [DATE]   print a compact digest of the day's work
+#                            (SESSIONS=pi reads pi sessions instead of Claude's)
 #   end-day save [DATE]      read a report on stdin into that day's diary
 #   end-day save [DATE] --plan   same for /start-day's plan, at the top of ### ECFX
 #   end-day touched [DATE]   list the wiki projects with a log entry or decision dated DATE
@@ -18,7 +19,8 @@
 #   jira      tickets whose status I changed that day
 #   claude    each Claude session active that day: project, title, my prompts
 #             (built-in commands dropped), and its last few substantial replies —
-#             work that leaves no commit behind
+#             work that leaves no commit behind. SESSIONS=pi replaces this section
+#             with the same shape read from ~/.pi/agent/sessions
 #
 # save puts the report between markers under "### ECFX" in ~/wiki/diary/DATE.md,
 # replacing the block a previous run wrote, so re-running updates rather than
@@ -31,7 +33,10 @@ JIRA_BASE="${JIRA_BASE:-https://ecfxdev.atlassian.net}"
 DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
 WIKI_DIR="${WIKI_DIR:-$HOME/wiki}"
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
+PI_DIR="${PI_DIR:-$HOME/.pi/agent}"
+SESSIONS="${SESSIONS:-claude}"
 BUILTINS="usage|context|exit|model|clear|compact|cost|help|config|status|resume|rewind|login|logout|doctor|memory|permissions|hooks|agents|mcp|plugin|ide|theme|vim|fast|effort|tasks|rename|export|init|bug|feedback"
+PI_BUILTINS="$BUILTINS|scoped-models|ps|bg|todos|new|share|name"
 HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
 
 cmd="${1:-}"; shift || true
@@ -128,6 +133,37 @@ collect_claude() {
     done
 }
 
+# Same shape as collect_claude, from pi's session transcripts: one JSONL per session,
+# a {type:"session",cwd} head line and {type:"message",message:{role,content[]}} entries.
+collect_pi() {
+  section "Pi sessions"
+  local from to
+  from=$(epoch "$day"); to=$(epoch "$next")
+  [ -d "$PI_DIR/sessions" ] || { echo "(no pi sessions)"; return; }
+  # mtime only prefilters: a session started earlier and used today still counts, and the
+  # jq pass below keeps just the messages whose timestamp falls inside the day.
+  find "$PI_DIR/sessions" -name '*.jsonl' -newermt "$day 00:00:00" 2>/dev/null | sort | while read -r f; do
+    jq -s -r --argjson from "$from" --argjson to "$to" --arg builtins "$PI_BUILTINS" '
+      def day_ts: .timestamp | sub("\\.[0-9]+"; "") | fromdateiso8601;
+      def utext: [.message.content[]? | select(.type == "text") | .text] | join(" ") | gsub("\\s+"; " ");
+      (map(select(.type == "session")) | .[-1].cwd // "") as $cwd
+      | map(select(.type == "message" and (day_ts >= $from) and (day_ts < $to))) as $msgs
+      | ($msgs | map(select(.message.role == "user") | utext)
+          # injected notices and built-in commands are how I drive pi, not work
+          | map(select((test("^\\[(acp_|bg-|background)|^# Artifact|^<|^Recovery notice")
+                        or test("^/(\($builtins))(\\s|$)")) | not))
+          | map(.[0:220])) as $asked
+      | ($msgs | map(select(.message.role == "assistant") | utext)
+          | map(select(length > 80) | .[0:350])) as $replied
+      | if ($asked | length) == 0 then empty else
+          "### \($cwd | sub(".*/"; "")) — \($asked[0][0:60]) (from \($msgs[0] | day_ts | strflocaltime("%H:%M")))\n",
+          ($asked[] | "- asked: \(.)"),
+          ($replied | .[-3:] | .[] | "- replied: \(.)"),
+          ""
+        end' "$f" 2>/dev/null || echo "(unreadable: $f)"
+  done
+}
+
 save() {
   local file="$DIARY_DIR/$day.md" block name=daily-report position=bottom
   # The marker name stays "daily-report": diary files already carry those markers,
@@ -201,7 +237,8 @@ entries() {
 case "$cmd" in
   collect)
     printf '# Work digest for %s\n' "$day"
-    collect_commits; collect_gitlab; collect_jira; collect_claude ;;
+    collect_commits; collect_gitlab; collect_jira
+    if [ "$SESSIONS" = pi ]; then collect_pi; else collect_claude; fi ;;
   save) save $save_opt ;;
   touched) touched ;;
   entries) entries "${2:-}" ;;

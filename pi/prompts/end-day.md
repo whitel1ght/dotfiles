@@ -6,12 +6,12 @@ argument-hint: "[yesterday | YYYY-MM-DD]"
 Collect the day's work:
 
 ```bash
-~/.local/bin/end-day collect $ARGUMENTS
+SESSIONS=pi ~/.local/bin/end-day collect $ARGUMENTS
 ```
 
 The digest has four sections: commits, GitLab activity (each MR marked as mine or a
-review for someone else), Jira status changes, and sessions (my prompts and each
-session's last reply). A line in brackets means that source was unavailable; mention it
+review for someone else), Jira status changes, and pi sessions (my prompts and each
+session's last replies). A line in brackets means that source was unavailable; mention it
 in one line at the end of the report rather than guessing its contents.
 
 ## Write the report
@@ -77,4 +77,54 @@ REPORT
 ```
 
 `save` replaces the block it wrote on an earlier run and never touches my own lines, so
-running it again the same day is safe. End with the path it printed.
+running it again the same day is safe. Note the path it printed, then continue with the next
+section.
+
+## Consolidate memory
+
+Skip this step, and say so in one line, when `~/wiki/projects` does not exist or the day has
+no log entries below (the commit and the end of the run still happen). It is the only place
+project `state.md` files change; during the day `/run-day` only appends logs and decisions.
+
+Find which projects were touched — `end-day touched` prints one project name per line, the
+projects with a `## <day> <title>` log entry or a decision dated `<day>`; empty output means
+none:
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+~/.local/bin/end-day touched "$DAY"
+```
+
+For each project `<p>` it prints:
+
+1. Read `~/wiki/projects/<p>/state.md`, the day's log entries
+   (`~/.local/bin/end-day entries "$DAY" <p>`), the decisions dated that day
+   (`rg -l "^date: $DAY" ~/wiki/projects/<p>/decisions`), and the `<p>:` lines under `notes:` in
+   `~/.local/state/run-day/$DAY.md` if it exists (the `state_change` lines `/run-day` collected).
+2. Rewrite `state.md` in full from the old state plus those: current focus, open threads (drop
+   what finished, add what started), links to existing notes. Keep the file's frontmatter and
+   headings, set its `date` to `$DAY`, and keep it at **60 lines or fewer** (`wc -l` it). It is a
+   snapshot, not a history: history lives in the log.
+3. If the project's one-line focus changed, update its line in the `## Long-term memory (projects)`
+   section of `~/wiki/index.md` (edit only that section).
+
+## Commit and end the run
+
+This always runs, even when the memory step was skipped: the report and the diary edits still get
+committed. Set `DAY` again here (new shell):
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+qmd update && qmd embed
+git -C ~/wiki add -A -- diary projects index.md
+[ -d ~/wiki/reviews ] && git -C ~/wiki add -A -- reviews
+git -C ~/wiki diff --cached --quiet || git -C ~/wiki commit -m "wiki: $DAY day"
+```
+
+If `qmd` fails, say so in one line and still commit. Never touch `*.pdf` or `*.kdbx`.
+
+Then end the run: move `~/.local/state/run-day/$DAY.md` into `~/.local/state/run-day/done/`
+(create the directory). That switches off the run-state injection and the event watcher. Skip it
+when there is no such file.
+
+End with the diary path, the projects consolidated, and the commit.
