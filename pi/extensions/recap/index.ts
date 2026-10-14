@@ -9,8 +9,8 @@ import type {
 import {
   buildSessionContext,
   convertToLlm,
-  serializeConversation,
 } from "@earendil-works/pi-coding-agent"
+import { digest, type DigestMessage } from "./digest.js"
 import { pickRecapModel } from "./model-picker.js"
 import {
   deleteRecapConfig,
@@ -35,7 +35,7 @@ import {
 } from "./tui.js"
 
 const RECAP_MAX_TOKENS = 160
-const RECAP_REQUEST_TIMEOUT_MS = 4_000
+const RECAP_REQUEST_TIMEOUT_MS = 30_000
 const AWAY_RECAP_DELAY_MS = 2 * 60 * 1_000
 const RECAP_ENTRY_TYPE = "pi-recap:state"
 
@@ -239,7 +239,7 @@ function getCurrentSessionMessages(
 }
 
 function buildPrompt(messages: AgentMessage[]): Message {
-  const conversationText = serializeConversation(convertToLlm(messages))
+  const conversationText = digest(convertToLlm(messages) as DigestMessage[])
   return {
     role: "user",
     content: [
@@ -363,7 +363,7 @@ function handleMissingRecapModel(
 
   notifyUser(
     ctx,
-    "No default recap model authenticated. Run /recap config.",
+    "Session model is not authenticated for recaps. Run /recap config.",
     "error",
   )
 }
@@ -415,7 +415,7 @@ async function configureRecapModel(
     if (result.action === "default") {
       deleteRecapConfig()
       state.modelConfig = { kind: "missing" }
-      notifyUser(ctx, "Recap model reset to default.", "info")
+      notifyUser(ctx, "Recap model reset to the session model.", "info")
       return
     }
 
@@ -488,7 +488,7 @@ async function notifyRecapStatus(
     const modelAuth = await getRecapModelAuth(ctx, state.modelConfig)
     if (modelAuth.status === "ok") {
       clearNoModelWarning(ctx)
-      const suffix = modelAuth.source === "default" ? " (default)" : ""
+      const suffix = modelAuth.source === "session" ? " (session model)" : ""
       selectedModelLine = `selected model: ${formatAuthModelKey(modelAuth.auth)}${suffix}`
       activeModelLine = `active model: ${formatAuthModelKey(modelAuth.auth)}`
     } else if (modelAuth.status === "invalid-config") {
@@ -510,7 +510,7 @@ async function notifyRecapStatus(
   notifyUser(
     ctx,
     [
-      "pi-recap status",
+      "recap status",
       selectedModelLine,
       activeModelLine,
       lastRecapLine,

@@ -9,7 +9,6 @@
     "npm:@juicesharp/rpiv-ask-user-question",
     "npm:@nicknisi/pi-artifacts",
     "npm:pi-context-view",
-    "./packages/pi-recap",
     "npm:pi-memory",
     "npm:@dietrichgebert/ponytail",
     "npm:pi-lens",

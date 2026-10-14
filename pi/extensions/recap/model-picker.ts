@@ -8,7 +8,6 @@ import {
   type Focusable,
 } from "@earendil-works/pi-tui"
 import {
-  DEFAULT_RECAP_MODEL,
   formatRecapModelKey,
   type RecapModelPreference,
 } from "./models.js"
@@ -41,8 +40,8 @@ class RecapModelPicker implements Component, Focusable {
     this.theme = theme
     this.items = [
       {
-        label: "Use default",
-        description: formatRecapModelKey(DEFAULT_RECAP_MODEL),
+        label: "Use session model",
+        description: "whatever model the session is using",
       },
       ...models.map((model) => ({
         label: formatRecapModelKey(model),

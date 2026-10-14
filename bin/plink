@@ -181,11 +181,6 @@ fi
 
 [ -d "$PI_SRC/extensions" ] && link_item "$PI_SRC/extensions" "$PI_DEST/extensions"
 
-# Vendored Pi packages: patched copies of upstream extensions. Pi resolves a
-# relative package path against the settings file it read, which is the link at
-# $PI_DEST/settings.json, so packages/ has to sit beside it in the agent dir.
-[ -d "$PI_SRC/packages" ] && link_item "$PI_SRC/packages" "$PI_DEST/packages"
-
 if [ "$DRY_RUN" = 1 ]; then
     log_info "$CHANGED change(s) pending (dry run)"
 elif [ "$CHANGED" = 0 ]; then

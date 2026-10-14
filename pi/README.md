@@ -33,10 +33,8 @@ wrong or broken links are repaired. Review the dry run before applying it.
 | `agents/` | `pi/agents/`: Pi-specific named subagent definitions |
 | `prompts/` | `pi/prompts/`: slash-command templates |
 | `extensions/` | `pi/extensions/`: local extensions and package configuration |
-| `packages/` | `pi/packages/`: vendored packages |
 
-The `packages/` link is required because `./packages/pi-recap` resolves relative
-to the settings location in `~/.pi/agent/`. Project settings in `.pi/settings.json`
+Project settings in `.pi/settings.json`
 can override personal settings once the project is trusted.
 
 ## Models and authentication
@@ -134,11 +132,7 @@ Local components:
 | [daily](extensions/daily/README.md) | Injects the active `/run-day` state and plan block; blocks a diary `[x]` tick that carries no evidence |
 | `mcp-env/` | Expands environment references and registers MCP servers; skips servers with missing variables |
 | `inline-files/` | Expands `@path` into file contents when the model has no tools |
-| [pi-recap](packages/pi-recap/README.md) | Vendored recap widget and `/recap`; uses Pi's model registry for requests |
-
-The recap model is configured separately in `extensions/pi-recap.json` as
-`opencode-go/space-bunny-free`. `/recap config` changes it; `/recap status`
-reports its state. It does not inherit the startup default or subagent pool.
+| [recap](extensions/recap/README.md) | One-line recap after idle and on `/recap`, on the session model; ours (forked from `@tifan/pi-recap` 0.4.7, upstream not tracked) |
 
 `settings.json` also declares packages for web search/access, todo lists,
 questions, browser artifacts, context display, memory, background tasks,

@@ -46,10 +46,8 @@ ln -s "$AGENT_DIR/auth.json" "$T/auth.json"
 ln -s "$DOTFILES/pi/models.json" "$T/models.json"
 ln -s "$DOTFILES/pi/APPEND_SYSTEM.md" "$T/APPEND_SYSTEM.md"
 cp "$DOTFILES/pi/settings.json" "$T/settings.json"
-# Packages are installed under the agent dir and settings.json resolves ./packages against
-# itself, so both have to exist here or package-provided tools never load.
+# Packages are installed under the agent dir; without this link package-provided tools never load.
 ln -s "$AGENT_DIR/npm" "$T/npm"
-ln -s "$DOTFILES/pi/packages" "$T/packages"
 
 cat > "$T/extensions/probe.ts" <<'EOF'
 import { writeFileSync } from "node:fs";
@@ -234,6 +232,28 @@ EOF
       echo "FAIL  pi-sub: expected 1 delivered wake-up in the session, found ${wakes:-0}"
       fails=$((fails + 1))
     fi
+  fi
+fi
+
+# recap: /recap must produce a recap on the session model from the digest. It runs on a
+# Pi model-registry call and session APIs, so a Pi update can break it without a sound.
+if command -v tmux >/dev/null; then
+  RSID="$(uuidgen | tr 'A-Z' 'a-z')"
+  rtm="pi-contract-recap-$$"
+  tmux new-session -d -s "$rtm" -x 160 -y 40 \
+    "cd /tmp && PI_CODING_AGENT_DIR='$T' PI_CODING_AGENT_SESSION_DIR='$T/sessions' PI_OFFLINE=1 \
+     pi --session-id '$RSID' --provider '$PROVIDER' --model '$MODEL_ID' --models '$MODEL' --thinking off \
+     'We are renaming the widget module to gadget. Reply with one word: ok'"
+  for _ in $(seq 1 60); do cat "$T"/sessions/*"$RSID"*.jsonl 2>/dev/null | grep -q '"role":"assistant"' && break; sleep 1; done
+  tmux send-keys -t "$rtm" "/recap" Enter
+  for _ in $(seq 1 45); do cat "$T"/sessions/*"$RSID"*.jsonl 2>/dev/null | grep -q '"customType":"pi-recap:state"' && break; sleep 1; done
+  tmux kill-session -t "$rtm" 2>/dev/null || true
+  recap="$(cat "$T"/sessions/*"$RSID"*.jsonl 2>/dev/null | jq -r 'select(.customType=="pi-recap:state")|.data.lastRecap' | tail -1)"
+  if [ -n "$recap" ]; then
+    printf 'PASS  recap: /recap answered on the session model: %s\n' "$(printf '%s' "$recap" | cut -c1-80)"
+  else
+    echo "FAIL  recap: /recap produced no recap within 45s"
+    fails=$((fails + 1))
   fi
 fi
 

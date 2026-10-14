@@ -12,7 +12,7 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent"
 
-const CONFIG_PATH = path.join(getAgentDir(), "extensions", "pi-recap.json")
+const CONFIG_PATH = path.join(getAgentDir(), "extensions", "recap.json")
 const CONFIG_DIR = path.dirname(CONFIG_PATH)
 
 export interface RecapModelPreference {
@@ -29,19 +29,14 @@ export type ResolvedRecapModelAuth =
   | {
       readonly status: "ok"
       readonly auth: Model<Api>
-      readonly source: "configured" | "default"
+      readonly source: "configured" | "session"
     }
   | { readonly status: "invalid-config" }
   | {
       readonly status: "unauthenticated"
       readonly model: RecapModelPreference | undefined
-      readonly source: "configured" | "default"
+      readonly source: "configured" | "session"
     }
-
-export const DEFAULT_RECAP_MODEL: RecapModelPreference = {
-  provider: "openai-codex",
-  id: "gpt-5.6-luna",
-}
 
 interface RecapConfig extends Record<string, unknown> {
   model?: unknown
@@ -50,7 +45,7 @@ interface RecapConfig extends Record<string, unknown> {
 export function formatModelPreference(config: RecapModelConfig): string {
   if (config.kind === "configured") return formatRecapModelKey(config.model)
   if (config.kind === "invalid") return "invalid"
-  return "default"
+  return "session model"
 }
 
 export function formatRecapModelKey({
@@ -144,16 +139,12 @@ export async function getRecapModelAuth(
         }
   }
 
-  const defaultAuth = await getModelAuth(ctx, DEFAULT_RECAP_MODEL)
-  if (defaultAuth) {
-    return { status: "ok", auth: defaultAuth, source: "default" }
-  }
-
-  return {
-    status: "unauthenticated",
-    model: DEFAULT_RECAP_MODEL,
-    source: "default",
-  }
+  // No pin: recap on whatever model the session is using right now.
+  const session = ctx.model ? toModelPreference(ctx.model) : undefined
+  const sessionAuth = session && (await getModelAuth(ctx, session))
+  return sessionAuth
+    ? { status: "ok", auth: sessionAuth, source: "session" }
+    : { status: "unauthenticated", model: session, source: "session" }
 }
 
 export async function getAuthenticatedTextModelPreferences(
