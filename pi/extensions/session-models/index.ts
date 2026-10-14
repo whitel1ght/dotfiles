@@ -1,7 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 type ModelId = { provider: string; id: string };
-type ModelCtx = {
+
+export type ModelCtx = {
   scopedModels: readonly { model: ModelId }[];
   model: ModelId | undefined;
   modelRegistry: { getAvailable: () => ModelId[] };
@@ -15,7 +16,8 @@ export const LANDED = [
   "Do not launch subagents",
 ];
 
-export function sectionText(ctx: ModelCtx): string {
+/** The model ids subagents may use: the scoped (or current) models that are still available. */
+export function liveModels(ctx: ModelCtx): string[] {
   const fullId = (model: ModelId) => `${model.provider}/${model.id}`;
   const available = new Set(ctx.modelRegistry.getAvailable().map(fullId));
   // Match pi-subagents modelScope.allow=["scoped"] when Pi has no scope.
@@ -24,7 +26,11 @@ export function sectionText(ctx: ModelCtx): string {
     : ctx.model
       ? [ctx.model]
       : [];
-  const ids = [...new Set(selected.map(fullId))].filter((id) => available.has(id)).sort();
+  return [...new Set(selected.map(fullId))].filter((id) => available.has(id)).sort();
+}
+
+export function sectionText(ctx: ModelCtx): string {
+  const ids = liveModels(ctx);
   const instructions = ids.length
     ? `Choose subagent models only from this live session list. Pass an exact provider/id explicitly.\n${ids.map((id) => `- ${id}`).join("\n")}`
     : "No selected models are currently available. Do not launch subagents; ask the user to repair the session model pool.";

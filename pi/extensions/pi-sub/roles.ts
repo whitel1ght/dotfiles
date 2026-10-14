@@ -10,27 +10,34 @@ export type Role = {
 };
 
 export function agentsDir(): string {
-  return process.env.PI_SUB_AGENTS_DIR ?? join(homedir(), ".pi", "agent", "agents");
+  return process.env.PI_SUB_AGENTS_DIR || join(homedir(), ".pi", "agent", "agents");
 }
 
-/** tools line split on commas and trimmed; read/grep/find/ls when absent. */
+const DEFAULT_TOOLS = ["read", "grep", "find", "ls"];
+
+/** tools line split on commas and trimmed; read/grep/find/ls when absent or empty. */
 function parseTools(frontmatter: string[]): string[] {
   const line = frontmatter.find((l) => l.startsWith("tools:"));
-  if (line === undefined) return ["read", "grep", "find", "ls"];
-  return line
+  if (line === undefined) return [...DEFAULT_TOOLS];
+  const tools = line
     .slice("tools:".length)
     .split(",")
     .map((t) => t.trim())
     .filter((t) => t.length > 0);
+  return tools.length > 0 ? tools : [...DEFAULT_TOOLS];
 }
 
 /** Split a role file into frontmatter lines and the body after the closing `---`. */
 function splitFrontmatter(text: string): { frontmatter: string[]; body: string } {
   const lines = text.split("\n");
-  const open = lines[0] !== undefined && lines[0].trim() === "---" ? 1 : 0;
-  const close = lines.indexOf("---", open);
+  // Frontmatter only when the file starts with a fence: a --- anywhere else
+  // is body text that must not be mistaken for the closing fence.
+  if (lines[0] === undefined || lines[0].trim() !== "---") {
+    return { frontmatter: [], body: text.trim() };
+  }
+  const close = lines.indexOf("---", 1);
   if (close === -1) return { frontmatter: [], body: text.trim() };
-  return { frontmatter: lines.slice(open, close), body: lines.slice(close + 1).join("\n").trim() };
+  return { frontmatter: lines.slice(1, close), body: lines.slice(close + 1).join("\n").trim() };
 }
 
 export function loadRole(name: string): Role {

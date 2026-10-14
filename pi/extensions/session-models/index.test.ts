@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import sessionModels from "./index.ts";
+import sessionModels, { liveModels } from "./index.ts";
+
+const model = (provider: string, id: string) => ({ provider, id });
 
 function harness() {
   const handlers = {};
@@ -65,6 +67,23 @@ test("missing parent and empty scope fail closed", () => {
   ctx.scopedModels = [];
   ctx.model = undefined;
   assert.match(run(), /Do not launch/);
+});
+
+test("liveModels lists the selected, available model ids", () => {
+  const a = model("openai", "coding");
+  const b = model("cheap", "reader");
+  const ctx = {
+    scopedModels: [{ model: b }, { model: a }, { model: a }],
+    model: a,
+    modelRegistry: { getAvailable: () => [a, b, model("other", "excluded")] },
+  };
+  assert.deepEqual(liveModels(ctx), ["cheap/reader", "openai/coding"]);
+});
+
+test("liveModels falls back to the current model on an empty scope", () => {
+  const a = model("openai", "coding");
+  const ctx = { scopedModels: [], model: a, modelRegistry: { getAvailable: () => [a] } };
+  assert.deepEqual(liveModels(ctx), ["openai/coding"]);
 });
 
 test("warns once when the section stops reaching the provider request", () => {

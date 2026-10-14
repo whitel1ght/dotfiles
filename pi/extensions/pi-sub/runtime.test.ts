@@ -174,8 +174,11 @@ test("flagText and idleText formats", () => {
       idleText(m, 3, 10),
       `[pi-sub idle] #3 worker quiet for 10m · activity: ${dir}/events.jsonl`,
     );
-    // flagText defaults `now` to the real clock.
-    assert.match(flagText(m, 1, "note"), /running \d+m\d+s/);
+    // flagText defaults `now` to the real clock (elapsed varies with it).
+    assert.match(
+      flagText(m, 1, "note"),
+      /\[pi-sub flag\] user flagged #1 worker \(prov\/model, running [^)]+\): "note"/,
+    );
   } finally {
     cleanup(root);
   }
@@ -441,8 +444,9 @@ test("Watcher delivers an exit that appears while it runs", async () => {
 test("Watcher flags an idle agent once per quiet spell, re-arming on a new event", async () => {
   const root = sandbox();
   try {
-    // idle_minutes is fractional here (0.01 = 0.6 s) so the test runs fast.
-    const m = meta({ idle_minutes: 0.01, pid: 4194304, pgid: 4194304 });
+    // idle_minutes is fractional here (0.01 = 0.6 s) so the test runs fast;
+    // started_at is the real clock so the 60-minute cap never fires mid-test.
+    const m = meta({ idle_minutes: 0.01, started_at: new Date().toISOString(), pid: 4194304, pgid: 4194304 });
     writeMeta(m);
     touchEvents(m.id);
     const sent: string[] = [];
