@@ -133,6 +133,7 @@ Local components:
 | `mcp-env/` | Expands environment references and registers MCP servers; skips servers with missing variables |
 | `inline-files/` | Expands `@path` into file contents when the model has no tools |
 | [recap](extensions/recap/README.md) | One-line recap after idle and on `/recap`, on the session model; ours (forked from `@tifan/pi-recap` 0.4.7, upstream not tracked) |
+| [session-summary](extensions/session-summary/README.md) | On session end, writes `~/wiki/sessions/<date>/<id>.md` (skips subagents, short sessions and the run-day session) |
 
 `settings.json` also declares packages for web search/access, todo lists,
 questions, browser artifacts, context display, memory, background tasks,
@@ -167,4 +168,4 @@ payload, that the injected prompt sections land, that every tool the prompts nam
 exists, and that pi-sub children launch bare, outlive their launcher and wake the
 owning session exactly once. Run it after any `pi update`.
 The other checks cover linking and local extension behavior; none of them prove
-remote provider authentication or model health. The vendored recap package currently has no test script.
+remote provider authentication or model health.

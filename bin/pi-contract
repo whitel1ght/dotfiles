@@ -257,6 +257,32 @@ if command -v tmux >/dev/null; then
   fi
 fi
 
+# session-summary: quitting an ordinary session must leave sessions/<date>/<id>.md in the
+# wiki. It hangs off session_shutdown and the model registry; an update can silence it.
+if command -v tmux >/dev/null; then
+  SSID="$(uuidgen | tr 'A-Z' 'a-z')"
+  stm="pi-contract-summary-$$"
+  mkdir -p "$T/wiki" "$T/run-day"
+  tmux new-session -d -s "$stm" -x 160 -y 40 \
+    "cd /tmp && PI_CODING_AGENT_DIR='$T' PI_CODING_AGENT_SESSION_DIR='$T/sessions' PI_OFFLINE=1 \
+     WIKI_DIR='$T/wiki' RUN_DAY_STATE_DIR='$T/run-day' \
+     pi --session-id '$SSID' --provider '$PROVIDER' --model '$MODEL_ID' --models '$MODEL' --thinking off \
+     'We are renaming the widget module to gadget. Reply with one word: ok'"
+  for _ in $(seq 1 60); do [ "$(cat "$T"/sessions/*"$SSID"*.jsonl 2>/dev/null | grep -c '"role":"assistant"')" -ge 1 ] && break; sleep 1; done
+  tmux send-keys -t "$stm" "Done. Reply with one word: bye" Enter
+  for _ in $(seq 1 60); do [ "$(cat "$T"/sessions/*"$SSID"*.jsonl 2>/dev/null | grep -c '"role":"assistant"')" -ge 2 ] && break; sleep 1; done
+  tmux send-keys -t "$stm" "/quit" Enter
+  summary=""
+  for _ in $(seq 1 40); do summary="$(ls "$T"/wiki/sessions/*/"$SSID".md 2>/dev/null | head -1 || true)"; [ -n "$summary" ] && break; sleep 1; done
+  tmux kill-session -t "$stm" 2>/dev/null || true
+  if [ -n "$summary" ] && grep -q "^session: $SSID" "$summary"; then
+    printf 'PASS  session-summary: quitting wrote %s\n' "$(grep -m1 '^# ' "$summary" | cut -c1-70)"
+  else
+    echo "FAIL  session-summary: no sessions/<date>/$SSID.md within 40s of /quit"
+    fails=$((fails + 1))
+  fi
+fi
+
 # Write-capable children load pi-lens by path with --no-extensions; if the package moves,
 # the -e path breaks and every worker would start without diagnostics, or not at all.
 lens_argv="$(cd /tmp && node --input-type=module -e '
