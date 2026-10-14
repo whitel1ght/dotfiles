@@ -1,5 +1,5 @@
 ---
-description: Standup report of the day's work across commits, MRs, Jira and sessions, filed in the diary
+description: Standup report of the day's work across commits, MRs, Jira and pi sessions, filed in the diary, then folded into the project memory in ~/wiki
 argument-hint: "[yesterday | YYYY-MM-DD]"
 ---
 
@@ -13,6 +13,21 @@ The digest has four sections: commits, GitLab activity (each MR marked as mine o
 review for someone else), Jira status changes, and pi sessions (my prompts and each
 session's last replies). A line in brackets means that source was unavailable; mention it
 in one line at the end of the report rather than guessing its contents.
+
+## Process the inbox first
+
+Define the day first:
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+fd -d 1 -e md . ~/.local/state/run-day/inbox 2>/dev/null | sort
+```
+
+Then process any messages waiting in `~/.local/state/run-day/inbox/*.md` the way section 7
+(Inbox) of `~/.pi/agent/prompts/run-day.md` says — read that file first — before the report is
+written, so that what was reported counts as reported. This happens whether or not the day has
+a plan: a missing `<!-- start-day:start -->` block only skips the comparison under "Unreported
+activity", never this step.
 
 ## Write the report
 
@@ -100,6 +115,38 @@ example `Done` to `In progress`, because this run's digest is thinner than the e
 When that block already has a `**Standup**` paragraph, rewrite it for the whole day rather
 than appending. Note the path it printed, then continue with the next section.
 
+## Unreported activity
+
+The safety net for work nobody wrote into the plan. Skip the comparison, in one line, when
+`~/wiki/diary/$DAY.md` has no `<!-- start-day:start -->` block (nothing to compare with). The inbox
+was already processed above. Otherwise take the ticket keys and MR numbers the plan already
+mentions, the plan being the start-day block only (its `**Unplanned**` group included):
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+PLAN="$(awk '/<!-- start-day:start -->/{f=1;next} /<!-- start-day:end -->/{f=0} f' ~/wiki/diary/$DAY.md)"
+printf '%s\n' "$PLAN" | rg -oi '\b[a-z]{2,10}-[0-9]{2,6}\b' | tr 'A-Z' 'a-z' | sort -u
+printf '%s\n' "$PLAN" | rg -o 'merge_requests/[0-9]+' | sort -u
+```
+
+Compare the digest's four sections with those two lists. A digest item is **unreported** when its
+ticket key is not among the plan's keys and, for an MR, its `merge_requests/<n>` is not among the
+plan's MR numbers. Items with neither a key nor an MR (a commit or a session without a ticket) are
+grouped per repo or session topic and shown for me to judge; drop obvious noise (merge commits,
+the edits made by this very report). Only the plan block counts, never the diary's report block.
+
+If nothing is unreported, say so in one line. Otherwise show a short list, one line each:
+`<key or topic> - <one-line summary> - <evidence: MR link or commit>`. Ask which to add, then stop
+and wait for my answer (yes or no per item). Do not go on to "Consolidate memory", and do not add
+anything, before the answer arrives. For each yes, add one line under the plan block's
+`**Unplanned**` group (create the group as the last group, just above `<!-- start-day:end -->`,
+when it is missing): `- [x] <key> <summary> · MR <repo>!<iid>  [↗][<repo>!<iid>]` (the URL goes in
+a `[<repo>!<iid>]: <url>` line above the end marker; an inline `[<repo>!<iid>](<url>)` is fine
+too), or `· note: <summary>` when there is no MR, because the diary's tick guard refuses an `[x]`
+without an MR link, `merged` or `· note:`. Use `[/]` for work that is clearly unfinished. After the
+edits run `~/.local/bin/diary-links ~/wiki/diary/$DAY.md`. Never add a line I did not approve and
+never edit a line outside the block.
+
 ## Consolidate memory
 
 Skip this step, and say so in one line, when `~/wiki/projects` does not exist or the day has
@@ -147,6 +194,17 @@ Then end the run: move `~/.local/state/run-day/$DAY.md` into `~/.local/state/run
 (create the directory). That switches off the run-state injection and the event watcher. Skip it
 when there is no such file.
 
-End with the diary path, the projects consolidated, and the commit, then print the Standup
+## Offer reviews
+
+Do not run these; ask whether to:
+
+```bash
+d=$(date +%-d); w=$(date +%u)
+[ "$w" = 5 ] && echo "offer: /review week"
+if { [ "$d" -eq 1 ] && [ "$w" -le 5 ]; } || { [ "$w" -eq 1 ] && [ "$d" -le 3 ]; }; then echo "offer: /review month"; fi
+```
+
+Friday offers `/review week`; the first workday of a month offers `/review month`. Print nothing
+if neither line appears. End with the diary path, the projects consolidated, and the commit, then print the Standup
 paragraph once more (the `**Standup**` line and the paragraph, nothing else) as the very last
 thing, so I can copy it.

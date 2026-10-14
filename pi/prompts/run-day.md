@@ -17,7 +17,7 @@ dispatch agents that do, verify their work yourself, and keep the day's records 
 - Hand-offs: `~/.local/state/run-day/handoff/<KEY>.md`
 - Brief templates: `~/projects/dotfiles/claude/daily/templates/ticket-brief.md` and `review-round-brief.md`
 - Vault rules: `~/wiki/AGENTS.md`; log/decision frontmatter: `~/wiki/_templates/`
-- Jira writes: `~/.pi/agent/skills/jira-cli/SKILL.md`
+- Jira writes: `~/.pi/agent/skills/jira-write/SKILL.md` (dry-run, then the user's yes)
 
 The `daily` pi extension injects the plan block and run state as a system section at the start of
 every turn, so a compaction cannot lose the day. Re-read the real files before acting on them —
@@ -161,7 +161,7 @@ Skip it when the run state says `owner=external:<KEY>` for that ticket.
 5. Set `needs_you=yes`, then show the user: the findings, `git log --oneline @{u}..HEAD`, and the
    **full** draft reply. Ask once: yes / edit / no.
 6. yes → push, `glab api "projects/$ENC/merge_requests/$IID/discussions/$DID/notes" -X POST -F body=@<reply>`,
-   `needs_you=no`, apply any memory block, offer the Jira one-liner.
+   `needs_you=no`, apply any memory block, offer the Jira one-liner with the new head SHA (post it only on yes, through `jira-write`).
    edit → a fresh `subagent` worker in the same worktree whose task names the earlier result
    file and the requested edits; come back to step 5.
    no → push nothing, `needs_you=no`, leave the diary alone.

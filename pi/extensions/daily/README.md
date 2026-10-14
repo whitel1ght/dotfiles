@@ -22,7 +22,7 @@ Two jobs, both reusing Claude Code's harness-free parsers in place
 Everything else CC's plugin does is native pi or an existing repo tool: model tiers come from
 the `session-models` extension's `<subagent_models>` list at run time, event watching is a
 `bg_start` sleeper over `changes-since --cursor run-day`, the plan display is `day-plan`
-(tmux popup), agent counts are pi's background dock.
+(tmux popup), running agents are the `pi-sub` footer and `/agents` overlay.
 
 Playbooks: `~/projects/dotfiles/pi/prompts/{run-day,handoff,pickup,report-back}.md`
 (symlinked to `~/.pi/agent/prompts/`).
