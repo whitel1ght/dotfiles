@@ -134,6 +134,7 @@ Local components:
 | `inline-files/` | Expands `@path` into file contents when the model has no tools |
 | [recap](extensions/recap/README.md) | One-line recap after idle and on `/recap`, on the session model; ours (forked from `@tifan/pi-recap` 0.4.7, upstream not tracked) |
 | [session-summary](extensions/session-summary/README.md) | On session end, writes `~/wiki/sessions/<date>/<id>.md` (skips subagents, short sessions and the run-day session) |
+| [claude-hooks](extensions/claude-hooks/README.md) | Runs Claude Code's `PreToolUse` hooks for `Bash` (from enabled plugins and `~/.claude/settings.json`) on pi's `bash` tool, with Claude's input and exit-code contract — the ECFX `/mr-description` gate holds in pi too |
 
 `settings.json` also declares packages for web search/access, todo lists,
 questions, browser artifacts, context display, memory, background tasks,
