@@ -159,6 +159,17 @@ done
 [ -d "$PI_SRC/modules" ] && \
     link_item "$PI_SRC/modules" "$HOME/.agents/modules"
 
+# billion-context (the acp_delegate host) reads its role model pins from
+# ~/.config/billion-context/billion-context.json: pi.subagents.agents.<role>.model.
+# It seeds that file once with {"providers":{}} and never overwrites an existing
+# one, so the versioned copy is safe to link; a hand-edited file is backed up
+# instead of clobbered. Lives outside ~/.pi/agent because that is where the
+# package looks, not where Pi does.
+if [ -f "$PI_SRC/billion-context.json" ]; then
+    [ "$DRY_RUN" = 1 ] || mkdir -p "$HOME/.config/billion-context"
+    link_item "$PI_SRC/billion-context.json" "$HOME/.config/billion-context/billion-context.json"
+fi
+
 # Slash commands. The shared source is claude/commands; pi/prompts holds the
 # Pi-specific ports of the ones whose subagent mechanics differ.
 if [ -d "$PI_SRC/prompts" ]; then

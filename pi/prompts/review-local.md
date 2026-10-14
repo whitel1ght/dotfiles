@@ -85,21 +85,19 @@ feature spans backend and UI. Announce the panel in one line.
 Every request includes a `<subagent_models>` block with the live selected ∩ available
 models. Before each panel launch, choose a difficulty-, cost-, and capability-appropriate
 exact `provider/id` for every reviewer solely from that block and pass it explicitly as
-`model`. Do not use the broader `subagent({ action: "models" })` registry as eligibility,
-call a model gate, omit the model, or rely on automatic fallback. If the list is empty,
-launch nothing and ask the user to repair the session model pool. See
-`~/.pi/agent/model-selection.md`.
+`model`. Do not treat the wider registry as eligibility, call a model gate, omit the model,
+or rely on automatic fallback. If the list is empty, launch nothing and ask the user to
+repair the session model pool. See `~/.pi/agent/model-selection.md`.
 
 ## 4. Round 1 — parallel, one turn
 
-Spawn the whole panel with one `subagent` workflow: write a `js workflow` block that
-returns `await runs.all([...])`, then call `subagent({ workflow: true, async: true })` in
-the same reply. Each item uses a stable `key`, the specialist's file name without `.md`
-as `agent` (for example `java-micronaut-dev`, `vue-expert`, or
-`security-compliance-reviewer`), an explicit live-list `model`, and
-`tools: ["read", "grep", "find", "ls"]`. The explicit per-call allowlist keeps this
-command read-only even if an agent's definition changes later. Use this short `task`; do
-not inline the brief:
+Launch the whole panel in one turn with one `acp_delegate` call per reviewer — that is what
+runs them in parallel; there is no workflow form. Every call uses `agent: "reviewer"`
+(read-only: read, bash, grep, find, ls), an explicit live-list `model`, `async: true`, and
+`cwd` set to the first MR's worktree (reviewers read absolute paths, so one cwd is enough).
+The lens lives in the task text, not in the agent name: the five roles are fixed and
+specialist agents are not launchable. Record each returned `runId` against its lens. Use
+this short `task`; do not inline the brief:
 
 > Read `$RUN/brief.md` (your review instructions) and `$RUN/context.md` (the change).
 > Review through the <lens> lens. For MR !X the worktree is `<path>` — ignore any
@@ -112,17 +110,16 @@ not inline the brief:
 Build the finding table in your head (dedupe, corroborated/unique). Default is no second
 round — skip it when findings agree, are lane-specific, or the verdict is already clear.
 Only when a dispute genuinely affects the verdict, continue just the one or two
-reviewers involved with only the disputed items. Prefer an awaited workflow
-`runs.run("<new-key>", { resume: "<latest-runId>", task: "<dispute>" })` when the prior
-result reports a resumable `runId`; the resumed child retains its model and read-only tool
-contract. If it is not resumable, launch the same specialist as a fresh child with a model
-from the current live list and the same read-only `tools` allowlist. Never run a fresh
-panel or a full R2. Max 3 rounds.
+reviewers involved with only the disputed items. Prefer resuming the prior run —
+`acp_delegate({ resumeFrom: "<runId>", task: "<the dispute>" })` — which keeps that
+reviewer's model and its read-only role; a failed or cancelled run keeps its output files
+too. Otherwise launch the same lens as a fresh `reviewer` with a model from the current
+live list. Never run a fresh panel or a full R2. Max 3 rounds.
 
-The async workflow returns a run id, and its completion notice wakes the parent. Use
-`subagent({ action: "status", id: "<run-id>" })` for status/results and
-`subagent({ action: "stop", id: "<run-id>" })` only to terminate it. There is no `wait`
-action.
+Each launch returns a `runId` and its completion notice wakes the parent and names the
+result file. `read` that file, or block on `acp_delegate_wait({ runId, timeout: 30000 })`
+when you need it now; there is no non-blocking status call, so never poll.
+`acp_delegate_cancel({ runId })` only to terminate a run.
 
 Before finalising, spot-check each BLOCKER and MAJOR citation by reading only the cited
 lines (`sed -n` a small range) in the worktree. Drop or downgrade anything that doesn't

@@ -1,0 +1,15 @@
+{
+  "providers": {},
+  "pi": {
+    "subagents": {
+      "enabled": true,
+      "agents": {
+        "reviewer": { "model": "qwen-token-plan/deepseek-v4.1-flash" },
+        "researcher": { "model": "qwen-token-plan/deepseek-v4.1-flash" },
+        "planner": { "model": "qwen-token-plan/qwen3.8-max" },
+        "oracle": { "model": "qwen-token-plan/qwen3.8-max" },
+        "worker": { "model": "qwen-token-plan/qwen3.8-flash" }
+      }
+    }
+  }
+}

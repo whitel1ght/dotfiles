@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# Contract test against a REAL pi, not a fake pi object.
+#
+# Unit tests that hand an extension a stub `pi` cannot notice Pi dropping the hook the
+# extension depends on. That happened once: context_with_system sections stopped reaching
+# the provider request somewhere between 1.0.3 and 1.2.0, every unit test still passed, and
+# subagent model selection ran unguided for days. This script boots pi in a throwaway
+# config dir with a probe extension, captures the outgoing provider payload, and asserts
+# that what my extensions and APPEND_SYSTEM.md rely on is really in it.
+#
+# Run it after any `pi update`, and after changing pi/extensions/{session-models,daily}.
+#
+# Usage: pi-contract [--model provider/id]
+set -euo pipefail
+
+DOTFILES="${DOTFILES:-$HOME/projects/dotfiles}"
+AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+MODEL="qwen-token-plan/qwen3.8-flash"
+[ "${1:-}" = --model ] && MODEL="${2:?--model needs provider/id}"
+PROVIDER="${MODEL%%/*}"
+MODEL_ID="${MODEL#*/}"
+TODAY="$(date +%F)"
+
+T="$(mktemp -d /tmp/pi-contract.XXXXXX)"
+trap 'rm -rf "$T"' EXIT
+mkdir -p "$T/sessions" "$T/state/run-day" "$T/wiki/diary"
+# Every entry of the extensions dir, not just the two under test: package- and
+# extension-registered tools (bg_start and friends) have to be present or the prose tool
+# check below reports tools that really do exist in an interactive session. Linked entry by
+# entry on purpose: the probe is written into $T/extensions below, and symlinking the dir
+# itself wrote that probe into the repo, where every real session loaded it and threw
+# because PROBE_OUT is unset outside this test.
+mkdir -p "$T/extensions"
+for entry in "$DOTFILES"/pi/extensions/*; do
+  ln -s "$entry" "$T/extensions/$(basename "$entry")"
+done
+
+# Credentials and model definitions come from the live install; everything the test asserts
+# on comes from the repo, so the test measures what dotfiles actually ships.
+ln -s "$AGENT_DIR/auth.json" "$T/auth.json"
+ln -s "$DOTFILES/pi/models.json" "$T/models.json"
+ln -s "$DOTFILES/pi/APPEND_SYSTEM.md" "$T/APPEND_SYSTEM.md"
+cp "$DOTFILES/pi/settings.json" "$T/settings.json"
+# Packages are installed under the agent dir and settings.json resolves ./packages against
+# itself, so both have to exist here or package-provided tools (acp_delegate) never load.
+ln -s "$AGENT_DIR/npm" "$T/npm"
+ln -s "$DOTFILES/pi/packages" "$T/packages"
+
+cat > "$T/extensions/probe.ts" <<'EOF'
+import { writeFileSync } from "node:fs";
+export default function probe(pi: any) {
+  pi.on("before_provider_request", (event: any) => {
+    writeFileSync(process.env.PROBE_OUT!, JSON.stringify(event.payload ?? null));
+  });
+}
+EOF
+
+# The daily extension stays silent without a run state, so give it one.
+printf '# run-day %s\nmax_agents: 3\n\n- ecfx-1001 | class=me | agent=- | worktree=- | mr=- | retries=0 | needs_you=no | owner=main\n' "$TODAY" > "$T/state/run-day/$TODAY.md"
+{
+  printf '# %s\n\n<!-- start-day:start -->\n#### Plan\n\n**Today**\n\n- [ ] ecfx-1001 fix the export\n<!-- start-day:end -->\n' "$TODAY"
+} > "$T/wiki/diary/$TODAY.md"
+
+cd /tmp
+PROBE_OUT="$T/payload.json" \
+PI_CODING_AGENT_DIR="$T" \
+PI_CODING_AGENT_SESSION_DIR="$T/sessions" \
+RUN_DAY_STATE_DIR="$T/state/run-day" \
+WIKI_DIR="$T/wiki" \
+RUN_DAY_DATE="$TODAY" \
+PI_OFFLINE=1 \
+  pi -p --provider "$PROVIDER" --model "$MODEL_ID" --models "$MODEL" --thinking off \
+  'Reply with one word: ok' > "$T/out.txt" 2> "$T/err.txt" || {
+    echo "FAIL: pi exited non-zero"; sed 's/^/  /' "$T/err.txt" | head -20; exit 1;
+  }
+
+[ -s "$T/payload.json" ] || { echo "FAIL: probe captured no provider payload"; exit 1; }
+
+fails=0
+check() { # check <label> <needle>
+  if python3 -c 'import json,sys; sys.exit(0 if sys.argv[1] in json.dumps(json.load(open(sys.argv[2]))) else 1)' "$2" "$T/payload.json"; then
+    printf 'PASS  %s\n' "$1"
+  else
+    printf 'FAIL  %s\n      expected to find: %s\n' "$1" "${2:0:90}"
+    fails=$((fails + 1))
+  fi
+}
+
+check "session-models: live model list reaches the request" "Choose subagent models only from this live session list"
+check "session-models: the scoped model is the one listed" "$MODEL"
+check "daily: run state reaches the request" "A /run-day session is active for $TODAY"
+check "daily: plan block reaches the request" "ecfx-1001 fix the export"
+check "APPEND_SYSTEM: fail-closed subagent rule reaches the request" "launch no subagents at all"
+check "APPEND_SYSTEM: fail-closed run-day rule reaches the request" "daily_run_state"
+
+# Every tool the prose tells the model to call must exist in this install. Dotfiles once
+# shipped prompts calling `subagent({…})` from a package that was no longer installed, and
+# nothing anywhere complained: the model just had no such tool.
+tools_file="$T/tools.txt"
+python3 - "$T/payload.json" > "$tools_file" <<'EOF'
+import json, sys
+payload = json.load(open(sys.argv[1]))
+for tool in payload.get("tools") or []:
+    name = (tool.get("function") or {}).get("name")
+    if name:
+        print(name)
+EOF
+
+check_tool() { # check_tool <name>
+  if grep -qxF "$1" "$tools_file"; then
+    printf 'PASS  tool exists: %s\n' "$1"
+  else
+    printf 'FAIL  tool missing from this pi install: %s\n' "$1"
+    fails=$((fails + 1))
+  fi
+}
+
+while IFS= read -r name; do
+  check_tool "$name"
+done < <(rg -oN --no-filename '`([a-zA-Z_][a-zA-Z0-9_-]*)\(\{' \
+  "$DOTFILES"/pi/prompts/*.md "$DOTFILES"/pi/skills/*/SKILL.md \
+  "$DOTFILES"/pi/APPEND_SYSTEM.md "$DOTFILES"/pi/model-selection.md \
+  | sed 's/`//; s/({$//' | sort -u)
+
+# The delegation tools the prompts depend on, checked by name rather than by prose, so a
+# prompt that stops mentioning them cannot hide their absence.
+for required in acp_delegate acp_delegate_wait acp_delegate_cancel; do
+  check_tool "$required"
+done
+
+# acp_delegate role model pins: without them every launch that passes no `model` silently
+# inherits the parent's, which is how an expensive model ends up running a review. A pin
+# outside the pool is worse than no pin — it names a model this install cannot run.
+for role in reviewer researcher planner oracle worker; do
+  model="$(jq -r --arg r "$role" '.pi.subagents.agents[$r].model // empty' "$DOTFILES/pi/billion-context.json" 2>/dev/null)"
+  if [ -z "$model" ]; then
+    printf 'FAIL  no model pin for acp_delegate role %s in pi/billion-context.json\n' "$role"
+    fails=$((fails + 1))
+  elif jq -e --arg m "$model" '.enabledModels | index($m) != null' "$DOTFILES/pi/settings.json" >/dev/null 2>&1; then
+    printf 'PASS  role pin: %s=%s (in pool)\n' "$role" "$model"
+  else
+    printf 'FAIL  role pin %s=%s is not in pi/settings.json enabledModels\n' "$role" "$model"
+    fails=$((fails + 1))
+  fi
+done
+linked="$HOME/.config/billion-context/billion-context.json"
+if [ -L "$linked" ] && [ "$(readlink "$linked")" = "$DOTFILES/pi/billion-context.json" ]; then
+  echo "PASS  ~/.config/billion-context/billion-context.json is linked to the repo"
+else
+  echo "FAIL  ~/.config/billion-context/billion-context.json is not linked to pi/billion-context.json (run plink)"
+  fails=$((fails + 1))
+fi
+
+# The sandbox must not write into the repo: a stray .ts directly in pi/extensions is loaded
+# by every real pi session, which is exactly how the probe leak above broke them.
+if [ -e "$DOTFILES/pi/extensions/probe.ts" ]; then
+  echo "FAIL  the sandbox leaked probe.ts into pi/extensions (every pi session would load it)"
+  fails=$((fails + 1))
+else
+  echo "PASS  the sandbox wrote nothing into pi/extensions"
+fi
+
+echo
+if [ "$fails" -eq 0 ]; then
+  echo "All checks passed against pi $(pi --version 2>/dev/null || echo '?')."
+else
+  echo "$fails check(s) failed against pi $(pi --version 2>/dev/null || echo '?')."
+  echo "Pi's extension hooks or prompt assembly probably changed; see pi/extensions/*/README.md."
+  sed 's/^/  stderr: /' "$T/err.txt" | head -10
+fi
+exit "$fails"

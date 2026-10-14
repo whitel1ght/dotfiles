@@ -29,6 +29,7 @@ printf '// ext\n'  > "$DOT/pi/extensions/tool.ts"
 printf '# me\n'    > "$DOT/claude/CLAUDE.md"
 printf '# skill\n' > "$DOT/pi/skills/alpha/SKILL.md"
 printf '# module\n' > "$DOT/pi/modules/ui-project-context.md"
+printf '{"providers":{}}\n' > "$DOT/pi/billion-context.json"
 
 run_plink() {
     HOME="$HOME_DIR" DOTFILES_DIR="$DOT" PI_AGENT_DIR="$DEST" bash "$SCRIPT" "$@"
@@ -54,6 +55,8 @@ done
 assert_link "$DEST/AGENTS.md" "$DOT/claude/CLAUDE.md" "links CLAUDE.md as AGENTS.md"
 assert_link "$DEST/skills" "$DOT/pi/skills" "links skills/"
 assert_link "$HOME_DIR/.agents/modules" "$DOT/pi/modules" "links modules/ into the cross-runtime ~/.agents"
+assert_link "$HOME_DIR/.config/billion-context/billion-context.json" "$DOT/pi/billion-context.json" \
+    "links billion-context.json (acp_delegate role model pins)"
 assert_link "$DEST/extensions" "$DOT/pi/extensions" "links extensions/"
 assert_link "$DEST/agents" "$DOT/pi/agents" "links Pi-specific agent definitions"
 [ ! -L "$DEST/auth.json" ] && [ "$(cat "$DEST/auth.json")" = "secret" ] \

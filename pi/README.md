@@ -87,34 +87,41 @@ by the active model-selection policy.
 
 ## Delegation
 
-Delegation uses **`npm:pi-subagents@0.76.0`**, not the retired custom runtime.
-Its bundled skills and prompts are disabled so the shared skills and local
-prompt templates remain authoritative.
+Delegation uses **`npm:billion-context`**, which registers `acp_delegate`,
+`acp_delegate_wait` and `acp_delegate_cancel`. The `pi-subagents` package these
+prompts used to target is not installed, and neither is its `subagent` tool:
+`bin/pi-contract` fails when a prompt names a tool this install does not have.
 
 1. `extensions/session-models/` injects `<subagent_models>` before each parent
    model request: the exact IDs in **selected scoped models ∩ available models**.
    Availability is registry/auth configuration, not a provider health check.
+   On the first request of a session it also verifies that the section really is
+   in the outgoing payload, and raises an error notification if Pi dropped it.
 2. The parent chooses the least expensive suitable model from that live list
-   and passes an explicit `provider/id` on each `subagent` launch.
-3. `subagents.modelScope` uses `allow: ["scoped"]`, `enforce: true`, and
-   `strict: true` to reject out-of-pool launches, including inherited models.
-   If the session has no scope, only its available parent model is eligible.
-4. A failed launch is inspected before an explicit retry. There is no model
-   questionnaire, ping probe, fixed ranking, or automatic provider fallback.
+   and passes an explicit `provider/id` on each `acp_delegate` launch.
+3. [billion-context.json](billion-context.json) pins a default model per role
+   (`pi.subagents.agents.<role>.model`), linked to
+   `~/.config/billion-context/billion-context.json` by `plink`. A launch that
+   omits `model` runs on the pin instead of inheriting the parent's. The pin is
+   a floor, not enforcement: an explicit `model` wins, and nothing in Pi rejects
+   an out-of-pool model — `subagents.modelScope` in `settings.json` was dead
+   config for that reason and is gone. The pins are read when `pi` starts, so a
+   session that was already running keeps the old defaults until restarted. The
+   `set-subagents` skill (`pi/skills/set-subagents`) re-picks the pins from the
+   live pool with the `ask_user_question` picker instead of hand-editing JSON.
+4. A failed launch is inspected before an explicit retry, and resumed with
+   `resumeFrom` rather than restarted. There is no model questionnaire, ping
+   probe, fixed ranking, or automatic provider fallback.
 
-Agent names define expertise and tools, not model routing. `scout`, `reviewer`,
-`oracle`, and most specialists are read-only; `worker` handles implementation
-with the needed specialist guidance in its brief. `text` has no tools. Tool
-restrictions are not an operating-system sandbox.
+The five roles are fixed: `reviewer`, `researcher`, `planner` and `oracle` are
+read-only (read, bash, grep, find, ls), `worker` implements. Named specialists
+are not launchable — their lens goes in the task text. Tool restrictions are not
+an operating-system sandbox. See [model-selection.md](model-selection.md) for the
+full selection rules and launch mechanics.
 
-`extensions/subagent/config.json` makes the tool eager and disables missions,
-scheduled runs, and Orca progress tabs. No shared child extension allowlist is
-configured: upstream discovery applies unless an agent declares its own policy.
-See [model-selection.md](model-selection.md) for the full selection rules.
-
-The `/orchestrate`, `/review-local`, and `/watch-mrs` templates use the named
-upstream tool and live model pool. Delegation still requires operator approval
-through the request or applicable workflow instructions.
+The `/orchestrate`, `/review-local`, `/run-day` and `/watch-mrs` templates use
+`acp_delegate` and the live model pool. Delegation still requires operator
+approval through the request or applicable workflow instructions.
 
 ## Extensions and packages
 
@@ -123,7 +130,8 @@ Local components:
 | Component | Purpose |
 | --- | --- |
 | [background-terminals](extensions/background-terminals/README.md) | `bg_start`, `bg_list`, `bg_output`, `bg_stop`, and `/ps`; completion wakes the parent |
-| [session-models](extensions/session-models/README.md) | Live model-pool injection; does not launch children or call providers |
+| [session-models](extensions/session-models/README.md) | Live model-pool injection plus a runtime check that it reached the request; does not launch children or call providers |
+| [daily](extensions/daily/README.md) | Injects the active `/run-day` state and plan block; blocks a diary `[x]` tick that carries no evidence |
 | `mcp-env/` | Expands environment references and registers MCP servers; skips servers with missing variables |
 | `inline-files/` | Expands `@path` into file contents when the model has no tools |
 | [pi-recap](packages/pi-recap/README.md) | Vendored recap widget and `/recap`; uses Pi's model registry for requests |
@@ -134,35 +142,35 @@ reports its state. It does not inherit the startup default or subagent pool.
 
 `settings.json` also declares packages for web search/access, todo lists,
 questions, browser artifacts, context display, memory, background tasks,
-Superpowers skills, Ponytail, pi-lens, and Billion Context. Except for the
-pinned subagent package, npm declarations are unversioned. `pi list` shows
-configured packages; `pi config` controls discovered resources.
+Superpowers skills, Ponytail, pi-lens, and Billion Context. npm declarations are
+unversioned. `pi list` shows configured packages; `pi config` controls discovered
+resources.
 
 ## Retired setup
 
-`archive/subagents/` preserves the old custom runtime outside extension discovery.
-Do not load it alongside upstream `pi-subagents`. The old `subagents.json`,
-`subagent-models.json`, `subagent-model-guide.md`, and `subagents-research.md`
-remain historical material, not active routing configuration. Their Claude
-Bridge references do not enable that provider. The linker removes only retired
-links owned by this checkout, preserving real files and foreign links.
-See [archive/README.md](archive/README.md) for rollback notes.
+The old custom subagent runtime (`pi/archive/`) was deleted; it is in git at `ed6ce1b`.
+The retired `subagents.json`, `subagent-models.json`, `subagent-model-guide.md`,
+`subagents-research.md` and `agents.test.mjs` are deleted; `model-selection.md` is
+the live policy. `plink` still removes their stale links — only links owned by this
+checkout, preserving real files and foreign links.
 
 ## Verification
 
-From the repo root, with Node.js 24 (native TypeScript test support) and the
-configured subagent package installed:
+From the repo root, with Node.js 24 (native TypeScript test support):
 
 ```sh
 ./bin/plink.test.sh
-PI_SUBAGENTS_PACKAGE="$HOME/.pi/agent/npm/node_modules/pi-subagents" \
-  node --test pi/agents.test.mjs
-for extension in background-terminals inline-files mcp-env session-models; do
+for extension in background-terminals daily inline-files mcp-env session-models; do
   (cd "pi/extensions/$extension" && npm test) || break
 done
+./bin/pi-contract
 git diff --check
 ```
 
-These checks cover linking, agent discovery, and local extension behavior; they
-do not prove remote provider authentication, model health, or successful live
-subagent execution. The vendored recap package currently has no test script.
+`pi-contract` is the only check that runs a real `pi`: it boots one in a throwaway
+config dir with a probe extension and asserts, against the captured provider
+payload, that the injected prompt sections land, that every tool the prompts name
+exists, and that the delegation role pins are in place. Run it after any `pi update`.
+The other checks cover linking and local extension behavior; none of them prove
+remote provider authentication, model health, or successful live subagent
+execution. The vendored recap package currently has no test script.

@@ -3,11 +3,13 @@ import test from "node:test";
 import sessionModels from "./index.ts";
 
 function harness() {
-  let handler;
+  const handlers = {};
   sessionModels({ on(event, callback) {
-    assert.equal(event, "context_with_system");
-    handler = callback;
+    handlers[event] = callback;
   } });
+  const handler = handlers.before_agent_start;
+  assert.equal(typeof handler, "function");
+  assert.equal(typeof handlers.before_provider_request, "function");
   const model = (provider, id) => ({ provider, id });
   const a = model("openai", "coding");
   const b = model("cheap", "reader");
@@ -16,56 +18,91 @@ function harness() {
     model: a,
     modelRegistry: { getAvailable: () => [a, b, model("other", "excluded")] },
   };
-  const event = { messages: [
-    { role: "system", content: "Existing instructions", sections: { rules: "Keep these" }, timestamp: 1 },
-    { role: "user", content: "Do work", timestamp: 2 },
-  ] };
-  return { handler, ctx, event, a, b };
+  const event = { systemPromptOptions: { sections: { rules: "Keep these" } }, systemPrompt: "Existing instructions" };
+  const run = (ev = event) => {
+    handler(ev, ctx);
+    return ev.systemPromptOptions.sections.subagent_models;
+  };
+  return { handler, ctx, event, run, a, b, handlers };
 }
 
-test("exposes only selected models that are still available, preserving the transcript", () => {
-  const { handler, ctx, event, a } = harness();
+test("exposes only selected models that are still available, leaving other sections alone", () => {
+  const { ctx, event, run, a } = harness();
   ctx.modelRegistry.getAvailable = () => [a, { provider: "other", id: "excluded" }];
-  const before = structuredClone(event);
-  const result = handler(event, ctx);
-  const section = result.messages[0].sections.subagent_models;
+  const section = run();
   assert.match(section, /openai\/coding/);
   assert.doesNotMatch(section, /cheap\/reader|other\/excluded/);
-  assert.equal(result.messages[0].content, "Existing instructions");
-  assert.equal(result.messages[0].sections.rules, "Keep these");
-  assert.deepEqual(result.messages.slice(1), event.messages.slice(1));
-  assert.deepEqual(event, before);
+  assert.equal(event.systemPromptOptions.sections.rules, "Keep these");
 });
 
-test("refreshes scope on each request instead of caching an old list", () => {
-  const { handler, ctx, event, b } = harness();
-  const first = handler(event, ctx);
+test("refreshes the scope on each turn instead of caching an old list", () => {
+  const { ctx, run, b } = harness();
+  run();
   ctx.scopedModels = [{ model: b }, { model: b }];
-  const second = handler({ messages: first.messages }, ctx);
-  const section = second.messages[0].sections.subagent_models;
+  const section = run({ systemPromptOptions: { sections: {} } });
   assert.doesNotMatch(section, /openai\/coding/);
   assert.equal(section.match(/cheap\/reader/g)?.length, 1);
 });
 
 test("empty scope matches upstream's current-model-only fallback", () => {
-  const { handler, ctx, event } = harness();
+  const { ctx, run } = harness();
   ctx.scopedModels = [];
-  const section = handler(event, ctx).messages[0].sections.subagent_models;
+  const section = run();
   assert.match(section, /openai\/coding/);
   assert.doesNotMatch(section, /cheap\/reader|other\/excluded/);
 });
 
 test("does not broaden a selected scope when all selected models are unavailable", () => {
-  const { handler, ctx, event } = harness();
+  const { ctx, run } = harness();
   ctx.modelRegistry.getAvailable = () => [{ provider: "other", id: "excluded" }];
-  const section = handler(event, ctx).messages[0].sections.subagent_models;
+  const section = run();
   assert.match(section, /Do not launch/);
   assert.doesNotMatch(section, /openai\/coding|cheap\/reader|other\/excluded/);
 });
 
 test("missing parent and empty scope fail closed", () => {
-  const { handler, ctx, event } = harness();
+  const { ctx, run } = harness();
   ctx.scopedModels = [];
   ctx.model = undefined;
-  assert.match(handler(event, ctx).messages[0].sections.subagent_models, /Do not launch/);
+  assert.match(run(), /Do not launch/);
+});
+
+test("warns once when the section stops reaching the provider request", () => {
+  const { handlers } = harness();
+  const seen = [];
+  const ctx = { ui: { notify: (message, type) => seen.push([message, type]) } };
+  const request = (payload) => handlers.before_provider_request({ payload }, ctx);
+  request({ messages: [{ role: "system", content: "something else" }] });
+  request({ messages: [{ role: "system", content: "still nothing" }] });
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0][1], "error");
+  assert.match(seen[0][0], /NOT in the provider request/);
+});
+
+test("stays quiet when the injected section is in the request", () => {
+  const { handlers, run } = harness();
+  const seen = [];
+  const ctx = { ui: { notify: (message) => seen.push(message) } };
+  const section = run();
+  handlers.before_provider_request(
+    { payload: { messages: [{ role: "system", content: `<subagent_models>\n${section}\n</subagent_models>` }] } },
+    ctx,
+  );
+  assert.deepEqual(seen, []);
+});
+
+test("the payload check keys on the section text, not on the tag prose can fake", () => {
+  const { handlers } = harness();
+  const seen = [];
+  const ctx = { ui: { notify: (message) => seen.push(message) } };
+  handlers.before_provider_request(
+    { payload: { messages: [{ role: "system", content: "pick from the live <subagent_models> list" }] } },
+    ctx,
+  );
+  assert.equal(seen.length, 1);
+});
+
+test("a broken self-check never fails the request", () => {
+  const { handlers } = harness();
+  assert.doesNotThrow(() => handlers.before_provider_request({ payload: undefined }, {}));
 });

@@ -40,26 +40,29 @@ directory and the **worktree**. Handle every MR in the summary, in parallel.
    **Model selection.** Every request includes a `<subagent_models>` block containing the
    live selected ∩ available exact `provider/id` list. Before each fixer launch, choose a
    difficulty-, cost-, and capability-appropriate model solely from the current block and
-   pass it explicitly. Do not use the broader `subagent({ action: "models" })` registry as
-   eligibility, call a model gate, persist choices across rounds, omit `model`, or rely on
-   automatic fallback. If the list is empty, stop the watch loop: launch nothing, ack
-   nothing, start no wait, and tell me. See `~/.pi/agent/model-selection.md`.
+   pass it explicitly. Do not treat the wider registry as eligibility, call a model gate,
+   persist choices across rounds, omit `model`, or rely on automatic fallback. If the list
+   is empty, stop the watch loop: launch nothing, ack nothing, start no wait, and tell me.
+   See `~/.pi/agent/model-selection.md`.
 
-2. **Fixer.** In one turn, make one direct async call per non-DIRTY MR:
-   `subagent({ agent: "worker", task: "<filled brief>", model: "<live exact id>",
-   cwd: "<worktree>", async: true })`. Separate direct calls are required because upstream
-   workflows have one outer `cwd`; workflow children cannot each target a different
-   worktree. Specialists are read-only by default. When specialist analysis is needed,
-   run that specialist read-only first and put its concrete guidance in the `worker`
-   brief—never use a specialist as the fixer or emulate a profile overlay.
-3. **Check** each report as it lands, with cheap commands only. Completion notices wake
-   the parent; use `subagent({ action: "status", id: "<run-id>" })` for status/results and
-   `subagent({ action: "stop", id: "<run-id>" })` only to terminate a run. There is no
-   `wait` action. Then check:
+2. **Fixer.** In one turn, make one `acp_delegate` call per non-DIRTY MR:
+   `acp_delegate({ agent: "worker", task: "<filled brief>", model: "<live exact id>",
+   cwd: "<worktree>", async: true })`. One call per MR in the same turn is what runs them
+   concurrently, and each call carries its own `cwd`, so fixers land in different
+   worktrees. The delegate sees none of this conversation: the brief is self-contained.
+   Read-only roles cannot write; when specialist analysis is needed, run that lens through
+   `reviewer` or `oracle` first and put its concrete guidance in the `worker` brief—never
+   expect a read-only role to fix anything.
+3. **Check** each report as it lands, with cheap commands only. Completion notices wake the
+   parent and name the result file; `read` that file, or block on
+   `acp_delegate_wait({ runId: "<run id>", timeout: 30000 })` when you need it now. There is
+   no non-blocking status call, so never poll. `acp_delegate_cancel({ runId })` only to
+   terminate a run. Then check:
    `git -C <wt> status --porcelain` (must be empty),
    `git -C <wt> log --oneline @{u}..HEAD` (the commits the report names), and that the
-   round has a `response.md`. If a fixer failed a finding (tests red, stuck), resume its
-   returned run id only when it is reported resumable; otherwise launch a fresh `worker`
+   round has a `response.md`. If a fixer failed a finding (tests red, stuck), resume it with
+   `acp_delegate({ resumeFrom: "<run id>", task: "<the specific failure and what to retry>" })`
+   — a failed or cancelled run keeps its output files; otherwise launch a fresh `worker`
    in the same worktree with a model selected from the current live list and the specific
    failure in its brief. If that attempt also fails, the finding becomes Deferred with
    the reason.
