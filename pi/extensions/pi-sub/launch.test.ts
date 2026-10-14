@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { buildArgv, extraExtensions, launch, npmRoot } from "./launch.ts";
@@ -62,6 +62,24 @@ async function runChild(opts: { task?: string } = {}) {
   const exit = JSON.parse(readFileSync(join(dir, "exit.json"), "utf8"));
   const result = existsSync(join(dir, "result.md")) ? readFileSync(join(dir, "result.md"), "utf8") : undefined;
   return { meta, dir, exit, result };
+}
+
+/**
+ * Drive run.mjs directly against a hand-built agent dir, for the failure
+ * modes launch() itself rejects (missing meta cwd, pre-seeded stop file).
+ */
+async function runWrapper(o: { cwd: string; piBin?: string; stop?: string }) {
+  const dir = mkdtempSync(join(tmpdir(), "pi-sub-wrapper-"));
+  writeFileSync(join(dir, "meta.json"), JSON.stringify({ argv: ["pi", "do it"], cwd: o.cwd }));
+  if (o.stop !== undefined) writeFileSync(join(dir, "stop-request.json"), o.stop);
+  spawn(process.execPath, [join(here, "run.mjs"), dir], {
+    env: { ...process.env, PI_SUB_PI_BIN: o.piBin ?? fakePi },
+    stdio: "ignore",
+  });
+  await waitFor(`exit.json in ${dir}`, () => existsSync(join(dir, "exit.json")));
+  const exit = JSON.parse(readFileSync(join(dir, "exit.json"), "utf8"));
+  const result = existsSync(join(dir, "result.md")) ? readFileSync(join(dir, "result.md"), "utf8") : undefined;
+  return { dir, exit, result };
 }
 
 test("argv matches the spec order", () => {
@@ -165,6 +183,70 @@ test("non-zero pi exit is a failure", async () => {
     assert.equal(exit.code, 1);
     // result.md is still written, even though pi failed.
     assert.ok(result !== undefined);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("missing pi binary still writes a failed exit.json", async () => {
+  const root = sandbox();
+  process.env.PI_SUB_PI_BIN = join(root, "no-such-pi");
+  try {
+    const { exit, result } = await runChild();
+    assert.equal(exit.how, "failed");
+    assert.equal(exit.code, null);
+    assert.equal(exit.signal, null);
+    // The spawn error is recorded, not silently swallowed.
+    assert.ok(String(exit.error).includes("ENOENT"));
+    // result.md (empty) is still written before exit.json.
+    assert.equal(result, "");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("missing meta cwd still writes a failed exit.json", async () => {
+  const root = sandbox();
+  try {
+    const { exit, result } = await runWrapper({ cwd: join(root, "gone") });
+    assert.equal(exit.how, "failed");
+    assert.equal(exit.code, null);
+    assert.equal(exit.signal, null);
+    assert.ok(String(exit.error).includes("ENOENT"));
+    assert.equal(result, "");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("malformed stop-request.json yields stopped with no by", async () => {
+  const root = sandbox();
+  try {
+    const cwd = mkdtempSync(join(tmpdir(), "pi-sub-cwd-"));
+    // Pre-seeded so the child's close handler is guaranteed to see it.
+    const { exit } = await runWrapper({ cwd, stop: "{not json" });
+    assert.equal(exit.how, "stopped");
+    assert.equal(exit.by, undefined);
+    assert.equal(exit.code, 0);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("launch rejects a cwd that does not exist", () => {
+  const root = sandbox();
+  try {
+    const cwd = join(root, "no-such-cwd");
+    assert.throws(
+      () => launch({
+        role: reader, model: "p/m", label: "bad cwd", task: "t", cwd,
+        skills: [], extras: [], ownerSession: "s", ownerPid: process.pid, maxMinutes: 5,
+      }),
+      new RegExp(`pi-sub: cwd does not exist: .*no-such-cwd`),
+    );
+    // No half-created agent dir is left behind looking "running".
+    const state = process.env.PI_SUB_STATE_DIR!;
+    assert.ok(!existsSync(state) || readdirSync(state).length === 0);
   } finally {
     cleanup(root);
   }

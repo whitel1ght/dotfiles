@@ -56,7 +56,7 @@ function agentDir(id: string): string {
 }
 
 /** Write via a tmp file + rename, so readers never see a partial file. */
-function atomicWrite(path: string, data: string): void {
+export function atomicWrite(path: string, data: string): void {
   const tmp = `${path}.tmp`;
   try {
     writeFileSync(tmp, data);

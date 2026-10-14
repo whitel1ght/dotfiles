@@ -3,7 +3,7 @@
 // records the meta. Node built-ins only, so run.mjs can stay plain node.
 
 import { spawn } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -92,6 +92,9 @@ export function buildArgv(o: {
  * ignored and the handle is unref'd.
  */
 export function launch(o: LaunchOpts): Meta {
+  if (!existsSync(o.cwd)) {
+    throw new Error(`pi-sub: cwd does not exist: ${o.cwd}`);
+  }
   const id = newId(new Date());
   const dir = join(stateDir(), id);
   mkdirSync(dir, { recursive: true });
@@ -131,6 +134,14 @@ export function launch(o: LaunchOpts): Meta {
     cwd: o.cwd,
     env: { ...process.env, PI_SUBAGENT: "1", PI_SUB_ID: id },
   });
+  // A failed spawn emits 'error' only after launch() returns; this listener
+  // keeps it from crashing the host, while the pid check below reports it.
+  child.on("error", () => {});
+  if (child.pid === undefined) {
+    // Remove the dir so a dead spawn does not linger as a "running" agent.
+    rmSync(dir, { recursive: true, force: true });
+    throw new Error(`pi-sub: could not start wrapper: ${process.execPath} ${runMjs} (cwd: ${o.cwd})`);
+  }
   child.unref();
   meta.pid = child.pid;
   meta.pgid = child.pid;

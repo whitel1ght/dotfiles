@@ -6,10 +6,11 @@
 // binary comes from PI_SUB_PI_BIN (default "pi").
 
 import { spawn } from "node:child_process";
-import { existsSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { finalText } from "./events.ts";
+import { atomicWrite } from "./state.ts";
 
 const dir = process.argv[2];
 if (!dir) {
@@ -31,22 +32,50 @@ const child = spawn(piBin, meta.argv.slice(1), {
 // extra and stay alive so the close handler below can still record the exit.
 process.on("SIGTERM", () => {});
 
+// Exactly one terminal record: the 'error' path (pi missing, bad cwd) marks
+// the run ended, so the 'close' that Node still fires (code -2) cannot write
+// a second, conflicting exit.json.
+let ended = false;
+
+child.on("error", (err) => {
+  if (ended) return;
+  ended = true;
+  // result.md first, then exit.json last: its presence is what pollers
+  // treat as "the run ended", so the agent never looks running forever.
+  atomicWrite(join(dir, "result.md"), "");
+  const exit = { code: null, signal: null, ended_at: new Date().toISOString(), how: "failed", error: String(err) };
+  atomicWrite(join(dir, "exit.json"), `${JSON.stringify(exit, null, 2)}\n`);
+  process.exit(1);
+});
+
 child.on("close", (code, signal) => {
-  writeFileSync(join(dir, "result.md"), finalText(readEvents(join(dir, "events.jsonl"))));
+  if (ended) return;
+  ended = true;
+  atomicWrite(join(dir, "result.md"), finalText(readEvents(join(dir, "events.jsonl"))));
   const stopPath = join(dir, "stop-request.json");
   let how = "failed";
   let by;
   if (existsSync(stopPath)) {
     how = "stopped";
-    by = JSON.parse(readFileSync(stopPath, "utf8")).by;
+    by = readStopBy(stopPath);
   } else if (code === 0) {
     how = "done";
   }
   const exit = { code, signal, ended_at: new Date().toISOString(), how, ...(by !== undefined ? { by } : {}) };
   // exit.json goes last: its presence is what pollers treat as "the run ended".
-  writeFileSync(join(dir, "exit.json"), `${JSON.stringify(exit, null, 2)}\n`);
+  atomicWrite(join(dir, "exit.json"), `${JSON.stringify(exit, null, 2)}\n`);
   process.exit(code ?? 1);
 });
+
+// A malformed or half-written stop request must not keep exit.json from
+// being written: fall back to how "stopped" with no by.
+function readStopBy(path) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8")).by;
+  } catch {
+    return undefined;
+  }
+}
 
 function readEvents(path) {
   try {
