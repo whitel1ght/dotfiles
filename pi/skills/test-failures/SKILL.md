@@ -7,7 +7,7 @@ description: >-
 
 # Test Failure Analyzer
 
-Summarize Gradle JUnit XML failures. The heavy report-reading work is delegated to the `backend:test-report-analyzer` agent (its system prompt already encodes the full extraction strategy and output format), so this skill only orchestrates: resolve path → fast-exit if nothing to analyze → spawn agent → relay output.
+Summarize Gradle JUnit XML failures. The heavy report-reading work is delegated to the `test-report-analyzer` agent (its system prompt already encodes the full extraction strategy and output format), so this skill only orchestrates: resolve path → fast-exit if nothing to analyze → spawn agent → relay output.
 
 ## 1. Resolve project path
 
@@ -43,9 +43,9 @@ If the newest mtime is more than ~1 hour old, prepend to the final output:
 
 ## 4. Spawn the analyzer
 
-Use the **Agent tool** with `subagent_type: backend:test-report-analyzer`, `model: sonnet`. The agent's system prompt is the source of truth for the multi-pass strategy, grouping rules, output format, and constraints — do **not** restate them, and do **not** fall back to `general-purpose` (it has none of that context and will dump raw stack traces).
+Launch `subagent({ role: "test-report-analyzer", model: "<cheap exact id from the subagent_models list>", task: <below>, cwd: <repo> })` and end the turn; a `[pi-sub]` wake-up names the result file. The role's prompt is the source of truth for the multi-pass strategy, grouping rules, output format, and constraints — do **not** restate them, and do **not** fall back to `reviewer` (it has none of that context and will dump raw stack traces).
 
-If `backend:test-report-analyzer` is unavailable, stop and tell the user the agent is missing — the `backend` plugin is not installed, or the session predates it (agents bind at session launch).
+If the launch fails with an unknown role, stop and tell the user `~/.pi/agent/agents/test-report-analyzer.md` is missing.
 
 Pass only:
 

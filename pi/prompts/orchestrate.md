@@ -18,12 +18,12 @@ together, so keep it for decisions, not file dumps.
 **You:** clarify the goal, pick the approach, split the work, choose a type for each
 piece, write the briefs, check what comes back, settle conflicts, talk to the user.
 
-Dispatch through `acp_delegate` (registered by the `billion-context` package). There is no
-`subagent` tool and no workflow runner in this install. One call per child —
-`acp_delegate({ agent, task, model, cwd, async: true })` — returns a `runId`; parallel work
-is several calls in the same reply, each with its own `cwd`. Fetch a result with
-`acp_delegate_wait({ runId, timeout })`, which blocks, or `read` the file its completion
-notice names. There is no non-blocking status call, so never poll.
+Dispatch through `subagent` (registered by `pi/extensions/pi-sub`). One call per child —
+`subagent({ role, model, task, cwd, label })` — returns an id at once; parallel work is
+several calls in the same reply, each with its own `cwd`. When a child finishes, a
+`[pi-sub]` message wakes this session and names its result file: `read` that. So after
+dispatching, end the turn — never wait, sleep or poll. `subagent_result({ id })` shows a
+result or the live activity tail; `ctrl+space` shows every child to the user.
 
 **Not you:** editing project files. That includes small fixes. A one-line change still
 goes to a subagent, because once you start writing code you stop orchestrating and your
@@ -37,8 +37,8 @@ decisions, not code.
 
 ## Picking the agent and model
 
-Pass `agent` on every child launch. These five roles are the only ones `acp_delegate`
-accepts; the role selects the child prompt and tools:
+Pass `role` on every child launch. A role is a file in `~/.pi/agent/agents/`; it selects
+the child's prompt and tools:
 
 | Work | Agent |
 |---|---|
@@ -48,11 +48,12 @@ accepts; the role selects the child prompt and tools:
 | Code review, checking claims against the code | `reviewer` |
 | A genuinely hard design or diagnosis you want a second strong opinion on | `oracle` — rare |
 
-Named specialists (`java-micronaut-dev`, `vue-expert`, `security-compliance-reviewer`) are
-not launchable: name the lens in the task text of a read-only launch, and for
-implementation put that lens's verified guidance in the `worker` brief. `reviewer`,
-`researcher`, `planner` and `oracle` are read-only (read, bash, grep, find, ls); only
-`worker` can edit. Tool restrictions are not a filesystem sandbox.
+Named specialists (`java-micronaut-dev`, `vue-expert`, `security-compliance-reviewer`, …)
+are roles too, all read-only: launch one by name for its lens, and for implementation put
+its verified findings in the `worker` brief. `reviewer`, `researcher`, `planner`, `oracle`
+and the specialists are read-only (read, bash, grep, find, ls); only `worker` can edit.
+Tool restrictions are not a filesystem sandbox. A child starts empty — no conversation,
+AGENTS.md, skills or memory — so the brief carries everything.
 
 Every request includes a `<subagent_models>` block containing the live selected ∩
 available model pool. Before every launch, choose a difficulty-, cost-, and
@@ -122,17 +123,17 @@ and say so.
    worktree explicit in the brief and require the child to work there, and pass the
    worktree as that child's `cwd`. A child cannot see this conversation: every path,
    convention and contract it needs goes in the task text or the shared context file.
-   Run independent pieces as several `acp_delegate` calls in one reply; run dependent pieces
-   in order, waiting for each one and passing only the facts the next child needs from the
-   previous result. Async launches return a `runId` immediately and their completion notices
-   wake the parent, naming the result file; `acp_delegate_cancel({ runId })` only when work
-   must be terminated.
+   Run independent pieces as several `subagent` calls in one reply; run dependent pieces
+   in order — launch the next one from the turn its predecessor's wake-up starts, passing
+   only the facts it needs from the previous result. Launches return an id at once and the
+   `[pi-sub]` wake-up names the result file; `subagent_stop({ id })` only when work must be
+   terminated. Long implementation work may need `max_minutes` above the 60-minute default.
 4. **Check.** After each piece: read `git diff --stat` and spot-check the risky parts of
    the diff, run the tests yourself, and compare against the done-when. Don't trust "done"
-   in a report. To fix a completed child's work, resume it with
-   `acp_delegate({ resumeFrom: "<runId>", task: "<specific failure>" })` — a failed or
-   cancelled run keeps its output files; otherwise launch a fresh child with the failure in
-   the brief (same worktree, constraints, explicit model, and role).
+   in a report. To fix a child's work, launch a fresh child with the failure in the brief
+   (same worktree, constraints, explicit model, and role) and the earlier run's result
+   path, so it starts from what is already there. A failed or stopped run keeps its result
+   and activity files.
 5. **Review.** For a non-trivial change, one `reviewer` (with the matching specialist lens
    named in its task) reads
    the whole diff against the goal before you call it finished. Choose and pass an

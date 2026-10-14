@@ -24,7 +24,8 @@ git -C "$W" diff --stat
 git -C "$W" status --short
 ```
 
-2. Stop the delegate if one is still running: `acp_delegate_cancel({runId:<run id from the run state>})`. A cancelled run keeps its output files, so quote what it finished in the hand-off note.
+2. Leave the item's subagent alone if it is still running (its id is `agent=` in the run state):
+   the side session adopts it by id. Put the id in the note's `Agent:` line, or `-` when none.
 
 3. Write `~/.local/state/run-day/handoff/<KEY>.md`, exactly this shape:
 
@@ -36,6 +37,7 @@ Repo: <repo>
 Worktree: <path>
 Branch: <branch>
 MR: <url or ->
+Agent: <subagent id or ->
 
 ## Original brief
 

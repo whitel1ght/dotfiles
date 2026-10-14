@@ -124,4 +124,4 @@ This doctrine is the general-purpose layer; the specialized skills own their dom
 | `@Transactional` placement | `transaction-boundary-validator` |
 | TDD mechanics per layer | `tdd-*-layer` skills |
 
-For an interactive audit, spawn the `backend:java-clean-code-purist` agent — it loads this doctrine and reports violations by commandment with `file:line` and severity.
+For an interactive audit, spawn the `java-clean-code-purist` agent — it loads this doctrine and reports violations by commandment with `file:line` and severity.

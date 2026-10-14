@@ -87,40 +87,40 @@ by the active model-selection policy.
 
 ## Delegation
 
-Delegation uses **`npm:billion-context`**, which registers `acp_delegate`,
-`acp_delegate_wait` and `acp_delegate_cancel`. The `pi-subagents` package these
-prompts used to target is not installed, and neither is its `subagent` tool:
-`bin/pi-contract` fails when a prompt names a tool this install does not have.
+Delegation is **`extensions/pi-sub/`**, which registers `subagent`, `subagent_stop`,
+`subagent_result`, `subagent_adopt` and `subagent_handoff`, and hides
+`acp_delegate*` (still registered by `npm:billion-context`, kept for context
+compression) from the main model. `bin/pi-contract` fails when a prompt names a tool
+this install does not have.
 
 1. `extensions/session-models/` injects `<subagent_models>` before each parent
    model request: the exact IDs in **selected scoped models ∩ available models**.
    Availability is registry/auth configuration, not a provider health check.
    On the first request of a session it also verifies that the section really is
    in the outgoing payload, and raises an error notification if Pi dropped it.
-2. The parent chooses the least expensive suitable model from that live list
-   and passes an explicit `provider/id` on each `acp_delegate` launch.
-3. [billion-context.json](billion-context.json) pins a default model per role
-   (`pi.subagents.agents.<role>.model`), linked to
-   `~/.config/billion-context/billion-context.json` by `plink`. A launch that
-   omits `model` runs on the pin instead of inheriting the parent's. The pin is
-   a floor, not enforcement: an explicit `model` wins, and nothing in Pi rejects
-   an out-of-pool model — `subagents.modelScope` in `settings.json` was dead
-   config for that reason and is gone. The pins are read when `pi` starts, so a
-   session that was already running keeps the old defaults until restarted. The
-   `set-subagents` skill (`pi/skills/set-subagents`) re-picks the pins from the
-   live pool with the `ask_user_question` picker instead of hand-editing JSON.
-4. A failed launch is inspected before an explicit retry, and resumed with
-   `resumeFrom` rather than restarted. There is no model questionnaire, ping
-   probe, fixed ranking, or automatic provider fallback.
+2. The parent chooses the least expensive suitable model from that live list and
+   passes it as `model` on every `subagent` launch. `model` is required and must be
+   in the live list; there are no per-role defaults.
+3. Each child is a bare `pi --mode json` process (no session, extensions, skills,
+   context files or memory) launched detached, so it survives the window closing.
+   Its state lives in `~/.local/state/pi-sub/<id>/`. When it finishes, fails or is
+   stopped, a `[pi-sub]` message wakes the owning session and starts a turn; it is
+   delivered once, even across reopenings. A child quiet for `idle_minutes` (10)
+   flags the session; one past `max_minutes` (60) is stopped.
+4. `ctrl+space` or `/agents` opens the agents window (list, activity log, stop,
+   flag to main). `subagent_handoff()` / `subagent_adopt({ from })` move agents to
+   a new session; agents of a session that is gone show up as orphans to adopt or
+   stop. There is no resume, model questionnaire, ping probe or provider fallback.
 
-The five roles are fixed: `reviewer`, `researcher`, `planner` and `oracle` are
-read-only (read, bash, grep, find, ls), `worker` implements. Named specialists
-are not launchable — their lens goes in the task text. Tool restrictions are not
-an operating-system sandbox. See [model-selection.md](model-selection.md) for the
-full selection rules and launch mechanics.
+A role is a file in `agents/<role>.md` (linked to `~/.pi/agent/agents`): its body is
+appended to the child's system prompt and its `tools:` line is the allowlist.
+`worker` implements; `reviewer`, `researcher`, `planner`, `oracle` and the named
+specialists are read-only. Tool restrictions are not an operating-system sandbox.
+See [model-selection.md](model-selection.md) for the selection rules and
+[extensions/pi-sub/README.md](extensions/pi-sub/README.md) for the mechanics.
 
 The `/orchestrate`, `/review-local`, `/run-day` and `/watch-mrs` templates use
-`acp_delegate` and the live model pool. Delegation still requires operator
+`subagent` and the live model pool. Delegation still requires operator
 approval through the request or applicable workflow instructions.
 
 ## Extensions and packages
@@ -170,7 +170,7 @@ git diff --check
 `pi-contract` is the only check that runs a real `pi`: it boots one in a throwaway
 config dir with a probe extension and asserts, against the captured provider
 payload, that the injected prompt sections land, that every tool the prompts name
-exists, and that the delegation role pins are in place. Run it after any `pi update`.
+exists, and that pi-sub children launch bare, outlive their launcher and wake the
+owning session exactly once. Run it after any `pi update`.
 The other checks cover linking and local extension behavior; none of them prove
-remote provider authentication, model health, or successful live subagent
-execution. The vendored recap package currently has no test script.
+remote provider authentication or model health. The vendored recap package currently has no test script.

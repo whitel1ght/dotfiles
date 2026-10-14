@@ -259,13 +259,13 @@ Before writing code, get a sanity check. Spawn 2–3 agents **in parallel** (a s
 
 | Change type | Suggested reviewers |
 |---|---|
-| Java/Micronaut backend change | `backend:java-micronaut-dev`, `shared:invent-simplify-reviewer` |
-| Data model / query change | `backend:java-micronaut-dev`, `shared:prod-readiness` |
-| Security-adjacent (auth, crypto, tenancy) | `shared:security-compliance-reviewer`, `shared:invent-simplify-reviewer` |
-| Infra/deployment | `ops:aws-cloud-architect`, `shared:prod-readiness` |
-| Anything user-facing or risky | Add `shared:prod-readiness` |
+| Java/Micronaut backend change | `java-micronaut-dev`, `invent-simplify-reviewer` |
+| Data model / query change | `java-micronaut-dev`, `prod-readiness` |
+| Security-adjacent (auth, crypto, tenancy) | `security-compliance-reviewer`, `invent-simplify-reviewer` |
+| Infra/deployment | `ops:aws-cloud-architect`, `prod-readiness` |
+| Anything user-facing or risky | Add `prod-readiness` |
 
-**Model selection (Pi).** The five `acp_delegate` roles are the only launchable agents — `reviewer`, `researcher`, `planner`, `oracle` (read-only) and `worker`. A named specialist is a lens you paste into the task text, not an agent and not a model. Every request includes a `<subagent_models>` block containing the live selected ∩ available exact `provider/id` list. Omit `model` on routine launches in this phase and Phase 10 so the configured role pin applies (`pi/billion-context.json`, re-picked by the `set-subagents` skill); pass an explicit `model` chosen from the current block only for the hard steps — security, correctness, architecture, the review round — choose it again per launch instead of reusing stale availability from an earlier phase, and use `worker` for implementation with the specialist's guidance in the task text. Never name a model outside the current block, call a model gate, or rely on automatic fallback. If the list is empty, launch nothing and ask the user to repair the session model pool. See `~/.pi/agent/model-selection.md`.
+**Subagents (Pi).** Launch each expert with `subagent({ role, model, task, cwd, label })`, one call per expert in the same turn so they run in parallel. `role` is the expert's file stem in `~/.pi/agent/agents/` — drop any `shared:`/`dashboard:`/`backend:` prefix (`prod-readiness` → `prod-readiness`); specialists are read-only, and implementation is always `worker` with the specialist's concrete guidance in the task text. `model` is required: pick an exact `provider/id` from the current request's `<subagent_models>` block per launch — the cheapest likely to succeed for routine lenses, a stronger one for security, correctness, architecture and the review round — never a model outside the block, a model gate or a fallback. If the list is empty, launch nothing and ask the user to repair the session model pool. Each child starts empty, so its task carries every path and constraint. Launches return an id at once; end the turn, and a `[pi-sub]` wake-up names each result file as it lands — never wait or poll. See `~/.pi/agent/model-selection.md`.
 
 Each agent gets the full proposal (paste it), the affected file paths, and "reply under 400 words, focused, actionable." Do NOT delegate the synthesis — read the responses yourself and decide which feedback to act on.
 

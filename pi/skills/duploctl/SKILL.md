@@ -7,7 +7,7 @@ description: >-
 
 # duploctl CLI Reference
 
-Construct correct `duploctl` commands for DuploCloud infrastructure management. For infrastructure architecture, migration planning, and CI/CD pipeline design, defer to the `infra:duplo-infra-specialist` agent.
+Construct correct `duploctl` commands for DuploCloud infrastructure management. For infrastructure architecture, migration planning, and CI/CD pipeline design, defer to the `duplo-infra-specialist` agent.
 
 ## User's Environment
 
@@ -282,7 +282,7 @@ duploctl service apply -f service.yaml --wait
 
 - **Complete command reference**: Read `reference.md` for all 37 resources with full action details, all global flags, env vars, config file format, and resource-specific notes
 - **Workflow examples**: Read `examples.md` for real-world scenarios (deployment, DB ops, JIT setup, CI/CD, troubleshooting)
-- **Infrastructure architecture**: Use the `infra:duplo-infra-specialist` agent for migration planning, account structure, and CI/CD pipeline design
+- **Infrastructure architecture**: Use the `duplo-infra-specialist` agent for migration planning, account structure, and CI/CD pipeline design
 
 ## Quality Checklist
 

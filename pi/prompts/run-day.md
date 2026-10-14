@@ -48,8 +48,10 @@ T=$(date +%F); S=~/.local/state/run-day; mkdir -p "$S/inbox/done/$T" "$S/inbox/b
 ~/.local/bin/changes-since --cursor run-day >/dev/null
 ```
 
-Run state exists: read it, then for every run id still listed `read` the result file its completion
-notice named — or `acp_delegate_wait({runId, timeout:10000})` when no notice arrived yet. Re-read the
+Run state exists: read it, then for every agent id still listed `read` the result file its `[pi-sub]`
+wake-up named — or `subagent_result({id})` when none arrived yet. If a session_start notice reported
+orphaned agents (their launching session is gone, e.g. after a crash), decide each before any dispatch:
+`subagent_adopt({from:"<old session id>"})` to keep them, or `subagent_stop({id})`. Re-read the
 plan block too: the user edits the diary directly. Never re-dispatch an item already `[/]`, `[x]` or
 `owner=external:`.
 
@@ -82,16 +84,19 @@ For each `auto` item:
 3. Pick the model at run time from the live `<subagent_models>` list — the cheapest that can plausibly
    do this work (see `~/.pi/agent/model-selection.md`). Empty list: dispatch nothing and tell the user
    to repair the pool. Never guess a provider.
-4. `acp_delegate({agent:"worker", task:<the brief text>, model:<chosen>, cwd:<worktree>, async:true})`
-   → returns a `runId`. A specialist lens goes into the brief text (only the five roles are
-   launchable); implementation is always `worker`.
+4. `subagent({role:"worker", model:<chosen>, task:<the brief text>, cwd:<worktree>, label:<KEY>})`
+   → returns an agent id at once. Implementation is always `worker`; a specialist lens
+   (`security-compliance-reviewer`, `vue-expert`, …) is a read-only role you can launch first
+   and fold into the brief. Raise `max_minutes` (default 60) for long work.
 5. Record it in the run state, one line per item:
 
 ```
-- <key> | class=auto | agent=<runId> | worktree=<path> | mr=- | retries=0 | needs_you=no | owner=main
+- <key> | class=auto | agent=<subagent id> | worktree=<path> | mr=- | retries=0 | needs_you=no | owner=main
 ```
 
 6. Tick the diary `- [/]` and run `~/.local/bin/diary-links ~/wiki/diary/$T.md`.
+7. End the turn. A `[pi-sub]` wake-up starts the next one when the agent finishes, fails, is
+   stopped, or goes quiet for 10 minutes — never wait, sleep or poll for it.
 
 Heavy route (multi-repo or contract change): plan it under `~/projects/worktrees/.plans/<KEY>/` with
 the superpowers skills, then dispatch one agent per repo **sequentially**, each brief naming the
@@ -151,13 +156,14 @@ Skip it when the run state says `owner=external:<KEY>` for that ticket.
    `IID=$(sed -E 's#.*/merge_requests/([0-9]+).*#\1#' <<<"$URL")`, `ENC=$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=""))' "$PROJECT_PATH")`.
 2. Fill `templates/review-round-brief.md` into `scratch/round-<repo>-<iid>.md` — all 10 tokens replaced.
 3. Worktree: reuse the item's, or `wt add <repo> <KEY> <branch>` when it is gone.
-4. `acp_delegate({agent:"worker", task:<brief>, model:<runtime choice>, cwd:<worktree>, async:true})`.
+4. `subagent({role:"worker", model:<runtime choice>, task:<brief>, cwd:<worktree>, label:<KEY>})`.
    It fixes locally and drafts a reply; it does not push.
 5. Set `needs_you=yes`, then show the user: the findings, `git log --oneline @{u}..HEAD`, and the
    **full** draft reply. Ask once: yes / edit / no.
 6. yes → push, `glab api "projects/$ENC/merge_requests/$IID/discussions/$DID/notes" -X POST -F body=@<reply>`,
    `needs_you=no`, apply any memory block, offer the Jira one-liner.
-   edit → `acp_delegate({resumeFrom:<runId>, task:<the edits>})` and come back to step 5.
+   edit → a fresh `subagent` worker in the same worktree whose task names the earlier result
+   file and the requested edits; come back to step 5.
    no → push nothing, `needs_you=no`, leave the diary alone.
 
 ## 6. Other events

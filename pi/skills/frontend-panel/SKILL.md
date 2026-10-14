@@ -27,7 +27,7 @@ not to re-derive context.
 ## When NOT to use
 
 - **Single-domain question** — invoke the one expert directly. "Is this ARIA
-  correct?" is `ui-review:accessibility-expert`, not a seven-agent panel.
+  correct?" is `accessibility-expert`, not a seven-agent panel.
 - **Reviewing a GitLab MR** — use `/mr-review-multi-agent`. It routes Vue / TS /
   SCSS diffs to **these same experts** and adds the MR mechanics this skill
   deliberately lacks: fetching the diff, pinning the checkout to the head SHA,
@@ -105,14 +105,14 @@ produce noise. Choose by what the change actually touches:
 
 | Signal in the target | Include |
 |---|---|
-| Any UI a user interacts with | `ui-review:accessibility-expert`, `ui-review:ux-expert` |
-| `.vue` files, composables, reactivity | `dashboard:vue-expert` |
-| Vuetify components, theming, `v-*` usage | `dashboard:vuetify-expert` |
-| Types, generics, `any`, API contracts | `dashboard:typescript-expert` |
-| SCSS, styles, tokens, layout | `dashboard:styling-expert` |
-| Cross-module structure, state, data flow, routing, bundle | `dashboard:frontend-architect` |
-| Security-sensitive (auth, `v-html`, tokens) | `shared:security-compliance-reviewer` |
-| Pre-release / production risk | `shared:prod-readiness` |
+| Any UI a user interacts with | `accessibility-expert`, `ux-expert` |
+| `.vue` files, composables, reactivity | `vue-expert` |
+| Vuetify components, theming, `v-*` usage | `vuetify-expert` |
+| Types, generics, `any`, API contracts | `typescript-expert` |
+| SCSS, styles, tokens, layout | `styling-expert` |
+| Cross-module structure, state, data flow, routing, bundle | `frontend-architect` |
+| Security-sensitive (auth, `v-html`, tokens) | `security-compliance-reviewer` |
+| Pre-release / production risk | `prod-readiness` |
 
 Minimum useful panel is 3. If your selection is 1–2, tell the user a panel is
 overkill and invoke those experts directly instead.
@@ -122,11 +122,11 @@ duplicating security or production expertise.
 
 State the selected panel and the reason before spawning. The user can veto.
 
-**Model selection (Pi).** The five `acp_delegate` roles are the only launchable agents — `reviewer`, `researcher`, `planner`, `oracle` (read-only) and `worker`. A named specialist is a lens you paste into the task text, not an agent and not a model. Every request includes a `<subagent_models>` block containing the live selected ∩ available exact `provider/id` list. Omit `model` on routine lenses so the configured role pin applies (`pi/billion-context.json`, re-picked by the `set-subagents` skill); pass an explicit `model` chosen from the current block only for the hard lenses — correctness, security, architecture, cross-examination — and choose it again per launch instead of carrying a stale choice across requests. Never name a model outside the current block, call a model gate, or rely on automatic fallback. If the list is empty, launch nothing and ask the user to repair the session model pool. See `~/.pi/agent/model-selection.md`.
+**Subagents (Pi).** Launch each expert with `subagent({ role, model, task, cwd, label })`, one call per expert in the same turn so they run in parallel. `role` is the expert's file stem in `~/.pi/agent/agents/` — drop any `shared:`/`dashboard:`/`backend:` prefix (`prod-readiness` → `prod-readiness`); specialists are read-only, and implementation is always `worker` with the specialist's concrete guidance in the task text. `model` is required: pick an exact `provider/id` from the current request's `<subagent_models>` block per launch — the cheapest likely to succeed for routine lenses, a stronger one for correctness, security, architecture and cross-examination — never a model outside the block, a model gate or a fallback. If the list is empty, launch nothing and ask the user to repair the session model pool. Each child starts empty, so its task carries every path and constraint. Launches return an id at once; end the turn, and a `[pi-sub]` wake-up names each result file as it lands — never wait or poll. See `~/.pi/agent/model-selection.md`.
 
 ### 3. Round 1 — independent review (parallel)
 
-Spawn **all selected experts in a single message with parallel Agent calls** so
+Spawn **all selected experts in a single message with parallel `subagent` calls** so
 they run concurrently and cannot influence each other. Independence is what makes
 corroboration meaningful.
 
@@ -183,10 +183,10 @@ Classify:
 
 **Conflicts are the point of the panel.** They are common and healthy here:
 
-- `ui-review:ux-expert` wants a richer custom control; `ui-review:accessibility-expert` and
-  `dashboard:vuetify-expert` want the accessible built-in.
-- `dashboard:frontend-architect` wants an abstraction; `dashboard:vue-expert` calls it premature.
-- `dashboard:styling-expert` wants a new token; the project's rules say use an existing one.
+- `ux-expert` wants a richer custom control; `accessibility-expert` and
+  `vuetify-expert` want the accessible built-in.
+- `frontend-architect` wants an abstraction; `vue-expert` calls it premature.
+- `styling-expert` wants a new token; the project's rules say use an existing one.
 
 Resolve with these tie-breakers, in order:
 
@@ -196,7 +196,7 @@ Resolve with these tie-breakers, in order:
    is not a design trade-off — it is a defect. UX and a11y should converge on a
    solution that is both, not compromise on one.
 3. **The narrower specialist wins on their home turf** — Vuetify component
-   semantics go to `dashboard:vuetify-expert`, reactivity to `dashboard:vue-expert`.
+   semantics go to `vuetify-expert`, reactivity to `vue-expert`.
 4. **Otherwise, escalate to the user** with both positions stated fairly and a
    recommendation. Do not silently pick a side.
 

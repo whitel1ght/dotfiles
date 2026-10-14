@@ -47,7 +47,7 @@ ln -s "$DOTFILES/pi/models.json" "$T/models.json"
 ln -s "$DOTFILES/pi/APPEND_SYSTEM.md" "$T/APPEND_SYSTEM.md"
 cp "$DOTFILES/pi/settings.json" "$T/settings.json"
 # Packages are installed under the agent dir and settings.json resolves ./packages against
-# itself, so both have to exist here or package-provided tools (acp_delegate) never load.
+# itself, so both have to exist here or package-provided tools never load.
 ln -s "$AGENT_DIR/npm" "$T/npm"
 ln -s "$DOTFILES/pi/packages" "$T/packages"
 
@@ -148,29 +148,6 @@ if [ -z "$prose_acp" ]; then
 else
   echo "FAIL  prose still tells the model to use acp_delegate:"
   printf '%s\n' "$prose_acp" | sed "s|^$DOTFILES/|        |"
-  fails=$((fails + 1))
-fi
-
-# acp_delegate role model pins: without them every launch that passes no `model` silently
-# inherits the parent's, which is how an expensive model ends up running a review. A pin
-# outside the pool is worse than no pin — it names a model this install cannot run.
-for role in reviewer researcher planner oracle worker; do
-  model="$(jq -r --arg r "$role" '.pi.subagents.agents[$r].model // empty' "$DOTFILES/pi/billion-context.json" 2>/dev/null)"
-  if [ -z "$model" ]; then
-    printf 'FAIL  no model pin for acp_delegate role %s in pi/billion-context.json\n' "$role"
-    fails=$((fails + 1))
-  elif jq -e --arg m "$model" '.enabledModels | index($m) != null' "$DOTFILES/pi/settings.json" >/dev/null 2>&1; then
-    printf 'PASS  role pin: %s=%s (in pool)\n' "$role" "$model"
-  else
-    printf 'FAIL  role pin %s=%s is not in pi/settings.json enabledModels\n' "$role" "$model"
-    fails=$((fails + 1))
-  fi
-done
-linked="$HOME/.config/billion-context/billion-context.json"
-if [ -L "$linked" ] && [ "$(readlink "$linked")" = "$DOTFILES/pi/billion-context.json" ]; then
-  echo "PASS  ~/.config/billion-context/billion-context.json is linked to the repo"
-else
-  echo "FAIL  ~/.config/billion-context/billion-context.json is not linked to pi/billion-context.json (run plink)"
   fails=$((fails + 1))
 fi
 

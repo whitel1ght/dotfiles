@@ -25,7 +25,7 @@ reconciled into a single answer.
 ## When NOT to use
 
 - **Single-domain question** — invoke the expert directly. "Why is this query
-  slow?" is `admin:sqlalchemy-expert`, not a six-agent panel.
+  slow?" is `sqlalchemy-expert`, not a six-agent panel.
 - **Reviewing a GitLab MR** — use `/mr-review-multi-agent`. It routes Python /
   Jinja diffs to **these same experts** and adds the MR mechanics this skill
   deliberately lacks: fetching the diff, pinning the checkout to the head SHA,
@@ -87,16 +87,16 @@ Do not run everyone every time. Choose by what the change touches:
 
 | Signal in the target | Include |
 |---|---|
-| Models, queries, relationships, migrations | `admin:sqlalchemy-expert` |
-| Views, routes, forms, auth, request handling | `admin:flask-expert` |
-| Jinja2 templates, server-rendered markup | `admin:jinja-ui-expert` |
-| Any change that should have tests | `admin:pytest-expert` |
-| Module boundaries, cross-cutting structure, config | `admin:python-architect` |
-| **Rendered UI a human uses** | `ui-review:accessibility-expert`, `ui-review:ux-expert` |
-| Auth, sessions, secrets, tenant isolation, PII | `shared:security-compliance-reviewer` |
-| Deploy/production risk | `shared:prod-readiness` |
+| Models, queries, relationships, migrations | `sqlalchemy-expert` |
+| Views, routes, forms, auth, request handling | `flask-expert` |
+| Jinja2 templates, server-rendered markup | `jinja-ui-expert` |
+| Any change that should have tests | `pytest-expert` |
+| Module boundaries, cross-cutting structure, config | `python-architect` |
+| **Rendered UI a human uses** | `accessibility-expert`, `ux-expert` |
+| Auth, sessions, secrets, tenant isolation, PII | `security-compliance-reviewer` |
+| Deploy/production risk | `prod-readiness` |
 
-`ui-review:accessibility-expert` and `ui-review:ux-expert` are shared with `/frontend-panel` —
+`accessibility-expert` and `ux-expert` are shared with `/frontend-panel` —
 ecfx-admin renders real UI that real people use, and its templates are the least
 guarded surface in either project (excluded from ruff; only djlint formatting
 applies; 1 of 49 templates uses ARIA). Include them whenever a template changes.
@@ -107,11 +107,11 @@ and production expertise.
 Minimum useful panel is 3. Below that, invoke experts directly. State the panel
 and the reason before spawning.
 
-**Model selection (Pi).** The five `acp_delegate` roles are the only launchable agents — `reviewer`, `researcher`, `planner`, `oracle` (read-only) and `worker`. A named specialist is a lens you paste into the task text, not an agent and not a model. Every request includes a `<subagent_models>` block containing the live selected ∩ available exact `provider/id` list. Omit `model` on routine lenses so the configured role pin applies (`pi/billion-context.json`, re-picked by the `set-subagents` skill); pass an explicit `model` chosen from the current block only for the hard lenses — correctness, security, architecture, cross-examination — and choose it again per launch instead of carrying a stale choice across requests. Never name a model outside the current block, call a model gate, or rely on automatic fallback. If the list is empty, launch nothing and ask the user to repair the session model pool. See `~/.pi/agent/model-selection.md`.
+**Subagents (Pi).** Launch each expert with `subagent({ role, model, task, cwd, label })`, one call per expert in the same turn so they run in parallel. `role` is the expert's file stem in `~/.pi/agent/agents/` — drop any `shared:`/`dashboard:`/`backend:` prefix (`prod-readiness` → `prod-readiness`); specialists are read-only, and implementation is always `worker` with the specialist's concrete guidance in the task text. `model` is required: pick an exact `provider/id` from the current request's `<subagent_models>` block per launch — the cheapest likely to succeed for routine lenses, a stronger one for correctness, security, architecture and cross-examination — never a model outside the block, a model gate or a fallback. If the list is empty, launch nothing and ask the user to repair the session model pool. Each child starts empty, so its task carries every path and constraint. Launches return an id at once; end the turn, and a `[pi-sub]` wake-up names each result file as it lands — never wait or poll. See `~/.pi/agent/model-selection.md`.
 
 ### 3. Round 1 — independent review (parallel)
 
-Spawn **all selected experts in one message with parallel Agent calls**.
+Spawn **all selected experts in one message with parallel `subagent` calls**.
 Independence is what makes corroboration meaningful.
 
 ```
@@ -165,13 +165,13 @@ Classify **corroborated** / **unique** / **conflicting**.
 
 Common conflicts in this panel:
 
-- `admin:sqlalchemy-expert` wants eager loading for performance; `admin:python-architect`
+- `sqlalchemy-expert` wants eager loading for performance; `python-architect`
   objects that it couples the query to one view's needs.
-- `admin:flask-expert` wants logic in the view for clarity; `admin:python-architect` wants it
+- `flask-expert` wants logic in the view for clarity; `python-architect` wants it
   extracted to a service module.
-- `admin:pytest-expert` wants a test that requires refactoring for a seam;
-  `admin:python-architect` says the seam is the right design anyway.
-- `ui-review:ux-expert` wants richer interaction; `admin:jinja-ui-expert` notes it needs client
+- `pytest-expert` wants a test that requires refactoring for a seam;
+  `python-architect` says the seam is the right design anyway.
+- `ux-expert` wants richer interaction; `jinja-ui-expert` notes it needs client
   JS the app deliberately avoids.
 
 Tie-breakers, in order:
@@ -181,8 +181,8 @@ Tie-breakers, in order:
 2. **Correctness and tenant isolation beat everything.** A missing `firm_id`
    filter or an N+1 that will time out in production is not a trade-off.
 3. **The narrower specialist wins on home turf** — loader strategy to
-   `admin:sqlalchemy-expert`, request lifecycle to `admin:flask-expert`, template semantics
-   to `admin:jinja-ui-expert`.
+   `sqlalchemy-expert`, request lifecycle to `flask-expert`, template semantics
+   to `jinja-ui-expert`.
 4. **Otherwise escalate to the user** with both positions and a recommendation.
 
 ### 5. Round 2 — only if it changes the answer

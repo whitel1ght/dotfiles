@@ -56,7 +56,7 @@ assert_link "$DEST/AGENTS.md" "$DOT/claude/CLAUDE.md" "links CLAUDE.md as AGENTS
 assert_link "$DEST/skills" "$DOT/pi/skills" "links skills/"
 assert_link "$HOME_DIR/.agents/modules" "$DOT/pi/modules" "links modules/ into the cross-runtime ~/.agents"
 assert_link "$HOME_DIR/.config/billion-context/billion-context.json" "$DOT/pi/billion-context.json" \
-    "links billion-context.json (acp_delegate role model pins)"
+    "links billion-context.json"
 assert_link "$DEST/extensions" "$DOT/pi/extensions" "links extensions/"
 assert_link "$DEST/agents" "$DOT/pi/agents" "links Pi-specific agent definitions"
 [ ! -L "$DEST/auth.json" ] && [ "$(cat "$DEST/auth.json")" = "secret" ] \

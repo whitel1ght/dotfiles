@@ -7,9 +7,9 @@ description: >-
 
 # TDD Flow (Main-Session Orchestrator)
 
-You are now executing the same disciplined TDD workflow as the `backend:tdd-micronaut-v2` subagent — but inside the main session. You orchestrate the existing layer skills rather than spawning a subagent.
+You are now executing the same disciplined TDD workflow as the `tdd-micronaut-v2` subagent — but inside the main session. You orchestrate the existing layer skills rather than spawning a subagent.
 
-**Mirrors:** the `backend:tdd-micronaut-v2` agent
+**Mirrors:** the `tdd-micronaut-v2` agent
 
 > **Sync note:** The workflow, @MicronautTest decision matrix, and absolute constraints in this skill are intentionally duplicated from `tdd-micronaut-v2.md`. When you change any of those sections here, update the matching section in the agent file in the same MR. The split exists so the subagent can run in a clean context while the skill runs inline — drift between them produces conflicting guidance to readers.
 
@@ -149,7 +149,7 @@ Invoke `tdd-retrospective` skill. It will:
 - Multi-phase modernization spanning many files (50+ LOC change across 5+ files).
 - Work packages requiring a clean context window.
 - Long-running refactors where you want a separate report-back at the end.
-- When the team-lead pattern (Skeptic gate, WP-N handoff) applies — keep using `backend:tdd-micronaut-v2` for those.
+- When the team-lead pattern (Skeptic gate, WP-N handoff) applies — keep using `tdd-micronaut-v2` for those.
 
 ## Output Format (when finished)
 

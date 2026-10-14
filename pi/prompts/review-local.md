@@ -91,13 +91,13 @@ repair the session model pool. See `~/.pi/agent/model-selection.md`.
 
 ## 4. Round 1 — parallel, one turn
 
-Launch the whole panel in one turn with one `acp_delegate` call per reviewer — that is what
-runs them in parallel; there is no workflow form. Every call uses `agent: "reviewer"`
-(read-only: read, bash, grep, find, ls), an explicit live-list `model`, `async: true`, and
-`cwd` set to the first MR's worktree (reviewers read absolute paths, so one cwd is enough).
-The lens lives in the task text, not in the agent name: the five roles are fixed and
-specialist agents are not launchable. Record each returned `runId` against its lens. Use
-this short `task`; do not inline the brief:
+Launch the whole panel in one turn with one `subagent` call per reviewer — that is what
+runs them in parallel; there is no workflow form. Every call uses the lens's role (a
+read-only file in `~/.pi/agent/agents/`: `security-compliance-reviewer`, `prod-readiness`,
+`vue-expert`, …; plain `reviewer` when no specialist fits), an explicit live-list `model`,
+and `cwd` set to the first MR's worktree (reviewers read absolute paths, so one cwd is
+enough). Record each returned agent id against its lens. Use this short `task`; do not
+inline the brief:
 
 > Read `$RUN/brief.md` (your review instructions) and `$RUN/context.md` (the change).
 > Review through the <lens> lens. For MR !X the worktree is `<path>` — ignore any
@@ -110,16 +110,13 @@ this short `task`; do not inline the brief:
 Build the finding table in your head (dedupe, corroborated/unique). Default is no second
 round — skip it when findings agree, are lane-specific, or the verdict is already clear.
 Only when a dispute genuinely affects the verdict, continue just the one or two
-reviewers involved with only the disputed items. Prefer resuming the prior run —
-`acp_delegate({ resumeFrom: "<runId>", task: "<the dispute>" })` — which keeps that
-reviewer's model and its read-only role; a failed or cancelled run keeps its output files
-too. Otherwise launch the same lens as a fresh `reviewer` with a model from the current
-live list. Never run a fresh panel or a full R2. Max 3 rounds.
+reviewers involved with only the disputed items: launch the same role and model fresh,
+with a task that names its round-1 result file and lists the disputed items. Never run a
+fresh panel or a full R2. Max 3 rounds.
 
-Each launch returns a `runId` and its completion notice wakes the parent and names the
-result file. `read` that file, or block on `acp_delegate_wait({ runId, timeout: 30000 })`
-when you need it now; there is no non-blocking status call, so never poll.
-`acp_delegate_cancel({ runId })` only to terminate a run.
+Each launch returns an agent id at once; a `[pi-sub]` wake-up names the result file when it
+finishes. End the turn after launching — never wait, sleep or poll. `subagent_result({ id })`
+shows a result (or the live tail); `subagent_stop({ id })` only to terminate a run.
 
 Before finalising, spot-check each BLOCKER and MAJOR citation by reading only the cited
 lines (`sed -n` a small range) in the worktree. Drop or downgrade anything that doesn't

@@ -45,26 +45,23 @@ directory and the **worktree**. Handle every MR in the summary, in parallel.
    is empty, stop the watch loop: launch nothing, ack nothing, start no wait, and tell me.
    See `~/.pi/agent/model-selection.md`.
 
-2. **Fixer.** In one turn, make one `acp_delegate` call per non-DIRTY MR:
-   `acp_delegate({ agent: "worker", task: "<filled brief>", model: "<live exact id>",
-   cwd: "<worktree>", async: true })`. One call per MR in the same turn is what runs them
-   concurrently, and each call carries its own `cwd`, so fixers land in different
-   worktrees. The delegate sees none of this conversation: the brief is self-contained.
+2. **Fixer.** In one turn, make one `subagent` call per non-DIRTY MR:
+   `subagent({ role: "worker", model: "<live exact id>", task: "<filled brief>",
+   cwd: "<worktree>", label: "<repo>!<iid>" })`. One call per MR in the same turn is what runs
+   them concurrently, and each call carries its own `cwd`, so fixers land in different
+   worktrees. The child starts empty and sees none of this conversation: the brief is
+   self-contained. End the turn after launching.
    Read-only roles cannot write; when specialist analysis is needed, run that lens through
    `reviewer` or `oracle` first and put its concrete guidance in the `worker` brief—never
    expect a read-only role to fix anything.
-3. **Check** each report as it lands, with cheap commands only. Completion notices wake the
-   parent and name the result file; `read` that file, or block on
-   `acp_delegate_wait({ runId: "<run id>", timeout: 30000 })` when you need it now. There is
-   no non-blocking status call, so never poll. `acp_delegate_cancel({ runId })` only to
-   terminate a run. Then check:
+3. **Check** each report as it lands, with cheap commands only. A `[pi-sub]` wake-up names
+   the result file; `read` it (or `subagent_result({ id })`). Never wait, sleep or poll.
+   `subagent_stop({ id })` only to terminate a run. Then check:
    `git -C <wt> status --porcelain` (must be empty),
    `git -C <wt> log --oneline @{u}..HEAD` (the commits the report names), and that the
-   round has a `response.md`. If a fixer failed a finding (tests red, stuck), resume it with
-   `acp_delegate({ resumeFrom: "<run id>", task: "<the specific failure and what to retry>" })`
-   — a failed or cancelled run keeps its output files; otherwise launch a fresh `worker`
-   in the same worktree with a model selected from the current live list and the specific
-   failure in its brief. If that attempt also fails, the finding becomes Deferred with
+   round has a `response.md`. If a fixer failed a finding (tests red, stuck), launch a fresh
+   `worker` in the same worktree with a model from the current live list; its brief names
+   the earlier result file and the specific failure to retry. If that attempt also fails, the finding becomes Deferred with
    the reason.
 4. **Push**: `git -C <wt> push`. Never force. If the push is rejected, stop on this MR:
    ack the round, hold its reply and tell me.

@@ -23,6 +23,9 @@ git branch --show-current | rg -io '[a-z]+-[0-9]+' | head -1 | tr 'a-z' 'A-Z'
 
 3. Warn if the current directory is not the note's `Worktree:` — then stop and ask before doing anything.
 
+   If the note's `Agent:` is an id, `subagent_adopt({ id: "<id>" })` so this session is woken
+   when that agent finishes, and read its result once it has.
+
 4. Summarise in ≤8 lines: what the item is, what is already done, what is left, what is unresolved.
    End with: *this session will not write the vault or the diary.*
 

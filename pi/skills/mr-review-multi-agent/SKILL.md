@@ -232,18 +232,18 @@ If the checkout has uncommitted local changes, warn the user and stop — don't 
 ### 2. Choose the agent panel
 
 Always include these three:
-- `shared:invent-simplify-reviewer` — challenges unnecessary complexity, asks whether the change fits the actual problem
-- `shared:prod-readiness` — twelve-factor, scalability, resilience, observability, dev/prod parity
-- `shared:security-compliance-reviewer` — security holes, SOC 2 compliance angle, data handling
+- `invent-simplify-reviewer` — challenges unnecessary complexity, asks whether the change fits the actual problem
+- `prod-readiness` — twelve-factor, scalability, resilience, observability, dev/prod parity
+- `security-compliance-reviewer` — security holes, SOC 2 compliance angle, data handling
 
 Plus **stack specialists** chosen from what the diff actually touches. Pick real
-agents wherever one matches; the `general-purpose` fallback is a last resort, not
+agents wherever one matches; the `reviewer` fallback is a last resort, not
 a default.
 
 **When the table below names an agent this session doesn't have** (its plugin isn't
 installed here — e.g. the diff touches DuploCloud config and calls for
-`infra:duplo-infra-specialist`, but this is a backend-only session): substitute
-`general-purpose`, given that specialty's own review lens as its prompt (the same
+`duplo-infra-specialist`, but this is a backend-only session): substitute
+`reviewer`, given that specialty's own review lens as its prompt (the same
 way the language-specialist fallback below builds one), and **disclose the
 substitution in the posted review** — a line naming which specialist was
 unavailable and that a generalist stood in, so the reader knows to weight that
@@ -252,28 +252,28 @@ off the generalist's findings as the named specialist's.
 
 | Diff dominated by | Specialist agent(s) |
 |---|---|
-| Java + Micronaut | `backend:java-micronaut-dev` |
+| Java + Micronaut | `java-micronaut-dev` |
 | AWS IaC (Terraform / CDK / CloudFormation) | `ops:aws-cloud-architect` |
-| DuploCloud config / Kubernetes via Duplo | `infra:duplo-infra-specialist` |
-| `.gitlab-ci.yml`, Git operations | `shared:git-gitlab-expert` |
-| Gradle / Jib / build config | `backend:gradle-jib-deployer` |
-| JReleaser / Maven Central publishing | `backend:jreleaser-maven-expert` |
+| DuploCloud config / Kubernetes via Duplo | `duplo-infra-specialist` |
+| `.gitlab-ci.yml`, Git operations | `git-gitlab-expert` |
+| Gradle / Jib / build config | `gradle-jib-deployer` |
+| JReleaser / Maven Central publishing | `jreleaser-maven-expert` |
 | **Vue / TypeScript frontend** (`.vue`, `.ts`, `.scss`) | see **UI panel selection** below |
 | **Flask / Python** (`.py`, Jinja `.html`) | see **UI panel selection** below |
-| Anything else (Go, Rust, Ruby, Kotlin, C#, …) | `general-purpose` with a "Senior <Language> reviewer" prompt — see "Language specialist fallback prompt" below |
+| Anything else (Go, Rust, Ruby, Kotlin, C#, …) | `reviewer` with a "Senior <Language> reviewer" prompt — see "Language specialist fallback prompt" below |
 
 **Domain lenses (ecfx-backend)** — in addition to the stack specialist, add one of these when the diff matches. They count toward the agent cap:
 
 | Diff touches | Domain lens |
 |---|---|
-| `projects/receipt_processing*`, `projects/poller_queue`, provider processors, the retry engine, or notice dedup | **Receipt-processing reviewer** — `general-purpose` agent instructed to first invoke the `backend:receipt-processor-guardrails` skill (and `backend:court-portal-processor-checklist` when a provider processor or browser automation changed) and review strictly against those checklists: exception classification (retryable vs terminal vs `@UserActionRequired`), USER-vs-ECFX failure routing, stable dedup keys, resource release on retry paths, listener registration |
-| Framework/dependency upgrades — Micronaut, Hibernate, JDK, serde, or version-catalog bumps | **Migration-regression hunter** — `general-purpose` agent prompted to hunt the known upgrade pitfall shapes: form-body double-decode on typed `HttpRequest<>` co-injection (SAML, ECFX-14918), Micronaut Serde types missing `@Serdeable`/introspection, Hibernate JSONB deep-copy of non-`Serializable` graphs (ECFX-14913, `EcfxJsonSerializer`), native tuple element types changing (`Timestamp` → `LocalDateTime`, ECFX-14916), criteria-builder functions unsupported on array columns (`array_to_string`, ECFX-14138), `instanceof` checks against relocated/rewrapped exception types, and test assumptions broken by execution reordering. Instruct it to search the diff for these shapes and verify each against the checkout, not to review generally |
-| Any non-trivial Java diff (default lens when a panel slot remains) | **Clean-code purist** — the `backend:java-clean-code-purist` agent. It invokes the `backend:java-clean-code-commandments` skill itself and audits the changed files against the Ten Commandments: type-system escapes, swallowed errors, event-loop blocking / singleton state, size and nesting, meaningless tests, layer violations, unjustified dependencies, junk-drawer naming, dead code, hardcoded secrets/config. If the cap is already bound by the other lenses, don't drop the doctrine — instead add one line to the `backend:java-micronaut-dev` brief: "Also invoke the `backend:java-clean-code-commandments` skill and fold commandment violations into your findings." |
+| `projects/receipt_processing*`, `projects/poller_queue`, provider processors, the retry engine, or notice dedup | **Receipt-processing reviewer** — `reviewer` launched with `skills: ["receipt-processor-guardrails"]` (plus `"court-portal-processor-checklist"` when a provider processor or browser automation changed) and told to review strictly against those checklists: exception classification (retryable vs terminal vs `@UserActionRequired`), USER-vs-ECFX failure routing, stable dedup keys, resource release on retry paths, listener registration |
+| Framework/dependency upgrades — Micronaut, Hibernate, JDK, serde, or version-catalog bumps | **Migration-regression hunter** — `reviewer` agent prompted to hunt the known upgrade pitfall shapes: form-body double-decode on typed `HttpRequest<>` co-injection (SAML, ECFX-14918), Micronaut Serde types missing `@Serdeable`/introspection, Hibernate JSONB deep-copy of non-`Serializable` graphs (ECFX-14913, `EcfxJsonSerializer`), native tuple element types changing (`Timestamp` → `LocalDateTime`, ECFX-14916), criteria-builder functions unsupported on array columns (`array_to_string`, ECFX-14138), `instanceof` checks against relocated/rewrapped exception types, and test assumptions broken by execution reordering. Instruct it to search the diff for these shapes and verify each against the checkout, not to review generally |
+| Any non-trivial Java diff (default lens when a panel slot remains) | **Clean-code purist** — the `java-clean-code-purist` role, launched with `skills: ["java-clean-code-commandments"]`. It audits the changed files against the Ten Commandments: type-system escapes, swallowed errors, event-loop blocking / singleton state, size and nesting, meaningless tests, layer violations, unjustified dependencies, junk-drawer naming, dead code, hardcoded secrets/config. If the cap is already bound by the other lenses, don't drop the doctrine — instead launch `java-micronaut-dev` with `skills: ["java-clean-code-commandments"]` and one line in its brief: "Also fold commandment violations into your findings." |
 
 #### UI panel selection
 
 The UI codebases have dedicated experts (see `docs/EXPERT_PANELS.md`). Do **not**
-send a Vue or Flask diff to the `general-purpose` fallback — these agents know
+send a Vue or Flask diff to the `reviewer` fallback — these agents know
 the frameworks, and they read the project's own `AGENTS.md`, local
 `.claude/skills/`, and lint configs at runtime.
 
@@ -282,21 +282,21 @@ can contain both:
 
 | Files in the diff | Add |
 |---|---|
-| `.vue`, composables, `src/stores/` | `dashboard:vue-expert` |
-| Vuetify components, theming, `v-*` usage | `dashboard:vuetify-expert` |
-| `.ts`/`.tsx`, type definitions, `src/types/` | `dashboard:typescript-expert` |
-| `.scss`, `<style>` blocks, style partials | `dashboard:styling-expert` |
-| Routing, cross-module structure, state architecture, bundle config | `dashboard:frontend-architect` |
-| `ecfx_admin/views/`, `app.py`, routes, forms | `admin:flask-expert` |
-| `ecfx_admin/models/`, queries, migrations | `admin:sqlalchemy-expert` |
-| `ecfx_admin/templates/` (Jinja2) | `admin:jinja-ui-expert` |
-| `tests/` (Python) | `admin:pytest-expert` |
-| Python package/module boundaries, config, services | `admin:python-architect` |
-| **Any user-facing UI change** (Vue components or Jinja templates) | `ui-review:accessibility-expert` |
-| **Any change to user-facing interaction or copy** | `ui-review:ux-expert` |
+| `.vue`, composables, `src/stores/` | `vue-expert` |
+| Vuetify components, theming, `v-*` usage | `vuetify-expert` |
+| `.ts`/`.tsx`, type definitions, `src/types/` | `typescript-expert` |
+| `.scss`, `<style>` blocks, style partials | `styling-expert` |
+| Routing, cross-module structure, state architecture, bundle config | `frontend-architect` |
+| `ecfx_admin/views/`, `app.py`, routes, forms | `flask-expert` |
+| `ecfx_admin/models/`, queries, migrations | `sqlalchemy-expert` |
+| `ecfx_admin/templates/` (Jinja2) | `jinja-ui-expert` |
+| `tests/` (Python) | `pytest-expert` |
+| Python package/module boundaries, config, services | `python-architect` |
+| **Any user-facing UI change** (Vue components or Jinja templates) | `accessibility-expert` |
+| **Any change to user-facing interaction or copy** | `ux-expert` |
 
-`ui-review:accessibility-expert` and `ui-review:ux-expert` serve both stacks. Include
-`ui-review:accessibility-expert` whenever the diff changes rendered markup — it is the
+`accessibility-expert` and `ux-expert` serve both stacks. Include
+`accessibility-expert` whenever the diff changes rendered markup — it is the
 least-covered risk in both projects (no a11y tooling is installed in either, and
 a contrast regression has shipped before: ECFX-15857).
 
@@ -314,9 +314,9 @@ on a single agent.
 When the cap binds:
 
 - **Backend/infra** — prefer the **domain lens** over the stack specialist.
-  `backend:java-micronaut-dev` overlaps more with the always-on reviewers than the domain
+  `java-micronaut-dev` overlaps more with the always-on reviewers than the domain
   checklists do. If more stacks are touched than fit, fold the extras into a
-  single `general-purpose` "polyglot reviewer" prompt covering the secondary
+  single `reviewer` "polyglot reviewer" prompt covering the secondary
   stacks.
 - **UI** — drop the *least* relevant specialist rather than folding lanes
   together; a diluted reviewer produces diluted findings.
@@ -325,11 +325,11 @@ When the cap binds:
 
 Announce the panel: "Reviewers for !123: invent-simplify, prod-readiness, security-compliance, vue-expert, accessibility-expert."
 
-**Model selection (Pi).** The five `acp_delegate` roles are the only launchable agents — `reviewer`, `researcher`, `planner`, `oracle` (read-only) and `worker`. A named specialist is a lens you paste into the task text, not an agent and not a model. Every request includes a `<subagent_models>` block containing the live selected ∩ available exact `provider/id` list. Omit `model` on routine lenses so the configured role pin applies (`pi/billion-context.json`, re-picked by the `set-subagents` skill); pass an explicit `model` chosen from the current block only for the hard lenses — security, architecture, cross-examination, the consolidated verdict — and in a batch choose it again before each launch instead of carrying a stale choice across requests or MRs. Never name a model outside the current block, call a model gate, or rely on automatic fallback. If the list is empty, stop before launching or posting and ask the user to repair the session model pool. See `~/.pi/agent/model-selection.md`.
+**Subagents (Pi).** Launch each reviewer with `subagent({ role, model, task, cwd, label })`. `role` is the agent's file stem in `~/.pi/agent/agents/` (the names above); every specialist is read-only. `model` is required: pick an exact `provider/id` from the current request's `<subagent_models>` block per launch — the cheapest likely to succeed for routine lenses, a stronger one for security, architecture and cross-examination; in a batch choose again before each launch. Never name a model outside the block, call a model gate, or rely on fallback. If the list is empty, stop before launching or posting and ask the user to repair the session model pool. Each child starts empty — its task carries every path it needs. Launches return an id at once; end the turn, and a `[pi-sub]` wake-up names each result file as it lands — never wait or poll. See `~/.pi/agent/model-selection.md`.
 
 ### 3. Round 1 — independent reviews (parallel)
 
-Spawn all selected agents **in a single message with parallel `task` tool calls**. Each agent gets the same brief:
+Spawn all selected agents **in a single turn with parallel `subagent` calls**. Each agent gets the same brief:
 
 ```
 You are reviewing GitLab MR !<iid> in <project>.
@@ -386,10 +386,10 @@ Be specific. Cite line numbers. Don't restate the diff. Skip findings outside yo
 
 For the language specialist fallback, prepend: "Act as a Senior/Principal <Language> engineer with 10+ years of production experience. Focus on idiomatic <Language>, common pitfalls, performance, and library/framework misuse."
 
-For the **UI specialists** (`dashboard:vue-expert`, `dashboard:vuetify-expert`, `dashboard:typescript-expert`,
-`dashboard:styling-expert`, `dashboard:frontend-architect`, `admin:flask-expert`, `admin:sqlalchemy-expert`,
-`admin:jinja-ui-expert`, `admin:pytest-expert`, `admin:python-architect`, `ui-review:accessibility-expert`,
-`ui-review:ux-expert`), append:
+For the **UI specialists** (`vue-expert`, `vuetify-expert`, `typescript-expert`,
+`styling-expert`, `frontend-architect`, `flask-expert`, `sqlalchemy-expert`,
+`jinja-ui-expert`, `pytest-expert`, `python-architect`, `accessibility-expert`,
+`ux-expert`), append:
 
 ```
 Also read ~/.agents/modules/ui-project-context.md (a real file at
@@ -407,8 +407,8 @@ no-raw-text rule, ruff, vue-tsc) is at minimum MAJOR: the author literally
 cannot merge it. Say which gate and why.
 ```
 
-For the **backend specialists** (`backend:java-micronaut-dev`, `shared:security-compliance-reviewer`,
-`shared:prod-readiness`, `shared:invent-simplify-reviewer`, `backend:java-clean-code-purist`), append:
+For the **backend specialists** (`java-micronaut-dev`, `security-compliance-reviewer`,
+`prod-readiness`, `invent-simplify-reviewer`, `java-clean-code-purist`), append:
 
 ```
 Also read ~/.agents/modules/backend-project-context.md (a real file at
@@ -458,14 +458,15 @@ When you skip R2, note it in the summary: `Rounds run: 1 (R1 convergence suffici
 
 ### 5. Round 2 — focused cross-examination (parallel)
 
-Before spawning R2, do the routing work yourself. For each finding that survived the R2 gate in step 4, decide *which* agents genuinely need to weigh in. Don't send every finding to every agent — that produced the bloat we saw in past runs (R2 agents using zero tool calls because the prompt was too large to do anything but skim).
+Before spawning R2, do the routing work yourself. For each finding that survived the R2 gate in step 4, decide *which* agents genuinely need to weigh in. Don't send every finding to every agent — that produced the bloat we saw in past runs (R2 agents using zero tool calls because the prompt was too large to do anything but skim). Each R2 reviewer is a fresh child of the same role; it remembers nothing, so its brief names its own R1 result file.
 
 **Per-agent R2 brief shape — lean and targeted:**
 
 ```
 ROUND 2 — focused cross-examination
 
-You reviewed this MR in R1. We're back only because a few findings need your specific input.
+You reviewed this MR in R1. Your R1 review is <R1 result file> — read it first, along with
+<brief/context files>. We're back only because a few findings need your specific input.
 
 Findings routed to you (others were either corroborated or lane-specific to another reviewer):
 
@@ -491,7 +492,7 @@ Synthesize again. After R2 the finding table has explicit AGREE/DISAGREE columns
 
 ### 5b. Optional — micro-rounds for stubborn disagreements
 
-If R2 narrowed the disputes to 1–2 items that two specific agents disagree on, **don't run a full R3** with everyone. Send a focused message just to those two agents (use SendMessage to continue the existing agent threads — they already have the R1+R2 context cached). One round of direct back-and-forth between the two specialists usually converges or surfaces the genuine disagreement faster than a full R3 of four agents.
+If R2 narrowed the disputes to 1–2 items that two specific agents disagree on, **don't run a full R3** with everyone. Launch those two roles fresh (a finished child cannot be continued), each with a task that names its own R1/R2 result files and states the opponent's argument for the disputed items. One round of direct back-and-forth between the two specialists usually converges or surfaces the genuine disagreement faster than a full R3 of four agents.
 
 ### 6. Round 3 — rarely needed
 
@@ -738,14 +739,14 @@ These are not severity decisions — they're judgment calls about *what to do* w
 - Do not invent line numbers when citing locations — verify each against the diff or the checkout. If a finding genuinely can't be located, state it without a citation rather than guessing.
 - Do not reach for line-anchored discussions as a "nicer" alternative to the one comment. Beyond the one-comment rule, `glab` can't post them reliably: `position` is a nested object, and `--field "position[...]"` returns **201 with `position: null`** — the comment silently lands unanchored, with no error. Anchoring correctly needs a hand-built JSON body plus a read-back check on every single comment. That machinery is exactly what the consolidated comment exists to avoid.
 - Do not approve an MR with a surviving BLOCKER.
-- Do not skip the language specialist just because no local agent matches — spawn `general-purpose` with the fallback prompt.
+- Do not skip the language specialist just because no local agent matches — spawn `reviewer` with the fallback prompt.
 - Do not modify the MR's source branch or push commits — review only.
 - Do not `git stash` or otherwise discard uncommitted local changes in the checkout to get it onto the head SHA. Stop and ask the user.
 - Do not use `$(...)` command substitution inside the `'EOF'` HEREDOC body — it expands at the wrong time and mangles the posted message.
 
 ## Language specialist fallback prompt
 
-When no specialized agent exists for the dominant language in the diff, spawn a `general-purpose` agent with this leading instruction:
+When no specialized agent exists for the dominant language in the diff, spawn a `reviewer` agent with this leading instruction:
 
 > Act as a Senior/Principal `<LANGUAGE>` engineer with 10+ years of production experience. You are reviewing a code change for a colleague. Focus on:
 > - Idiomatic `<LANGUAGE>` (does this read like a native of the language wrote it?)
