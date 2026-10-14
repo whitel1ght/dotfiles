@@ -1,6 +1,6 @@
 // Parses the events.jsonl a child `pi --mode json` writes: JSONL framing,
-// live activity lines, the final answer, and run totals. Node built-ins only,
-// so the plain-node wrapper (run.mjs) can import it. Shapes per pi 1.2.0
+// live activity lines, the final answer, and run totals. Node built-ins only
+// and no imports at all, so the plain-node wrapper (run.mjs) can import it. Shapes per pi 1.2.0
 // docs/json.md; only LF terminates a record, and a trailing CR is allowed.
 
 export type ActivityLine = {
@@ -23,7 +23,7 @@ export class LineBuffer {
   push(chunk: string): string[] {
     const lines = (this.pending + chunk).split("\n");
     this.pending = lines.pop() ?? "";
-    return lines;
+    return lines.filter((l) => l.trim() !== "");
   }
 }
 
@@ -36,7 +36,7 @@ export function toActivity(ev: object): ActivityLine | undefined {
     case "message_update": {
       const ame = e.assistantMessageEvent;
       if (ame?.type === "thinking_delta") {
-        return { kind: "think", text: oneLine(ame.delta).slice(0, THINK_CHARS), at: Date.now() };
+        return { kind: "think", text: oneLine(String(ame.delta)).slice(0, THINK_CHARS), at: Date.now() };
       }
       if (ame?.type === "text_delta") {
         return { kind: "stream", text: String(ame.delta), at: Date.now() };
@@ -90,7 +90,11 @@ export function stats(events: object[]): { toolCalls: number; tokensIn: number }
     const e = ev as Record<string, any>;
     if (e?.type === "tool_execution_start") toolCalls++;
     else if (e?.type === "message_end" && e.message?.role === "assistant") {
-      tokensIn += Number(e.message?.usage?.input) || 0;
+      const usage = e.message?.usage ?? {};
+      tokensIn +=
+        (Number(usage.input) || 0) +
+        (Number(usage.cacheRead) || 0) +
+        (Number(usage.cacheWrite) || 0);
     }
   }
   return { toolCalls, tokensIn };

@@ -17,6 +17,11 @@ function event(partial: Record<string, unknown>): object {
   return partial;
 }
 
+test("skips blank and whitespace-only lines", () => {
+  const buffer = new LineBuffer();
+  assert.deepEqual(buffer.push("a\n\n  \nb\n"), ["a", "b"]);
+});
+
 test("holds an incomplete last line", () => {
   const buffer = new LineBuffer();
   assert.deepEqual(buffer.push('{"type":"message_sta'), []);
@@ -62,6 +67,15 @@ test("thinking truncated to 100 chars", () => {
   assert.equal(line.text.length, 100);
 });
 
+test("thinking delta coerced to string", () => {
+  const line = toActivity(
+    event({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", delta: 42 } }),
+  );
+  assert.ok(line);
+  assert.equal(line.kind, "think");
+  assert.equal(line.text, "42");
+});
+
 test("text deltas collapse to one stream line", () => {
   const lines = activity([
     event({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Don" } }),
@@ -81,5 +95,6 @@ test("stats counts tool calls and input tokens", () => {
   const events = new LineBuffer().push(FIXTURE).map((l) => JSON.parse(l));
   const s = stats(events);
   assert.equal(s.toolCalls, 1);
-  assert.equal(s.tokensIn, 1563 + 639);
+  // 1563 (first turn) + 639 + 1024 cacheRead (second turn) = 3226 total.
+  assert.equal(s.tokensIn, 1563 + 639 + 1024);
 });
