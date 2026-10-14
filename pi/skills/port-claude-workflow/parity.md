@@ -4,6 +4,19 @@ Every Claude Code surface `scripts/inventory` lists that has no pi file of the s
 with where it lives in pi or why it is not ported. One line each, in the form
 ``- `<kind>:<name>` — <reason>``; the inventory reads the backticked key.
 
+## Adapted skills
+
+pi copies that differ from their Claude source on purpose. The digest is
+`scripts/skill-digest <claude skill dir>` at the time of the adaptation; when Claude's source
+changes, the digest stops matching and the skill shows as `stale` until the update is ported
+and the digest renewed.
+
+- `adapted:commit-msg` 78de777149b7 — Claude's `` !`cmd` `` context injection becomes "run `cmd`".
+- `adapted:shipit` 03029dcb423c — as commit-msg.
+- `adapted:mr-description` 67df83382616 — as commit-msg; `${CLAUDE_PLUGIN_ROOT}` becomes the claude-components checkout path; Atlassian MCP tool named generically.
+- `adapted:mr-review-multi-agent` faa9b7d41e59 — Claude agents (`shared:…`, `general-purpose`, `Task`, `SendMessage`) become pi-sub roles and `subagent`; model choice from `<subagent_models>`.
+- `adapted:jira-write` e549b675b855 — script called in place from the dotfiles; Ready for QA rule (wiki decision 0005); scratch path.
+
 ## Hooks
 
 - `hook:superpowers/SessionStart[startup|clear|compact]` — the superpowers pi package (`git:github.com/obra/superpowers`) ships its own `.pi/extensions/superpowers.ts`.

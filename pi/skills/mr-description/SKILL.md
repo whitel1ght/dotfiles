@@ -183,7 +183,7 @@ hand". For a **split** MR, both descriptions name the other and state which file
 Before creating the MR, record a marker so the pre-MR hook knows this skill was run:
 
 ```bash
-/Users/dmitry/projects/claude-components/hooks/record-mr-review-marker.sh
+~/projects/claude-components/plugins/shared/hooks/record-mr-review-marker.sh
 ```
 
 Pass the repo directory as an argument if you are not already in it.

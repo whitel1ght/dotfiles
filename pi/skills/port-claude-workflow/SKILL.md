@@ -28,17 +28,27 @@ Set `D` and `S` again in every bash call; shell state does not carry over.
 
 ```bash
 S=~/projects/dotfiles/pi/skills/port-claude-workflow
-"$S/scripts/inventory" | awk -F'\t' '$3=="MISSING"'
+"$S/scripts/inventory" | awk -F'\t' '$3=="MISSING" || $3=="stale"'
 ```
 
 Each row is `kind  name  status  source`. `ported` means pi already has a prompt, skill or
-agent of that name (pi's own dir or any installed pi package). `accepted` means `parity.md`
+agent of that name (pi's own dir or any installed pi package); a skill copied into
+`pi/skills/` must also match its Claude source by content (`scripts/skill-digest` ignores
+the `name` field, frontmatter folding and blank lines). `adapted` is a pi skill that differs
+on purpose and whose `adapted:` line in `parity.md` carries the digest of the Claude source it
+was adapted from. `stale` is a pi skill that differs with no such record, or whose Claude
+source changed since: see what moved with
+`"$S/scripts/skill-digest" <claude skill dir> ~/projects/dotfiles/pi/skills/<name>`, port
+the upstream change, keep the pi adaptations, then write the new digest
+(`"$S/scripts/skill-digest" <claude skill dir>`) into the `adapted:` line, or delete the line
+when the copies match again. The source column names the plugin; its skill dir is
+`<installPath>/skills/<name>` from `~/.claude/plugins/installed_plugins.json`. `accepted` means `parity.md`
 says where it lives in pi or why it is not ported. `disabled` is an installed Claude plugin
 that `settings.json` does not enable: ignore it unless the user asks. Hooks never match by
 name, so each one is `MISSING` until `parity.md` accounts for it.
 
 When the user named one feature, port that one; otherwise show the `MISSING` rows grouped by
-kind and ask which to do. A `ported` row can still be behind: when the user says pi lacks
+kind and ask which to do. A `ported` prompt can still be behind: when the user says pi lacks
 something Claude does (as with `/end-day`'s standup paragraph), diff the pair:
 
 ```bash
@@ -97,14 +107,15 @@ checkout's `pi/prompts`, `pi/extensions`, `pi/settings.json`, the run-day state 
   docs in `docs/extensions.md` beside it. Read them, do not guess.
 - **Hook:** if the Claude hook is a script, run it rather than rewriting it, the way
   `claude-hooks` does, so a fix in one place fixes both harnesses.
-- Then add or edit the `parity.md` line if the inventory cannot see the counterpart by name.
+- Then add or edit the `parity.md` line if the inventory cannot see the counterpart by name,
+  and an `adapted:` line with the source digest for every skill whose pi copy differs.
 
 ## 4. Verify
 
 ```bash
 D=~/projects/worktrees/dotfiles/<name>
 "$D/pi/skills/port-claude-workflow/tests/inventory.test.sh"
-PI_DIR="$D/pi" "$D/pi/skills/port-claude-workflow/scripts/inventory" | awk -F'\t' '$3=="MISSING"'
+PI_DIR="$D/pi" "$D/pi/skills/port-claude-workflow/scripts/inventory" | awk -F'\t' '$3=="MISSING" || $3=="stale"'
 (cd "$D/pi/extensions/<n>" && npm test)        # for each extension touched
 cd "$D" && DOTFILES="$PWD" bin/pi-contract     # boots real pi; must end "All checks passed"
 ```

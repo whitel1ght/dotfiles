@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # inventory: every Claude Code workflow surface and its pi counterpart, one line each.
 #   <kind>  <name>  <status>  <claude source>
-# status: ported (pi has a prompt, skill or agent of that name), accepted (parity.md says
-# where it lives in pi or why it is not ported), MISSING (neither), disabled (an installed
-# plugin settings.json does not enable; its contents are not listed). Hooks never have a
-# same-name counterpart, so each one is MISSING until parity.md accounts for it.
+# status: ported (pi has a prompt, skill or agent of that name; a skill in pi/skills must also
+# match its Claude source by content), adapted (pi's skill differs deliberately and parity.md
+# records the source digest it was adapted from, which is still current), stale (pi's skill
+# differs and is not a recorded adaptation, or Claude's source changed since), accepted
+# (parity.md says where it lives in pi or why it is not ported), MISSING (none of these),
+# disabled (an installed plugin settings.json does not enable; its contents are not listed).
+# Hooks never have a same-name counterpart, so each one is MISSING until parity.md accounts
+# for it.
 # Read-only. Env overrides for tests: CLAUDE_DIR, PI_DIR, PI_HOME, PARITY.
 set -euo pipefail
 
@@ -22,10 +26,19 @@ has_skill() { printf '%s\n' "$PI_SKILLS" | grep -qx "$1"; }
 
 # A parity.md line "- `<kind>:<name>` — reason" marks a deliberate gap.
 accepted() { [ -f "$PARITY" ] && grep -qF -- "- \`$1:$2\` " "$PARITY"; }
+# A parity.md line "- `adapted:<name>` <source digest> — what pi changes" records a
+# deliberate pi adaptation of a skill, made against that version of Claude's source.
+adapted() { [ -f "$PARITY" ] && grep -qF -- "- \`adapted:$1\` $2 " "$PARITY"; }
+DIGEST="$(dirname "$0")/skill-digest"
 
-row() { # kind name pi-path source
+row() { # kind name pi-path source [claude skill dir]
   local status
-  if [ -e "$3" ] || { [ "$1" = skill ] && has_skill "$2"; }; then status=ported
+  if [ "$1" = skill ] && [ -e "$3" ] && [ -n "${5:-}" ]; then
+    local src; src="$("$DIGEST" "$5")"
+    if [ "$("$DIGEST" "$(dirname "$3")")" = "$src" ]; then status=ported
+    elif adapted "$2" "$src"; then status=adapted
+    else status=stale; fi
+  elif [ -e "$3" ] || { [ "$1" = skill ] && has_skill "$2"; }; then status=ported
   elif accepted "$1" "$2"; then status=accepted
   else status=MISSING; fi
   printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$status" "$4"
@@ -54,7 +67,7 @@ while IFS=$'\t' read -r plugin root; do
   done
   for d in "$root"/skills/*/; do
     [ -f "$d/SKILL.md" ] || continue
-    n="$(basename "$d")"; row skill "$n" "$PI_DIR/skills/$n/SKILL.md" "$plugin"
+    n="$(basename "$d")"; row skill "$n" "$PI_DIR/skills/$n/SKILL.md" "$plugin" "${d%/}"
   done
   for f in "$root"/agents/*.md; do
     [ -e "$f" ] || continue
@@ -78,7 +91,7 @@ for d in "$CLAUDE_DIR"/skills/*/ "$CLAUDE_DIR"/skills/synced/*/*/; do
   case "$seen" in *" $n "*) continue ;; esac
   seen="$seen$n "
   case "$d" in */synced/*) src="claude.ai synced" ;; *) src="$d" ;; esac
-  row skill "$n" "$PI_DIR/skills/$n/SKILL.md" "$src"
+  row skill "$n" "$PI_DIR/skills/$n/SKILL.md" "$src" "${d%/}"
 done
 
 # User-level hooks.
