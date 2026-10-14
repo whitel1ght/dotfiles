@@ -481,7 +481,7 @@ personal links.
 `~/.pi/agent/` by `plink`. Authentication, sessions, and installed packages stay
 machine-local. The default model is `opencode-go/longcat-2.5`; delegation uses
 pinned upstream `pi-subagents` with named agents and strict session-model scope,
-not the archived custom runtime or Claude Bridge.
+not Claude Bridge.
 
 See [pi/README.md](pi/README.md) for the configuration map, authentication,
 model-selection policy, extensions, relinking instructions, and verification.
