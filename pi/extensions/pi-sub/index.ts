@@ -58,9 +58,14 @@ const HOTKEY = "ctrl+space";
  * pi's --skill wants a path. A bare name means a skill installed in pi's own
  * skills dir; anything with a slash is a path relative to the session cwd.
  */
+/** A path the model wrote: `~/x` is under home, anything else is relative to `base`. */
+export function resolvePath(base: string, p: string): string {
+  return p === "~" || p.startsWith("~/") ? join(homedir(), p.slice(1)) : resolve(base, p);
+}
+
 export function resolveSkill(skill: string, cwd: string): string {
   const path = skill.includes("/")
-    ? resolve(cwd, skill)
+    ? resolvePath(cwd, skill)
     : join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "skills", skill);
   if (!existsSync(path)) throw new Error(`pi-sub: skill not found: ${skill} (looked at ${path})`);
   return path;
@@ -232,7 +237,7 @@ export default function piSub(pi: ExtensionAPI) {
         model: p.model,
         label: p.label ?? (p.task.split("\n")[0].slice(0, 60) || "subagent task"),
         task: p.task,
-        cwd: p.cwd ? resolve(ctx.cwd, p.cwd) : ctx.cwd,
+        cwd: p.cwd ? resolvePath(ctx.cwd, p.cwd) : ctx.cwd,
         skills: (p.skills ?? []).map((sk) => resolveSkill(sk, ctx.cwd)),
         extras: p.with ?? [],
         ownerSession: session,

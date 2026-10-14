@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import piSub from "./index.ts";
+import piSub, { resolvePath } from "./index.ts";
 import { readEvents } from "./helpers.ts";
 import { deliverPending } from "./runtime.ts";
 import { listAgents, readMeta, stateDir, writeMeta, type Exit, type Meta } from "./state.ts";
@@ -656,4 +656,11 @@ test("/agents adopt moves a handed-off session's agents here", async (t) => {
   } finally {
     handlers.session_shutdown({});
   }
+});
+
+test("resolvePath expands ~ and resolves the rest against the base", () => {
+  assert.equal(resolvePath("/base", "~/wiki"), join(homedir(), "wiki"));
+  assert.equal(resolvePath("/base", "~"), homedir());
+  assert.equal(resolvePath("/base", "sub"), "/base/sub");
+  assert.equal(resolvePath("/base", "/abs"), "/abs");
 });
