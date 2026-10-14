@@ -2,7 +2,6 @@
   "defaultModel": "longcat-2.5",
   "defaultProvider": "opencode-go",
   "packages": [
-    "npm:@ollama/pi-web-search",
     "git:github.com/obra/superpowers",
     "npm:pi-web-access",
     "npm:@juicesharp/rpiv-todo",
