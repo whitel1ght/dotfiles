@@ -288,6 +288,26 @@ test("deliverPending: several exits queued in order, oldest first", () => {
   }
 });
 
+test("deliverPending ordinals follow started_at, not id order", () => {
+  const root = sandbox();
+  try {
+    const later = meta({ id: "20261014-101500-01aa", started_at: "2026-10-14T10:02:00Z" });
+    const earlier = meta({ id: "20261014-101500-02bb", started_at: "2026-10-14T10:01:00Z" });
+    for (const m of [later, earlier]) {
+      writeMeta(m);
+      writeExit(m.id, { code: 0, signal: null, ended_at: "2026-10-14T10:04:12Z", how: "done" });
+    }
+    const sent: string[] = [];
+    deliverPending("sess-a", (t) => sent.push(t));
+    assert.match(sent[0], /#1 worker/);
+    assert.ok(sent[0].includes("02bb"), "the earlier-started agent is #1");
+    assert.match(sent[1], /#2 worker/);
+    assert.ok(sent[1].includes("01aa"), "the later-started agent is #2");
+  } finally {
+    cleanup(root);
+  }
+});
+
 test("deliverPending skips other owners, running agents, and the delivered", () => {
   const root = sandbox();
   try {

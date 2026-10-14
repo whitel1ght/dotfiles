@@ -23,6 +23,8 @@ export type LaunchOpts = {
   ownerSession: string;
   ownerPid: number;
   maxMinutes: number;
+  /** Idle-flag threshold in minutes; 0 disables (the caller resolves defaults). */
+  idleMinutes?: number;
 };
 
 const runMjs = fileURLToPath(new URL("./run.mjs", import.meta.url));
@@ -122,7 +124,7 @@ export function launch(o: LaunchOpts): Meta {
     started_at: new Date().toISOString(),
     owner_session: o.ownerSession,
     owner_pid: o.ownerPid,
-    idle_minutes: 0,
+    idle_minutes: o.idleMinutes ?? 0,
     max_minutes: o.maxMinutes,
     argv,
   };

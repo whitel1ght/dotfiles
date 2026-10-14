@@ -9,7 +9,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { activity } from "./events.ts";
 import {
   agentFolder,
-  isAlive,
   num,
   obj,
   ordinalOf,
@@ -27,7 +26,7 @@ import {
 } from "./helpers.ts";
 import { launch } from "./launch.ts";
 import { loadRole } from "./roles.ts";
-import { deliverPending, stop, Watcher } from "./runtime.ts";
+import { deliverPending, isPidAlive, stop, Watcher } from "./runtime.ts";
 import { isDelivered, listAgents, orphans, owned, readExit, writeMeta } from "./state.ts";
 import { liveModels } from "../session-models/index.ts";
 
@@ -38,8 +37,11 @@ const DELEGATE_TOOLS = new Set(["acp_delegate", "acp_delegate_wait", "acp_delega
 
 const EXTRAS = ["web", "playwright"] as const;
 
+/** Idle-flag threshold unless the caller passes another; 0 disables it. */
+const DEFAULT_IDLE_MINUTES = 10;
+
 /** Hard cap for a subagent run unless the caller asks for another. */
-const DEFAULT_MAX_MINUTES = 120;
+const DEFAULT_MAX_MINUTES = 60;
 
 /** Default tail length of subagent_result. */
 const DEFAULT_LINES = 40;
@@ -58,11 +60,15 @@ export default function piSub(pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     const session = ctx.sessionManager.getSessionId();
+    // A reload fires session_start again: stop and clear any watcher from a
+    // previous start so its timers are never orphaned.
+    watcher?.stop();
+    watcher = undefined;
     // Exits recorded while this session was down are delivered right away.
     deliverPending(session, send);
     watcher = new Watcher(session, () => {}, send);
     watcher.start();
-    const found = orphans(listAgents(), session, isAlive);
+    const found = orphans(listAgents(), session, isPidAlive);
     if (found.length > 0) {
       const lines = found.map((m) => `- ${m.id} ${m.role} (${m.model}) · ${m.label}`);
       send(`[pi-sub] ${found.length} orphaned agent(s) from dead sessions (adopt with subagent_adopt):\n${lines.join("\n")}`);
@@ -97,8 +103,8 @@ export default function piSub(pi: ExtensionAPI) {
         skills: strArr("Skill names to enable in the child"),
         with: strArr('Extra capabilities: "web" (web access) or "playwright" (browser)'),
         label: str("Short label shown in wake messages"),
-        idle_minutes: num("Flag this session when the agent has been quiet this long (default: off)"),
-        max_minutes: num("Hard timeout: stop the agent after this many minutes (default 120)"),
+        idle_minutes: num("Flag this session when the agent has been quiet this long (default 10; 0 disables it)"),
+        max_minutes: num("Hard timeout: stop the agent after this many minutes (default 60)"),
       },
       ["role", "model", "task"],
     ),
@@ -127,14 +133,9 @@ export default function piSub(pi: ExtensionAPI) {
         extras: p.with ?? [],
         ownerSession: session,
         ownerPid: process.pid,
+        idleMinutes: p.idle_minutes ?? DEFAULT_IDLE_MINUTES,
         maxMinutes: p.max_minutes ?? DEFAULT_MAX_MINUTES,
       });
-      if ((p.idle_minutes ?? 0) > 0) {
-        // launch always writes idle_minutes 0; run.mjs reads only argv/cwd, so
-        // this rewrite is invisible to the child and read fresh by the watcher.
-        meta.idle_minutes = p.idle_minutes!;
-        writeMeta(meta);
-      }
       const ordinal = ordinalOf(session, meta.id);
       return {
         content: [
@@ -257,17 +258,13 @@ export default function piSub(pi: ExtensionAPI) {
       const mine = owned(listAgents(), session).filter((m) => readExit(m.id) === undefined || !isDelivered(m.id));
       for (const m of mine) writeMeta({ ...m, handoff_from: session });
       const lines = mine.map((m) => `- #${ordinalOf(session, m.id)} ${m.role} (${m.model}) · ${m.label}`);
-      return {
-        content: [
-          text(
-            [
-              mine.length > 0 ? `Handed off ${mine.length} agent(s) to the next session:` : "No agents to hand off.",
-              ...lines,
-              `In the next session, run: subagent_adopt({ from: "${session}" })`,
-            ].join("\n"),
-          ),
-        ],
-      };
+      const parts = [
+        mine.length > 0 ? `Handed off ${mine.length} agent(s) to the next session:` : "No agents to hand off.",
+        ...lines,
+      ];
+      // With nothing to hand off there is no pickup command to print.
+      if (mine.length > 0) parts.push(`In the next session, run: subagent_adopt({ from: "${session}" })`);
+      return { content: [text(parts.join("\n"))] };
     },
   });
 }

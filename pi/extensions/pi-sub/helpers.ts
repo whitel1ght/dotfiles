@@ -40,20 +40,15 @@ export const obj = (properties: Record<string, unknown>, required: string[]): TS
 
 export const agentFolder = (id: string) => join(stateDir(), id);
 
-/** kill(pid, 0) liveness probe; EPERM means alive but not signallable. */
-export function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err: any) {
-    return err?.code === "EPERM";
-  }
+/** Agents in started_at order (tie-break id): the one ordinal-scheme order. */
+export function byStartedAt<T extends { started_at: string; id: string }>(a: T, b: T): number {
+  return a.started_at === b.started_at ? a.id.localeCompare(b.id) : a.started_at.localeCompare(b.started_at);
 }
 
 /** #N of an agent among its owner's agents, in started_at order, 1-based. */
 export function ordinalOf(session: string, id: string): number {
   const rank = owned(listAgents(), session)
-    .sort((a, b) => (a.started_at === b.started_at ? a.id.localeCompare(b.id) : a.started_at.localeCompare(b.started_at)))
+    .sort(byStartedAt)
     .findIndex((m) => m.id === id);
   if (rank === -1) throw new Error(`pi-sub: agent ${id} is not owned by this session`);
   return rank + 1;
@@ -66,16 +61,28 @@ export function tailLines(text: string, lines: number): string {
   return all.slice(Math.max(0, all.length - lines)).join("\n");
 }
 
-/** The events.jsonl records of an agent, or [] when there are none yet. */
+/**
+ * The events.jsonl records of an agent, or [] when there are none yet. The
+ * wrapper appends mid-record, so a partial (or otherwise bad) line is
+ * expected: only that line is skipped, the rest are kept.
+ */
 export function readEvents(id: string): object[] {
+  let raw: string;
   try {
-    return readFileSync(join(agentFolder(id), "events.jsonl"), "utf8")
-      .split("\n")
-      .filter((line) => line.trim() !== "")
-      .map((line) => JSON.parse(line));
+    raw = readFileSync(join(agentFolder(id), "events.jsonl"), "utf8");
   } catch {
     return [];
   }
+  const events: object[] = [];
+  for (const line of raw.split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      events.push(JSON.parse(line) as object);
+    } catch {
+      // Unparseable line: skip only this one.
+    }
+  }
+  return events;
 }
 
 /** The text of a file in an agent dir, or undefined when it is not there yet. */

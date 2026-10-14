@@ -6,6 +6,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import piSub from "./index.ts";
+import { readEvents } from "./helpers.ts";
+import { deliverPending } from "./runtime.ts";
 import { listAgents, readMeta, stateDir, writeMeta, type Exit, type Meta } from "./state.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -139,6 +141,11 @@ async function waitFor(what: string, ok: () => boolean, ms = 10000): Promise<voi
   assert.ok(ok(), `timed out waiting for ${what}`);
 }
 
+/** Launch tests: the detached wrapper must finish writing before t.after removes the state dir. */
+async function waitForExit(id: string): Promise<void> {
+  await waitFor(`exit.json of ${id}`, () => existsSync(join(stateDir(), id, "exit.json")), 5000);
+}
+
 test("registers nothing under PI_SUBAGENT", (t) => {
   const saved = process.env.PI_SUBAGENT;
   process.env.PI_SUBAGENT = "1";
@@ -231,17 +238,69 @@ test("launch returns the id and the agent folder", async (t) => {
   assert.ok(text(result).includes(join(stateDir(), m.id)), "folder in result");
   assert.match(text(result), /woken when it finishes; do not poll/);
   assert.ok(existsSync(join(stateDir(), m.id, "meta.json")));
+  await waitForExit(m.id);
 });
 
-test("defaults: no idle flagging, a 120-minute cap, cwd from the session", async (t) => {
+test("defaults: idle flagging after 10 minutes, a 60-minute cap, cwd from the session", async (t) => {
   const root = sandbox(t);
   const { pi, tools } = stubPi();
   piSub(pi);
   await exec(tools[0], { role: "worker", model: "p/m", task: "t" }, stubCtx(root));
   const m = listAgents()[0];
-  assert.equal(m.idle_minutes, 0);
-  assert.equal(m.max_minutes, 120);
+  assert.equal(m.idle_minutes, 10);
+  assert.equal(m.max_minutes, 60);
   assert.equal(m.cwd, root);
+  await waitForExit(m.id);
+});
+
+test("explicit 0 disables idle flagging and the hard cap", async (t) => {
+  const root = sandbox(t);
+  const { pi, tools } = stubPi();
+  piSub(pi);
+  await exec(tools[0], { role: "worker", model: "p/m", task: "t", idle_minutes: 0, max_minutes: 0 }, stubCtx(root));
+  const m = listAgents()[0];
+  assert.equal(m.idle_minutes, 0);
+  assert.equal(m.max_minutes, 0);
+  await waitForExit(m.id);
+});
+
+test("the launch result and the wake message show the same #N", async (t) => {
+  const root = sandbox(t);
+  const { pi, tools } = stubPi();
+  piSub(pi);
+  const ctx = stubCtx(root);
+  const result = await exec(tools[0], { role: "worker", model: "p/m", task: "t", label: "mine" }, ctx);
+  const m = listAgents()[0];
+  assert.match(text(result), /#1 worker \(p\/m\) started/);
+  // A sibling whose id sorts first but that started later: #N follows
+  // started_at, so the launched agent stays #1 in the wake message too.
+  writeMeta(
+    meta({ id: "20261013-000000-00zz", started_at: new Date(Date.parse(m.started_at) + 60_000).toISOString(), pid: DEAD_PID }),
+  );
+  await waitForExit(m.id);
+  const sent: string[] = [];
+  deliverPending("sess-main", (msg) => sent.push(msg));
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /\[pi-sub\] #1 worker \(p\/m\) done .* · mine/);
+});
+
+test("readEvents skips only unparseable lines, keeping the rest", (t) => {
+  const root = sandbox(t);
+  const m = meta({ id: "20261014-100000-20ev", pid: DEAD_PID });
+  writeMeta(m);
+  const ev = (txt: string) =>
+    JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: txt }] } });
+  // A bad line mid-file and a truncated trailing line (expected while the
+  // child is mid-append): both are skipped, the good ones survive.
+  writeFileSync(
+    join(stateDir(), m.id, "events.jsonl"),
+    [ev("first"), `{"type":"mess`, ev("second"), `{"trailing partial`].join("\n") + "\n",
+  );
+  const evts = readEvents(m.id) as any[];
+  assert.deepEqual(
+    evts.map((e) => e.message.content[0].text),
+    ["first", "second"],
+  );
 });
 
 test("result tails result.md when exited and activity when running", async (t) => {
@@ -296,11 +355,12 @@ test("stop reports an unknown agent and stops a running one as main", async (t) 
   const id = listAgents()[0].id;
   const dir = join(stateDir(), id);
   await waitFor("child to start", () => existsSync(join(dir, "events.jsonl")));
-  await exec(tools[1], { id }, ctx);
+  const stopResult = await exec(tools[1], { id }, ctx);
   await waitFor("exit.json after stop", () => existsSync(join(dir, "exit.json")));
   const x = JSON.parse(readFileSync(join(dir, "exit.json"), "utf8"));
   assert.equal(x.how, "stopped");
   assert.equal(x.by, "main");
+  assert.match(text(stopResult), new RegExp(`^Stopped ${id}\\. The wake message follows when it exits\\.$`));
   assert.match(text(result), /do not poll/);
 });
 
@@ -321,6 +381,15 @@ test("handoff marks running and undelivered agents only", async (t) => {
   assert.equal(readMeta(running.id).handoff_from, "sess-main");
   assert.equal(readMeta(undelivered.id).handoff_from, "sess-main");
   assert.equal(readMeta(delivered.id).handoff_from, undefined);
+});
+
+test("handoff with no unfinished agents says so without the adopt call", async (t) => {
+  const root = sandbox(t);
+  const { pi, tools } = stubPi();
+  piSub(pi);
+  const result = text(await exec(tools[4], {}, stubCtx(root)));
+  assert.match(result, /No agents to hand off/);
+  assert.ok(!result.includes("subagent_adopt"), "nothing to hand off: no adopt call printed");
 });
 
 test("adopt by from re-owns the handed-off agents, and only those", async (t) => {
@@ -410,6 +479,27 @@ test("session_start delivers pending runs and lists orphans", async (t) => {
     assert.ok(orphanMsg.includes(orphan.id));
     assert.match(orphanMsg, /subagent_adopt/);
     // The pending run is delivered exactly once, not again by the watcher.
+    const wakes = sent.filter((s) => /done in/.test(s.message.content));
+    assert.equal(wakes.length, 1);
+  } finally {
+    handlers.session_shutdown({});
+  }
+});
+
+test("session_start is idempotent: a second start never leaks the first watcher", async (t) => {
+  const root = sandbox(t);
+  const { pi, handlers, sent } = stubPi();
+  piSub(pi);
+
+  const pending = meta({ id: "20261014-100000-13p", started_at: "2026-10-14T10:00:00Z" });
+  writeMeta(pending);
+  mark(pending.id, { exit: exit("done") });
+
+  try {
+    handlers.session_start({}, stubCtx(root));
+    handlers.session_start({}, stubCtx(root));
+    // Still exactly one wake for one finished run: the first watcher was
+    // stopped and cleared, not orphaned alongside the second.
     const wakes = sent.filter((s) => /done in/.test(s.message.content));
     assert.equal(wakes.length, 1);
   } finally {

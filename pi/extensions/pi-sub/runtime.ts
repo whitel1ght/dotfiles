@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, statSync, watch } from "node:fs";
 import { join } from "node:path";
 
+import { byStartedAt, ordinalOf } from "./helpers.ts";
 import {
   atomicWrite,
   isDelivered,
@@ -186,12 +187,13 @@ export async function stop(id: string, by: "user" | "main" | "timeout", opts: St
  * message twice. Returns the messages that were sent.
  */
 export function deliverPending(session: string, send: Send): string[] {
-  const mine = owned(listAgents(), session);
+  const mine = owned(listAgents(), session).sort(byStartedAt);
   const sent: string[] = [];
-  mine.forEach((m, i) => {
+  mine.forEach((m) => {
     const x = readExit(m.id);
     if (x === undefined || isDelivered(m.id)) return;
-    const text = wakeText(m, x, i + 1);
+    // One ordinal scheme everywhere (helpers.ordinalOf): started_at order.
+    const text = wakeText(m, x, ordinalOf(session, m.id));
     send(text);
     markDelivered(m.id);
     sent.push(text);
@@ -360,11 +362,11 @@ export class Watcher {
       let changed = false;
       const now = this.now();
       const mine = owned(listAgents(), this.session);
-      mine.forEach((m, index) => {
+      mine.forEach((m) => {
         // One bad agent dir (corrupt files, a throwing send) must not stop
         // the others.
         try {
-          if (this.handleAgent(m, index + 1, now)) changed = true;
+          if (this.handleAgent(m, ordinalOf(this.session, m.id), now)) changed = true;
         } catch (e) {
           this.report(e);
         }
@@ -401,7 +403,8 @@ function killGroup(pgid: number, signal: NodeJS.Signals): void {
   }
 }
 
-function isPidAlive(pid: number): boolean {
+/** kill(pid, 0) liveness probe; EPERM means alive but not signallable. */
+export function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
