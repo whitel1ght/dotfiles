@@ -618,7 +618,7 @@ test("session_start sets the footer from this session's agents", (t) => {
   const { ctx, status } = uiCtx(root);
   try {
     handlers.session_start({}, ctx);
-    assert.match(status[status.length - 1] ?? "", /^subagents ●0 run ✓1 ✗0 ■0  ctrl\+space$/);
+    assert.match(status[status.length - 1] ?? "", /^agents ✓1$/);
   } finally {
     handlers.session_shutdown({});
   }
@@ -667,32 +667,34 @@ test("resolvePath expands ~ and resolves the rest against the base", () => {
   assert.equal(resolvePath("/base", "/abs"), "/abs");
 });
 
-test("a second shortcut press while open does not open another overlay", async (t) => {
+test("a second shortcut press while open closes the overlay instead of opening another", async (t) => {
   const root = sandbox(t);
   const { pi, handlers, shortcuts } = stubPi();
   piSub(pi);
   const { ctx, shown } = uiCtx(root);
   let release!: () => void;
+  let dones = 0;
   ctx.ui.custom = async (factory: any, options: any) => {
-    let closed = false;
-    const c = factory({ requestRender() {}, terminal: { rows: 30 } }, theme, {}, () => (closed = true));
-    shown.push({ c, options, closed: () => closed });
+    const c = factory({ requestRender() {}, terminal: { rows: 30 } }, theme, {}, () => {
+      dones++;
+      release();
+    });
+    shown.push({ c, options });
     await new Promise<void>((r) => (release = r));
   };
   try {
     handlers.session_start({}, ctx);
     const first = shortcuts["ctrl+space"].handler(ctx);
     await shortcuts["ctrl+space"].handler(ctx);
-    assert.equal(shown.length, 1);
-    shown[0].c.handleInput("\x00");
-    assert.ok(shown[0].closed());
-    release();
     await first;
+    assert.equal(shown.length, 1);
+    assert.equal(dones, 1);
+    assert.equal(shown[0].c.timer, undefined);
     const again = shortcuts["ctrl+space"].handler(ctx);
     assert.equal(shown.length, 2);
     shown[1].c.handleInput("\x00");
-    release();
     await again;
+    assert.equal(dones, 2);
   } finally {
     handlers.session_shutdown({});
   }

@@ -31,7 +31,7 @@ import { launch } from "./launch.ts";
 import { loadRole } from "./roles.ts";
 import { deliverPending, flagText, isPidAlive, stop, Watcher } from "./runtime.ts";
 import { isDelivered, listAgents, orphans, owned, readExit, writeMeta } from "./state.ts";
-import { AgentsOverlay, footerText, visibleRows } from "./ui.ts";
+import { AgentsOverlay, footerText, plain, visibleRows } from "./ui.ts";
 import { liveModels } from "../session-models/index.ts";
 
 const WAKE_TYPE = "pi-sub";
@@ -103,7 +103,9 @@ export default function piSub(pi: ExtensionAPI) {
       if (!ctx.hasUI) return;
       const mine = visibleRows(listAgents(), session, { showFinished: false, filter: "" }, new Date(), isPidAlive)
         .filter((r) => !r.orphan);
-      ctx.ui.setStatus("pi-sub", footerText(mine, HOTKEY));
+      const t = ctx.ui.theme;
+      const paint = t ? { fg: (c: string, s: string) => t.fg(c, s), bg: (c: string, s: string) => t.bg(c, s), bold: (s: string) => t.bold(s) } : plain;
+      ctx.ui.setStatus("pi-sub", footerText(mine, paint));
     };
     // A reload fires session_start again: stop and clear any watcher from a
     // previous start so its timers are never orphaned.
@@ -147,6 +149,7 @@ export default function piSub(pi: ExtensionAPI) {
   };
 
   let overlayOpen = false;
+  let overlay: AgentsOverlay | undefined;
 
   const openOverlay = async (ctx: any, openId?: string) => {
     if (!ctx.hasUI || overlayOpen) return;
@@ -154,7 +157,7 @@ export default function piSub(pi: ExtensionAPI) {
     try {
       await ctx.ui.custom(
         (tui: any, theme: any, _kb: unknown, done: (r: undefined) => void) =>
-          new AgentsOverlay(
+          (overlay = new AgentsOverlay(
             {
               session,
               agents: listAgents,
@@ -175,18 +178,19 @@ export default function piSub(pi: ExtensionAPI) {
               },
             },
             openId,
-          ),
+          )),
         { overlay: true, overlayOptions: { width: "90%", maxHeight: "80%", anchor: "center" } },
       );
     } finally {
       overlayOpen = false;
+      overlay = undefined;
     }
     refreshFooter();
   };
 
   pi.registerShortcut(HOTKEY, {
     description: "Subagents: list, open, stop, flag",
-    handler: (ctx) => openOverlay(ctx),
+    handler: (ctx) => (overlay ? overlay.close() : openOverlay(ctx)),
   });
 
   pi.registerCommand("agents", {

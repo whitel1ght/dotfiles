@@ -184,7 +184,18 @@ test("footerText: counts, cleared when empty", () => {
     { meta: meta("b"), exit: exit("done"), ordinal: 2, orphan: false },
     { meta: meta("c"), exit: exit("stopped"), ordinal: 3, orphan: false },
   ];
-  assert.equal(footerText(rows), "subagents ●1 run ✓1 ✗0 ■1  ctrl+space");
+  assert.equal(footerText(rows), "agents ● 1 running · ■1");
+  assert.equal(footerText(rows.slice(1)), "agents ■1 ✓1");
+  assert.equal(footerText([{ meta: meta("d"), exit: exit("failed"), ordinal: 1, orphan: false }]), "agents ✗1");
+});
+
+test("footerText: colours by state, dim label", () => {
+  const p = { fg: (c: string, s: string) => `<${c}>${s}</>`, bg: (_c: string, s: string) => s, bold: (s: string) => s };
+  const rows: Row[] = [
+    { meta: meta("a"), ordinal: 1, orphan: false },
+    { meta: meta("b"), exit: exit("failed"), ordinal: 2, orphan: false },
+  ];
+  assert.equal(footerText(rows, p), "<dim>agents</> <accent>● 1 running</><dim> · </><error>✗1</>");
 });
 
 test("AgentsOverlay: keys drive actions; q closes and stops the timer", (t) => {

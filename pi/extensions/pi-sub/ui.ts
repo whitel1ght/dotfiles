@@ -309,10 +309,14 @@ function logSegs(l: string): Seg[] {
 }
 
 /** Footer status for this session's agents; undefined (cleared) when it has none. */
-export function footerText(mine: Row[], hotkey = "ctrl+space"): string | undefined {
+export function footerText(mine: Row[], p: Paint = plain): string | undefined {
   if (mine.length === 0) return undefined;
   const c = counts(mine);
-  return `subagents ●${c.run} run ✓${c.done} ✗${c.failed} ■${c.stopped}  ${hotkey}`;
+  const part = (n: number, glyph: string, state: string) => (n > 0 ? p.fg(STATE_COLOR[state], `${glyph}${n}`) : undefined);
+  const rest = [part(c.failed, "✗", "failed"), part(c.stopped, "■", "stopped"), c.run > 0 ? undefined : part(c.done, "✓", "done")];
+  const running = c.run > 0 ? p.fg(STATE_COLOR.run, `● ${c.run} running`) : undefined;
+  const parts = [running, ...rest].filter((s): s is string => s !== undefined);
+  return `${p.fg("dim", "agents")} ${parts.join(running ? p.fg("dim", " · ") : " ")}`;
 }
 
 export type OverlayDeps = {
@@ -375,11 +379,7 @@ export class AgentsOverlay {
   handleInput(data: string): void {
     const raw = this.deps.parse(data);
     if (raw === undefined) return;
-    if (raw === this.deps.hotkey) {
-      this.dispose();
-      this.deps.done();
-      return;
-    }
+    if (raw === this.deps.hotkey) return this.close();
     const key = translate(raw, this.deps.rebinds, this.view.mode);
     const rows = this.rows();
     const h = this.deps.rowsOnScreen();
@@ -392,13 +392,14 @@ export class AgentsOverlay {
     }
     const next = reduce(this.view, key, rows, { page, log });
     this.view = next.view;
-    if (next.action?.close) {
-      this.dispose();
-      this.deps.done();
-      return;
-    }
+    if (next.action?.close) return this.close();
     if (next.action) this.deps.onAction(next.action);
     this.deps.requestRender();
+  }
+
+  close(): void {
+    this.dispose();
+    this.deps.done();
   }
 
   render(width: number): string[] {
