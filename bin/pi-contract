@@ -161,7 +161,7 @@ cat > "$T/launch.ts" <<'EOF'
 import { launch } from "PISUB/launch.ts";
 import { loadRole } from "PISUB/roles.ts";
 const m = launch({
-  role: loadRole("researcher"), model: process.argv[2], label: "contract probe",
+  role: loadRole("worker"), model: process.argv[2], label: "contract probe",
   task: "Reply with exactly this line and nothing else: PISUB OK",
   cwd: "/tmp", skills: [], extras: [], ownerSession: process.argv[3], ownerPid: process.pid,
   maxMinutes: 5, idleMinutes: 0,
@@ -211,11 +211,11 @@ EOF
       "cd /tmp && PROBE_OUT='$T/wake.json' PI_CODING_AGENT_DIR='$T' PI_CODING_AGENT_SESSION_DIR='$T/sessions' \
        PI_SUB_STATE_DIR='$PI_SUB_STATE_DIR' PI_SUB_AGENTS_DIR='$PI_SUB_AGENTS_DIR' PI_OFFLINE=1 \
        pi --session-id '$SID' --provider '$PROVIDER' --model '$MODEL_ID' --models '$MODEL' --thinking off"
-    for _ in $(seq 1 90); do grep -q "\[pi-sub\] #1 researcher" "$T/wake.json" 2>/dev/null && break; sleep 1; done
+    for _ in $(seq 1 90); do grep -q "\[pi-sub\] #1 worker" "$T/wake.json" 2>/dev/null && break; sleep 1; done
     # Pi writes the session file only once the turn has a reply; killing earlier loses it.
     for _ in $(seq 1 60); do cat "$T"/sessions/*"$SID"*.jsonl 2>/dev/null | grep -q '"role":"assistant"' && break; sleep 1; done
     tmux kill-session -t "$tm" 2>/dev/null || true
-    if grep -q "\[pi-sub\] #1 researcher" "$T/wake.json" 2>/dev/null; then
+    if grep -q "\[pi-sub\] #1 worker" "$T/wake.json" 2>/dev/null; then
       echo "PASS  pi-sub: reopening the owner session delivered the exit and started a turn unprompted"
     else
       echo "FAIL  pi-sub: no turn carrying the [pi-sub] wake-up started in the reopened session"

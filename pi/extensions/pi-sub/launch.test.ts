@@ -31,6 +31,7 @@ function cleanup(root: string) {
   delete process.env.PI_SUB_PI_BIN;
   delete process.env.FAKE_SLEEP;
   delete process.env.FAKE_EXIT;
+  delete process.env.FAKE_HEADER_ONLY;
 }
 
 async function waitFor(what: string, ok: () => boolean, ms = 10000): Promise<void> {
@@ -68,9 +69,9 @@ async function runChild(opts: { task?: string } = {}) {
  * Drive run.mjs directly against a hand-built agent dir, for the failure
  * modes launch() itself rejects (missing meta cwd, pre-seeded stop file).
  */
-async function runWrapper(o: { cwd: string; piBin?: string; stop?: string }) {
+async function runWrapper(o: { cwd: string; piBin?: string; stop?: string; meta?: string }) {
   const dir = mkdtempSync(join(tmpdir(), "pi-sub-wrapper-"));
-  writeFileSync(join(dir, "meta.json"), JSON.stringify({ argv: ["pi", "do it"], cwd: o.cwd }));
+  writeFileSync(join(dir, "meta.json"), o.meta ?? JSON.stringify({ argv: ["pi", "do it"], cwd: o.cwd }));
   if (o.stop !== undefined) writeFileSync(join(dir, "stop-request.json"), o.stop);
   spawn(process.execPath, [join(here, "run.mjs"), dir], {
     env: { ...process.env, PI_SUB_PI_BIN: o.piBin ?? fakePi },
@@ -110,7 +111,7 @@ test("argv matches the spec order", () => {
     "--no-tests",
     "-e", join(npmRoot(), "pi-web-access/dist"),
     "--skill", join(npmRoot(), "pi-playwright/skills/playwright-browser"),
-    "do it",
+    "--", "do it",
   ]);
 });
 
@@ -129,6 +130,25 @@ test("task passes verbatim", () => {
   // A leading-dash task is preceded by `--` so pi treats it as the message.
   const dash = buildArgv({ role: reader, model: "p/m", task: "-task", skills: [], extras: [], promptFile: "p" });
   assert.deepEqual(dash.slice(-2), ["--", "-task"]);
+});
+
+test("worker task is separated from trailing extension flags", () => {
+  const argv = buildArgv({ role: writer, model: "p/m", task: "plain task", skills: [], extras: [], promptFile: "p" });
+  assert.deepEqual(argv.slice(-3), ["--no-tests", "--", "plain task"]);
+});
+
+test("header-only zero exit is a failure", async () => {
+  const root = sandbox();
+  process.env.FAKE_HEADER_ONLY = "1";
+  try {
+    const { exit, result } = await runChild();
+    assert.equal(exit.how, "failed");
+    assert.equal(exit.code, 0);
+    assert.match(exit.error, /no assistant response/i);
+    assert.equal(result, "");
+  } finally {
+    cleanup(root);
+  }
 });
 
 test("read-only role gets no -e", () => {
@@ -216,6 +236,17 @@ test("missing meta cwd still writes a failed exit.json", async () => {
     assert.equal(result, "");
   } finally {
     cleanup(root);
+  }
+});
+
+test("malformed meta.json still writes a failed exit.json", async () => {
+  const { dir, exit, result } = await runWrapper({ cwd: tmpdir(), meta: "{not json" });
+  try {
+    assert.equal(exit.how, "failed");
+    assert.match(exit.error, /SyntaxError/);
+    assert.equal(result, "");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

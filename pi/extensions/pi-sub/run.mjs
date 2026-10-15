@@ -17,7 +17,15 @@ if (!dir) {
   process.stderr.write("usage: node run.mjs <agentDir>\n");
   process.exit(1);
 }
-const meta = JSON.parse(readFileSync(join(dir, "meta.json"), "utf8"));
+let meta;
+try {
+  meta = JSON.parse(readFileSync(join(dir, "meta.json"), "utf8"));
+} catch (err) {
+  atomicWrite(join(dir, "result.md"), "");
+  const exit = { code: null, signal: null, ended_at: new Date().toISOString(), how: "failed", error: String(err) };
+  atomicWrite(join(dir, "exit.json"), `${JSON.stringify(exit, null, 2)}\n`);
+  process.exit(1);
+}
 
 const piBin = process.env.PI_SUB_PI_BIN ?? "pi";
 const out = openSync(join(dir, "events.jsonl"), "w");
@@ -51,20 +59,23 @@ child.on("error", (err) => {
 child.on("close", (code, signal) => {
   if (ended) return;
   ended = true;
-  atomicWrite(join(dir, "result.md"), finalText(readEvents(join(dir, "events.jsonl"))));
+  const events = readEvents(join(dir, "events.jsonl"));
+  const hasAssistant = events.some((ev) => ev.type === "message_end" && ev.message?.role === "assistant");
+  atomicWrite(join(dir, "result.md"), finalText(events));
   const stopPath = join(dir, "stop-request.json");
   let how = "failed";
   let by;
   if (existsSync(stopPath)) {
     how = "stopped";
     by = readStopBy(stopPath);
-  } else if (code === 0) {
+  } else if (code === 0 && hasAssistant) {
     how = "done";
   }
-  const exit = { code, signal, ended_at: new Date().toISOString(), how, ...(by !== undefined ? { by } : {}) };
+  const error = how === "failed" && code === 0 ? "Pi exited with no assistant response" : undefined;
+  const exit = { code, signal, ended_at: new Date().toISOString(), how, ...(by !== undefined ? { by } : {}), ...(error ? { error } : {}) };
   // exit.json goes last: its presence is what pollers treat as "the run ended".
   atomicWrite(join(dir, "exit.json"), `${JSON.stringify(exit, null, 2)}\n`);
-  process.exit(code ?? 1);
+  process.exit(how === "failed" ? code || 1 : code ?? 1);
 });
 
 // A malformed or half-written stop request must not keep exit.json from

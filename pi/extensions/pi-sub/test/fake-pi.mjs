@@ -8,6 +8,11 @@
 const sleep = Number(process.env.FAKE_SLEEP ?? 0);
 if (sleep > 0) await new Promise((resolve) => setTimeout(resolve, sleep));
 
+if (process.env.FAKE_HEADER_ONLY === "1") {
+  console.log(JSON.stringify({ type: "session", version: 3, id: "test", timestamp: new Date().toISOString(), cwd: process.cwd() }));
+  process.exit(0);
+}
+
 const argv = process.argv.slice(2);
 const echoed = JSON.stringify({ argv, env: { PI_SUBAGENT: process.env.PI_SUBAGENT, PI_SUB_ID: process.env.PI_SUB_ID } });
 const events = [

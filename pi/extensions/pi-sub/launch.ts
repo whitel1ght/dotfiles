@@ -53,9 +53,8 @@ export function extraExtensions(role: Role, extras: string[]): string[] {
 
 /**
  * The exact child argv: `pi --mode json ... <task>`. The returned argv[0] is
- * "pi" — run.mjs spawns `$PI_SUB_PI_BIN ?? "pi"` with the rest. A task that
- * starts with "-" is passed verbatim, behind pi's `--` separator so it is
- * still treated as the message.
+ * "pi" — run.mjs spawns `$PI_SUB_PI_BIN ?? "pi"` with the rest. The `--`
+ * separator keeps extension flags from consuming the task as their value.
  */
 export function buildArgv(o: {
   role: Role;
@@ -82,8 +81,7 @@ export function buildArgv(o: {
   argv.push("--model", model, "--append-system-prompt", o.promptFile);
   for (const skill of o.skills) argv.push("--skill", skill);
   argv.push(...extraExtensions(o.role, o.extras));
-  if (o.task.startsWith("-")) argv.push("--");
-  argv.push(o.task);
+  argv.push("--", o.task);
   return argv;
 }
 
