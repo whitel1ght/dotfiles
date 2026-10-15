@@ -33,7 +33,7 @@ snap() { (cd "$FRICTION_WIKI" && find . -type f | sort | xargs cat | cksum); }
 
 # --- apply: new ---------------------------------------------------------------
 echo "apply — new groups"
-mine "$SANDBOX/d1.json" 2026-10-13 "$A|auth|high|2|Outlook not connected" "$C|tool_error|high|1|jq missing" "$COR|correction|low|3|no, not that"
+mine "$SANDBOX/d1.json" 2026-10-13 "$A|auth|high|2|Outlook not connected" "$C|tool_error|high|2|jq missing" "$COR|correction|low|3|no, not that"
 OUT="$(apply 2026-10-13 "$SANDBOX/d1.json")"
 assert_eq "F-001 F-002" "$(jq -r '[.new[].id] | join(" ")' <<<"$OUT")" "two high-confidence groups become F-001, F-002"
 assert_eq "$A" "$(jq -r '.new[0].sig' <<<"$OUT")" "new item carries the signature"
@@ -189,6 +189,91 @@ grep -q "^- F-.* — Gitlab outage made the run loop on retries (frustration)$" 
 "$SCRIPT" directions retire "$last" >/dev/null
 OUT="$("$SCRIPT" diary-section --date 2026-10-15 --mine-json "$SANDBOX/us.json")"
 assert_eq "0" "$(grep -c 'share the scope' <<<"$OUT")" "retiring one drops the suggestion below 3"
+
+# --- frustration with a proposal ------------------------------------------------
+echo "frustration — proposal"
+printf 'Script it.\n' >"$SANDBOX/fp.md"
+out="$("$SCRIPT" frustration --date 2026-10-14 --what "Slow export" --class script --sig-hint "slow export" --rung script --proposal-file "$SANDBOX/fp.md")"
+fid="$(jq -r .id <<<"$out")"
+assert_eq "open" "$(fld "$fid" status)" "day 1: proposal stored, status stays open"
+grep -q 'Script it.' "$FRICTION_WIKI/$fid.md" && pass "proposal stored on day 1" || fail "proposal stored" ""
+out="$("$SCRIPT" frustration --date 2026-10-15 --what "Slow export" --class script --sig-hint "slow export" --rung script --proposal-file "$SANDBOX/fp.md")"
+assert_eq "proposed" "$(fld "$fid" status)" "day 2: the script sets proposed"
+assert_eq "script" "$(fld "$fid" rung)" "rung stored"
+assert_eq "false" "$(jq -r .needs_proposal <<<"$out")" "and nothing is left to propose"
+
+# --- section_edit: headings in text ---------------------------------------------
+echo "set — headings in a proposal"
+printf '## Evil\nbody\n# Top\n### keep\n' >"$SANDBOX/evil.md"
+"$SCRIPT" set "$fid" --proposal-file "$SANDBOX/evil.md" --diagnosis "$(printf 'x\n## Y')"
+assert_eq "4" "$(grep -c '^## ' "$FRICTION_WIKI/$fid.md")" "still exactly the four sections"
+grep -q '^### Evil$' "$FRICTION_WIKI/$fid.md" && grep -q '^### Top$' "$FRICTION_WIKI/$fid.md" && pass "## and # are demoted to ###" || fail "demote" ""
+assert_eq "$(printf '### Evil\nbody\n### Top\n### keep')" "$(awk '/^## Proposal/{f=1;next} /^## /{f=0} f' "$FRICTION_WIKI/$fid.md" | sed '/^$/d')" "the proposal stays in its section"
+
+# --- file modes and temp files ----------------------------------------------------
+echo "files"
+assert_eq "644" "$(stat -f %Lp "$FRICTION_WIKI/$fid.md" 2>/dev/null || stat -c %a "$FRICTION_WIKI/$fid.md")" "F-file is 0644"
+assert_eq "644" "$(stat -f %Lp "$LED" 2>/dev/null || stat -c %a "$LED")" "ledger.md is 0644"
+assert_eq "0" "$(ls -A "$FRICTION_WIKI" | grep -c '\.[A-Za-z0-9]\{6\}$' | tr -d ' ')" "no temp files left behind"
+
+# --- tool_error needs 2 occurrences or 2 days ---------------------------------------
+echo "apply — tool_error"
+TE="claude:tool_error:one-off boom"
+mine "$SANDBOX/t1.json" 2026-10-20 "$TE|tool_error|high|1|boom"
+OUT="$(apply 2026-10-20 "$SANDBOX/t1.json")"
+assert_eq "0" "$(rg -l 'one-off boom' "$FRICTION_WIKI"/F-*.md 2>/dev/null | wc -l | tr -d ' ')" "a single tool_error does not get an entry"
+OUT="$(apply 2026-10-20 "$SANDBOX/t1.json")"
+assert_eq "0" "$(rg -l 'one-off boom' "$FRICTION_WIKI"/F-*.md 2>/dev/null | wc -l | tr -d ' ')" "the same day again still does not"
+mine "$SANDBOX/t2.json" 2026-10-21 "$TE|tool_error|high|1|boom"
+OUT="$(apply 2026-10-21 "$SANDBOX/t2.json")"
+assert_eq "1" "$(jq '.new | length' <<<"$OUT")" "seen again on a later day: entry created"
+mine "$SANDBOX/t3.json" 2026-10-22 "claude:tool_error:twice today|tool_error|high|2|boom"
+assert_eq "1" "$(apply 2026-10-22 "$SANDBOX/t3.json" | jq '.new | length')" "2 occurrences in one day: entry created"
+mine "$SANDBOX/t4.json" 2026-10-22 "x:auth:one auth|auth|high|1|a"
+assert_eq "1" "$(apply 2026-10-22 "$SANDBOX/t4.json" | jq '.new | length')" "other kinds are unchanged"
+
+# --- ingest -------------------------------------------------------------------------
+echo "ingest"
+rm -rf "$FRICTION_WIKI"
+mine "$SANDBOX/i1.json" 2026-10-15 "$A|auth|high|1|Outlook not connected" "$B|blocked|high|1|x"
+jq '. + {user_signals: [{text: "always script it", harness: "claude"}]}' "$SANDBOX/i1.json" >"$SANDBOX/i1u.json"
+OUT="$(apply 2026-10-15 "$SANDBOX/i1u.json")"
+assert_eq "1" "$(jq '.user_signals | length' <<<"$OUT")" "signals are passed before ingest"
+cat >"$SANDBOX/r1.json" <<'EOT'
+{"items": {"F-001": {"class": "env", "diagnosis": "Outlook auth lapsed", "rung": "config", "proposal": "## Rung\nconfig re-auth"},
+           "F-002": {"class": "external", "diagnosis": "waits on approval"}},
+ "directions": [{"rule": "Script every outage fix", "scope": "global", "quote": "always script it", "harness": "claude"}],
+ "frustrations": [{"what_went_wrong": "Slow retries", "class": "script", "sig_hint": "slow retries", "rung": "script", "proposal": "backoff"}]}
+EOT
+before="$(snap)"
+echo '{"items": {"F-001": {"class": "env", "diagnosis": "ok"}, "F-009": {"class": "env", "diagnosis": "x"}}, "directions": [{"rule": "r", "scope": "g"}]}' >"$SANDBOX/bad1.json"
+"$SCRIPT" ingest "$SANDBOX/bad1.json" --date 2026-10-15 2>"$SANDBOX/err"; assert_eq "1" "$?" "unknown id is refused"
+grep -q 'F-009: no such entry' "$SANDBOX/err" && pass "error names the id" || fail "error text" "$(cat "$SANDBOX/err")"
+assert_eq "$before" "$(snap)" "invalid input applies nothing (valid parts included)"
+for bad in '{"items": {"F-001": {"class": "bogus", "diagnosis": "x"}}}' \
+           '{"items": {"F-001": {"class": "env", "diagnosis": "x", "rung": "magic", "proposal": "p"}}}' \
+           '{"items": {"F-001": {"class": "env", "diagnosis": "x", "rung": "script"}}}' \
+           '{"items": {"F-001": {"class": "env", "diagnosis": "x", "extra": 1}}}' \
+           '{"frustrations": [{"what_went_wrong": "w", "class": "env", "sig_hint": "h"}]}' \
+           '{"directions": [{"rule": "r"}]}' 'not json'; do
+  printf '%s' "$bad" >"$SANDBOX/bad.json"
+  "$SCRIPT" ingest "$SANDBOX/bad.json" --date 2026-10-15 2>/dev/null; rc=$?
+  [ "$rc" = 1 ] && [ "$before" = "$(snap)" ] && pass "rejected, nothing applied: ${bad:0:60}" || fail "invalid input" "$bad rc=$rc"
+done
+OUT="$("$SCRIPT" ingest "$SANDBOX/r1.json" --date 2026-10-15)"
+assert_eq "proposed|env|config" "$(fld F-001 status)|$(fld F-001 class)|$(fld F-001 rung)" "item with a proposal becomes proposed"
+grep -q '^### Rung$' "$FRICTION_WIKI/F-001.md" && pass "proposal heading demoted" || fail "demote in ingest" ""
+assert_eq "wontfix|external" "$(fld F-002 status)|$(fld F-002 class)" "external becomes wontfix"
+assert_eq "D-001" "$(jq -r '.directions[0]' <<<"$OUT")" "direction added"
+grep -q '(claude)' "$FRICTION_WIKI/directions.md" && pass "direction keeps its harness" || fail "harness" ""
+assert_eq "open" "$(fld F-003 status)" "frustration entry created, open on day 1"
+assert_eq "[]" "$("$SCRIPT" apply --date 2026-10-15 --mine-json "$SANDBOX/i1u.json" | jq -c .user_signals)" "re-run apply: signals dropped once ingested"
+before="$(snap)"
+sed -i.bak 's/Script every outage fix/Always script each outage fix/' "$SANDBOX/r1.json"
+"$SCRIPT" ingest "$SANDBOX/r1.json" --date 2026-10-15 | jq -e .skipped_signals >/dev/null && pass "re-ingest skips directions and frustrations" || fail "skip" ""
+apply 2026-10-15 "$SANDBOX/i1u.json" >/dev/null
+assert_eq "$before" "$(snap)" "re-run of apply + ingest creates no new entries"
+assert_eq "1" "$(grep -c '^| D-' "$FRICTION_WIKI/directions.md")" "one direction"
 
 # --- misc ---------------------------------------------------------------------
 echo "misc"
