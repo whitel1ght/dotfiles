@@ -58,6 +58,9 @@ assert_eq "key:" "$(sed -n 2p "$f")" "written as exactly key: with no trailing s
 assert_eq "yes" "$([[ "$(basename "$f")" =~ ^[0-9]{8}T[0-9]{6}-offplan-[0-9a-f]{4}\.md$ ]] && echo yes || echo no)" "file name uses offplan in place of the key"
 f=$(run --kind progress ECFX-99 "Half way"); assert_eq "progress" "$(field "$f" kind)" "--kind overrides the default"
 f=$(run --kind handback ECFX-18169 "Back to you"); assert_eq "handback" "$(field "$f" kind)" "handback accepted"
+f=$(run --kind service --session wait-for "gitlab is back"); assert_eq "service" "$(field "$f" kind)" "service accepted without a KEY"
+assert_eq "" "$(field "$f" key)" "and with an empty key"
+f=$(run --kind service ECFX-99 "jira is back"); assert_eq "service" "$(field "$f" kind)" "service accepted with a KEY, even off the plan"
 
 f=$(run 'memory: fake'); assert_eq "yes" "$([ "$(grep -c '^memory:' "$f")" = 1 ] && echo yes || echo no)" "a summary starting with memory: is not a line starting with memory:, so only the real block is one"
 assert_eq " memory: fake" "$(sed -n 7p "$f")" "the paragraph is indented, not read as a block"
