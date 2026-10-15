@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import daily, { guardVerdict, newlyNeedsYou, runStateSection } from "./index.ts";
+import daily, { directionsSection, guardVerdict, newlyNeedsYou, runStateSection } from "./index.ts";
 
 const DAY = "2026-01-01";
 
@@ -208,4 +208,72 @@ test("registers both handlers and blocks only on a bad tick", () => {
     undefined,
   );
   cleanup(root);
+});
+
+function directionsSandbox(script: string) {
+  const root = mkdtempSync(join(tmpdir(), "daily-dir-"));
+  mkdirSync(join(root, "friction"), { recursive: true });
+  const file = join(root, "friction", "directions.md");
+  const bin = join(root, "friction-ledger");
+  const counter = join(root, "calls");
+  writeFileSync(bin, script.replaceAll("$COUNTER", counter));
+  chmodSync(bin, 0o755);
+  process.env.FRICTION_WIKI = join(root, "friction");
+  process.env.FRICTION_LEDGER_BIN = bin;
+  return { root, file, bin, counter };
+}
+
+function directionsCleanup(root: string) {
+  rmSync(root, { recursive: true, force: true });
+  delete process.env.FRICTION_WIKI;
+  delete process.env.FRICTION_LEDGER_BIN;
+}
+
+const calls = (counter: string) => (existsSync(counter) ? readFileSync(counter, "utf8").split("\n").filter(Boolean).length : 0);
+
+test("directions: injects the rendered rules, cached until the file changes", () => {
+  const { root, file, counter } = directionsSandbox('#!/bin/sh\necho x >> "$COUNTER"\ncat "$(dirname "$0")/friction/directions.md"\n');
+  writeFileSync(file, "- rule one\n");
+  const first = directionsSection();
+  assert.match(first ?? "", /^## Standing directions\n/);
+  assert.match(first ?? "", /- rule one/);
+  directionsSection();
+  directionsSection();
+  assert.equal(calls(counter), 1, "cached across requests");
+  writeFileSync(file, "- rule two\n");
+  utimesSync(file, new Date(Date.now() + 5000), new Date(Date.now() + 5000));
+  assert.match(directionsSection() ?? "", /- rule two/);
+  assert.equal(calls(counter), 2, "re-read after the mtime changed");
+  directionsCleanup(root);
+});
+
+test("directions: missing file, missing script or failing script inject nothing", () => {
+  const { root, file, bin } = directionsSandbox("#!/bin/sh\necho '- r'\n");
+  assert.equal(directionsSection(), null, "no directions file");
+  writeFileSync(file, "x");
+  rmSync(bin);
+  assert.equal(directionsSection(), null, "no script");
+  writeFileSync(bin, "#!/bin/sh\nexit 3\n");
+  chmodSync(bin, 0o755);
+  utimesSync(file, new Date(Date.now() + 9000), new Date(Date.now() + 9000));
+  assert.equal(directionsSection(), null, "failing script");
+  writeFileSync(bin, "#!/bin/sh\n:\n");
+  utimesSync(file, new Date(Date.now() + 12000), new Date(Date.now() + 12000));
+  assert.equal(directionsSection(), null, "empty render");
+  directionsCleanup(root);
+});
+
+test("directions: before_agent_start sets the section, and never throws without one", () => {
+  const { root, file } = directionsSandbox("#!/bin/sh\necho '- never retry with the model'\n");
+  const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
+  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb) } as never);
+  writeFileSync(file, "x");
+  const options = { sections: {} as Record<string, string> };
+  handlers.before_agent_start({ systemPromptOptions: options }, { ui: undefined });
+  assert.match(options.sections.standing_directions, /never retry with the model/);
+  rmSync(file);
+  const next = { sections: {} as Record<string, string> };
+  assert.doesNotThrow(() => handlers.before_agent_start({ systemPromptOptions: next }, { ui: undefined }));
+  assert.equal(next.sections.standing_directions, undefined);
+  directionsCleanup(root);
 });

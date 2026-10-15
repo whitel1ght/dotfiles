@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -73,6 +74,46 @@ export function runStateSection(): string | null {
   return cut(`${head}${blockHead}${block}${stateText}`, MAX_CHARS);
 }
 
+let directionsCache: { key: string; text: string } | null = null;
+
+/**
+ * The standing directions friction-ledger renders from ~/wiki/friction/directions.md,
+ * cached until the file's mtime changes. A missing file or script, or a failing one,
+ * is no section and never an error.
+ */
+export function directionsSection(): string | null {
+  const file = join(process.env.FRICTION_WIKI ?? join(homedir(), "wiki/friction"), "directions.md");
+  let key: string;
+  try {
+    key = `${file}:${statSync(file).mtimeMs}`;
+  } catch {
+    directionsCache = null;
+    return null;
+  }
+  if (directionsCache?.key !== key) {
+    const bin = process.env.FRICTION_LEDGER_BIN ?? join(homedir(), ".local/bin/friction-ledger");
+    let text = "";
+    try {
+      if (existsSync(bin)) {
+        text = execFileSync(bin, ["directions", "render"], {
+          encoding: "utf8",
+          timeout: 5000,
+          stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+      }
+    } catch {
+      text = "";
+    }
+    directionsCache = {
+      key,
+      text: text
+        ? `## Standing directions\nRules the user gave in earlier sessions, active until retired. Follow them.\n${text}`
+        : "",
+    };
+  }
+  return directionsCache.text || null;
+}
+
 /** Items whose needs_you flipped on since the last request. */
 const announced = new Set<string>();
 
@@ -142,6 +183,14 @@ export default function daily(pi: ExtensionAPI) {
     }
     // Omitting the key on a later turn is what removes it: pi diffs sections by name.
     if (section) event.systemPromptOptions.sections.daily_run_state = section;
+
+    let directions: string | null = null;
+    try {
+      directions = directionsSection();
+    } catch {
+      directions = null;
+    }
+    if (directions) event.systemPromptOptions.sections.standing_directions = directions;
   });
 
   pi.on("tool_call", (event, _ctx) => {
