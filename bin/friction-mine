@@ -17,8 +17,9 @@
 #
 # Prints {"date", "groups":[{sig, source, kind, count, keys, confidence, samples,
 # evidence, known, ledger_status[, regression]}]}, biggest first. Read-only: no
-# network, no model, nothing written. Corrections are guessed from the wording of
-# user prompts, so they carry confidence "low". The same failing command three or
+# network, no model, nothing written. Corrections are guessed from user prompts that
+# open with "no,", "stop", "don't", "why did you" and the like (5+ words, not a short
+# answer to an assistant question), so they carry confidence "low". The same failing command three or
 # more times in one transcript adds a `retry` record. A group whose signature is in
 # the ledger gets known=<F-id> and ledger_status; status fixed also sets regression.
 set -euo pipefail
@@ -38,7 +39,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --date) [ $# -ge 2 ] || die "--date needs a value"; date_="$2"; shift ;;
     --ledger) [ $# -ge 2 ] || die "--ledger needs a value"; ledger="$2"; shift ;;
-    -h|--help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown option $1" ;;
   esac
   shift
@@ -54,7 +55,9 @@ def flat: gsub("[\\n\\r\\t]+"; " ") | gsub("\\s+"; " ") | ltrimstr(" ") | rtrims
 def text: if type == "string" then . else ([.[]? | select(.type == "text") | .text] | join(" ")) end;
 def keyof: (. // "") | [scan("[A-Z]{2,}-[0-9]+")] | last // "";
 def rec($src; $kind; $msg; $key; $ev; $conf): {source: $src, kind: $kind, msg: ($msg | flat | .[0:200]), key: $key, evidence: $ev, confidence: $conf};
-def correction: length <= 600 and test("(^|[^a-z])(no,|don.t|stop|wrong|again|why did you|that.s not)"; "i");
+def correction($lastq): ([splits("\\s+") | select(length > 0)] | length) as $w
+  | length <= 600 and $w >= 5 and ($w > 8 or ($lastq | not))
+    and test("^\\s*(no[,.]|(nope|wrong|stop|don.t|do not|that.s not|thats not|why did you|you didn.t|you did not|undo|revert)\\b)"; "i");
 def errkind: if test("unavailable|overloaded|connection error|econn|enotfound|\\b5\\d\\d\\b"; "i") then "service_down"
   elif test("unauthori[sz]ed|\\b40[13]\\b|api key|not logged in|oauth|expired"; "i") then "auth"
   elif test("timed? ?out|timeout"; "i") then "timeout"
@@ -75,8 +78,8 @@ f="$FRICTION_DIR/$date_.jsonl"
 for f in "$RUN_DAY_DIR/$date_.md" "$RUN_DAY_DIR/done/$date_.md"; do
   [ -f "$f" ] || continue
   jq -cnR --arg f "$f" "$DEF"'
-    foreach inputs as $l ({notes: false};
-      (if $l == "notes:" then .notes = true else . end);
+    foreach inputs as $l (null;
+      null;
       ($l | select(startswith("- "))) as $b
       | ("\($f):\(input_line_number)") as $ev
       | if ($b | test(" \\| (class|retries)=")) then
@@ -85,8 +88,6 @@ for f in "$RUN_DAY_DIR/$date_.md" "$RUN_DAY_DIR/done/$date_.md"; do
           | ([$p[1:][] | select(contains("=")) | {key: split("=")[0], value: (split("=")[1:] | join("="))}] | from_entries) as $fd
           | (if (($fd.retries // "0") | tonumber? // 0) > 0 then rec("run-state"; "retry"; "item retried: retries=\($fd.retries)"; $key; $ev; "high") else empty end),
             (if $fd.needs_you == "yes" then rec("run-state"; "blocked"; "item needs you: class=\($fd.class // "-")"; $key; $ev; "high") else empty end)
-        elif (.notes and ($b | test("fail|error|retr|timeout|timed out|unavailable|denied|blocked|\\bEOF\\b|not connected|offline|refus"; "i"))) then
-          rec("run-state"; "other"; $b[2:]; ($b | keyof | ascii_upcase); $ev; "low")
         else empty end)' "$f" | emit
 done
 
@@ -119,9 +120,10 @@ if [ -d "$PI_SUB_STATE_DIR" ]; then
 fi
 
 claude_prog="$DEF"'
-foreach inputs as $e ({tools: {}};
+foreach inputs as $e ({tools: {}, lastq: false};
   if $e.type == "assistant" then
-    .tools += ([$e.message.content[]? | select(.type == "tool_use") |
+    .lastq = ([$e.message.content[]? | select(.type == "text") | .text] | join(" ") | rtrimstr(" ") | rtrimstr("\n") | endswith("?"))
+    | .tools += ([$e.message.content[]? | select(.type == "tool_use") |
       {key: .id, value: {name, cmd: (.input.command // .input.file_path // .input.pattern // .input.url // (.input | tostring))}}] | from_entries)
   else . end;
   . as $st
@@ -136,19 +138,20 @@ foreach inputs as $e ({tools: {}};
           elif ($x | startswith("[Request interrupted")) then empty
           else rec("claude"; "tool_error"; "\($t.name): \($x | split("\n")[0])"; $key; $ev; "high") + {file: input_filename, cmd: "\($t.name) \($t.cmd | flat | .[0:200])"} end),
       ($e.message.content[] | select(.type == "text") | .text | select(startswith("[Request interrupted")) | rec("claude"; "interrupt"; .; $key; $ev; "high")),
-      (($e.message.content | text) as $x | select(($e.isMeta | not) and ($x | startswith("<") | not) and ($x | startswith("[") | not) and ($x | correction)) | rec("claude"; "correction"; $x; $key; $ev; "low"))
+      (($e.message.content | text) as $x | select(($e.isMeta | not) and ($x | startswith("<") | not) and ($x | startswith("[") | not) and ($x | correction($st.lastq))) | rec("claude"; "correction"; $x; $key; $ev; "low"))
     elif $e.type == "user" and ($e.message.content | type) == "string" then
       ($e.message.content) as $x
       | if ($x | startswith("[Request interrupted")) then rec("claude"; "interrupt"; $x; $key; $ev; "high")
-        elif (($e.isMeta | not) and ($x | startswith("<") | not) and ($x | correction)) then rec("claude"; "correction"; $x; $key; $ev; "low")
+        elif (($e.isMeta | not) and ($x | startswith("<") | not) and ($x | correction($st.lastq))) then rec("claude"; "correction"; $x; $key; $ev; "low")
         else empty end
     else empty end)'
 
 pi_prog="$DEF"'
-foreach inputs as $e ({tools: {}, cwd: ""};
+foreach inputs as $e ({tools: {}, cwd: "", lastq: false};
   if $e.type == "session" then .cwd = ($e.cwd // "")
   elif $e.message.role == "assistant" then
-    .tools += ([$e.message.content[]? | select(.type == "toolCall") |
+    .lastq = ([$e.message.content[]? | select(.type == "text") | .text] | join(" ") | rtrimstr(" ") | rtrimstr("\n") | endswith("?"))
+    | .tools += ([$e.message.content[]? | select(.type == "toolCall") |
       {key: .id, value: {name, cmd: (.arguments.command // .arguments.path // .arguments.url // (.arguments | tostring))}}] | from_entries)
   else . end;
   . as $st
@@ -164,7 +167,7 @@ foreach inputs as $e ({tools: {}, cwd: ""};
       rec("pi"; ($m.errorMessage | errkind); $m.errorMessage; $key; $ev; "high")
     elif $m.role == "user" then
       ($m.content | text) as $x
-      | select($x | correction) | rec("pi"; "correction"; $x; $key; $ev; "low")
+      | select($x | correction($st.lastq)) | rec("pi"; "correction"; $x; $key; $ev; "low")
     else empty end)'
 
 # transcripts touched on or after the date; jq then filters entries by local date

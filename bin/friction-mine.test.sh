@@ -32,7 +32,7 @@ f() { jq -r "$2" <<<"$1"; }
   echo '{"ts":"2026-10-15T09:06:00+03:00","harness":"script","source":"wait-for","kind":"service_down","key":"","msg":"gitlab down 3h","sig":"wait-for:service_down:gitlab down <n>h"}'; } >"$FR/$D.jsonl"
 echo '{"ts":"2026-10-14T09:00:00+03:00","harness":"script","source":"old","kind":"other","key":"","msg":"yesterday","sig":"old:other:yesterday"}' >"$FR/2026-10-14.jsonl"
 
-# run state: one item in the live file, one in done/, notes with and without trouble
+# run state: one item in the live file, one in done/, plus notes that must not become friction
 cat >"$RD/$D.md" <<'EOT'
 # run-day 2026-10-15
 max_agents: 3
@@ -70,6 +70,7 @@ printf '%s\n' '{"type":"agent_start"}' '{"type":"auto_retry_start","attempt":1,"
 cl() { jq -cn --arg ts "$1" --arg cwd "$2" --argjson m "$3" --arg t "$4" '{type:$t, timestamp:$ts, cwd:$cwd, message:$m}'; }
 tu() { cl "$1" /w/ECFX-77 "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"$2\",\"name\":\"Bash\",\"input\":{\"command\":\"$3\"}}]}" assistant; }
 tr_() { cl "$1" /w/ECFX-77 "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"$2\",\"is_error\":true,\"content\":\"$3\"}]}" user; }
+aq() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"assistant",content:[{type:"text",text:$c}]}')" assistant; }
 us() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"user",content:$c}')" user; }
 { for i in 1 2 3; do tu "2026-10-15T07:0$i:00.000Z" "t$i" "make build"; tr_ "2026-10-15T07:0$i:30.000Z" "t$i" "Exit code 2\nerror in step $i"; done
   tu 2026-10-15T07:10:00.000Z t4 "git push"; tr_ 2026-10-15T07:10:10.000Z t4 "The user doesn't want to proceed with this tool use. The tool use was rejected"
@@ -77,6 +78,13 @@ us() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"user",content:$c}')" us
   us 2026-10-15T07:12:00.000Z "[Request interrupted by user]"
   us 2026-10-15T07:13:00.000Z "no, that's not what I asked"
   us 2026-10-15T07:14:00.000Z "please add a test"
+  us 2026-10-15T07:14:10.000Z "looks good, I want to make sure though that again is fine"
+  us 2026-10-15T07:14:20.000Z "no, its fine"
+  us 2026-10-15T07:14:30.000Z "okay, now do not stop the build again"
+  aq 2026-10-15T07:14:40.000Z "Shall I continue with the migration?"
+  us 2026-10-15T07:14:50.000Z "no, go ahead please"
+  aq 2026-10-15T07:14:55.000Z "Which file do you mean?"
+  us 2026-10-15T07:14:58.000Z "don't touch the config file, only the tests please, wrong one entirely"
   us 2026-10-15T07:15:00.000Z "<system-reminder>don't do this again</system-reminder>"
   tu 2026-10-14T07:00:00.000Z t6 "yesterday"; tr_ 2026-10-14T07:00:10.000Z t6 "old failure"
   us 2026-10-14T07:01:00.000Z "no, wrong, stop"; } >"$CP/-proj/s1.jsonl"
@@ -87,7 +95,8 @@ pm() { jq -cn --arg ts "$1" --argjson m "$2" '{type:"message", timestamp:$ts, me
   pm 2026-10-15T07:01:00.000Z '{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"npm test"}}]}'
   pm 2026-10-15T07:01:10.000Z '{"role":"toolResult","toolCallId":"c1","toolName":"bash","isError":true,"content":[{"type":"text","text":"1 failing"}]}'
   pm 2026-10-15T07:02:00.000Z '{"role":"assistant","stopReason":"error","errorMessage":"Our servers are currently overloaded.","content":[]}'
-  pm 2026-10-15T07:03:00.000Z '{"role":"user","content":[{"type":"text","text":"why did you edit that file?"}]}'
+  pm 2026-10-15T07:03:00.000Z '{"role":"user","content":[{"type":"text","text":"why did you edit that file again?"}]}'
+  pm 2026-10-15T07:03:30.000Z '{"role":"user","content":[{"type":"text","text":"okay, new important rule for reviews that should be applied"}]}'
   pm 2026-10-14T07:03:00.000Z '{"role":"user","content":[{"type":"text","text":"stop, wrong"}]}'; } >"$PI/--proj--/2026-10-15T07-00-00-000Z_p1.jsonl"
 
 cat >"$LEDGER" <<'EOT'
@@ -122,9 +131,7 @@ assert_eq "retry|2" "$(f "$g" '[.kind,.count]|join("|")')" "retries>0 from the l
 assert_eq '["ECFX-12","ECFX-9"]' "$(f "$g" '.keys|tostring')" "keys upper-cased"
 g=$(grp "run-state:blocked:item needs you: class=auto")
 assert_eq "blocked|ECFX-10" "$(f "$g" '[.kind,.keys[0]]|join("|")')" "needs_you=yes -> blocked"
-g=$(grp "run-state:other:merge request fetch failed with eof, retried once")
-assert_eq "other|low" "$(f "$g" '[.kind,.confidence]|join("|")')" "a trouble note after notes: -> other, low"
-assert_eq "" "$(jq -r '.groups[]|select(.sig|test("sidebar"))' <<<"$OUT")" "a harmless note is ignored"
+assert_eq "" "$(jq -r '.groups[]|select(.sig|test("fetch failed|sidebar"))' <<<"$OUT")" "notes: lines are not friction"
 assert_eq "" "$(jq -r '.groups[]|select(.evidence[0]|test("2026-10-14.md"))' <<<"$OUT")" "other days' run state ignored"
 
 echo "friction-mine — diary"
@@ -151,15 +158,17 @@ assert_eq "denied" "$(f "$(grp 'claude:denied:bash denied by user or permissions
 assert_eq "interrupt" "$(f "$(grp 'claude:interrupt:[request interrupted by user]')" .kind)" "interrupt"
 g=$(grp "claude:correction:no, that's not what i asked")
 assert_eq "correction|low" "$(f "$g" '[.kind,.confidence]|join("|")')" "correction wording -> correction, confidence low"
-assert_eq "1" "$(jq '[.groups[]|select(.source=="claude" and .kind=="correction")]|length' <<<"$OUT")" "neutral prompts, system reminders and yesterday's prompts are not corrections"
+assert_eq "2" "$(jq '[.groups[]|select(.source=="claude" and .kind=="correction")]|length' <<<"$OUT")" "only prompts that open with a correction word count (5+ words; short ones after an assistant question do not)"
+assert_eq "" "$(jq -r '.groups[]|select(.sig|test("looks good|its fine|stop the build|go ahead"))' <<<"$OUT")" "excluded: correction word mid-text, too short, 'again' anywhere, short reply to a question"
+assert_eq "1" "$(jq '[.groups[]|select(.sig|test("^claude:correction:don.t touch"))]|length' <<<"$OUT")" "a long correction right after an assistant question still counts"
 assert_eq "" "$(jq -r '.groups[]|select(.sig|test("old failure|yesterday"))' <<<"$OUT")" "yesterday's entries left out"
 assert_eq "1" "$(jq '[.groups[]|select(.sig|test("ls: nope"))]|length' <<<"$OUT")" "a single failure stays a tool_error, no retry group"
 
 echo "friction-mine — pi transcripts"
 assert_eq "tool_error|ECFX-88" "$(f "$(grp 'pi:tool_error:bash: <n> failing')" '[.kind,.keys[0]]|join("|")')" "isError toolResult -> tool_error, key from the session cwd"
 assert_eq "service_down" "$(f "$(grp 'pi:service_down:our servers are currently overloaded.')" .kind)" "assistant errorMessage classified"
-assert_eq "correction|low" "$(f "$(grp 'pi:correction:why did you edit that file?')" '[.kind,.confidence]|join("|")')" "correction heuristic on pi prompts"
-assert_eq "0" "$(jq '[.groups[]|select(.sig|test("stop, wrong"))]|length' <<<"$OUT")" "yesterday's pi prompt left out"
+assert_eq "correction|low" "$(f "$(grp 'pi:correction:why did you edit that file again?')" '[.kind,.confidence]|join("|")')" "correction heuristic on pi prompts"
+assert_eq "0" "$(jq '[.groups[]|select(.sig|test("stop, wrong|new important rule"))]|length' <<<"$OUT")" "yesterday's pi prompt and a mid-text match are left out"
 
 echo "friction-mine — ledger"
 g=$(grp "changes-since:auth:outlook not connected")
