@@ -205,6 +205,14 @@ assert_eq "40" "$(jq '.user_signals|length' <<<"$OUT")" "capped at 40 a day"
 assert_eq "4" "$(jq '.user_signals[0].markers|length' <<<"$OUT")" "the most-marked kept first"
 rm "$CP/-proj/s2.jsonl"; OUT=$(mine --date $D)
 
+echo "friction-mine — state per file"
+mkdir -p "$SANDBOX/cp2/-proj"
+for n in a b; do
+  { us 2026-10-15T08:00:00.000Z "plain opener $n"; aq 2026-10-15T08:01:00.000Z "tail $n"; us 2026-10-15T08:02:00.000Z "[Request interrupted by user]"; } >"$SANDBOX/cp2/-proj/$n.jsonl"
+done
+OUTS=$(CLAUDE_PROJECTS_DIR="$SANDBOX/cp2" FRICTION_DIR="$SANDBOX/none" RUN_DAY_DIR="$SANDBOX/none" DIARY_DIR="$SANDBOX/none" PI_SUB_STATE_DIR="$SANDBOX/none" PI_SESSIONS_DIR="$SANDBOX/none" "$SCRIPT" --ledger "$LEDGER" --date $D)
+assert_eq "0" "$(jq '[.user_signals[]|select(.text|startswith("plain opener"))]|length' <<<"$OUTS")" "an interrupt ending one file does not mark the first prompt of the next file in the batch"
+
 echo "friction-mine — pi transcripts"
 assert_eq "tool_error|ECFX-88" "$(f "$(grp 'pi:tool_error:bash: <n> failing')" '[.kind,.keys[0]]|join("|")')" "isError toolResult -> tool_error, key from the session cwd"
 assert_eq "service_down" "$(f "$(grp 'pi:service_down:our servers are currently overloaded.')" .kind)" "assistant errorMessage classified"

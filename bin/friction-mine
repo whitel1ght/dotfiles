@@ -140,8 +140,9 @@ if [ -d "$PI_SUB_STATE_DIR" ]; then
 fi
 
 claude_prog="$DEF"'
-foreach inputs as $e ({tools: {}, lastq: false, atext: "", int: false, pint: false};
-  ($e | if .type == "user" and (.isMeta | not) then
+foreach inputs as $e ({f: null, tools: {}, lastq: false, atext: "", int: false, pint: false};
+  (if .f != input_filename then {f: input_filename, tools: {}, lastq: false, atext: "", int: false, pint: false} else . end)
+  | ($e | if .type == "user" and (.isMeta | not) then
       (.message.content | if type == "string" then . elif all(.[]; .type != "tool_result") then text else null end) else null end) as $px
   | ($e | [.message.content | arrays | .[] | select(.type == "tool_result" and .is_error == true) | (.content | text) | select(test("doesn.t want to proceed"; "i"))] | length > 0) as $den
   |
@@ -178,8 +179,9 @@ foreach inputs as $e ({tools: {}, lastq: false, atext: "", int: false, pint: fal
       | signal("claude"; $e.timestamp; ($e.sessionId // (input_filename | sub(".*/"; "") | sub("\\.jsonl$"; ""))); ($e.cwd // ""); $key; $x; $st.atext; $st.lastq; $st.pint)))'
 
 pi_prog="$DEF"'
-foreach inputs as $e ({tools: {}, cwd: "", lastq: false, atext: "", int: false, pint: false};
-  if $e.type == "session" then .cwd = ($e.cwd // "")
+foreach inputs as $e ({f: null, tools: {}, cwd: "", lastq: false, atext: "", int: false, pint: false};
+  (if .f != input_filename then {f: input_filename, tools: {}, cwd: "", lastq: false, atext: "", int: false, pint: false} else . end)
+  | if $e.type == "session" then .cwd = ($e.cwd // "")
   elif $e.message.role == "assistant" then
     ([$e.message.content[]? | select(.type == "text") | .text] | join(" ")) as $at
     | .lastq = ($at | rtrimstr(" ") | rtrimstr("\n") | endswith("?"))
