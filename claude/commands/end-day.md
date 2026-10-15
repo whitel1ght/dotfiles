@@ -2,7 +2,7 @@
 description: Standup report of the day's work across commits, MRs, Jira and all Claude sessions, filed in the diary, then folded into the project memory in ~/wiki
 argument-hint: [yesterday | YYYY-MM-DD]
 model: sonnet
-allowed-tools: Bash(~/.local/bin/end-day:*), Bash(~/.local/bin/diary-links:*), Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Bash(fd:*), Bash(grep:*), Bash(glab api:*), Bash(jq:*), Bash(printf:*), Bash(cat:*), Bash(wc:*), Bash([:*), Bash(test:*), Bash(git -C * diff:*), Bash(wt add:*), Read, Edit, Write
+allowed-tools: Bash(~/.local/bin/end-day:*), Bash(~/.local/bin/diary-links:*), Bash(~/.local/bin/friction-mine:*), Bash(~/.local/bin/friction-ledger:*), Agent, Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Bash(fd:*), Bash(grep:*), Bash(glab api:*), Bash(jq:*), Bash(printf:*), Bash(cat:*), Bash(wc:*), Bash([:*), Bash(test:*), Bash(git -C * diff:*), Bash(wt add:*), Read, Edit, Write
 disable-model-invocation: true
 ---
 
@@ -141,6 +141,37 @@ For each project `<p>` it prints:
 2. Rewrite `state.md` in full from the old state plus those: current focus, open threads (drop what finished, add what started), links to existing notes. Keep the file's frontmatter and headings, set its `date` to `$DAY`, and keep it at **60 lines or fewer** (`wc -l` it). It is a snapshot, not a history: history lives in the log.
 3. If the project's one-line focus changed, update its line in the `## Long-term memory (projects)` section of `~/wiki/index.md` (the existing vault index; edit only that section).
 
+## Reflect on friction
+
+Scripts do the bookkeeping and the model only judges new friction. Mine the day and fold it into the ledger (`M` is the miner output, kept for the diary step):
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+M="${TMPDIR:-/tmp}/friction-$DAY.json"
+~/.local/bin/friction-mine --date "$DAY" >"$M" && ~/.local/bin/friction-ledger apply --date "$DAY" --mine-json "$M"
+```
+
+It prints `{new, needs_proposal, regressed, corrections}`. If either command is missing or fails, say so in one line and go on to the commit: friction never blocks the report. If `new` and `needs_proposal` are both empty, say so in one line and skip to the diary step: no subagent for nothing. Otherwise make ONE Agent call with `model: "haiku"` and this brief, the JSON filled in:
+
+> Classify friction from my daily workflow and propose fixes. The JSON below lists `new` items (first seen today) and `needs_proposal` items (they qualify for a fix). Each has an id, a signature, samples and evidence (`path:line`, readable). Read evidence only when a sample is not enough. Never write any file; reply with the JSON array only.
+> For every item in `new`: `class` is `env` (auth, MCP, network, service down), `instruction` (a prompt or skill is wrong), `script` (a bug in our code), `model` (model behaviour) or `external` (a blocker outside us: another ticket, an approval); `diagnosis` is one line of at most 20 words.
+> For every item in `needs_proposal` and not `external`: `rung` and `proposal`. Pick the cheapest rung that works: `script` (retry/backoff, health gate, preflight check, cache, fallback source, background waiter), then `config` (re-auth, env var, settings, dropping a dead step), then `prompt` (prompt/skill/command text, only when the problem is the model's judgement). `proposal` is markdown: the rung, why each lower rung does not fit, the target files in `~/projects/dotfiles` (`bin/`, `claude/`, `pi/`), and a test that proves it (a `bin/<x>.test.sh` case or similar).
+> Reply: `[{"id":"F-001","class":"env","diagnosis":"...","rung":"config","proposal":"..."}]`, with `rung` and `proposal` omitted when there is none.
+> JSON: <the output of friction-ledger apply>
+
+For each item in its answer, write it to the ledger yourself (a subagent never writes the wiki). Put the `proposal` in a temp file and run `~/.local/bin/friction-ledger set <id> --class <class> --diagnosis "<diagnosis>"`, adding `--rung <rung> --proposal-file <file> --status proposed` when it has a proposal, and `--status wontfix` for `external`. The script refuses a bad value: fix the item and retry once, then leave it for tomorrow.
+
+Then file the section in the diary and let the commit below pick up `friction/`:
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+M="${TMPDIR:-/tmp}/friction-$DAY.json"
+S="$(~/.local/bin/friction-ledger diary-section --date "$DAY" --mine-json "$M")"
+[ -z "$S" ] || printf '%s\n' "$S" | ~/.local/bin/end-day friction "$DAY"
+```
+
+`end-day friction` puts it between its own markers at the end of the diary, so a re-run replaces it and the report is never touched. Mention the counts in one line.
+
 ## Index, commit and end the run
 
 This always runs, even when the memory step was skipped: the report and the diary edits still get committed. Set `DAY` again here (new shell):
@@ -150,6 +181,7 @@ DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$AR
 qmd update && qmd embed
 git -C ~/wiki add -A -- diary projects index.md
 [ -d ~/wiki/reviews ] && git -C ~/wiki add -A -- reviews
+[ -d ~/wiki/friction ] && git -C ~/wiki add -A -- friction
 git -C ~/wiki diff --cached --quiet || git -C ~/wiki commit -m "wiki: $DAY day"
 ```
 

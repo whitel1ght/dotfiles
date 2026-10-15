@@ -175,6 +175,37 @@ For each project `<p>` it prints:
 3. If the project's one-line focus changed, update its line in the `## Long-term memory (projects)`
    section of `~/wiki/index.md` (edit only that section).
 
+## Reflect on friction
+
+Scripts do the bookkeeping and the model only judges new friction. Mine the day and fold it into the ledger (`M` is the miner output, kept for the diary step):
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+M="${TMPDIR:-/tmp}/friction-$DAY.json"
+~/.local/bin/friction-mine --date "$DAY" >"$M" && ~/.local/bin/friction-ledger apply --date "$DAY" --mine-json "$M"
+```
+
+It prints `{new, needs_proposal, regressed, corrections}`. If either command is missing or fails, say so in one line and go on to the commit: friction never blocks the report. If `new` and `needs_proposal` are both empty, say so in one line and skip to the diary step: no subagent for nothing. Otherwise launch one subagent, the cheapest suitable model in the live `<subagent_models>` list (per `~/projects/dotfiles/pi/model-selection.md`: bounded reading and classification): `subagent({ role: "researcher", model: <that model>, cwd: "~/projects/dotfiles", label: "friction", task: <the brief below, JSON filled in> })`. Then end the turn. On the `[pi-sub]` wake-up read the answer with `subagent_result` and continue from the next paragraph.
+
+> Classify friction from my daily workflow and propose fixes. The JSON below lists `new` items (first seen today) and `needs_proposal` items (they qualify for a fix). Each has an id, a signature, samples and evidence (`path:line`, readable). Read evidence only when a sample is not enough. Never write any file; reply with the JSON array only.
+> For every item in `new`: `class` is `env` (auth, MCP, network, service down), `instruction` (a prompt or skill is wrong), `script` (a bug in our code), `model` (model behaviour) or `external` (a blocker outside us: another ticket, an approval); `diagnosis` is one line of at most 20 words.
+> For every item in `needs_proposal` and not `external`: `rung` and `proposal`. Pick the cheapest rung that works: `script` (retry/backoff, health gate, preflight check, cache, fallback source, background waiter), then `config` (re-auth, env var, settings, dropping a dead step), then `prompt` (prompt/skill/command text, only when the problem is the model's judgement). `proposal` is markdown: the rung, why each lower rung does not fit, the target files in `~/projects/dotfiles` (`bin/`, `claude/`, `pi/`), and a test that proves it (a `bin/<x>.test.sh` case or similar).
+> Reply: `[{"id":"F-001","class":"env","diagnosis":"...","rung":"config","proposal":"..."}]`, with `rung` and `proposal` omitted when there is none.
+> JSON: <the output of friction-ledger apply>
+
+For each item in its answer, write it to the ledger yourself (a subagent never writes the wiki). Put the `proposal` in a temp file and run `~/.local/bin/friction-ledger set <id> --class <class> --diagnosis "<diagnosis>"`, adding `--rung <rung> --proposal-file <file> --status proposed` when it has a proposal, and `--status wontfix` for `external`. The script refuses a bad value: fix the item and retry once, then leave it for tomorrow.
+
+Then file the section in the diary and let the commit below pick up `friction/`:
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+M="${TMPDIR:-/tmp}/friction-$DAY.json"
+S="$(~/.local/bin/friction-ledger diary-section --date "$DAY" --mine-json "$M")"
+[ -z "$S" ] || printf '%s\n' "$S" | ~/.local/bin/end-day friction "$DAY"
+```
+
+`end-day friction` puts it between its own markers at the end of the diary, so a re-run replaces it and the report is never touched. Mention the counts in one line.
+
 ## Commit and end the run
 
 This always runs, even when the memory step was skipped: the report and the diary edits still get
@@ -185,6 +216,7 @@ DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$AR
 qmd update && qmd embed
 git -C ~/wiki add -A -- diary projects index.md
 [ -d ~/wiki/reviews ] && git -C ~/wiki add -A -- reviews
+[ -d ~/wiki/friction ] && git -C ~/wiki add -A -- friction
 git -C ~/wiki diff --cached --quiet || git -C ~/wiki commit -m "wiki: $DAY day"
 ```
 

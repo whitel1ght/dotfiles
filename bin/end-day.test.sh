@@ -120,6 +120,19 @@ WIKI_DIR="$WIKI" "$SCRIPT" entries 2026-10-08 a/b >/dev/null 2>&1; assert_eq "1"
 out=$(WIKI_DIR="$WIKI" "$SCRIPT" entries 2026-10-08 2>&1); assert_eq "1" "$?" "entries without a project exits 1"
 assert_eq "end-day: entries needs a project" "$out" "with an explicit message"
 
+echo "end-day friction"
+printf '# Day\n\n## Work\n\n### ECFX\n\n- mine\n' > "$SANDBOX/2026-02-01.md"
+save 2026-02-01 "- report"
+printf '## Friction\n\n1 new\n' | "$SCRIPT" friction 2026-02-01 >/dev/null
+assert_eq "yes" "$(tail -5 "$SANDBOX/2026-02-01.md" | head -1 | grep -qx '<!-- friction:start -->' && echo yes || echo no)" "the section goes at the end, between markers"
+printf '## Friction\n\n2 new\n' | "$SCRIPT" friction 2026-02-01 >/dev/null
+assert_eq "1" "$(grep -c 'friction:start' "$SANDBOX/2026-02-01.md")" "a re-run replaces the block"
+assert_eq "yes" "$(grep -q '^2 new$' "$SANDBOX/2026-02-01.md" && ! grep -q '^1 new$' "$SANDBOX/2026-02-01.md" && echo yes || echo no)" "with the new text"
+save 2026-02-01 "- report v2"
+assert_eq "yes" "$(grep -q '^2 new$' "$SANDBOX/2026-02-01.md" && grep -q -- '- report v2' "$SANDBOX/2026-02-01.md" && echo yes || echo no)" "re-saving the report leaves the friction block alone"
+printf '' | "$SCRIPT" friction 2026-02-01 >/dev/null 2>&1; assert_eq "1" "$?" "empty stdin is refused"
+printf 'x\n' | "$SCRIPT" friction 2026-02-02 >/dev/null 2>&1; assert_eq "1" "$?" "no diary for the day is refused"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
