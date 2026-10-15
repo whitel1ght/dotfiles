@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // harnesses read and write byte-identical state. Only the glue is pi-specific.
 import { extractBlock } from "./mod/diary.ts";
 import { applyEdit, checkTicks, denyMessage, isTodaysDiary } from "./mod/guard.ts";
+import type { OnBlock } from "./mod/guard.ts";
 import { messageFiles } from "./mod/inbox.ts";
 import { parseRunState } from "./mod/runstate.ts";
 
@@ -35,6 +36,16 @@ function paths(): Paths {
     diary: join(wiki, "diary", `${today}.md`),
     inbox: join(stateDir, "inbox"),
   };
+}
+
+/** Fire-and-forget: a missing or failing friction must never slow or change the caller. */
+export function friction(kind: string, msg: string, source = "daily-guard"): void {
+  try {
+    const args = ["--harness", "pi", "--source", source, kind, msg.replace(/\s+/g, " ").slice(0, 300)];
+    spawn("friction", args, { detached: true, stdio: "ignore" }).on("error", () => {}).unref();
+  } catch {
+    // swallowed on purpose
+  }
 }
 
 const cut = (s: string, n: number) => [...s].slice(0, n).join("");
@@ -135,6 +146,7 @@ export function guardVerdict(
   input: Record<string, unknown>,
   today: string,
   active: boolean,
+  onBlock?: OnBlock,
 ): string | undefined {
   if (!active) return undefined;
   if (toolName !== "edit" && toolName !== "write") return undefined;
@@ -161,7 +173,7 @@ export function guardVerdict(
   }
   if (after === null) return undefined;
 
-  const result = checkTicks(before, after);
+  const result = checkTicks(before, after, onBlock);
   return result.ok ? undefined : denyMessage(result.lines);
 }
 
@@ -202,6 +214,7 @@ export default function daily(pi: ExtensionAPI) {
         event.input as Record<string, unknown>,
         p.today,
         existsSync(p.runState),
+        (msg) => friction("guard", msg),
       );
     } catch {
       return; // a throwing guard must never block an unrelated edit

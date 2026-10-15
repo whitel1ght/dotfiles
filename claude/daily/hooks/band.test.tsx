@@ -7,7 +7,7 @@ const STATE = '/home/t/.local/state/run-day/2026-10-08.md'
 
 type Run = { exitCode: number; stdout: string; stderr: string }
 
-async function start($: any, on: any, opts: { day: Run; refuse?: boolean }) {
+async function start($: any, on: any, opts: { day: Run; refuse?: boolean; frictionDenied?: boolean }) {
   const clock = mock.clock(on)
   const calls: string[][] = []
   const toasts: string[] = []
@@ -16,6 +16,7 @@ async function start($: any, on: any, opts: { day: Run; refuse?: boolean }) {
   mock.env(on, { HOME: '/home/t' })
   on('process.run', (_$: any, e: any) => {
     calls.push(e.argv)
+    if (opts.frictionDenied && isFriction(e.argv)) return { deny: 'friction exploded' }
     return { value: e.argv[0] === 'date' ? { exitCode: 0, stdout: '2026-10-08\n', stderr: '' } : opts.day } as never
   })
   on('fs.read', (_$: any, e: any) => (e.path === WIKI ? { value: DIARY } : e.path === STATE ? { value: RUN_STATE } : { deny: 'ENOENT' }))
@@ -43,6 +44,8 @@ async function start($: any, on: any, opts: { day: Run; refuse?: boolean }) {
   return { clock, calls, toasts, logs, registered, statuses }
 }
 
+const isFriction = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('friction')
+const frictionFor = (calls: string[][], source: string) => calls.filter(a => isFriction(a) && a[7] === source)
 const OK: Run = { exitCode: 0, stdout: '', stderr: '' }
 const isDayPlan = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('day-plan')
 
@@ -68,4 +71,41 @@ test('a refused command name is logged and the rest of session.start still runs'
   expect(s.logs[0]).toContain('/day-plan not registered')
   await s.clock.advance(5_000)
   expect(s.statuses.some(t => typeof t === 'string' && t.length > 0)).toBe(true)
+})
+
+test('a failing changes-since watch records one service_down friction event and toasts once', async ($, on) => {
+  const s = await start($, on, { day: { exitCode: 1, stdout: '', stderr: 'changes-since: Jira unavailable\n' } })
+  await s.clock.advance(180_000)
+  await s.clock.advance(180_000)
+  const events = frictionFor(s.calls, 'changes-since')
+  expect(events.length).toBe(1)
+  expect(events[0].slice(3)).toEqual(['friction', '--harness', 'claude', '--source', 'changes-since', 'service_down', 'changes-since failed (exit 1): changes-since: Jira unavailable'])
+  expect(s.toasts.filter(t => t.startsWith('changes-since failed')).length).toBe(1)
+})
+
+test('a timed-out changes-since watch is recorded as a timeout', async ($, on) => {
+  const s = await start($, on, { day: { exitCode: 124, stdout: '', stderr: '' } })
+  await s.clock.advance(180_000)
+  expect(frictionFor(s.calls, 'changes-since')[0][8]).toBe('timeout')
+})
+
+test('a failing friction call does not change the toast or break the watcher', async ($, on) => {
+  const s = await start($, on, { day: { exitCode: 1, stdout: '', stderr: 'boom\n' }, frictionDenied: true })
+  await s.clock.advance(180_000)
+  expect(frictionFor(s.calls, 'changes-since').length).toBe(1)
+  expect(s.toasts).toContain('changes-since failed (exit 1): boom')
+})
+
+test('a healthy watch records nothing', async ($, on) => {
+  const s = await start($, on, { day: OK })
+  await s.clock.advance(180_000)
+  expect(s.calls.filter(isFriction).length).toBe(0)
+})
+
+test('a failing inbox listing records one tool_error friction event, however often it repeats', async ($, on) => {
+  const s = await start($, on, { day: { exitCode: 1, stdout: '', stderr: 'ls: denied\n' } })
+  await s.clock.advance(90_000)
+  const events = frictionFor(s.calls, 'daily-inbox')
+  expect(events.length).toBe(1)
+  expect(events[0].slice(8)).toEqual(['tool_error', 'inbox read failed (exit 1): ls: denied'])
 })

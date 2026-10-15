@@ -45,6 +45,7 @@ function sandbox(opts: { runState?: boolean } = {}) {
   process.env.RUN_DAY_STATE_DIR = stateDir;
   process.env.WIKI_DIR = join(root, "wiki");
   process.env.RUN_DAY_DATE = DAY;
+  process.env.FRICTION_DIR = join(root, "friction"); // a real friction must never write into the user's log from a test
   return { root, diary, stateDir, runState: join(stateDir, `${DAY}.md`) };
 }
 
@@ -53,6 +54,7 @@ function cleanup(root: string) {
   delete process.env.RUN_DAY_STATE_DIR;
   delete process.env.WIKI_DIR;
   delete process.env.RUN_DAY_DATE;
+  delete process.env.FRICTION_DIR;
 }
 
 function tick(diary: string, oldText: string, newText: string, active = true) {
@@ -276,4 +278,76 @@ test("directions: before_agent_start sets the section, and never throws without 
   assert.doesNotThrow(() => handlers.before_agent_start({ systemPromptOptions: next }, { ui: undefined }));
   assert.equal(next.sections.standing_directions, undefined);
   directionsCleanup(root);
+});
+
+/** A `friction` on PATH that records its argv, one line per call; exits `code`. */
+function fakeFriction(root: string, code = 0) {
+  const bin = join(root, "bin");
+  const log = join(root, "friction.log");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "friction"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\nexit ${code}\n`);
+  chmodSync(join(bin, "friction"), 0o755);
+  return { bin, log };
+}
+
+async function waitFor(path: string) {
+  for (let i = 0; i < 100 && !existsSync(path); i++) await new Promise((r) => setTimeout(r, 20));
+}
+
+function blockedTick(diary: string) {
+  const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
+  daily({ on: (event: string, cb: (e: unknown, c: unknown) => unknown) => (handlers[event] = cb) } as never);
+  return handlers.tool_call(
+    { toolName: "edit", input: { path: diary, edits: [{ oldText: "- [ ] ecfx-1001 fix the export", newText: "- [x] ecfx-1001 fix the export" }] } },
+    {},
+  ) as { block: boolean; reason: string };
+}
+
+test("guardVerdict reports a block through onBlock and stays quiet otherwise", () => {
+  const { root, diary } = sandbox();
+  const seen: string[] = [];
+  const edit = (from: string, to: string) =>
+    guardVerdict("edit", { path: diary, edits: [{ oldText: from, newText: to }] }, DAY, true, (m) => seen.push(m));
+  assert.ok(edit("- [ ] ecfx-1001 fix the export", "- [x] ecfx-1001 fix the export"));
+  assert.equal(seen.length, 1);
+  assert.match(seen[0], /diary guard blocked: .*ecfx-1001/);
+  assert.equal(edit("- [ ] ecfx-1001 fix the export", "- [x] ecfx-1001 fix the export · merged"), undefined);
+  assert.equal(seen.length, 1);
+  cleanup(root);
+});
+
+test("a blocked tick records a guard friction event for pi", async () => {
+  const { root, diary } = sandbox();
+  const { bin, log } = fakeFriction(root);
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  try {
+    const blocked = blockedTick(diary);
+    assert.equal(blocked.block, true);
+    await waitFor(log);
+    const lines = readFileSync(log, "utf8").trim().split("\n");
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /^--harness pi --source daily-guard guard diary guard blocked: .*ecfx-1001/);
+  } finally {
+    process.env.PATH = path;
+    cleanup(root);
+  }
+});
+
+test("a failing or missing friction leaves the block verdict unchanged", async () => {
+  const { root, diary } = sandbox();
+  const expected = blockedTick(diary);
+  const { bin, log } = fakeFriction(root, 1);
+  const path = process.env.PATH;
+  try {
+    process.env.PATH = `${bin}:${path}`;
+    assert.deepEqual(blockedTick(diary), expected);
+    await waitFor(log);
+    process.env.PATH = join(root, "nowhere");
+    assert.deepEqual(blockedTick(diary), expected);
+    assert.equal(expected.block, true);
+  } finally {
+    process.env.PATH = path;
+    cleanup(root);
+  }
 });

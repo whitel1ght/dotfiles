@@ -59,23 +59,25 @@ shift_day() { date -j -v"$2"d -f %F "$1" +%F 2>/dev/null || date -d "$1 $2 day" 
 next=$(shift_day "$day" +1)
 prev=$(shift_day "$day" -1)
 
+friction_log() { command -v friction >/dev/null 2>&1 && friction "$@" >/dev/null 2>&1 || true; }
 section() { printf '\n## %s\n\n' "$1"; }
 
 collect_commits() {
   section "Commits"
-  "$HERE/ecfx-daily-commits" "$day 00:00" "$next 00:00" | sed 's/^\(ecfx-[^ ]*\)$/### \1/' || echo "(commits unavailable)"
+  "$HERE/ecfx-daily-commits" "$day 00:00" "$next 00:00" | sed 's/^\(ecfx-[^ ]*\)$/### \1/' \
+    || { friction_log --source end-day service_down "commits unavailable"; echo "(commits unavailable)"; }
 }
 
 collect_gitlab() {
   section "GitLab activity"
   local user me username events
-  user=$(glab api user) || { echo "(GitLab unavailable)"; return; }
+  user=$(glab api user) || { friction_log --source end-day service_down "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
   me=$(jq -r .id <<<"$user"); username=$(jq -r .username <<<"$user")
   # after/before are exclusive dates in UTC; widen by a day, then keep only
   # events whose local date is the one asked for.
   events=$(glab api --paginate "users/$me/events?after=$prev&before=$next&per_page=100" | jq -s --arg d "$day" '
     add // [] | map(select((.created_at | sub("\\.[0-9]+"; "") | fromdateiso8601 | strflocaltime("%Y-%m-%d")) == $d))
-    | map(select(.action_name | test("^(pushed|deleted)") | not))') || { echo "(GitLab unavailable)"; return; }
+    | map(select(.action_name | test("^(pushed|deleted)") | not))') || { friction_log --source end-day service_down "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
   [ "$(jq length <<<"$events")" -gt 0 ] || { echo "(none)"; return; }
 
   # One line per MR: what I did to it, and whose it is.
@@ -99,7 +101,11 @@ collect_jira() {
     --data-urlencode "jql=status CHANGED BY currentUser() DURING (\"$day\", \"$next\")" \
     --data-urlencode fields=status,summary,issuetype \
     | jq -r '.issues[] | "- \(.key) → \(.fields.status.name) (\(.fields.issuetype.name)): \(.fields.summary)"' \
-    | grep . || echo "(none, or Jira unavailable — token may have expired)"
+    | grep . || {
+      # only a failed request is friction; no status changes is a normal day
+      [ "${PIPESTATUS[0]}" -eq 0 ] || friction_log --source end-day auth "Jira unavailable, token may have expired"
+      echo "(none, or Jira unavailable — token may have expired)"
+    }
 }
 
 collect_claude() {

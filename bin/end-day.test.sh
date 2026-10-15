@@ -133,6 +133,35 @@ assert_eq "yes" "$(grep -q '^2 new$' "$SANDBOX/2026-02-01.md" && grep -q -- '- r
 printf '' | "$SCRIPT" friction 2026-02-01 >/dev/null 2>&1; assert_eq "1" "$?" "empty stdin is refused"
 printf 'x\n' | "$SCRIPT" friction 2026-02-02 >/dev/null 2>&1; assert_eq "1" "$?" "no diary for the day is refused"
 
+echo "end-day collect — friction capture"
+# A private copy of the script, so HERE holds a failing ecfx-daily-commits; glab and curl fail too.
+CBIN="$SANDBOX/cbin"; CSTUBS="$SANDBOX/cstubs"; CLOG="$SANDBOX/friction.log"
+mkdir -p "$CBIN" "$CSTUBS" "$SANDBOX/claude"
+cp "$SCRIPT" "$CBIN/end-day"
+printf '#!/bin/bash\nexit 1\n' > "$CBIN/ecfx-daily-commits"
+printf '#!/bin/bash\nexit 1\n' > "$CSTUBS/glab"
+printf '#!/bin/bash\nexit 22\n' > "$CSTUBS/curl"
+printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "$CLOG"\n[ -n "${FRICTION_FAIL:-}" ] && exit 1\nexit 0\n' > "$CSTUBS/friction"
+chmod +x "$CBIN/end-day" "$CBIN/ecfx-daily-commits" "$CSTUBS"/*
+collect() { PATH="$CSTUBS:$PATH" CLOG="$CLOG" CLAUDE_DIR="$SANDBOX/claude" JIRA_EMAIL=a JIRA_API_TOKEN=b "$CBIN/end-day" collect 2026-01-05 2>&1; }
+mkdir -p "$SANDBOX/cnof"; ln -s "$CSTUBS/glab" "$CSTUBS/curl" "$SANDBOX/cnof/"
+baseline=$(PATH="$SANDBOX/cnof:$(dirname "$(command -v jq)"):/usr/bin:/bin" CLAUDE_DIR="$SANDBOX/claude" JIRA_EMAIL=a JIRA_API_TOKEN=b "$CBIN/end-day" collect 2026-01-05 2>&1); brc=$?
+assert_eq "0" "$brc" "collect with no friction on PATH still exits 0"
+out=$(collect); rc=$?
+assert_eq "0" "$rc" "collect with friction present exits 0"
+assert_eq "$baseline" "$out" "and prints the same digest as without friction"
+assert_eq "--source end-day service_down commits unavailable
+--source end-day service_down GitLab unavailable
+--source end-day auth Jira unavailable, token may have expired" "$(cat "$CLOG")" "commits, GitLab and Jira failures record service_down/service_down/auth"
+rm -f "$CLOG"
+out=$(FRICTION_FAIL=1 collect); rc=$?
+assert_eq "0" "$rc" "a failing friction leaves exit 0"
+assert_eq "$baseline" "$out" "and the same digest"
+printf '#!/bin/bash\nexit 0\n' > "$CSTUBS/curl"
+rm -f "$CLOG"; collect >/dev/null
+assert_eq "--source end-day service_down commits unavailable
+--source end-day service_down GitLab unavailable" "$(cat "$CLOG")" "Jira answering with nothing records no auth event"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

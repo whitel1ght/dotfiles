@@ -34,6 +34,8 @@ JIRA_API="${JIRA_API:-jira-api}"
 STATE_DIR="${CHANGES_SINCE_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/changes-since}"
 
 die() { echo "changes-since: $*" >&2; exit 1; }
+friction_log() { command -v friction >/dev/null 2>&1 && friction "$@" >/dev/null 2>&1 || true; }
+down() { friction_log --source "$1" service_down "$2"; die "$2"; }
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 epoch_of() { date -j -u -f %Y-%m-%dT%H:%M:%SZ "$1" +%s 2>/dev/null || date -u -d "$1" +%s; }
 
@@ -154,9 +156,9 @@ feed_gitlab_mrs() {
   done < <(jq -r '.[] | [.project_id, .iid] | @tsv' <<<"$mrs")
 }
 
-feed_jira || die "Jira unavailable (is JIRA_EMAIL/JIRA_API_TOKEN set? are they still valid?)"
-feed_gitlab_todos || die "GitLab to-dos unavailable"
-feed_gitlab_mrs || die "GitLab MRs unavailable"
+feed_jira || down jira "Jira unavailable (is JIRA_EMAIL/JIRA_API_TOKEN set? are they still valid?)"
+feed_gitlab_todos || down gitlab-todos "GitLab to-dos unavailable"
+feed_gitlab_mrs || down gitlab-mrs "GitLab MRs unavailable"
 
 out=$(jq -sc '
   (map(select(.kind == "assigned" and .mr == null) | .ticket)) as $assigned
