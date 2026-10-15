@@ -119,6 +119,77 @@ assert_eq "## Friction" "$(sed -n 1p <<<"$OUT")" "corrections alone still produc
 printf '{"groups":[]}' >"$SANDBOX/empty.json"
 assert_eq "" "$("$SCRIPT" diary-section --date 2026-09-01 --mine-json "$SANDBOX/empty.json")" "no friction prints nothing"
 
+# --- directions ---------------------------------------------------------------
+echo "directions"
+DF="$FRICTION_WIKI/directions.md"
+id="$("$SCRIPT" directions add --rule "Handle service outages with scripts, never model retries" --scope global --quote "gitlab fails | run a script" --harness claude --date 2026-10-15)"
+assert_eq "D-001" "$id" "add allocates D-001"
+grep -q '^| D-001 | Handle service outages with scripts, never model retries | global | 2026-10-15 | "gitlab fails ¦ run a script" (claude) | active |$' "$DF" && pass "row format per spec, | in the quote escaped" || fail "row format" "$(cat "$DF")"
+assert_eq "D-001" "$("$SCRIPT" directions add --rule "handle service outages with scripts; never model retries!" --date 2026-10-16)" "a rule equal after normalising is not added again"
+assert_eq "1" "$(grep -c '^| D-' "$DF")" "still one row"
+assert_eq "D-001" "$("$SCRIPT" directions add --rule "Prefer scripts over model retries when services fail" --same-as D-001)" "--same-as keeps the original"
+assert_eq "2026-10-15" "$(awk -F'|' '/D-001/ { gsub(/ /, "", $5); print $5 }' "$DF")" "and its since date"
+assert_eq "D-002" "$("$SCRIPT" directions add --rule "Reviews cite the commit sha" --scope reviews --date 2026-10-15)" "a new rule gets the next id"
+"$SCRIPT" directions add --rule "Reviews never approve with open blockers" --scope reviews --date 2026-10-15 >/dev/null
+assert_eq "D-001" "$("$SCRIPT" directions render | head -1 | grep -q 'Handle service outages' && echo D-001)" "render lists active rules"
+assert_eq "- Handle service outages with scripts, never model retries
+- Reviews cite the commit sha [reviews]
+- Reviews never approve with open blockers [reviews]" "$("$SCRIPT" directions render)" "render format: scope shown unless global"
+assert_eq "- Handle service outages with scripts, never model retries" "$("$SCRIPT" directions render --scope run-day)" "--scope keeps global plus that scope"
+"$SCRIPT" directions retire D-002 --reason "wrong"
+"$SCRIPT" directions promote D-003 --fix abc1234
+grep -q '^| D-002 | .* | retired — retired: wrong |$' "$DF" || grep -q 'D-002.*retired: wrong | retired |$' "$DF" && pass "retire marks the row and keeps the reason" || fail "retire row" "$(cat "$DF")"
+grep -q 'D-003.*fix abc1234 | promoted |$' "$DF" && pass "promote marks the row with the fix" || fail "promote row" "$(cat "$DF")"
+assert_eq "- Handle service outages with scripts, never model retries" "$("$SCRIPT" directions render)" "retired and promoted rules are not rendered"
+assert_eq "D-004" "$("$SCRIPT" directions add --rule "Reviews cite the commit sha" --scope reviews)" "a retired rule can be learned again under a new id"
+"$SCRIPT" directions retire D-099 2>/dev/null; assert_eq "1" "$?" "retire of an unknown id fails"
+"$SCRIPT" directions promote D-004 2>/dev/null; assert_eq "1" "$?" "promote needs --fix"
+"$SCRIPT" directions add --date 2026-10-15 2>/dev/null; assert_eq "1" "$?" "add needs a rule"
+
+export FRICTION_WIKI="$SANDBOX/cap"; DF="$FRICTION_WIKI/directions.md"
+assert_eq "" "$("$SCRIPT" directions render)" "no file renders nothing"
+long="$(printf 'word%.0s ' $(seq 1 25))"
+for i in $(seq 1 30); do "$SCRIPT" directions add --rule "global rule $i $long" --scope global --date "2026-09-$(printf '%02d' "$i")" >/dev/null; done
+"$SCRIPT" directions add --rule "Reviews keep one comment" --scope reviews --date 2026-10-01 >/dev/null
+out="$("$SCRIPT" directions render)"
+[ "$(printf '%s' "$out" | wc -c)" -le 2048 ] && pass "render stays within 2 KB" || fail "render size" "$(printf '%s' "$out" | wc -c)"
+assert_eq "yes" "$(grep -q 'Reviews keep one comment \[reviews\]' <<<"$out" && grep -q 'global rule 30 ' <<<"$out" && ! grep -q 'global rule 1 ' <<<"$out" && echo yes || echo no)" "the oldest global rules are folded first"
+grep -Eq '^- [0-9]+ more in ~/wiki/friction/directions.md$' <<<"$out" && pass "the folded rules are summarised in one line" || fail "summary line" "$out"
+export FRICTION_WIKI="$SANDBOX/friction"; DF="$FRICTION_WIKI/directions.md"
+
+# --- frustration ----------------------------------------------------------------
+echo "frustration"
+out="$("$SCRIPT" frustration --date 2026-10-14 --what "Gitlab outage made the run loop on retries" --class env --sig-hint "gitlab retries loop" --quote "why is it retrying again")"
+assert_eq "true|1|false" "$(jq -r '[.new, .days, .needs_proposal] | join("|")' <<<"$out")" "a first frustration is a new ledger entry, no proposal yet"
+fid="$(jq -r .id <<<"$out")"
+assert_eq "\"user:frustration:gitlab retries loop\"" "$(fld "$fid" signature)" "signature is user:frustration:<hint>"
+assert_eq "env" "$(fld "$fid" class)" "class set from the reply"
+grep -q 'Gitlab outage made the run loop' "$FRICTION_WIKI/$fid.md" && pass "diagnosis set from what_went_wrong" || fail "diagnosis" ""
+out="$("$SCRIPT" frustration --date 2026-10-15 --what "Gitlab outage again" --class env --sig-hint "GitLab retries loop")"
+assert_eq "false|2|true" "$(jq -r '[.new, .days, .needs_proposal] | join("|")' <<<"$out")" "the same hint on another day: same entry, 2 days, needs a proposal"
+before="$(snap)"; "$SCRIPT" frustration --date 2026-10-15 --what "Gitlab outage again" --class env --sig-hint "gitlab retries loop" >/dev/null
+assert_eq "$before" "$(snap)" "recording the same frustration twice changes nothing"
+
+# --- apply passes user_signals --------------------------------------------------
+echo '{"groups":[],"user_signals":[{"text":"always use scripts"}]}' >"$SANDBOX/us.json"
+assert_eq "always use scripts" "$("$SCRIPT" apply --date 2026-10-15 --mine-json "$SANDBOX/us.json" | jq -r '.user_signals[0].text')" "apply passes user_signals through"
+echo '{"groups":[]}' >"$SANDBOX/us.json"
+assert_eq "[]" "$("$SCRIPT" apply --date 2026-10-15 --mine-json "$SANDBOX/us.json" | jq -c .user_signals)" "and an empty list when there are none"
+
+# --- diary-section: directions and frustrations ---------------------------------
+echo "diary-section — directions"
+"$SCRIPT" directions add --rule "Never merge without asking" --scope global --date 2026-10-15 >/dev/null
+for r in one two three; do last="$("$SCRIPT" directions add --rule "docs rule $r" --scope docs --date 2026-10-10)"; done
+OUT="$("$SCRIPT" diary-section --date 2026-10-15 --mine-json "$SANDBOX/us.json")"
+grep -q '^Directions learned today (active from the next session; retire with' <<<"$OUT" && pass "lists the directions learned today" || fail "directions header" "$OUT"
+grep -q '^- D-.* — Never merge without asking (global)$' <<<"$OUT" && pass "one D-NNN — rule line per direction" || fail "direction line" "$OUT"
+assert_eq "0" "$(grep -c 'docs rule one (' <<<"$OUT")" "older directions are not listed"
+grep -q '^3 active directions share the scope "docs" (D-.*, D-.*, D-.*): run /fix-friction' <<<"$OUT" && pass "3 directions on one scope suggest /fix-friction" || fail "scope suggestion" "$OUT"
+grep -q "^- F-.* — Gitlab outage made the run loop on retries (frustration)$" <<<"$OUT" || grep -q "(frustration)" <<<"$OUT" && pass "a frustration seen today is listed" || fail "frustration line" "$OUT"
+"$SCRIPT" directions retire "$last" >/dev/null
+OUT="$("$SCRIPT" diary-section --date 2026-10-15 --mine-json "$SANDBOX/us.json")"
+assert_eq "0" "$(grep -c 'share the scope' <<<"$OUT")" "retiring one drops the suggestion below 3"
+
 # --- misc ---------------------------------------------------------------------
 echo "misc"
 "$SCRIPT" apply 2>/dev/null; assert_eq "1" "$?" "apply without --date fails"

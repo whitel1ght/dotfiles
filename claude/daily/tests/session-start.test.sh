@@ -16,6 +16,7 @@ assert_lacks() { case "$1" in *"$2"*) fail "$3" "[$2] unexpectedly found" ;; *) 
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "$SANDBOX"' EXIT
 export RUN_DAY_STATE_DIR="$SANDBOX/state" WIKI_DIR="$SANDBOX/wiki" RUN_DAY_DATE=2026-10-08
+export FRICTION_LEDGER_BIN="$SANDBOX/no-such-friction-ledger" FRICTION_WIKI="$SANDBOX/friction"
 mkdir -p "$RUN_DAY_STATE_DIR" "$WIKI_DIR/diary"
 cat > "$WIKI_DIR/diary/2026-10-08.md" <<'D'
 ## habits tracking
@@ -87,6 +88,38 @@ len="$(bash "$HOOK" </dev/null | jq -r '.hookSpecificOutput.additionalContext | 
 echo "== another day's state is ignored =="
 RUN_DAY_DATE=2026-10-09 out="$(bash "$HOOK" </dev/null)"
 assert_eq "" "$out" "yesterday's state file does not activate today"
+
+echo "== standing directions =="
+export RUN_DAY_DATE=2026-10-08
+LEDGER="$TEST_DIR/../../../bin/friction-ledger"
+rm -f "$RUN_DAY_STATE_DIR/2026-10-08.md"
+assert_eq "" "$(bash "$HOOK" </dev/null)" "no friction-ledger, no run: still silent"
+export FRICTION_LEDGER_BIN="$LEDGER"
+assert_eq "" "$(bash "$HOOK" </dev/null)" "ledger but no directions file, no run: silent"
+"$LEDGER" directions add --rule "Handle service outages with scripts, never model retries" --scope global >/dev/null
+"$LEDGER" directions add --rule "Retired one" >/dev/null; "$LEDGER" directions retire D-002
+out="$(bash "$HOOK" </dev/null)"
+ctx="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext')"
+assert_eq "SessionStart" "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.hookEventName')" "directions alone: valid hook JSON"
+assert_contains "$ctx" "## Standing directions" "under the Standing directions heading"
+assert_contains "$ctx" "- Handle service outages with scripts, never model retries" "with the active rule"
+assert_lacks "$ctx" "Retired one" "retired rules are left out"
+assert_lacks "$ctx" "run-day session is active" "and no run context without a run"
+ctx="$(bash "$HOOK" directions </dev/null | jq -r '.hookSpecificOutput.additionalContext')"
+assert_contains "$ctx" "- Handle service outages" "the directions argument injects them (startup)"
+printf '# run-day 2026-10-08
+- ecfx-1 | class=auto | needs_you=no
+' > "$RUN_DAY_STATE_DIR/2026-10-08.md"
+ctx="$(bash "$HOOK" </dev/null | jq -r '.hookSpecificOutput.additionalContext')"
+assert_contains "$ctx" "run-day session is active" "with a run: run context"
+assert_contains "$ctx" "- Handle service outages" "and the directions after it"
+ctx="$(bash "$HOOK" directions </dev/null | jq -r '.hookSpecificOutput.additionalContext')"
+assert_lacks "$ctx" "run-day session is active" "the startup entry never injects run state"
+export FRICTION_LEDGER_BIN="$SANDBOX/no-such-friction-ledger"
+ctx="$(bash "$HOOK" </dev/null | jq -r '.hookSpecificOutput.additionalContext')"
+assert_lacks "$ctx" "Standing directions" "a missing script injects nothing and does not fail the hook"
+printf '#!/bin/sh\nexit 3\n' >"$SANDBOX/broken"; chmod +x "$SANDBOX/broken"; export FRICTION_LEDGER_BIN="$SANDBOX/broken"
+bash "$HOOK" </dev/null >/dev/null 2>&1; assert_eq "0" "$?" "a failing script does not fail the hook"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

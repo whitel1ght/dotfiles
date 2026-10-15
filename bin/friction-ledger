@@ -6,6 +6,11 @@
 #   friction-ledger set F-NNN [--class C] [--status S] [--rung R] [--fix SHA]
 #                             [--diagnosis TEXT] [--proposal-file FILE] [--date D]
 #   friction-ledger diary-section --date D [--mine-json FILE]
+#   friction-ledger frustration --date D --what TEXT --class C --sig-hint H [--quote Q]
+#   friction-ledger directions add --rule R [--scope S] [--quote Q] [--harness H] [--date D] [--same-as D-NNN]
+#   friction-ledger directions retire D-NNN [--reason R]
+#   friction-ledger directions promote D-NNN --fix SHA
+#   friction-ledger directions render [--scope S]
 #
 # apply   folds one day of `friction-mine` output (FILE, else it runs the miner) into the
 #         ledger. A group whose signature is already there gets last/days/Evidence updated
@@ -25,6 +30,17 @@
 # diary-section  prints the `## Friction` markdown for D (nothing when there is no friction):
 #         counts of new / recurring / regressed, a `→ /fix-friction F-NNN` line per proposed or
 #         regressed item seen on D, and one line for possible corrections (unverified).
+#
+# frustration  records a user frustration as a ledger group (source user, kind frustration,
+#         signature user:frustration:<sig-hint>), so it counts toward promotion like any
+#         group. Sets class and diagnosis on a new entry. Prints {id, new, days, needs_proposal}.
+# directions  the standing directions in $FRICTION_WIKI/directions.md (D-NNN | rule | scope |
+#         since | source | status). add skips a rule already active (same words, ignoring case
+#         and punctuation) or flagged --same-as, and prints the id either way; retire and
+#         promote change the status (retired / promoted: no longer injected); render prints
+#         the active rules as a list of at most 2 KB, oldest global first folded into an
+#         "N more" line, or nothing when there are none. apply also passes `user_signals`
+#         from the miner output through.
 #
 # $FRICTION_WIKI (default ~/wiki/friction) holds ledger.md and the F-files. The F-files are
 # the source of truth; ledger.md is regenerated from them. Only the main session at end-day
@@ -217,7 +233,8 @@ cmd_apply() {
       {new: [$touched[] | select($st[.id].first == $date and $st[.id].class == "") | item(.)],
        needs_proposal: [$touched[] | select($st[.id].status == "open" and ($st[.id].proposal | not) and ($st[.id].days >= 2 or .g.kind == "blocked")) | item(.)],
        regressed: [$touched[] | select($st[.id].status == "regressed" and $st[.id].regressed) | item(.)],
-       corrections: [$mine.groups[]? | select(.kind == "correction") | {count, samples}]}'
+       corrections: [$mine.groups[]? | select(.kind == "correction") | {count, samples}],
+       user_signals: ($mine.user_signals // [])}'
 }
 
 # --- set ----------------------------------------------------------------------
@@ -285,12 +302,12 @@ cmd_diary() {
     local text; text="$(section_get "$f" Diagnosis | head -1)"
     [ -n "$text" ] || text="$(fm_get "$f" signature | jq -r .)"
     rows+="$(jq -nc --arg id "$id" --arg status "$(fm_get "$f" status)" --arg first "$(fm_get "$f" first)" --arg last "$(fm_get "$f" last)" \
-      --arg text "$text" --argjson regressed "$([ "$(grep -c "^- $date_: regressed" "$f" || true)" != 0 ] && echo true || echo false)" \
-      '{id: $id, status: $status, first: $first, last: $last, text: $text, regressed: $regressed}')"$'\n'
+      --arg text "$text" --argjson frustr "$([[ "$(fm_get "$f" signature | jq -r .)" == user:frustration:* ]] && echo true || echo false)" --argjson regressed "$([ "$(grep -c "^- $date_: regressed" "$f" || true)" != 0 ] && echo true || echo false)" \
+      '{id: $id, status: $status, first: $first, last: $last, text: $text, regressed: $regressed, frustr: $frustr}')"$'\n'
   done
   mine="$(load_mine "$date_" "$mine_file" 2>/dev/null || echo '{"groups":[]}')"
 
-  jq -rn --arg date "$date_" --slurpfile mine <(printf '%s' "$mine") --slurpfile rows <(printf '%s' "$rows") '
+  jq -rn --arg date "$date_" --slurpfile mine <(printf '%s' "$mine") --slurpfile rows <(printf '%s' "$rows") --slurpfile dirs <(dir_rows | jq -c .) '
     def short: gsub("\\s+"; " ") | if length > 60 then .[0:57] + "..." else . end;
     [$rows[] | select(.last == $date)] as $seen
     | [$seen[] | select(.first == $date)] as $new
@@ -298,18 +315,188 @@ cmd_diary() {
     | [$seen[] | select(.first != $date and (.regressed | not))] as $rec
     | [($mine[0].groups // [])[] | select(.kind == "correction")] as $cor
     | ([$cor[].count] | add // 0) as $ncor
-    | if ($seen | length) == 0 and $ncor == 0 then empty else
+    | [$dirs[] | select(.since == $date and .status == "active")] as $dnew
+    | ([$dirs[] | select(.status == "active" and .scope != "global")] | group_by(.scope) | map(select(length >= 3))) as $dgrp
+    | if ($seen | length) == 0 and $ncor == 0 and ($dnew | length) == 0 then empty else
         "## Friction", "",
         "\($new | length) new · \($rec | length) recurring · \($reg | length) regressed", "",
         ($seen[] | select(.status == "proposed" or .regressed) | "- \(.id) — \(.text) → /fix-friction \(.id)"),
-        (if $ncor > 0 then "- \($ncor) possible corrections (unverified): " + ([$cor[].samples[]? | short | "\"" + . + "\""] | .[:3] | join(" · ")) else empty end)
+        ($seen[] | select(.frustr and (.status != "proposed") and (.regressed | not)) | "- \(.id) — \(.text) (frustration)"),
+        (if $ncor > 0 then "- \($ncor) possible corrections (unverified): " + ([$cor[].samples[]? | short | "\"" + . + "\""] | .[:3] | join(" · ")) else empty end),
+        (if ($dnew | length) > 0 then "", "Directions learned today (active from the next session; retire with `friction-ledger directions retire D-NNN`):", ($dnew[] | "- \(.id) — \(.rule) (\(.scope))") else empty end),
+        ($dgrp[] | "", "\(length) active directions share the scope \"\(.[0].scope)\" (\([.[].id] | join(", "))): run /fix-friction to fold them into that prompt or skill, then `friction-ledger directions promote D-NNN --fix <sha>`.")
       end'
+}
+
+# --- frustration --------------------------------------------------------------
+
+find_id() { # sig -> F-id or empty
+  local f
+  for f in "$FRICTION_WIKI"/F-*.md; do
+    [ -f "$f" ] || continue
+    [ "$(fm_get "$f" signature | jq -r .)" = "$1" ] && { basename "$f" .md; return; }
+  done
+  return 0
+}
+
+cmd_frustration() {
+  local date_="" what="" class="" hint="" quote="" bin
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      --what) need "$@"; what="$2"; shift ;;
+      --class) need "$@"; class="$2"; shift ;;
+      --sig-hint) need "$@"; hint="$2"; shift ;;
+      --quote) need "$@"; quote="$2"; shift ;;
+      *) die "frustration: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] && [ -n "$what" ] && [ -n "$hint" ] || die "frustration needs --date, --what and --sig-hint"
+  valid_date "$date_"
+  [ -z "$class" ] || [[ "$class" =~ ^(env|instruction|script|model|external)$ ]] || die "bad class: $class"
+  local sig tmp out id
+  if [ -x "$HERE/friction" ]; then bin="$HERE/friction"; else bin="$(command -v friction || true)"; fi
+  if [ -n "$bin" ]; then sig="$("$bin" sig user frustration "$hint")"; else sig="user:frustration:$(tr '[:upper:]' '[:lower:]' <<<"$hint")"; fi
+  tmp="$(mktemp)"
+  jq -n --arg sig "$sig" --arg s "$(one_line "${quote:-$what}" | cut -c1-200)" \
+    '{groups: [{sig: $sig, source: "user", kind: "frustration", count: 1, confidence: "high", keys: [], samples: [$s], evidence: []}]}' >"$tmp"
+  out="$(cmd_apply --date "$date_" --mine-json "$tmp")"; rm -f "$tmp"
+  id="$(find_id "$sig")"
+  [ -n "$id" ] || die "frustration: no entry for $sig"
+  local was_new=false
+  [ "$(jq -r --arg id "$id" '[.new[].id] | index($id) != null' <<<"$out")" = true ] && was_new=true
+  if [ -z "$(fm_get "$(fpath "$id")" class)" ]; then
+    cmd_set "$id" --diagnosis "$what" --date "$date_" ${class:+--class "$class"}
+  fi
+  jq -nc --arg id "$id" --argjson new "$was_new" --argjson out "$out" --arg days "$(fm_get "$(fpath "$id")" days)" \
+    '{id: $id, new: $new, days: ($days | tonumber), needs_proposal: ([$out.needs_proposal[].id] | index($id) != null)}'
+}
+
+# --- directions ---------------------------------------------------------------
+
+DIR_HEAD='# Standing directions
+
+| id | rule | scope | since | source | status |
+|---|---|---|---|---|---|'
+dir_file() { printf '%s/directions.md' "$FRICTION_WIKI"; }
+cell() { tr '\n\r\t|' '   ¦' <<<"$1" | sed 's/  */ /g; s/^ //; s/ $//'; }
+norm() { jq -rn --arg v "$1" '$v | ascii_downcase | gsub("[^\\p{L}\\p{N}\\s]"; "") | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ")'; }
+
+# id<TAB>rule<TAB>scope<TAB>since<TAB>source<TAB>status for every row
+dir_tsv() {
+  [ -f "$(dir_file)" ] || return 0
+  awk -F'|' '/^\| *D-[0-9]+ *\|/ { for (i = 2; i <= 7; i++) gsub(/^ +| +$/, "", $i); print $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 }' "$(dir_file)"
+}
+dir_rows() { dir_tsv | jq -Rc 'split("\t") | {id: .[0], rule: .[1], scope: .[2], since: .[3], source: .[4], status: .[5]}'; }
+
+dir_set_status() { # id status suffix
+  local f tmp; f="$(dir_file)"; tmp="$(mktemp)"
+  I="$1" S="$2" X="$3" awk -F'|' 'BEGIN { OFS = "|" }
+    $0 ~ "^\\| *" ENVIRON["I"] " *\\|" { src = $6; sub(/ +$/, "", src); $6 = src ENVIRON["X"] " "; $7 = " " ENVIRON["S"] " " }
+    { print }' "$f" >"$tmp" && mv "$tmp" "$f"
+}
+
+cmd_dir_add() {
+  local rule="" scope=global quote="" harness="" date_="" same=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --rule) need "$@"; rule="$2"; shift ;;
+      --scope) need "$@"; scope="$2"; shift ;;
+      --quote) need "$@"; quote="$2"; shift ;;
+      --harness) need "$@"; harness="$2"; shift ;;
+      --date) need "$@"; date_="$2"; shift ;;
+      --same-as) need "$@"; same="$2"; shift ;;
+      *) die "directions add: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$(cell "$rule")" ] || die "directions add needs --rule"
+  [ -n "$date_" ] || date_="$(date +%F)"
+  valid_date "$date_"
+  rule="$(cell "$rule")"; scope="$(cell "${scope:-global}")"; [ -n "$scope" ] || scope=global
+  local id n existing
+  if [ -n "$same" ]; then
+    [ -n "$(dir_tsv | awk -F'\t' -v i="$same" '$1 == i && $6 == "active"')" ] && { echo "$same"; return; }
+  fi
+  n="$(norm "$rule")"
+  if [ -n "$n" ]; then
+    while IFS=$'\t' read -r id r _ _ _ st; do
+      [ "$st" = active ] && [ "$(norm "$r")" = "$n" ] && { echo "$id"; return; }
+    done < <(dir_tsv)
+  fi
+  local next=1 num
+  while IFS=$'\t' read -r id _; do num=$((10#${id#D-})); [ "$num" -lt "$next" ] || next=$((num + 1)); done < <(dir_tsv)
+  id="$(printf 'D-%03d' "$next")"
+  mkdir -p "$FRICTION_WIKI"
+  [ -f "$(dir_file)" ] || printf '%s\n' "$DIR_HEAD" >"$(dir_file)"
+  local src; src="$(cell "$quote" | cut -c1-160)"
+  [ -z "$src" ] || src="\"$src\""
+  [ -z "$harness" ] || src="${src:+$src }($(cell "$harness"))"
+  printf '| %s | %s | %s | %s | %s | active |\n' "$id" "$rule" "$scope" "$date_" "$src" >>"$(dir_file)"
+  echo "$id"
+}
+
+cmd_dir_change() { # retire|promote args
+  local what="$1" id="${2:-}" reason="" fix="" st
+  [[ "$id" =~ ^D-[0-9]+$ ]] || die "directions $what needs a D-NNN id"
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason) need "$@"; reason="$2"; shift ;;
+      --fix) need "$@"; fix="$2"; shift ;;
+      *) die "directions $what: unknown option $1" ;;
+    esac
+    shift
+  done
+  st="$(dir_tsv | awk -F'\t' -v i="$id" '$1 == i { print $6 }')"
+  [ -n "$st" ] || die "no such direction: $id"
+  if [ "$what" = retire ]; then
+    [ "$st" = retired ] && return 0
+    dir_set_status "$id" retired "${reason:+ — retired: $(cell "$reason")}"
+  else
+    [ -n "$fix" ] || die "directions promote needs --fix SHA"
+    [ "$st" = promoted ] && return 0
+    dir_set_status "$id" promoted " — fix $(cell "$fix")"
+  fi
+}
+
+cmd_dir_render() {
+  local scope=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --scope) need "$@"; scope="$2"; shift ;;
+      *) die "directions render: unknown option $1" ;;
+    esac
+    shift
+  done
+  dir_rows | jq -rn --arg scope "$scope" --argjson cap 2048 '
+    def text($a; $n): ($a | map("- \(.rule)" + (if .scope == "global" then "" else " [\(.scope)]" end)) | join("\n"))
+      + (if $n > 0 then (if ($a | length) > 0 then "\n" else "" end) + "- \($n) more in ~/wiki/friction/directions.md" else "" end);
+    def fit($a; $n):
+      if ($a | length) == 0 or (text($a; $n) | utf8bytelength) <= $cap then {a: $a, n: $n}
+      else (([$a[] | select(.scope == "global")] | sort_by(.since, .id) | first) // ($a | sort_by(.since, .id) | first)) as $d
+        | fit([$a[] | select(.id != $d.id)]; $n + 1) end;
+    [inputs | select(.status == "active" and ($scope == "" or .scope == "global" or .scope == $scope))] | sort_by(.id)
+    | fit(.; 0) | if (.a | length) == 0 and .n == 0 then empty else text(.a; .n) end'
+}
+
+cmd_directions() {
+  local sub="${1:-}"; shift || true
+  case "$sub" in
+    add) cmd_dir_add "$@" ;;
+    retire|promote) cmd_dir_change "$sub" "$@" ;;
+    render) cmd_dir_render "$@" ;;
+    *) die "directions: add|retire|promote|render" ;;
+  esac
 }
 
 case "${1:-}" in
   apply) shift; cmd_apply "$@" ;;
   set) shift; cmd_set "$@" ;;
   diary-section) shift; cmd_diary "$@" ;;
-  -h|--help|"") sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
+  frustration) shift; cmd_frustration "$@" ;;
+  directions) shift; cmd_directions "$@" ;;
+  -h|--help|"") sed -n '2,49p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
   *) die "unknown command $1" ;;
 esac

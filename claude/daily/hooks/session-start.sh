@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# SessionStart (compact|resume): re-inject today's /run-day context. Silent when no run is active.
+# SessionStart: re-inject today's /run-day context (compact|resume), and the standing directions
+# learned from earlier days (every start; `session-start.sh directions` is the directions only).
+# Silent when there is neither. A missing friction-ledger or directions file injects nothing.
 set -euo pipefail
 
 STATE_DIR="${RUN_DAY_STATE_DIR:-$HOME/.local/state/run-day}"
@@ -10,7 +12,23 @@ DIARY="$WIKI/diary/$TODAY.md"
 MAX_CHARS=6000
 BLOCK_MAX=3000
 
-[ -f "$STATE" ] || exit 0
+FRICTION_LEDGER_BIN="${FRICTION_LEDGER_BIN:-$(command -v friction-ledger 2>/dev/null || echo "$HOME/.local/bin/friction-ledger")}"
+dir_text=""
+if [ -x "$FRICTION_LEDGER_BIN" ]; then
+  directions="$("$FRICTION_LEDGER_BIN" directions render 2>/dev/null || true)"
+  [ -z "$directions" ] || dir_text="
+
+## Standing directions
+Rules the user gave in earlier sessions, active until retired. Follow them.
+$directions"
+fi
+
+if [ "${1:-}" = directions ] || [ ! -f "$STATE" ]; then
+  [ -n "$dir_text" ] || exit 0
+  jq -n --arg c "${dir_text#
+}" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $c}}'
+  exit 0
+fi
 
 pending=0
 if [ -d "$STATE_DIR/inbox" ]; then
@@ -57,4 +75,4 @@ fi
 
 ctx="$head_text$block_head$block$state_text"
 
-jq -n --arg c "$(cut_chars "$ctx" "$MAX_CHARS")" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $c}}'
+jq -n --arg c "$(cut_chars "$ctx" "$MAX_CHARS")$dir_text" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $c}}'
