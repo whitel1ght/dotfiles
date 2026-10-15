@@ -222,7 +222,7 @@ PY
   echo "$file"
 }
 
-friction() {
+save_friction() {
   local file="$DIARY_DIR/$day.md" block
   block=$(cat)
   [ -n "$block" ] || { echo "end-day: nothing on stdin" >&2; exit 1; }
@@ -270,7 +270,7 @@ case "$cmd" in
     collect_commits; collect_gitlab; collect_jira
     if [ "$SESSIONS" = pi ]; then collect_pi; else collect_claude; fi ;;
   save) save $save_opt ;;
-  friction) friction ;;
+  friction) save_friction ;;
   touched) touched ;;
   entries) entries "${2:-}" ;;
   -h|--help|"") sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; [ -n "$cmd" ] ;;
