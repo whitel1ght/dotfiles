@@ -12,6 +12,7 @@ import {
   filesTouched,
   fit,
   footerText,
+  panelToken,
   renderAgent,
   renderList,
   visibleRows,
@@ -298,4 +299,40 @@ test("AgentsOverlay: the hotkey follows the configured key; no hotkey, no toggle
   const bare = hotkeyOverlay(undefined, { q: "ctrl+g" });
   bare.o.handleInput("ctrl+space");
   assert.equal(bare.state.closed, 0);
+});
+
+test("panel bg: every line is shaded, nested resets re-open it, plain output is untouched", () => {
+  const P = "\x1b[48;5;1m";
+  const p = {
+    fg: (_c: string, s: string) => s,
+    bg: (c: string, s: string) => `${c === "selectedBg" ? "\x1b[48;5;2m" : P}${s}\x1b[49m`,
+    bold: (s: string) => s,
+    panel: "userMessageBg",
+  };
+  const rows: Row[] = [
+    { meta: meta("a"), ordinal: 1, orphan: false },
+    { meta: meta("b"), ordinal: 2, orphan: false },
+  ];
+  const row = rows[0];
+  const outs = [
+    renderList({ ...initialView(), cursor: 1 }, rows, 90, 12, NOW, "s", p),
+    renderAgent(initialView(), row, [row], [], [], 90, 15, NOW, p),
+  ];
+  for (const out of outs) {
+    for (const l of out) {
+      assert.ok(l.startsWith(P), l);
+      assert.ok(l.endsWith("\x1b[49m"), l);
+      assert.ok(!/\x1b\[49m(?!$)(?!\x1b\[48;5;1m)/.test(l), "reset not followed by the panel bg");
+      assert.equal([...l.replace(/\x1b\[[\d;]+m/g, "")].length, 90);
+    }
+  }
+  assert.ok(outs[0].some((l) => l.includes("\x1b[48;5;2m") && /\x1b\[49m\x1b\[48;5;1m.*│.*\x1b\[49m$/.test(l)), "cursor row keeps selectedBg, border stays shaded");
+});
+
+test("panelToken: default, valid token, none, unknown", () => {
+  assert.equal(panelToken(undefined), "userMessageBg");
+  assert.equal(panelToken("toolPendingBg"), "toolPendingBg");
+  assert.equal(panelToken("none"), undefined);
+  assert.equal(panelToken("nope"), "userMessageBg");
+  assert.equal(panelToken(3), "userMessageBg");
 });

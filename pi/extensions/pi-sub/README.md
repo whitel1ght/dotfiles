@@ -29,7 +29,8 @@ orphans in a `session_start` notice and in the window.
 
 `ctrl+space` toggles the window and `/agents [id]` opens it: `j/k` move, `l` open, `x` stop,
 `m` flag to main, `/` filter, `zf` show finished, `q` close. Rebind keys under
-`piSub.keys` in settings. `/agents adopt <session>` adopts from the command line.
+`piSub.keys` in settings. The popup is shaded with the `userMessageBg` theme
+colour; set `piSub.panelBg` to another bg token, or `"none"`. `/agents adopt <session>` adopts from the command line.
 
 Verified against Pi 1.2.0. Run `node --test *.test.ts` here; `bin/pi-contract` checks
 the real behaviour (bare child, survives its launcher, wake-up once, pi-lens path).

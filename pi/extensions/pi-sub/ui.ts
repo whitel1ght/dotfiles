@@ -54,8 +54,24 @@ export type Paint = {
   fg: (color: string, s: string) => string;
   bg: (color: string, s: string) => string;
   bold: (s: string) => string;
+  /** Bg token shading the whole panel; unset leaves the theme's own background. */
+  panel?: string;
 };
 export const plain: Paint = { fg: (_c, s) => s, bg: (_c, s) => s, bold: (s) => s };
+
+const BG_TOKENS = ["selectedBg", "userMessageBg", "customMessageBg", "toolPendingBg", "toolSuccessBg", "toolErrorBg", "searchMatchBg"];
+
+/** `piSub.panelBg` setting → bg token for the panel: unset or unknown is the default, "none" is no shading. */
+export function panelToken(v: unknown): string | undefined {
+  return v === "none" ? undefined : typeof v === "string" && BG_TOKENS.includes(v) ? v : "userMessageBg";
+}
+
+/** Shade a finished line with the panel bg, re-applying it after any inner bg or full reset. */
+function shade(l: string, p: Paint): string {
+  if (!p.panel) return l;
+  const [open, close] = p.bg(p.panel, "\0").split("\0");
+  return open + l.replace(/\x1b\[(?:0|49)m/g, (m) => m + open) + close;
+}
 
 /** A run of text with its theme colour and weight. */
 type Seg = [text: string, color?: string, bold?: boolean];
@@ -214,7 +230,7 @@ export function renderList(
   out.push(rule(width, p));
   out.push(line(promptRow(view, rows, events, now, LIST_KEYS), width, p));
   out.push(bottom(width, p));
-  return out;
+  return out.map((l) => shade(l, p));
 }
 
 /** Distinct files a write-capable agent has edited or written, from its tool calls. */
@@ -295,7 +311,7 @@ export function renderAgent(
   const keys = `j/k scroll · G follow${view.follow ? " (on)" : ""} · l wrap · / search · t task · x stop · m flag · h back`;
   out.push(line(promptRow(view, rows, events, now, keys), width, p));
   out.push(bottom(width, p));
-  return out;
+  return out.map((l) => shade(l, p));
 }
 
 /** Colour a log line by the kind label agentLog gave it. */

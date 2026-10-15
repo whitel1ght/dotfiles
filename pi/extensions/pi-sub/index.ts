@@ -31,7 +31,7 @@ import { launch } from "./launch.ts";
 import { loadRole } from "./roles.ts";
 import { deliverPending, flagText, isPidAlive, stop, Watcher } from "./runtime.ts";
 import { isDelivered, listAgents, orphans, owned, readExit, writeMeta } from "./state.ts";
-import { AgentsOverlay, footerText, plain, visibleRows } from "./ui.ts";
+import { AgentsOverlay, footerText, panelToken, plain, visibleRows } from "./ui.ts";
 import { liveModels } from "../session-models/index.ts";
 
 const WAKE_TYPE = "pi-sub";
@@ -71,11 +71,20 @@ export function resolveSkill(skill: string, cwd: string): string {
   return path;
 }
 
-/** `piSub.keys` from pi's settings: overlay key rebinds, { "<default>": "<yours>" }. */
-function rebinds(): Record<string, string> {
+/** The `piSub` block of pi's settings; {} when missing or unreadable. */
+function piSubSettings(): any {
   const dir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
   try {
-    const keys = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8"))?.piSub?.keys;
+    return JSON.parse(readFileSync(join(dir, "settings.json"), "utf8"))?.piSub ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** `piSub.keys` from pi's settings: overlay key rebinds, { "<default>": "<yours>" }. */
+function rebinds(): Record<string, string> {
+  try {
+    const keys = piSubSettings().keys;
     if (keys && typeof keys === "object") {
       return Object.fromEntries(Object.entries(keys).filter(([, v]) => typeof v === "string")) as Record<string, string>;
     }
@@ -175,6 +184,7 @@ export default function piSub(pi: ExtensionAPI) {
                 fg: (c, s) => theme.fg(c, s),
                 bg: (c, s) => theme.bg(c, s),
                 bold: (s) => theme.bold(s),
+                panel: panelToken(piSubSettings().panelBg),
               },
             },
             openId,
