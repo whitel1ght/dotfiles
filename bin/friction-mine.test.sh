@@ -70,6 +70,7 @@ printf '%s\n' '{"type":"agent_start"}' '{"type":"auto_retry_start","attempt":1,"
 cl() { jq -cn --arg ts "$1" --arg cwd "$2" --argjson m "$3" --arg t "$4" '{type:$t, timestamp:$ts, cwd:$cwd, message:$m}'; }
 tu() { cl "$1" /w/ECFX-77 "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"$2\",\"name\":\"Bash\",\"input\":{\"command\":\"$3\"}}]}" assistant; }
 tr_() { cl "$1" /w/ECFX-77 "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"$2\",\"is_error\":true,\"content\":\"$3\"}]}" user; }
+meta() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"user",content:$c}')" user | jq -c '. + {isMeta:true}'; }
 aq() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"assistant",content:[{type:"text",text:$c}]}')" assistant; }
 us() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"user",content:$c}')" user; }
 { for i in 1 2 3; do tu "2026-10-15T07:0$i:00.000Z" "t$i" "make build"; tr_ "2026-10-15T07:0$i:30.000Z" "t$i" "Exit code 2\nerror in step $i"; done
@@ -86,6 +87,17 @@ us() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"user",content:$c}')" us
   aq 2026-10-15T07:14:55.000Z "Which file do you mean?"
   us 2026-10-15T07:14:58.000Z "don't touch the config file, only the tests please, wrong one entirely"
   us 2026-10-15T07:15:00.000Z "<system-reminder>don't do this again</system-reminder>"
+  aq 2026-10-15T07:30:00.000Z "Linter pass finished."
+  us 2026-10-15T07:30:10.000Z "from now on always run the linter before committing"
+  us 2026-10-15T07:31:00.000Z "why did you do that again?!"
+  us 2026-10-15T07:32:00.000Z "THIS IS BROKEN fix it"
+  us 2026-10-15T07:33:00.000Z "[Request interrupted by user]"
+  us 2026-10-15T07:33:10.000Z "ok try the other approach instead"
+  us 2026-10-15T07:34:00.000Z "and one more plain thing"
+  us 2026-10-15T07:35:00.000Z "<command-name>/foo</command-name> always never must"
+  us 2026-10-15T07:35:10.000Z "The daily plugin sent a message: [daily-event] always never"
+  meta 2026-10-15T07:35:20.000Z "Caveat: you must always remember this"
+  tr_ 2026-10-15T07:35:30.000Z t5 "you must always never again"
   tu 2026-10-14T07:00:00.000Z t6 "yesterday"; tr_ 2026-10-14T07:00:10.000Z t6 "old failure"
   us 2026-10-14T07:01:00.000Z "no, wrong, stop"; } >"$CP/-proj/s1.jsonl"
 
@@ -158,11 +170,34 @@ assert_eq "denied" "$(f "$(grp 'claude:denied:bash denied by user or permissions
 assert_eq "interrupt" "$(f "$(grp 'claude:interrupt:[request interrupted by user]')" .kind)" "interrupt"
 g=$(grp "claude:correction:no, that's not what i asked")
 assert_eq "correction|low" "$(f "$g" '[.kind,.confidence]|join("|")')" "correction wording -> correction, confidence low"
-assert_eq "2" "$(jq '[.groups[]|select(.source=="claude" and .kind=="correction")]|length' <<<"$OUT")" "only prompts that open with a correction word count (5+ words; short ones after an assistant question do not)"
+assert_eq "3" "$(jq '[.groups[]|select(.source=="claude" and .kind=="correction")]|length' <<<"$OUT")" "only prompts that open with a correction word count (5+ words; short ones after an assistant question do not)"
 assert_eq "" "$(jq -r '.groups[]|select(.sig|test("looks good|its fine|stop the build|go ahead"))' <<<"$OUT")" "excluded: correction word mid-text, too short, 'again' anywhere, short reply to a question"
 assert_eq "1" "$(jq '[.groups[]|select(.sig|test("^claude:correction:don.t touch"))]|length' <<<"$OUT")" "a long correction right after an assistant question still counts"
 assert_eq "" "$(jq -r '.groups[]|select(.sig|test("old failure|yesterday"))' <<<"$OUT")" "yesterday's entries left out"
 assert_eq "1" "$(jq '[.groups[]|select(.sig|test("ls: nope"))]|length' <<<"$OUT")" "a single failure stays a tool_error, no retry group"
+
+echo "friction-mine — user_signals"
+sg() { jq -c --arg t "$1" '.user_signals[] | select(.text == $t)' <<<"$OUT"; }
+OUT=$(mine --date $D)
+g=$(sg "from now on always run the linter before committing")
+assert_eq "claude|from now on,always" "$(f "$g" '[.harness,(.markers|join(","))]|join("|")')" "direction markers"
+assert_eq "Linter pass finished." "$(f "$g" .prev_assistant)" "prev_assistant is the preceding assistant text"
+assert_eq "ECFX-77|/w/ECFX-77" "$(f "$g" '[.key,.cwd]|join("|")')" "key and cwd carried"
+assert_eq "s1" "$(f "$g" .session)" "session from the transcript name"
+assert_eq "2026-10-15T07:30:10.000Z" "$(f "$g" .ts)" "ts of the entry"
+g=$(sg "why did you do that again?!")
+assert_eq "again,why did,?!,correction" "$(f "$g" '.markers|join(",")')" "frustration markers, correction included"
+assert_eq "caps" "$(f "$(sg 'THIS IS BROKEN fix it')" '.markers|join(",")')" "ALL-CAPS word of 4+ letters"
+assert_eq "after_interrupt" "$(f "$(sg 'ok try the other approach instead')" '.markers|join(",")')" "a prompt right after an interrupt"
+assert_eq "0" "$(jq '[.user_signals[]|select(.text=="and one more plain thing")]|length' <<<"$OUT")" "the next prompt is not after an interrupt, and has no marker"
+assert_eq "0" "$(jq '[.user_signals[]|select(.text|test("^<|daily plugin|Caveat|^\\[Request|you must always never again|yesterday"))]|length' <<<"$OUT")" "injected, command-expansion, meta, interrupt marker and tool-result messages are skipped"
+assert_eq "yes" "$(jq -e '[.user_signals[]|select(.harness=="pi")]|length >= 1' <<<"$OUT" >/dev/null && echo yes || echo no)" "pi prompts are candidates too"
+assert_eq "yes" "$(jq -e '[.user_signals[]|.ts[0:10]]|unique == ["2026-10-15"]' <<<"$OUT" >/dev/null && echo yes || echo no)" "only the day's prompts"
+for i in $(seq 1 45); do us "2026-10-15T08:$(printf %02d $((i % 60))):00.000Z" "always remember rule number $i" ; done >>"$CP/-proj/s2.jsonl"
+OUT=$(mine --date $D)
+assert_eq "40" "$(jq '.user_signals|length' <<<"$OUT")" "capped at 40 a day"
+assert_eq "4" "$(jq '.user_signals[0].markers|length' <<<"$OUT")" "the most-marked kept first"
+rm "$CP/-proj/s2.jsonl"; OUT=$(mine --date $D)
 
 echo "friction-mine — pi transcripts"
 assert_eq "tool_error|ECFX-88" "$(f "$(grp 'pi:tool_error:bash: <n> failing')" '[.kind,.keys[0]]|join("|")')" "isError toolResult -> tool_error, key from the session cwd"
@@ -185,7 +220,7 @@ OUT=$(mine --date 2026-10-14)
 assert_eq "old:other:yesterday" "$(jq -r '.groups[]|select(.source=="old")|.sig' <<<"$OUT")" "--date 2026-10-14 reads that day's events"
 assert_eq "yes" "$(jq -e '[.groups[].sig|select(startswith("changes-since"))]|length == 0' <<<"$OUT" >/dev/null && echo yes || echo no)" "and none of the 15th's"
 assert_eq "yes" "$(jq -e '[.groups[]|select(.sig|test("old failure"))]|length == 1' <<<"$OUT" >/dev/null && echo yes || echo no)" "Claude entries of the 14th are found on the 14th"
-OUT=$(mine --date 2026-01-01); assert_eq '{"date":"2026-01-01","groups":[]}' "$(jq -c . <<<"$OUT")" "a quiet day gives an empty group list"
+OUT=$(mine --date 2026-01-01); assert_eq '{"date":"2026-01-01","user_signals":[],"groups":[]}' "$(jq -c . <<<"$OUT")" "a quiet day gives an empty group list"
 mine --date nope >/dev/null; assert_eq "1" "$?" "a bad --date is an error"
 
 echo

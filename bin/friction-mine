@@ -15,13 +15,17 @@
 #   CLAUDE_PROJECTS_DIR */<sid>.jsonl transcripts                 (~/.claude/projects)
 #   PI_SESSIONS_DIR     **/*.jsonl transcripts                    (~/.pi/agent/sessions)
 #
-# Prints {"date", "groups":[{sig, source, kind, count, keys, confidence, samples,
-# evidence, known, ledger_status[, regression]}]}, biggest first. Read-only: no
-# network, no model, nothing written. Corrections are guessed from user prompts that
-# open with "no,", "stop", "don't", "why did you" and the like (5+ words, not a short
-# answer to an assistant question), so they carry confidence "low". The same failing command three or
-# more times in one transcript adds a `retry` record. A group whose signature is in
-# the ledger gets known=<F-id> and ledger_status; status fixed also sets regression.
+# Prints {"date", "user_signals", "groups"}. groups: [{sig, source, kind, count, keys,
+# confidence, samples, evidence, known, ledger_status[, regression]}], biggest first.
+# Read-only: no network, no model, nothing written. Corrections are guessed from user
+# prompts that open with "no,", "stop", "don't", "why did you" and the like (5+ words,
+# not a short answer to an assistant question), so they carry confidence "low". The
+# same failing command three or more times in one transcript adds a `retry` record. A
+# group whose signature is in the ledger gets known=<F-id> and ledger_status; status
+# fixed also sets regression.
+# user_signals: broad-recall candidate user prompts (direction and frustration markers,
+# or sent right after an interrupt) with the preceding assistant text, at most 40,
+# most-marked first; injected, meta and command-expansion messages are skipped.
 set -euo pipefail
 
 FRICTION_DIR="${FRICTION_DIR:-$HOME/.local/state/friction}"
@@ -39,7 +43,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --date) [ $# -ge 2 ] || die "--date needs a value"; date_="$2"; shift ;;
     --ledger) [ $# -ge 2 ] || die "--ledger needs a value"; ledger="$2"; shift ;;
-    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown option $1" ;;
   esac
   shift
@@ -58,6 +62,21 @@ def rec($src; $kind; $msg; $key; $ev; $conf): {source: $src, kind: $kind, msg: (
 def correction($lastq): ([splits("\\s+") | select(length > 0)] | length) as $w
   | length <= 600 and $w >= 5 and ($w > 8 or ($lastq | not))
     and test("^\\s*(no[,.]|(nope|wrong|stop|don.t|do not|that.s not|thats not|why did you|you didn.t|you did not|undo|revert)\\b)"; "i");
+def markers($x; $lastq; $pint):
+  ($x | ascii_downcase) as $l
+  | [("from now on", "always", "never", "rule", "make sure", "i want", "i prefer", "should", "must", "remember", "next time", "in the future",
+      "again", "i told you", "i said", "still", "why did", "why is") as $p | select($l | test("\\b\($p)\\b")) | $p]
+    + [if $l | test("don.t ever") then "don\u0027t ever" else empty end]
+    + [("?!", "!!") as $p | select($x | contains($p)) | $p]
+    + [if $x | test("\\b[A-Z]{4,}\\b") then "caps" else empty end]
+    + [if $l | test("\\b(fuck\\w*|shit\\w*|damn\\w*|crap|wtf|bullshit|stupid|idiot\\w*|useless)\\b") then "profanity" else empty end]
+    + [if $x | correction($lastq) then "correction" else empty end]
+    + [if $pint then "after_interrupt" else empty end];
+def signal($h; $ts; $sess; $cwd; $key; $x; $prev; $lastq; $pint):
+  markers($x; $lastq; $pint) as $m
+  | select($m | length > 0)
+  | {signal: true, harness: $h, ts: $ts, session: $sess, cwd: $cwd, key: $key, text: $x[0:600], prev_assistant: $prev[-300:], markers: $m};
+def realprompt: type == "string" and length > 0 and length <= 3000 and (startswith("<") or startswith("[") or startswith("# /") or startswith("Base directory") or startswith("The daily plugin sent") | not);
 def errkind: if test("unavailable|overloaded|connection error|econn|enotfound|\\b5\\d\\d\\b"; "i") then "service_down"
   elif test("unauthori[sz]ed|\\b40[13]\\b|api key|not logged in|oauth|expired"; "i") then "auth"
   elif test("timed? ?out|timeout"; "i") then "timeout"
@@ -120,17 +139,25 @@ if [ -d "$PI_SUB_STATE_DIR" ]; then
 fi
 
 claude_prog="$DEF"'
-foreach inputs as $e ({tools: {}, lastq: false};
+foreach inputs as $e ({tools: {}, lastq: false, atext: "", int: false, pint: false};
+  ($e | if .type == "user" and (.isMeta | not) then
+      (.message.content | if type == "string" then . elif all(.[]; .type != "tool_result") then text else null end) else null end) as $px
+  | ($e | [.message.content | arrays | .[] | select(.type == "tool_result" and .is_error == true) | (.content | text) | select(test("doesn.t want to proceed"; "i"))] | length > 0) as $den
+  |
   if $e.type == "assistant" then
-    .lastq = ([$e.message.content[]? | select(.type == "text") | .text] | join(" ") | rtrimstr(" ") | rtrimstr("\n") | endswith("?"))
+    ([$e.message.content[]? | select(.type == "text") | .text] | join(" ")) as $at
+    | .lastq = ($at | rtrimstr(" ") | rtrimstr("\n") | endswith("?"))
+    | (if $at != "" then .atext = $at else . end)
     | .tools += ([$e.message.content[]? | select(.type == "tool_use") |
       {key: .id, value: {name, cmd: (.input.command // .input.file_path // .input.pattern // .input.url // (.input | tostring))}}] | from_entries)
+  elif $den or ($px | type == "string" and startswith("[Request interrupted")) then .int = true
+  elif ($px | realprompt) then .pint = .int | .int = false
   else . end;
   . as $st
   | select($e.timestamp != null and ($e.timestamp | ldate) == $date and ($e.type == "user" or $e.type == "assistant"))
   | ("\(input_filename):\(input_line_number)") as $ev
   | ($e.cwd | keyof) as $key
-  | if $e.type == "user" and ($e.message.content | type) == "array" then
+  | (if $e.type == "user" and ($e.message.content | type) == "array" then
       ($e.message.content[] | select(.type == "tool_result" and .is_error == true) |
         ($st.tools[.tool_use_id] // {name: "tool", cmd: ""}) as $t
         | (.content | text) as $x
@@ -144,22 +171,29 @@ foreach inputs as $e ({tools: {}, lastq: false};
       | if ($x | startswith("[Request interrupted")) then rec("claude"; "interrupt"; $x; $key; $ev; "high")
         elif (($e.isMeta | not) and ($x | startswith("<") | not) and ($x | correction($st.lastq))) then rec("claude"; "correction"; $x; $key; $ev; "low")
         else empty end
-    else empty end)'
+    else empty end),
+    (select($e.type == "user") | ($e | if (.isMeta | not) then (.message.content | if type == "string" then . elif all(.[]; .type != "tool_result") then text else null end) else null end) as $x
+      | select($x | realprompt)
+      | signal("claude"; $e.timestamp; ($e.sessionId // (input_filename | sub(".*/"; "") | sub("\\.jsonl$"; ""))); ($e.cwd // ""); $key; $x; $st.atext; $st.lastq; $st.pint)))'
 
 pi_prog="$DEF"'
-foreach inputs as $e ({tools: {}, cwd: "", lastq: false};
+foreach inputs as $e ({tools: {}, cwd: "", lastq: false, atext: "", int: false, pint: false};
   if $e.type == "session" then .cwd = ($e.cwd // "")
   elif $e.message.role == "assistant" then
-    .lastq = ([$e.message.content[]? | select(.type == "text") | .text] | join(" ") | rtrimstr(" ") | rtrimstr("\n") | endswith("?"))
+    ([$e.message.content[]? | select(.type == "text") | .text] | join(" ")) as $at
+    | .lastq = ($at | rtrimstr(" ") | rtrimstr("\n") | endswith("?"))
+    | (if $at != "" then .atext = $at else . end)
+    | .int = (($e.message.stopReason // "") == "aborted" or (($e.message.errorMessage // "") | test("abort"; "i")))
     | .tools += ([$e.message.content[]? | select(.type == "toolCall") |
       {key: .id, value: {name, cmd: (.arguments.command // .arguments.path // .arguments.url // (.arguments | tostring))}}] | from_entries)
+  elif $e.message.role == "user" and (($e.message.content | text) | realprompt) then .pint = .int | .int = false
   else . end;
   . as $st
   | select($e.type == "message" and $e.timestamp != null and ($e.timestamp | ldate) == $date)
   | ("\(input_filename):\(input_line_number)") as $ev
   | ($st.cwd | keyof) as $key
   | $e.message as $m
-  | if $m.role == "toolResult" and $m.isError == true then
+  | (if $m.role == "toolResult" and $m.isError == true then
       ($st.tools[$m.toolCallId] // {name: ($m.toolName // "tool"), cmd: ""}) as $t
       | ($m.content | text) as $x
       | rec("pi"; "tool_error"; "\($t.name): \($x | split("\n")[0])"; $key; $ev; "high") + {file: input_filename, cmd: "\($t.name) \($t.cmd | flat | .[0:200])"}
@@ -168,7 +202,9 @@ foreach inputs as $e ({tools: {}, cwd: "", lastq: false};
     elif $m.role == "user" then
       ($m.content | text) as $x
       | select($x | correction($st.lastq)) | rec("pi"; "correction"; $x; $key; $ev; "low")
-    else empty end)'
+    else empty end),
+    (select($m.role == "user") | ($m.content | text) as $x | select($x | realprompt)
+      | signal("pi"; $e.timestamp; (input_filename | sub(".*/"; "") | sub("\\.jsonl$"; "")); $st.cwd; $key; $x; $st.atext; $st.lastq; $st.pint)))'
 
 # transcripts touched on or after the date; jq then filters entries by local date
 mine() {
@@ -187,13 +223,14 @@ mine "$PI_SESSIONS_DIR" "$pi_prog" 3
 
 jq -sc --arg date "$date_" --rawfile ledger "$out/ledger.tsv" "$DEF"'
   ([$ledger | split("\n")[] | select(length > 0) | split("\t") | {key: .[1], value: {id: .[0], status: .[2]}}] | from_entries) as $led
-  | [.[] | . + {sig: (.sig // sig(.source; .kind; .msg))}] as $recs
+  | [.[] | select(.signal | not) | . + {sig: (.sig // sig(.source; .kind; .msg))}] as $recs
+  | ([.[] | select(.signal) | del(.signal)] | map(. + {n: (.markers | length)}) | sort_by([-.n, .ts]) | .[:40] | map(del(.n))) as $signals
   | ([$recs[] | select(.cmd != null)] | group_by([.file, .cmd])
      | map(select(length >= 3) | .[0] as $f
        | rec($f.source; "retry"; "repeated failing command x\(length): \($f.cmd)"; $f.key; ([.[].evidence][:5] | first); $f.confidence)
          + {evidence_all: [.[].evidence]})
      | map(. + {sig: sig(.source; .kind; .msg)})) as $rep
-  | {date: $date, groups: (
+  | {date: $date, user_signals: $signals, groups: (
       [$recs[] | del(.file, .cmd)] + [$rep[] | del(.evidence_all)]
       | group_by(.sig)
       | map(. as $g | $led[$g[0].sig] as $l | {
