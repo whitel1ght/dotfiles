@@ -120,6 +120,7 @@ ctx="$(bash "$HOOK" </dev/null | jq -r '.hookSpecificOutput.additionalContext')"
 assert_lacks "$ctx" "Standing directions" "a missing script injects nothing and does not fail the hook"
 printf '#!/bin/sh\nexit 3\n' >"$SANDBOX/broken"; chmod +x "$SANDBOX/broken"; export FRICTION_LEDGER_BIN="$SANDBOX/broken"
 bash "$HOOK" </dev/null >/dev/null 2>&1; assert_eq "0" "$?" "a failing script does not fail the hook"
+assert_eq "startup|clear" "$(jq -r '.hooks.SessionStart[] | select(.hooks[0].command | endswith("directions")) | .matcher' "$TEST_DIR/../hooks/hooks.json")" "directions are injected on startup and after /clear"
 
 echo
 echo "passed: $PASS  failed: $FAIL"
