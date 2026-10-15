@@ -73,13 +73,11 @@ test('a refused command name is logged and the rest of session.start still runs'
   expect(s.statuses.some(t => typeof t === 'string' && t.length > 0)).toBe(true)
 })
 
-test('a failing changes-since watch records one service_down friction event and toasts once', async ($, on) => {
+test('a failing changes-since watch toasts once and leaves service_down to the script', async ($, on) => {
   const s = await start($, on, { day: { exitCode: 1, stdout: '', stderr: 'changes-since: Jira unavailable\n' } })
   await s.clock.advance(180_000)
   await s.clock.advance(180_000)
-  const events = frictionFor(s.calls, 'changes-since')
-  expect(events.length).toBe(1)
-  expect(events[0].slice(3)).toEqual(['friction', '--harness', 'claude', '--source', 'changes-since', 'service_down', 'changes-since failed (exit 1): changes-since: Jira unavailable'])
+  expect(frictionFor(s.calls, 'changes-since').length).toBe(0)
   expect(s.toasts.filter(t => t.startsWith('changes-since failed')).length).toBe(1)
 })
 
@@ -90,10 +88,10 @@ test('a timed-out changes-since watch is recorded as a timeout', async ($, on) =
 })
 
 test('a failing friction call does not change the toast or break the watcher', async ($, on) => {
-  const s = await start($, on, { day: { exitCode: 1, stdout: '', stderr: 'boom\n' }, frictionDenied: true })
+  const s = await start($, on, { day: { exitCode: 124, stdout: '', stderr: 'boom\n' }, frictionDenied: true })
   await s.clock.advance(180_000)
   expect(frictionFor(s.calls, 'changes-since').length).toBe(1)
-  expect(s.toasts).toContain('changes-since failed (exit 1): boom')
+  expect(s.toasts).toContain('changes-since failed (exit 124): boom')
 })
 
 test('a healthy watch records nothing', async ($, on) => {

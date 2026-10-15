@@ -108,8 +108,9 @@ async function watch($: EngineInterface) {
     if (ran.exitCode !== 0) {
       if (!flags.hasWatchFailed) {
         $.ui.toast(`changes-since failed (exit ${ran.exitCode}): ${ran.stderr.split('\n')[0]}`)
+        // changes-since logs its own service_down; only its timeout is invisible to it
         const timedOut = ran.exitCode === 124 || /timed? ?out/i.test(ran.stderr)
-        friction($, timedOut ? 'timeout' : 'service_down', `changes-since failed (exit ${ran.exitCode}): ${ran.stderr.split('\n')[0]}`)
+        if (timedOut) friction($, 'timeout', `changes-since failed (exit ${ran.exitCode}): ${ran.stderr.split('\n')[0]}`)
       }
       flags.hasWatchFailed = true
       return
