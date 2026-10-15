@@ -424,6 +424,11 @@ if [ -f "$DOTFILES_DIR/bin/day-note" ]; then
     create_symlink "$DOTFILES_DIR/bin/day-note" "$HOME/.local/bin/day-note"
 fi
 
+# friction-ledger keeps the friction ledger in the wiki; /end-day's reflect step calls it.
+if [ -f "$DOTFILES_DIR/bin/friction-ledger" ]; then
+    create_symlink "$DOTFILES_DIR/bin/friction-ledger" "$HOME/.local/bin/friction-ledger"
+fi
+
 # day-plan opens today's diary plan in nvim in a tmux popup (tmux prefix+e, /day-plan).
 if [ -f "$DOTFILES_DIR/bin/day-plan" ]; then
     create_symlink "$DOTFILES_DIR/bin/day-plan" "$HOME/.local/bin/day-plan"

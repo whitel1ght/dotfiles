@@ -1,0 +1,315 @@
+#!/usr/bin/env bash
+# Keep the friction ledger in the wiki: one F-NNN.md per recurring annoyance, and ledger.md,
+# a table rebuilt from them. The end-day reflect step drives it; no model needed here.
+#
+#   friction-ledger apply --date D [--mine-json FILE]
+#   friction-ledger set F-NNN [--class C] [--status S] [--rung R] [--fix SHA]
+#                             [--diagnosis TEXT] [--proposal-file FILE] [--date D]
+#   friction-ledger diary-section --date D [--mine-json FILE]
+#
+# apply   folds one day of `friction-mine` output (FILE, else it runs the miner) into the
+#         ledger. A group whose signature is already there gets last/days/Evidence updated
+#         (one bullet per date, so a second run changes nothing); `fixed` seen again turns
+#         `regressed`. A new high-confidence group becomes the next F-NNN, status open, class
+#         empty. Corrections (kind correction, low confidence) are never added. Nothing is
+#         ever set to `proposed` here. Prints JSON:
+#           {new: items first seen on D with no class yet,
+#            needs_proposal: open items with no proposal that qualify (seen on >= 2 days, or
+#              kind blocked),
+#            regressed: items that regressed on D,
+#            corrections: [{count, samples}]}
+#         each item {id, sig, kind, count, days, class, samples, evidence}.
+# set     writes the given front-matter fields and sections; a status change adds a dated
+#         History line. class: env|instruction|script|model|external; status:
+#         open|proposed|fixed|regressed|wontfix; rung: script|config|prompt.
+# diary-section  prints the `## Friction` markdown for D (nothing when there is no friction):
+#         counts of new / recurring / regressed, a `→ /fix-friction F-NNN` line per proposed or
+#         regressed item seen on D, and one line for possible corrections (unverified).
+#
+# $FRICTION_WIKI (default ~/wiki/friction) holds ledger.md and the F-files. The F-files are
+# the source of truth; ledger.md is regenerated from them. Only the main session at end-day
+# calls this: subagents never write the wiki.
+set -euo pipefail
+
+FRICTION_WIKI="${FRICTION_WIKI:-$HOME/wiki/friction}"
+HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
+
+die() { echo "friction-ledger: $*" >&2; exit 1; }
+need() { [ $# -ge 2 ] || die "$1 needs a value"; }
+valid_date() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "--date must be YYYY-MM-DD, got $1"; }
+one_line() { tr '\n\r\t' '   ' <<<"$1" | sed 's/  */ /g; s/^ //; s/ $//'; }
+
+# --- F-file helpers -----------------------------------------------------------
+
+fm_get() { # file key
+  awk -v k="$2" 'NR == 1 && $0 != "---" { exit } NR > 1 && $0 == "---" { exit }
+    index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^ +/, "", v); print v; exit }' "$1"
+}
+
+fm_set() { # file key value
+  local tmp; tmp="$(mktemp)"
+  K="$2" V="$3" awk 'BEGIN { k = ENVIRON["K"]; v = ENVIRON["V"] }
+    NR == 1 { print; fm = 1; next }
+    fm && $0 == "---" { fm = 0 }
+    fm && index($0, k ":") == 1 { print (v == "" ? k ":" : k ": " v); next }
+    { print }' "$1" >"$tmp" && mv "$tmp" "$1"
+}
+
+section_get() { # file name
+  awk -v n="## $2" '$0 == n { on = 1; next } /^## / { on = 0 } on' "$1" |
+    awk 'NF { started = 1; for (; pend > 0; pend--) print ""; print; next } started { pend++ }'
+}
+
+# mode replace|append; text via env so backslashes and newlines survive
+section_edit() { # file name mode text
+  local tmp; tmp="$(mktemp)"
+  N="## $2" M="$3" T="$4" awk '
+    function flush(   i) {
+      while (nb > 0 && buf[nb] == "") nb--
+      if (ENVIRON["M"] != "append") nb = 0
+      if (nb > 0 || ENVIRON["T"] != "") print ""
+      for (i = 1; i <= nb; i++) print buf[i]
+      if (ENVIRON["T"] != "") print ENVIRON["T"]
+      print ""
+      nb = 0; on = 0
+    }
+    $0 == ENVIRON["N"] { print; on = 1; next }
+    on && /^## / { flush() }
+    on { if (nb == 0 && $0 == "") next; buf[++nb] = $0; next }
+    { print }
+    END { if (on) { flush() } }' "$1" >"$tmp" && mv "$tmp" "$1"
+}
+
+evidence_dates() { section_get "$1" Evidence | grep -oE '^- [0-9]{4}-[0-9]{2}-[0-9]{2}' | cut -c3- | sort -u || true; }
+has_date() { evidence_dates "$1" | grep -qx "$2"; }
+
+fpath() { printf '%s/%s.md' "$FRICTION_WIKI" "$1"; }
+
+new_file() { # id sig date
+  cat >"$(fpath "$1")" <<EOT
+---
+id: $1
+signature: $(jq -Rn --arg v "$2" '$v')
+class:
+status: open
+first: $3
+last: $3
+days: 1
+fix:
+rung:
+---
+
+# $1
+
+## Evidence
+
+## Diagnosis
+
+## Proposal
+
+## History
+- $3: opened
+EOT
+}
+
+rebuild_ledger() {
+  local files=() f out
+  for f in "$FRICTION_WIKI"/F-*.md; do [ -f "$f" ] && files+=("$f"); done
+  [ ${#files[@]} -gt 0 ] || return 0
+  out="$(mktemp)"
+  {
+    printf '# Friction ledger\n\n| id | signature | class | first | last | days | status | fix |\n|---|---|---|---|---|---|---|---|\n'
+    for f in "${files[@]}"; do
+      printf '| %s | %s | %s | %s | %s | %s | %s | %s |\n' "$(fm_get "$f" id)" \
+        "$(fm_get "$f" signature | jq -r . | sed 's/|/∣/g')" "$(fm_get "$f" class)" "$(fm_get "$f" first)" \
+        "$(fm_get "$f" last)" "$(fm_get "$f" days)" "$(fm_get "$f" status)" "$(fm_get "$f" fix)"
+    done
+  } >"$out"
+  if cmp -s "$out" "$FRICTION_WIKI/ledger.md" 2>/dev/null; then rm -f "$out"; else mv "$out" "$FRICTION_WIKI/ledger.md"; fi
+}
+
+# --- mine input ---------------------------------------------------------------
+
+load_mine() { # date file-or-empty -> prints JSON
+  if [ -n "$2" ]; then
+    [ -f "$2" ] || die "no such file: $2"
+    jq -c . "$2" || die "not JSON: $2"
+  else
+    local ledger="$FRICTION_WIKI/ledger.md" bin
+    if [ -x "$HERE/friction-mine" ]; then bin="$HERE/friction-mine"; else bin="$(command -v friction-mine)" || die "friction-mine not found"; fi
+    "$bin" --date "$1" --ledger "$ledger" | jq -c .
+  fi
+}
+
+# --- apply --------------------------------------------------------------------
+
+cmd_apply() {
+  local date_="" mine_file=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      --mine-json) need "$@"; mine_file="$2"; shift ;;
+      *) die "apply: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "apply needs --date"
+  valid_date "$date_"
+
+  local mine f id sig num next g kind conf ev
+  work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+  mine="$(load_mine "$date_" "$mine_file")"
+  : >"$work/map.tsv"; : >"$work/touched.jsonl"
+  next=1
+  for f in "$FRICTION_WIKI"/F-*.md; do
+    [ -f "$f" ] || continue
+    id="$(basename "$f" .md)"
+    printf '%s\t%s\n' "$id" "$(fm_get "$f" signature | jq -r .)" >>"$work/map.tsv"
+    num=$((10#${id#F-})); [ "$num" -lt "$next" ] || next=$((num + 1))
+  done
+
+  while IFS= read -r g; do
+    sig="$(jq -r .sig <<<"$g")"; kind="$(jq -r .kind <<<"$g")"; conf="$(jq -r .confidence <<<"$g")"
+    id="$(S="$sig" awk -F'\t' '$2 == ENVIRON["S"] { print $1; exit }' "$work/map.tsv")"
+    if [ -z "$id" ]; then
+      [ "$kind" != correction ] && [ "$conf" = high ] || continue
+      id="$(printf 'F-%03d' "$next")"; next=$((next + 1))
+      mkdir -p "$FRICTION_WIKI"
+      new_file "$id" "$sig" "$date_"
+      printf '%s\t%s\n' "$id" "$sig" >>"$work/map.tsv"
+    fi
+    f="$(fpath "$id")"
+    if ! has_date "$f" "$date_"; then
+      ev="- $date_ ($(jq -r .count <<<"$g")×): $(jq -r '(.samples[0] // "") | gsub("\\s+"; " ") | .[0:160]' <<<"$g")"
+      ev+=" — $(jq -r '(.evidence // [])[:5] | join(", ")' <<<"$g")"
+      section_edit "$f" Evidence append "$(sed 's/ — $//' <<<"$ev")"
+      local days first last
+      days="$(evidence_dates "$f" | wc -l | tr -d ' ')"
+      first="$(fm_get "$f" first)"; last="$(fm_get "$f" last)"
+      [[ "$date_" < "$first" ]] && fm_set "$f" first "$date_"
+      [[ "$date_" > "$last" ]] && fm_set "$f" last "$date_"
+      fm_set "$f" days "$days"
+      if [ "$(fm_get "$f" status)" = fixed ]; then
+        fm_set "$f" status regressed
+        section_edit "$f" History append "- $date_: regressed (seen again after fix $(fm_get "$f" fix))"
+      fi
+    fi
+    jq -nc --arg id "$id" --argjson g "$g" '{id: $id, g: $g}' >>"$work/touched.jsonl"
+  done < <(jq -c '.groups[]?' <<<"$mine")
+
+  rebuild_ledger
+
+  : >"$work/state.tsv"
+  for f in "$FRICTION_WIKI"/F-*.md; do
+    [ -f "$f" ] || continue
+    id="$(basename "$f" .md)"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$(fm_get "$f" status)" "$(fm_get "$f" class)" "$(fm_get "$f" days)" \
+      "$(fm_get "$f" first)" "$([ -n "$(section_get "$f" Proposal)" ] && echo 1 || echo 0)" \
+      "$(grep -c "^- $date_: regressed" "$f" || true)" >>"$work/state.tsv"
+  done
+
+  jq -n --arg date "$date_" --argjson mine "$mine" --rawfile state "$work/state.tsv" --slurpfile touched "$work/touched.jsonl" '
+    ([$state | split("\n")[] | select(length > 0) | split("\t")
+      | {key: .[0], value: {status: .[1], class: .[2], days: (.[3] | tonumber), first: .[4], proposal: (.[5] == "1"), regressed: (.[6] != "0")}}]
+      | from_entries) as $st
+    | def item($t): $st[$t.id] as $s | {id: $t.id, sig: $t.g.sig, kind: $t.g.kind, count: $t.g.count, days: $s.days, class: $s.class,
+        samples: ($t.g.samples // []), evidence: ($t.g.evidence // [])};
+      {new: [$touched[] | select($st[.id].first == $date and $st[.id].class == "") | item(.)],
+       needs_proposal: [$touched[] | select($st[.id].status == "open" and ($st[.id].proposal | not) and ($st[.id].days >= 2 or .g.kind == "blocked")) | item(.)],
+       regressed: [$touched[] | select($st[.id].status == "regressed" and $st[.id].regressed) | item(.)],
+       corrections: [$mine.groups[]? | select(.kind == "correction") | {count, samples}]}'
+}
+
+# --- set ----------------------------------------------------------------------
+
+cmd_set() {
+  local id="${1:-}" class="" status="" rung="" fix="" diag="" pfile="" date_="" has_fix=0
+  [[ "$id" =~ ^F-[0-9]+$ ]] || die "set needs an F-NNN id"
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --class) need "$@"; class="$2"; shift ;;
+      --status) need "$@"; status="$2"; shift ;;
+      --rung) need "$@"; rung="$2"; shift ;;
+      --fix) need "$@"; fix="$2"; has_fix=1; shift ;;
+      --diagnosis) need "$@"; diag="$2"; shift ;;
+      --proposal-file) need "$@"; pfile="$2"; shift ;;
+      --date) need "$@"; date_="$2"; shift ;;
+      *) die "set: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || date_="$(date +%F)"
+  valid_date "$date_"
+  local f; f="$(fpath "$id")"
+  [ -f "$f" ] || die "no such entry: $id"
+  [ -z "$class" ] || [[ "$class" =~ ^(env|instruction|script|model|external)$ ]] || die "bad class: $class"
+  [ -z "$status" ] || [[ "$status" =~ ^(open|proposed|fixed|regressed|wontfix)$ ]] || die "bad status: $status"
+  [ -z "$rung" ] || [[ "$rung" =~ ^(script|config|prompt)$ ]] || die "bad rung: $rung"
+  [ -z "$pfile" ] || [ -f "$pfile" ] || die "no such file: $pfile"
+
+  [ -z "$class" ] || fm_set "$f" class "$class"
+  [ -z "$rung" ] || fm_set "$f" rung "$rung"
+  [ "$has_fix" = 0 ] || fm_set "$f" fix "$fix"
+  [ -z "$diag" ] || section_edit "$f" Diagnosis replace "$(one_line "$diag")"
+  [ -z "$pfile" ] || section_edit "$f" Proposal replace "$(cat "$pfile")"
+  if [ -n "$status" ]; then
+    local old; old="$(fm_get "$f" status)"
+    if [ "$old" != "$status" ]; then
+      fm_set "$f" status "$status"
+      section_edit "$f" History append "- $date_: $old → $status${fix:+ (fix $fix)}"
+    fi
+  fi
+  rebuild_ledger
+}
+
+# --- diary-section ------------------------------------------------------------
+
+cmd_diary() {
+  local date_="" mine_file=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      --mine-json) need "$@"; mine_file="$2"; shift ;;
+      *) die "diary-section: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "diary-section needs --date"
+  valid_date "$date_"
+
+  local f id rows="" mine=""
+  for f in "$FRICTION_WIKI"/F-*.md; do
+    [ -f "$f" ] || continue
+    id="$(basename "$f" .md)"
+    local text; text="$(section_get "$f" Diagnosis | head -1)"
+    [ -n "$text" ] || text="$(fm_get "$f" signature | jq -r .)"
+    rows+="$(jq -nc --arg id "$id" --arg status "$(fm_get "$f" status)" --arg first "$(fm_get "$f" first)" --arg last "$(fm_get "$f" last)" \
+      --arg text "$text" --argjson regressed "$([ "$(grep -c "^- $date_: regressed" "$f" || true)" != 0 ] && echo true || echo false)" \
+      '{id: $id, status: $status, first: $first, last: $last, text: $text, regressed: $regressed}')"$'\n'
+  done
+  mine="$(load_mine "$date_" "$mine_file" 2>/dev/null || echo '{"groups":[]}')"
+
+  jq -rn --arg date "$date_" --slurpfile mine <(printf '%s' "$mine") --slurpfile rows <(printf '%s' "$rows") '
+    def short: gsub("\\s+"; " ") | if length > 60 then .[0:57] + "..." else . end;
+    [$rows[] | select(.last == $date)] as $seen
+    | [$seen[] | select(.first == $date)] as $new
+    | [$seen[] | select(.regressed)] as $reg
+    | [$seen[] | select(.first != $date and (.regressed | not))] as $rec
+    | [($mine[0].groups // [])[] | select(.kind == "correction")] as $cor
+    | ([$cor[].count] | add // 0) as $ncor
+    | if ($seen | length) == 0 and $ncor == 0 then empty else
+        "## Friction", "",
+        "\($new | length) new · \($rec | length) recurring · \($reg | length) regressed", "",
+        ($seen[] | select(.status == "proposed" or .regressed) | "- \(.id) — \(.text) → /fix-friction \(.id)"),
+        (if $ncor > 0 then "- \($ncor) possible corrections (unverified): " + ([$cor[].samples[]? | short | "\"" + . + "\""] | .[:3] | join(" · ")) else empty end)
+      end'
+}
+
+case "${1:-}" in
+  apply) shift; cmd_apply "$@" ;;
+  set) shift; cmd_set "$@" ;;
+  diary-section) shift; cmd_diary "$@" ;;
+  -h|--help|"") sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
+  *) die "unknown command $1" ;;
+esac
