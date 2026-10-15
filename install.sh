@@ -429,6 +429,18 @@ if [ -f "$DOTFILES_DIR/bin/friction-ledger" ]; then
     create_symlink "$DOTFILES_DIR/bin/friction-ledger" "$HOME/.local/bin/friction-ledger"
 fi
 
+# friction records friction events; friction-mine gathers the day's friction for /end-day.
+for f in friction friction-mine; do
+    if [ -f "$DOTFILES_DIR/bin/$f" ]; then
+        create_symlink "$DOTFILES_DIR/bin/$f" "$HOME/.local/bin/$f"
+    fi
+done
+
+# wait-for waits out a GitLab or Jira outage and then tells the run-day inbox.
+if [ -f "$DOTFILES_DIR/bin/wait-for" ]; then
+    create_symlink "$DOTFILES_DIR/bin/wait-for" "$HOME/.local/bin/wait-for"
+fi
+
 # day-plan opens today's diary plan in nvim in a tmux popup (tmux prefix+e, /day-plan).
 if [ -f "$DOTFILES_DIR/bin/day-plan" ]; then
     create_symlink "$DOTFILES_DIR/bin/day-plan" "$HOME/.local/bin/day-plan"
