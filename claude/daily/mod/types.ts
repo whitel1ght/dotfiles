@@ -20,6 +20,7 @@ export type RunItem = {
   retries: number
   needsYou: boolean
   owner: string
+  waiting: string
 }
 
 export type AgentLite = { id: string; description: string; status: string }

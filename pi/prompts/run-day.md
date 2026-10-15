@@ -94,6 +94,8 @@ For each `auto` item:
 - <key> | class=auto | agent=<subagent id> | worktree=<path> | mr=- | retries=0 | needs_you=no | owner=main
 ```
 
+   While an item is parked on an outage (section 6) append ` | waiting=<gitlab|jira>`; drop it on resume.
+
 6. Tick the diary `- [/]` and run `~/.local/bin/diary-links ~/wiki/diary/$T.md`.
 7. End the turn. A `[pi-sub]` wake-up starts the next one when the agent finishes, fails, is
    stopped, or goes quiet for 10 minutes — never wait, sleep or poll for it.
@@ -179,6 +181,9 @@ On wake, restart it. Also check the inbox (step 7) on every wake — list it **b
 - `assigned` → offer to add it under `**Today**` unless it is already planned.
 - `pipeline_failed` on one of today's MRs → dispatch a fix agent (step 2).
 - `[daily-event:info]` → no action, do not mention it.
+- GitLab or Jira unavailable (5xx, timeout, connection refused; not 401/403/404) → no retry. Add `waiting=<service>`
+  to the item's run-state line, run `wait-for <service> --detach --key <KEY>` (no-op if one is waiting) and move on.
+  A sub-agent that hits it reports back; park its item the same way.
 - `inbox: N new` → step 7.
 
 ## 7. Inbox
@@ -191,7 +196,7 @@ Oldest first, and finish one file completely before opening the next. Each holds
 (`key kind session repo mr at`), one summary paragraph, and a `memory:` block.
 
 1. Validate: filename regex above; `key` matches `[A-Za-z][A-Za-z0-9]*-[0-9]+` (case-insensitive);
-   `kind` is `done|progress|handback|offplan`; project is `ecfx|epicmax|personal`. Anything malformed →
+   `kind` is `done|progress|handback|offplan|service` (`service`: key optional, no memory block); project is `ecfx|epicmax|personal`. Anything malformed →
    `mv` to `inbox/bad/` with a one-line reason appended. Never repair a message.
 2. Find the diary item by exact key, case-insensitively. Never downgrade an `[x]`.
 3. Apply by kind:
@@ -199,8 +204,11 @@ Oldest first, and finish one file completely before opening the next. Each holds
    - `progress` → keep the marker, append ` · <summary clip>`.
    - `handback` → refill the brief, append the note as `## Hand-back note`, re-dispatch (step 2).
      Worktree gone: recover it from the hand-off note or the MR's `source_branch`.
+   - `service` ending `gave up` → items with `waiting=<that service>` drop the field, get `needs_you=yes` and
+     `· blocked: <service> down` on the diary line; no resume. Otherwise every item with `waiting=<that service>` drops the field and resumes where it stopped (re-dispatch
+     into its worktree, or redo the failed check). No diary line, no memory block; `mv` to `inbox/done/$T/`.
    - `offplan` → new line under `**Unplanned**`, immediately above `<!-- start-day:end -->`.
-4. Apply the memory block (step 4), then `diary-links`, then `mv` the file to `inbox/done/$T/`.
+4. Apply the memory block (step 4; not for `service`), then `diary-links`, then `mv` the file to `inbox/done/$T/`.
 
 Only file it after steps 3 and 4 both succeeded. On failure, leave the file in place and tell the user —
 never retry in a loop.

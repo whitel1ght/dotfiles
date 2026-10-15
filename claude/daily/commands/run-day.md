@@ -65,6 +65,8 @@ notes:
 
    `owner` is `main` (this session dispatches and checks the item) or `owner=external:<KEY>` (a side session works it after `/handoff`; the item is never dispatched, never gets a review-round agent, and has no agent id). It is optional on read and defaults to `main`; always write it.
 
+   `waiting=<service>` (`gitlab` or `jira`) is a ninth field, written only while an item is parked on an outage (section 6); drop it when the item resumes.
+
    Immediately after creating the file, seed the watcher cursor so the first watcher tick does not replay events from earlier today (a missing cursor means "since the beginning"):
 
 ```bash
@@ -143,6 +145,7 @@ glab api --method POST "projects/<urlencoded path>/merge_requests/<iid>/discussi
 
 - `[daily-event] assigned | ...`: offer to add the ticket to today's plan; on yes add one `- [ ] <key> <summary>` line under `**Today**` (never add on your own) and triage it like step 1.
 - `[daily-event] pipeline_failed | ...` on a today MR: dispatch a fix agent under the normal autonomy rule (ticket brief, done-when: the pipeline on the branch is green), within the cap of 3.
+- A tool call fails because GitLab or Jira is unavailable (5xx, timeout, connection refused; not a 401/403 or a 404): do not retry it. Set `waiting=<service>` on the item's run-state line, run `wait-for <service> --detach --key <KEY>` (a no-op when one is already waiting) and move on to the next item. A background agent that hits it reports back instead of retrying; park its item the same way.
 - `[daily-event:info] ...` lines: no action. Mention them only if the user asks what changed.
 - `inbox: <N> new` (from the mod): process the inbox, section 7.
 - Before handling any other event or agent report, list the inbox (section 7) and process what is waiting. Then re-read the plan block: the user edits the diary too. An item they ticked or removed is theirs; do not touch it.
@@ -165,7 +168,7 @@ File names start with a timestamp, so that order is **oldest first**. Handle one
 ```
 ---
 key: ECFX-18169            # empty for off-plan work without a ticket
-kind: done | progress | handback | offplan
+kind: done | progress | handback | offplan | service   # service: key is optional, no memory block
 session: ECFX-18169
 repo: ecfx-dashboard       # optional
 mr: https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2231   # optional
@@ -180,7 +183,7 @@ memory:
   state_change: "<one line>" | none
 ```
 
-1. **Validate.** The message is malformed when: the frontmatter is missing or has no closing `---`; `kind` is not one of `done`, `progress`, `handback`, `offplan`; `key` (compare case-insensitively; `day-note` upper-cases it) is not `[A-Za-z][A-Za-z0-9]*-[0-9]+` (an empty key is fine for any kind, it makes the message off-plan work, step 2); the summary is empty; or the `memory:` block names a `project` other than `ecfx`, `epicmax` or `personal`. A message with no `memory:` block is not malformed, there is just nothing to apply. A malformed file goes to `~/.local/state/run-day/inbox/bad/`:
+1. **Validate.** The message is malformed when: the frontmatter is missing or has no closing `---`; `kind` is not one of `done`, `progress`, `handback`, `offplan`, `service`; `key` (compare case-insensitively; `day-note` upper-cases it) is not `[A-Za-z][A-Za-z0-9]*-[0-9]+` (an empty key is fine for any kind, it makes the message off-plan work, step 2); the summary is empty; or the `memory:` block names a `project` other than `ecfx`, `epicmax` or `personal`. A message with no `memory:` block is not malformed, there is just nothing to apply. A malformed file goes to `~/.local/state/run-day/inbox/bad/`:
 
 ```bash
 INBOX=~/.local/state/run-day/inbox
@@ -195,6 +198,7 @@ mkdir -p "$INBOX/bad"; mv "$f" "$INBOX/bad/"
    - `progress`, key on the plan: `[/]`, suffix `· progress: <summary clip>` (after `· with you: <KEY>` when the owner is external); `owner` stays. A line that is already `[x]` is left entirely as it is (a late `progress` is a no-op; never downgrade a ticked line).
    - A key with no run-state line (a `me` item, or one added to the plan later): skip every run-state edit, apply only the diary line and the memory block.
    - `handback`, key on the plan: `owner=main`, `agent=-`, `needs_you=no`, marker `[ ]`, suffix `· handed back: <summary clip>`; the item goes back into the dispatch queue (section 2.2) in plan order. When it is dispatched, append the message body to the filled brief as a `## Hand-back note` section so the agent starts from it. If `test -d <worktree>` fails, the worktree is gone: take the branch from `~/.local/state/run-day/handoff/<KEY>.md` or from the MR (`glab api "projects/<urlencoded path>/merge_requests/<iid>" | jq -r .source_branch`) and run `wt add <repo> <KEY> <branch>`; if no branch can be found, mark `[!]` with `· blocked: worktree is gone and the branch was not found`, `needs_you=yes`, and tell the user. Tell the user the item was re-queued. A `handback` for a key that is not on the plan, or with an empty key, has no item to queue: tell the user and only apply its memory block.
+   - `service`: the summary names the service. A summary ending `gave up` means it stayed down: every item whose run-state line has `waiting=<that service>` loses the field, gets `needs_you=yes` and `· blocked: <service> down` on its diary line, and is not resumed. Otherwise (`gitlab is back`) every item whose run-state line has `waiting=<that service>` loses the field and is picked up again where it stopped: re-dispatch into its existing worktree (section 2.2, without `wt add`), or redo the check that failed. No diary line changes, there is no Unplanned line, and no memory block (step 4 does not apply).
    - `offplan`, or `done` / `progress` for a key that is not on the plan, or an empty key: write one line under the `**Unplanned**` group, the last group of the block. Unplanned lines always go immediately above `<!-- start-day:end -->`; when the group does not exist yet, create it in the same Edit (old_string `<!-- start-day:end -->`):
 
 ```
@@ -208,7 +212,7 @@ mkdir -p "$INBOX/bad"; mv "$f" "$INBOX/bad/"
 
      The line is `- [x] <key lowercase, if any> <summary clip, 80 characters> · <evidence>`: `[x]` by default, `[/]` when the summary says the work is unfinished (wip, started, in progress, continuing); evidence is `MR <repo>!<iid>  [↗][<repo>!<iid>]` when `mr` is set, else `note: <summary clip>`. No run-state line. If the same key already has an Unplanned line, update that line instead of adding another. An `offplan` message whose key is on the plan means the plan changed after it was written: treat it as `progress`.
    - A second message for the same key is handled in file order, each in full: the later marker and evidence win, except that you never downgrade `[x]`, and both `memory:` blocks are applied (two log entries).
-4. **Memory.** For every kind, apply the `memory:` block (section 4) with the `project` it names.
+4. **Memory.** For every kind but `service`, apply the `memory:` block (section 4) with the `project` it names.
 5. **File it away.** Once steps 3 and 4 succeeded, move the file to `~/.local/state/run-day/inbox/done/$T/` (today's date, not the message's):
 
 ```bash

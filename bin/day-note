@@ -4,9 +4,10 @@
 #   day-note [--kind K] [--project P] [--repo R] [--mr URL] [--session S] [KEY] "summary"
 #
 #   KEY       Jira key, e.g. ECFX-18169; omit it for work without a ticket
-#   --kind    done | progress | handback | offplan. Default: offplan when there is
+#   --kind    done | progress | handback | offplan | service. Default: offplan when there is
 #             no KEY or KEY is not on today's plan (inside the start-day block of
-#             $DIARY_DIR/<today>.md, matched case-insensitively), else done
+#             $DIARY_DIR/<today>.md, matched case-insensitively), else done.
+#             service means a GitLab or Jira outage is over (wait-for); KEY optional
 #   --project wiki project, used when the KEY does not say (default personal);
 #             a KEY starting with ECFX- is always ecfx
 #   --session free text naming this session (default terminal)
@@ -51,7 +52,7 @@ case ${#pos[@]} in
 esac
 summary=$(one_line "$summary")
 [ -n "$summary" ] || die "the summary is empty"
-case "$kind" in ""|done|progress|handback|offplan) ;; *) die "--kind must be done, progress, handback or offplan, got $kind" ;; esac
+case "$kind" in ""|done|progress|handback|offplan|service) ;; *) die "--kind must be done, progress, handback, offplan or service, got $kind" ;; esac
 
 on_plan() {
   local f="$DIARY_DIR/$(date +%F).md"
