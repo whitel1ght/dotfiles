@@ -184,6 +184,8 @@ On wake, restart it. Also check the inbox (step 7) on every wake — list it **b
 - GitLab or Jira unavailable (5xx, timeout, connection refused; not 401/403/404) → no retry. Add `waiting=<service>`
   to the item's run-state line, run `wait-for <service> --detach --key <KEY>` (no-op if one is waiting) and move on.
   A sub-agent that hits it reports back; park its item the same way.
+  An item with `waiting=<service>` and no live `~/.local/state/wait-for/<service>.lock` (a pid that is a running
+  `wait-for`) was given up on: treat it as `gave up` (`needs_you=yes`, `· blocked: <service> down`).
 - `inbox: N new` → step 7.
 
 ## 7. Inbox
@@ -206,7 +208,7 @@ Oldest first, and finish one file completely before opening the next. Each holds
      Worktree gone: recover it from the hand-off note or the MR's `source_branch`.
    - `service` ending `gave up` → items with `waiting=<that service>` drop the field, get `needs_you=yes` and
      `· blocked: <service> down` on the diary line; no resume. Otherwise every item with `waiting=<that service>` drops the field and resumes where it stopped (re-dispatch
-     into its worktree, or redo the failed check). No diary line, no memory block; `mv` to `inbox/done/$T/`.
+     into its worktree, or redo the failed check), with no diary line change. No memory block; `mv` to `inbox/done/$T/`.
    - `offplan` → new line under `**Unplanned**`, immediately above `<!-- start-day:end -->`.
 4. Apply the memory block (step 4; not for `service`), then `diary-links`, then `mv` the file to `inbox/done/$T/`.
 

@@ -41,6 +41,10 @@ cat > "$BIN/fake-friction" <<'S'
 #!/bin/bash
 echo "$*" >> "$SANDBOX/friction"
 S
+cat > "$BIN/wait-for-holder" <<'S'
+#!/bin/bash
+sleep 30
+S
 chmod +x "$BIN"/*
 
 reset() { rm -rf "$SANDBOX/state" "$SANDBOX"/{sleeps,probes,notes,friction}; echo 1000 > "$SANDBOX/clock"; }
@@ -76,7 +80,7 @@ assert_contains "$(cat "$SANDBOX/friction")" "gitlab still down after 6m, gave u
 assert_contains "$(cat "$SANDBOX/stderr")" "gave up" "and stderr too"
 
 echo "wait-for — lock"
-reset; mkdir -p "$SANDBOX/state/gitlab.lock"; sleep 30 & holder=$!; echo "$holder" > "$SANDBOX/state/gitlab.lock/pid"
+reset; mkdir -p "$SANDBOX/state/gitlab.lock"; "$BIN/wait-for-holder" & holder=$!; echo "$holder" > "$SANDBOX/state/gitlab.lock/pid"
 FAIL_UNTIL=1 run gitlab; rc=$?
 assert_eq "0" "$rc" "a second instance exits 0"
 assert_eq "no" "$([ -e "$SANDBOX/probes" ] && echo yes || echo no)" "without probing"
@@ -86,6 +90,35 @@ FAIL_UNTIL=1 run jira; assert_eq "1" "$(cat "$SANDBOX/probes")" "a lock on gitla
 kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
 reset; mkdir -p "$SANDBOX/state/gitlab.lock"; echo 999999 > "$SANDBOX/state/gitlab.lock/pid"
 FAIL_UNTIL=1 run gitlab; assert_eq "1" "$(cat "$SANDBOX/probes")" "a lock left by a dead process is taken over"
+
+reset; mkdir -p "$SANDBOX/state/gitlab.lock"; sleep 30 & other=$!; echo "$other" > "$SANDBOX/state/gitlab.lock/pid"
+FAIL_UNTIL=1 run gitlab; assert_eq "1" "$(cat "$SANDBOX/probes" 2>/dev/null)" "a lock whose pid is alive but not a wait-for is taken over"
+kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
+reset; mkdir -p "$SANDBOX/state/gitlab.lock"
+FAIL_UNTIL=1 run gitlab; assert_eq "no" "$([ -e "$SANDBOX/probes" ] && echo yes || echo no)" "a fresh lock with no pid yet is held"
+reset; mkdir -p "$SANDBOX/state/gitlab.lock"; touch -t 202001010000 "$SANDBOX/state/gitlab.lock"
+FAIL_UNTIL=1 run gitlab; assert_eq "1" "$(cat "$SANDBOX/probes" 2>/dev/null)" "an old lock with no pid is stale"
+
+echo "wait-for — default probes"
+cat > "$BIN/jira-api" <<'S'
+#!/bin/bash
+cat "$SANDBOX/jira-body"
+S
+cat > "$BIN/glab" <<'S'
+#!/bin/bash
+cat "$SANDBOX/glab-body"
+S
+chmod +x "$BIN/jira-api" "$BIN/glab"
+dflt() { (PATH="$BIN:$PATH" SANDBOX="$SANDBOX" WAIT_FOR_DIR="$SANDBOX/state" WAIT_FOR_SLEEP="$BIN/fake-sleep" WAIT_FOR_NOW="$BIN/fake-now" \
+  DAY_NOTE="$BIN/fake-day-note" FRICTION="$BIN/fake-friction" "$SCRIPT" "$@" >/dev/null 2>&1); }
+reset; echo '{"errorMessages":["Unauthorized"]}' > "$SANDBOX/jira-body"; dflt jira --max-hours 0.01
+assert_eq "1" "$?" "jira: an error body from jira-api is not up"
+reset; echo '{"accountId":"abc"}' > "$SANDBOX/jira-body"; dflt jira --max-hours 0.01
+assert_eq "0" "$?" "jira: a user body is up"
+reset; echo '{"message":"401 Unauthorized"}' > "$SANDBOX/glab-body"; dflt gitlab --max-hours 0.01
+assert_eq "1" "$?" "gitlab: an error body from glab is not up"
+reset; echo '{"id":7}' > "$SANDBOX/glab-body"; dflt gitlab --max-hours 0.01
+assert_eq "0" "$?" "gitlab: a user body is up"
 
 echo "wait-for — detach"
 reset; FAIL_UNTIL=1 SANDBOX="$SANDBOX" pid=$(run gitlab --detach); rc=$?
