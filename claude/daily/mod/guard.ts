@@ -20,7 +20,22 @@ export function applyEdit(current: string, input: EditInput): string | null {
     : current.replace(input.old_string, () => input.new_string)
 }
 
-export function checkTicks(before: string, after: string): GuardResult {
+// Fired with a one-line description whenever the guard blocks; a throwing hook never changes the verdict.
+export type OnBlock = (msg: string) => void
+
+export function checkTicks(before: string, after: string, onBlock?: OnBlock): GuardResult {
+  const result = checkTicksPure(before, after)
+  if (!result.ok && onBlock) {
+    try {
+      onBlock(`diary guard blocked: ${result.lines.join(' | ')}`.replace(/\s+/g, ' ').slice(0, 300))
+    } catch {
+      // capture must never change the verdict
+    }
+  }
+  return result
+}
+
+function checkTicksPure(before: string, after: string): GuardResult {
   if (extractBlock(before) !== null && extractBlock(after) === null) {
     return { ok: false, lines: ['the start-day block markers (<!-- start-day:start --> / <!-- start-day:end -->) are broken or missing'] }
   }

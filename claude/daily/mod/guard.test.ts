@@ -110,3 +110,24 @@ test('a diary with no valid block before still passes', async () => {
 test('applyEdit with an empty old_string returns null', async () => {
   expect(applyEdit(DIARY, { tool: 'Edit', old_string: '', new_string: 'x' })).toBe(null)
 })
+
+test('a blocked tick reports one line through onBlock, and an allowed one does not', async () => {
+  const seen: string[] = []
+  const bad = tick('- [ ] ecfx-6659 sync with @smtsuchi', '- [x] ecfx-6659 sync with @smtsuchi')
+  const verdict = checkTicks(DIARY, bad, m => seen.push(m))
+  expect(verdict.ok).toBe(false)
+  expect(seen.length).toBe(1)
+  expect(seen[0]).toContain('diary guard blocked')
+  expect(seen[0]).toContain('ecfx-6659')
+  expect(seen[0]).not.toContain('\n')
+  checkTicks(DIARY, tick('- [ ] ecfx-6659 sync with @smtsuchi', '- [x] ecfx-6659 sync with @smtsuchi · merged'), m => seen.push(m))
+  expect(seen.length).toBe(1)
+})
+
+test('a throwing onBlock never changes the verdict', async () => {
+  const bad = tick('- [ ] ecfx-6659 sync with @smtsuchi', '- [x] ecfx-6659 sync with @smtsuchi')
+  const boom = () => {
+    throw new Error('boom')
+  }
+  expect(checkTicks(DIARY, bad, boom)).toEqual(checkTicks(DIARY, bad))
+})

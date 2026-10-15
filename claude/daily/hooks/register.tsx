@@ -15,6 +15,7 @@ const WATCH_MS = 180_000
 const INBOX_MS = 30_000
 const DAY_PLAN = 'exec "$(command -v day-plan || echo "$HOME/.local/bin/day-plan")"'
 const INBOX_LS = 'ls -1 "$HOME/.local/state/run-day/inbox" 2>/dev/null; true'
+const FRICTION = 'F="$(command -v friction || echo "$HOME/.local/bin/friction")"; [ -x "$F" ] && exec "$F" "$@" || true'
 const EMPTY: ViewState = { active: false, status: '', groups: [] }
 const view = atom({ plugin: 'daily', key: 'view' } as const, EMPTY)
 const inbox = atom({ plugin: 'daily', key: 'inbox' } as const, EMPTY_INBOX as InboxState)
@@ -51,7 +52,17 @@ async function load($: EngineInterface) {
   return { day, active: true as const, items: parseItems(diary), runs: parseRunState(state) }
 }
 
-const flags = { lastNeeds: null as Set<string> | null, isWatching: false, hasWatchFailed: false, hasRefreshFailed: false, isListing: false }
+const flags = { lastNeeds: null as Set<string> | null, isWatching: false, hasWatchFailed: false, hasRefreshFailed: false, isListing: false, hasInboxFailed: false }
+
+// Fire-and-forget: a missing or failing friction must never slow or change the caller.
+function friction($: EngineInterface, kind: string, msg: string, source = 'changes-since') {
+  try {
+    const argv = ['/bin/sh', '-c', FRICTION, 'friction', '--harness', 'claude', '--source', source, kind, msg.replace(/\s+/g, ' ').slice(0, 300)]
+    void $.process.run(argv, { timeoutMs: 5_000 }).catch(() => undefined)
+  } catch {
+    // swallowed on purpose
+  }
+}
 
 async function refresh($: EngineInterface) {
   const ctx = await load($)
@@ -97,6 +108,8 @@ async function watch($: EngineInterface) {
     if (ran.exitCode !== 0) {
       if (!flags.hasWatchFailed) {
         $.ui.toast(`changes-since failed (exit ${ran.exitCode}): ${ran.stderr.split('\n')[0]}`)
+        const timedOut = ran.exitCode === 124 || /timed? ?out/i.test(ran.stderr)
+        friction($, timedOut ? 'timeout' : 'service_down', `changes-since failed (exit ${ran.exitCode}): ${ran.stderr.split('\n')[0]}`)
       }
       flags.hasWatchFailed = true
       return
@@ -135,7 +148,11 @@ async function watch($: EngineInterface) {
       }
     }
   } catch (err) {
-    if (!flags.hasWatchFailed) $.ui.toast(`daily watcher: ${err instanceof Error ? err.message : String(err)}`)
+    if (!flags.hasWatchFailed) {
+      const why = err instanceof Error ? err.message : String(err)
+      $.ui.toast(`daily watcher: ${why}`)
+      friction($, /timed? ?out/i.test(why) ? 'timeout' : 'tool_error', `daily watcher: ${why}`)
+    }
     flags.hasWatchFailed = true
   } finally {
     flags.isWatching = false
@@ -149,7 +166,12 @@ async function watchInbox($: EngineInterface) {
     const ctx = await load($)
     if (!ctx || !ctx.active) return
     const ran = await $.process.run(['/bin/sh', '-c', INBOX_LS], { timeoutMs: 10_000 })
-    if (ran.exitCode !== 0) return
+    if (ran.exitCode !== 0) {
+      if (!flags.hasInboxFailed) friction($, 'tool_error', `inbox read failed (exit ${ran.exitCode}): ${ran.stderr.split('\n')[0]}`, 'daily-inbox')
+      flags.hasInboxFailed = true
+      return
+    }
+    flags.hasInboxFailed = false
     const before = await read($, inbox)
     const { fresh, state } = nextInbox(parseListing(ran.stdout), before.seen)
     await update($, inbox, () => state)
@@ -157,7 +179,9 @@ async function watchInbox($: EngineInterface) {
       $.ui.toast(`inbox: ${fresh.length} new`)
       void $.prompt.submit({ text: inboxPrompt(fresh.length) }).catch(() => $.ui.toast('daily inbox: prompt submit failed'))
     }
-  } catch {
+  } catch (err) {
+    if (!flags.hasInboxFailed) friction($, 'tool_error', `inbox read failed: ${err instanceof Error ? err.message : String(err)}`, 'daily-inbox')
+    flags.hasInboxFailed = true
     return
   } finally {
     flags.isListing = false
@@ -204,7 +228,7 @@ export const register: Register = on => {
       const current = (await readOr($, e.file_path)) ?? ''
       const after = applyEdit(current, e as unknown as EditInput)
       if (after === null) return next(e)
-      const verdict = checkTicks(current, after)
+      const verdict = checkTicks(current, after, msg => friction($, 'guard', msg, 'daily-guard'))
       return verdict.ok ? next(e) : { deny: denyMessage(verdict.lines) }
     }).catch(($, e, next) => next(e))
   }
