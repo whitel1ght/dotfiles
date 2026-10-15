@@ -24,11 +24,11 @@ cleanup() {
 trap cleanup EXIT
 
 CALLS="$SANDBOX/calls"
-for stub in lms webui; do
+for stub in lms webui articles; do
     printf '#!/bin/bash\necho "%s $*" >>"%s"\n' "$stub" "$CALLS" >"$SANDBOX/$stub"
     chmod +x "$SANDBOX/$stub"
 done
-export LMS="$SANDBOX/lms" WEBUI="$SANDBOX/webui" LMS_URL="http://127.0.0.1:$API_PORT" LOCALAI_NO_BROWSER=1
+export LMS="$SANDBOX/lms" WEBUI="$SANDBOX/webui" ARTICLES="$SANDBOX/articles" LMS_URL="http://127.0.0.1:$API_PORT" LOCALAI_NO_BROWSER=1
 
 echo "localai"
 
@@ -40,6 +40,7 @@ assert_contains "$calls" "lms server start" "start: starts the LM Studio server"
 assert_contains "$calls" "lms load gemma-4-e4b-it-mlx -c 32768 --parallel 1 -y" "start: loads the chat model"
 assert_contains "$calls" "lms load qwen2.5-coder-1.5b -c 4096 -y" "start: loads the autocomplete model"
 assert_contains "$calls" "webui start" "start: starts Open WebUI"
+assert_contains "$calls" "articles start" "start: starts the articles server"
 assert_contains "$out" "http://127.0.0.1:8080" "start: prints the link"
 first="$(head -1 "$CALLS")"
 assert_contains "$first" "server start" "start: server comes up before any load"
@@ -63,6 +64,7 @@ assert_contains "$out" "gemma-4-e4b-it-mlx already loaded" "start: says what it 
 out="$("$SCRIPT" stop 2>&1)"
 calls="$(cat "$CALLS")"
 assert_contains "$calls" "webui stop" "stop: stops Open WebUI"
+assert_contains "$calls" "articles stop" "stop: stops the articles server"
 assert_contains "$calls" "lms unload --all" "stop: unloads all models"
 assert_contains "$calls" "lms server stop" "stop: stops the server"
 

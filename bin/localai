@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start and stop the whole local AI stack in one go:
 # LM Studio server + Gemma (chat, voice) + Qwen coder 1.5B (nvim autocomplete)
-# + Open WebUI. Everything together holds ~13 GB, so stop it when done.
+# + Open WebUI + the articles server (if installed). Everything together holds ~13 GB, so stop it when done.
 #
 #   localai          start everything and open Open WebUI in the browser
 #   localai stop     stop Open WebUI, unload all models, stop the LM Studio server
@@ -10,6 +10,7 @@ set -euo pipefail
 
 LMS="${LMS:-$HOME/.lmstudio/bin/lms}"
 WEBUI="${WEBUI:-$(dirname "$(readlink -f "$0")")/webui}"
+ARTICLES="${ARTICLES:-articles}"
 LMS_URL="${LMS_URL:-http://127.0.0.1:1234}"
 CHAT_MODEL=gemma-4-e4b-it-mlx
 COMPLETE_MODEL=qwen2.5-coder-1.5b
@@ -42,9 +43,14 @@ cmd_start() {
   load "$COMPLETE_MODEL" -c 4096
   echo "Open WebUI"
   if [ -n "${LOCALAI_NO_BROWSER:-}" ]; then "$WEBUI" start; else "$WEBUI"; fi
+  if command -v "$ARTICLES" >/dev/null; then
+    echo "Articles"
+    "$ARTICLES" start
+  fi
   cat <<EOF
 
 Ready. Chat and voice: http://127.0.0.1:8080
+Saved articles:  http://127.0.0.1:8765
 nvim: autocomplete is on in new nvim windows; in an open one press <Space>ac.
 Stop everything with: localai stop
 EOF
@@ -52,6 +58,7 @@ EOF
 
 cmd_stop() {
   "$WEBUI" stop
+  command -v "$ARTICLES" >/dev/null && "$ARTICLES" stop || true
   if [ -x "$LMS" ]; then
     "$LMS" unload --all >/dev/null 2>&1 || true
     "$LMS" server stop >/dev/null 2>&1 || true
@@ -71,6 +78,11 @@ cmd_status() {
   fi
   printf 'Open WebUI: '
   "$WEBUI" status
+  if curl -sf -m 1 http://127.0.0.1:8765/health >/dev/null; then
+    echo "Articles: up at http://127.0.0.1:8765"
+  else
+    echo "Articles: down"
+  fi
 }
 
 case "${1:-start}" in

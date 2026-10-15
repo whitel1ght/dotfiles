@@ -479,6 +479,11 @@ if [ -f "$DOTFILES_DIR/bin/localai" ]; then
     create_symlink "$DOTFILES_DIR/bin/localai" "$HOME/.local/bin/localai"
 fi
 
+# articles lives in its own repo (~/projects/articles); link its wrapper when cloned.
+if [ -x "$HOME/projects/articles/bin/articles" ]; then
+    create_symlink "$HOME/projects/articles/bin/articles" "$HOME/.local/bin/articles"
+fi
+
 # tmux-prune closes idle tmux windows; bound to prefix+X in tmux/.tmux.conf.
 if [ -f "$DOTFILES_DIR/bin/tmux-prune" ]; then
     create_symlink "$DOTFILES_DIR/bin/tmux-prune" "$HOME/.local/bin/tmux-prune"

@@ -489,7 +489,8 @@ model-selection policy, extensions, relinking instructions, and verification.
 ## Open WebUI
 
 `localai` starts the whole local stack in one go — LM Studio server, Gemma (chat),
-Qwen coder 1.5B (nvim autocomplete), Open WebUI — and `localai stop` tears it all
+Qwen coder 1.5B (nvim autocomplete), Open WebUI, and the articles server from
+`~/projects/articles` when it is installed — and `localai stop` tears it all
 down; `localai status` shows what is up. Tested by `bin/localai.test.sh`.
 
 `bin/webui` runs [Open WebUI](https://openwebui.com) — browser chat, voice,
