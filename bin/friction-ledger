@@ -7,6 +7,8 @@
 #                             [--diagnosis TEXT] [--proposal-file FILE] [--date D]
 #   friction-ledger diary-section --date D [--mine-json FILE]
 #   friction-ledger frustration --date D --what TEXT --class C --sig-hint H [--quote Q]
+#                               [--rung R --proposal-file F]
+#   friction-ledger ingest FILE --date D
 #   friction-ledger directions add --rule R [--scope S] [--quote Q] [--harness H] [--date D] [--same-as D-NNN]
 #   friction-ledger directions retire D-NNN [--reason R]
 #   friction-ledger directions promote D-NNN --fix SHA
@@ -42,6 +44,18 @@
 #         "N more" line, or nothing when there are none. apply also passes `user_signals`
 #         from the miner output through.
 #
+# ingest  applies the classifier subagent's whole reply at once; FILE is one JSON object:
+#           {"items": {"F-NNN": {"class": C, "diagnosis": T, "rung": R, "proposal": MD}},
+#            "directions": [{"rule": T, "scope": S, "quote": Q, "same_as": "D-NNN", "harness": H}],
+#            "frustrations": [{"what_went_wrong": T, "class": C, "sig_hint": H, "rung": R, "proposal": MD}]}
+#         items: rung and proposal go together; directions: same_as, harness, quote are optional.
+#         Unknown keys, ids, classes or rungs reject the whole file and nothing is applied. An item with a proposal goes open -> proposed, an
+#         `external` one open -> wontfix. A frustration always stores its proposal; the script
+#         sets it proposed from the second day. Marks D as ingested (.ingested/D): apply then
+#         drops user_signals for D and a re-run of ingest skips directions and frustrations.
+# apply creates an entry for a tool_error only with count >= 2 on the day or on a second day
+#         (first sightings are kept in .seen-sigs.tsv).
+#
 # $FRICTION_WIKI (default ~/wiki/friction) holds ledger.md and the F-files. The F-files are
 # the source of truth; ledger.md is regenerated from them. Only the main session at end-day
 # calls this: subagents never write the wiki.
@@ -63,12 +77,12 @@ fm_get() { # file key
 }
 
 fm_set() { # file key value
-  local tmp; tmp="$(mktemp)"
+  local tmp; tmp="$(mktemp "$1.XXXXXX")"
   K="$2" V="$3" awk 'BEGIN { k = ENVIRON["K"]; v = ENVIRON["V"] }
     NR == 1 { print; fm = 1; next }
     fm && $0 == "---" { fm = 0 }
     fm && index($0, k ":") == 1 { print (v == "" ? k ":" : k ": " v); next }
-    { print }' "$1" >"$tmp" && mv "$tmp" "$1"
+    { print }' "$1" >"$tmp" && chmod 644 "$tmp" && mv "$tmp" "$1"
 }
 
 section_get() { # file name
@@ -78,8 +92,9 @@ section_get() { # file name
 
 # mode replace|append; text via env so backslashes and newlines survive
 section_edit() { # file name mode text
-  local tmp; tmp="$(mktemp)"
-  N="## $2" M="$3" T="$4" awk '
+  local tmp text; tmp="$(mktemp "$1.XXXXXX")"
+  text="$(sed -E 's/^#{1,2} /### /' <<<"$4")" # a heading in the text would split the section
+  N="## $2" M="$3" T="$text" awk '
     function flush(   i) {
       while (nb > 0 && buf[nb] == "") nb--
       if (ENVIRON["M"] != "append") nb = 0
@@ -93,7 +108,7 @@ section_edit() { # file name mode text
     on && /^## / { flush() }
     on { if (nb == 0 && $0 == "") next; buf[++nb] = $0; next }
     { print }
-    END { if (on) { flush() } }' "$1" >"$tmp" && mv "$tmp" "$1"
+    END { if (on) { flush() } }' "$1" >"$tmp" && chmod 644 "$tmp" && mv "$tmp" "$1"
 }
 
 evidence_dates() { section_get "$1" Evidence | grep -oE '^- [0-9]{4}-[0-9]{2}-[0-9]{2}' | cut -c3- | sort -u || true; }
@@ -132,7 +147,7 @@ rebuild_ledger() {
   local files=() f out
   for f in "$FRICTION_WIKI"/F-*.md; do [ -f "$f" ] && files+=("$f"); done
   [ ${#files[@]} -gt 0 ] || return 0
-  out="$(mktemp)"
+  out="$(mktemp "$FRICTION_WIKI/ledger.md.XXXXXX")"
   {
     printf '# Friction ledger\n\n| id | signature | class | first | last | days | status | fix |\n|---|---|---|---|---|---|---|---|\n'
     for f in "${files[@]}"; do
@@ -141,7 +156,7 @@ rebuild_ledger() {
         "$(fm_get "$f" last)" "$(fm_get "$f" days)" "$(fm_get "$f" status)" "$(fm_get "$f" fix)"
     done
   } >"$out"
-  if cmp -s "$out" "$FRICTION_WIKI/ledger.md" 2>/dev/null; then rm -f "$out"; else mv "$out" "$FRICTION_WIKI/ledger.md"; fi
+  if cmp -s "$out" "$FRICTION_WIKI/ledger.md" 2>/dev/null; then rm -f "$out"; else chmod 644 "$out" && mv "$out" "$FRICTION_WIKI/ledger.md"; fi
 }
 
 # --- mine input ---------------------------------------------------------------
@@ -156,6 +171,22 @@ load_mine() { # date file-or-empty -> prints JSON
     "$bin" --date "$1" --ledger "$ledger" | jq -c .
   fi
 }
+
+# A tool_error becomes an entry only at 2+ occurrences in a day or on a second day, so one-off
+# errors stay out of the ledger; the first sighting of a signature is kept in .seen-sigs.tsv.
+tool_error_ready() { # sig date count
+  local seen="$FRICTION_WIKI/.seen-sigs.tsv" prior=1
+  mkdir -p "$FRICTION_WIKI"
+  if [ -f "$seen" ]; then
+    S="$1" D="$2" awk -F'\t' '$2 == ENVIRON["S"] && $1 != ENVIRON["D"] { f = 1 } END { exit !f }' "$seen" && prior=0
+    grep -qxF "$2"$'\t'"$1" "$seen" || printf '%s\t%s\n' "$2" "$1" >>"$seen"
+  else
+    printf '%s\t%s\n' "$2" "$1" >"$seen"
+  fi
+  [ "$3" -ge 2 ] || [ "$prior" = 0 ]
+}
+
+ingested() { [ -f "$FRICTION_WIKI/.ingested/$1" ]; } # date: its signals were already classified
 
 # --- apply --------------------------------------------------------------------
 
@@ -189,6 +220,7 @@ cmd_apply() {
     id="$(S="$sig" awk -F'\t' '$2 == ENVIRON["S"] { print $1; exit }' "$work/map.tsv")"
     if [ -z "$id" ]; then
       [ "$kind" != correction ] && [ "$conf" = high ] || continue
+      if [ "$kind" = tool_error ]; then tool_error_ready "$sig" "$date_" "$(jq -r .count <<<"$g")" || continue; fi
       id="$(printf 'F-%03d' "$next")"; next=$((next + 1))
       mkdir -p "$FRICTION_WIKI"
       new_file "$id" "$sig" "$date_"
@@ -224,7 +256,7 @@ cmd_apply() {
       "$(grep -c "^- $date_: regressed" "$f" || true)" >>"$work/state.tsv"
   done
 
-  jq -n --arg date "$date_" --argjson mine "$mine" --rawfile state "$work/state.tsv" --slurpfile touched "$work/touched.jsonl" '
+  jq -n --arg date "$date_" --argjson mine "$mine" --rawfile state "$work/state.tsv" --argjson done "$(ingested "$date_" && echo true || echo false)" --slurpfile touched "$work/touched.jsonl" '
     ([$state | split("\n")[] | select(length > 0) | split("\t")
       | {key: .[0], value: {status: .[1], class: .[2], days: (.[3] | tonumber), first: .[4], proposal: (.[5] == "1"), regressed: (.[6] != "0")}}]
       | from_entries) as $st
@@ -234,7 +266,7 @@ cmd_apply() {
        needs_proposal: [$touched[] | select($st[.id].status == "open" and ($st[.id].proposal | not) and ($st[.id].days >= 2 or .g.kind == "blocked")) | item(.)],
        regressed: [$touched[] | select($st[.id].status == "regressed" and $st[.id].regressed) | item(.)],
        corrections: [$mine.groups[]? | select(.kind == "correction") | {count, samples}],
-       user_signals: ($mine.user_signals // [])}'
+       user_signals: (if $done then [] else ($mine.user_signals // []) end)}'
 }
 
 # --- set ----------------------------------------------------------------------
@@ -340,7 +372,7 @@ find_id() { # sig -> F-id or empty
 }
 
 cmd_frustration() {
-  local date_="" what="" class="" hint="" quote="" bin
+  local date_="" what="" class="" hint="" quote="" bin rung="" pfile=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --date) need "$@"; date_="$2"; shift ;;
@@ -348,6 +380,8 @@ cmd_frustration() {
       --class) need "$@"; class="$2"; shift ;;
       --sig-hint) need "$@"; hint="$2"; shift ;;
       --quote) need "$@"; quote="$2"; shift ;;
+      --rung) need "$@"; rung="$2"; shift ;;
+      --proposal-file) need "$@"; pfile="$2"; shift ;;
       *) die "frustration: unknown option $1" ;;
     esac
     shift
@@ -355,6 +389,8 @@ cmd_frustration() {
   [ -n "$date_" ] && [ -n "$what" ] && [ -n "$hint" ] || die "frustration needs --date, --what and --sig-hint"
   valid_date "$date_"
   [ -z "$class" ] || [[ "$class" =~ ^(env|instruction|script|model|external)$ ]] || die "bad class: $class"
+  [ -z "$rung" ] || [[ "$rung" =~ ^(script|config|prompt)$ ]] || die "bad rung: $rung"
+  [ -z "$pfile" ] || [ -f "$pfile" ] || die "no such file: $pfile"
   local sig tmp out id
   if [ -x "$HERE/friction" ]; then bin="$HERE/friction"; else bin="$(command -v friction || true)"; fi
   if [ -n "$bin" ]; then sig="$("$bin" sig user frustration "$hint")"; else sig="user:frustration:$(tr '[:upper:]' '[:lower:]' <<<"$hint")"; fi
@@ -369,8 +405,109 @@ cmd_frustration() {
   if [ -z "$(fm_get "$(fpath "$id")" class)" ]; then
     cmd_set "$id" --diagnosis "$what" --date "$date_" ${class:+--class "$class"}
   fi
-  jq -nc --arg id "$id" --argjson new "$was_new" --argjson out "$out" --arg days "$(fm_get "$(fpath "$id")" days)" \
-    '{id: $id, new: $new, days: ($days | tonumber), needs_proposal: ([$out.needs_proposal[].id] | index($id) != null)}'
+  local f days; f="$(fpath "$id")"; days="$(fm_get "$f" days)"
+  if [ -n "$rung" ] || [ -n "$pfile" ]; then
+    cmd_set "$id" --date "$date_" ${rung:+--rung "$rung"} ${pfile:+--proposal-file "$pfile"}
+    [ -z "$pfile" ] || [ "$days" -lt 2 ] || [ "$(fm_get "$f" status)" != open ] || cmd_set "$id" --date "$date_" --status proposed
+  fi
+  jq -nc --arg id "$id" --argjson new "$was_new" --argjson out "$out" --arg days "$days" --arg status "$(fm_get "$f" status)" \
+    '{id: $id, new: $new, days: ($days | tonumber), needs_proposal: ($status == "open" and ([$out.needs_proposal[].id] | index($id) != null))}'
+}
+
+# --- ingest -------------------------------------------------------------------
+
+INGEST_ERRORS='
+  def cls: ["env", "instruction", "script", "model", "external"];
+  def rungs: ["script", "config", "prompt"];
+  def str: type == "string" and test("\\S");
+  def unk($ok): keys - $ok | map("unknown key " + .);
+  def obj($where; $ok; $need):
+    if type != "object" then ["\($where): must be an object"] else
+      ((unk($ok) + ($need - keys | map("missing " + .))) | map("\($where): " + .)) end;
+  def common($where):
+    (if has("class") and (.class | IN(cls[]) | not) then ["\($where): bad class \(.class | tojson)"] else [] end)
+    + (if has("rung") and (.rung | IN(rungs[]) | not) then ["\($where): bad rung \(.rung | tojson)"] else [] end)
+    + ([to_entries[] | select(.key | IN("diagnosis", "proposal", "what_went_wrong", "sig_hint", "rule") ) | select(.value | str | not) | "\($where): \(.key) must be non-empty text"])
+    + (if has("proposal") != has("rung") then ["\($where): rung and proposal go together"] else [] end);
+  if type != "object" then ["the reply must be a JSON object"] else
+    obj("reply"; ["items", "directions", "frustrations"]; [])
+    + ((.items // {}) | if type != "object" then ["items: must be an object keyed by F-NNN"] else
+        [to_entries[] | .key as $k | .value | "items.\($k)" as $w
+          | (if ($k | test("^F-[0-9]+$") | not) then ["\($w): not an F-NNN id"] else [] end)
+            + obj($w; ["class", "diagnosis", "rung", "proposal"]; ["class", "diagnosis"])
+            + (if type == "object" then common($w) else [] end)] | add // [] end)
+    + ((.directions // []) | if type != "array" then ["directions: must be an array"] else
+        [to_entries[] | .key as $i | .value | "directions[\($i)]" as $w
+          | obj($w; ["rule", "scope", "quote", "same_as", "harness"]; ["rule", "scope"])
+            + (if type == "object" then (if has("rule") and (.rule | str | not) then ["\($w): rule must be non-empty text"] else [] end)
+                + (if has("same_as") and ((.same_as | type) != "string" or (.same_as | test("^D-[0-9]+$") | not)) then ["\($w): bad same_as"] else [] end) else [] end)] | add // [] end)
+    + ((.frustrations // []) | if type != "array" then ["frustrations: must be an array"] else
+        [to_entries[] | .key as $i | .value | "frustrations[\($i)]" as $w
+          | obj($w; ["what_went_wrong", "class", "sig_hint", "rung", "proposal"]; ["what_went_wrong", "class", "sig_hint", "rung", "proposal"])
+            + (if type == "object" then common($w) else [] end)] | add // [] end)
+  end | .[]'
+
+cmd_ingest() {
+  local file="${1:-}" date_="" errs id n
+  [ -n "$file" ] && [ -f "$file" ] || die "ingest needs a reply FILE"
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      *) die "ingest: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "ingest needs --date"
+  valid_date "$date_"
+  jq -e . "$file" >/dev/null 2>&1 || die "ingest: $file is not JSON, nothing applied"
+  errs="$(jq -r "$INGEST_ERRORS" "$file")"
+  for id in $(jq -r '(.items // {}) | if type == "object" then keys[] else empty end' "$file"); do
+    [ -f "$(fpath "$id")" ] || errs+=$'
+'"items.$id: no such entry"
+  done
+  errs="$(sed '/^$/d' <<<"$errs")"
+  if [ -n "$errs" ]; then
+    echo "friction-ledger: invalid reply, nothing applied:" >&2; sed 's/^/  /' <<<"$errs" >&2; exit 1
+  fi
+
+  local tmp; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
+  local f cur class rung out ids="" frs="" skipped=false
+  for id in $(jq -r '(.items // {}) | keys[]' "$file"); do
+    f="$(fpath "$id")"; cur="$(fm_get "$f" status)"
+    class="$(jq -r --arg i "$id" '.items[$i].class' "$file")"; rung="$(jq -r --arg i "$id" '.items[$i].rung // empty' "$file")"
+    local args=(--class "$class" --diagnosis "$(jq -r --arg i "$id" '.items[$i].diagnosis' "$file")" --date "$date_")
+    if [ "$cur" = open ]; then
+      if [ "$class" = external ]; then args+=(--status wontfix)
+      elif [ -n "$rung" ]; then args+=(--status proposed); fi
+    fi
+    if [ -n "$rung" ] && [ "$class" != external ]; then
+      jq -r --arg i "$id" '.items[$i].proposal' "$file" >"$tmp/$id.md"
+      args+=(--rung "$rung" --proposal-file "$tmp/$id.md")
+    fi
+    cmd_set "$id" "${args[@]}"
+  done
+  if ingested "$date_"; then
+    skipped=true
+  else
+    while IFS= read -r d; do
+      local dargs=(--rule "$(jq -r .rule <<<"$d")" --scope "$(jq -r .scope <<<"$d")" --quote "$(jq -r '.quote // empty' <<<"$d")"
+        --harness "$(jq -r '.harness // empty' <<<"$d")" --date "$date_")
+      [ -z "$(jq -r '.same_as // empty' <<<"$d")" ] || dargs+=(--same-as "$(jq -r .same_as <<<"$d")")
+      out="$(cmd_dir_add "${dargs[@]}")"
+      ids+="${ids:+ }$out"
+    done < <(jq -c '(.directions // [])[]' "$file")
+    n=0
+    while IFS= read -r d; do
+      n=$((n + 1)); jq -r .proposal <<<"$d" >"$tmp/fr$n.md"
+      out="$(cmd_frustration --date "$date_" --what "$(jq -r .what_went_wrong <<<"$d")" --class "$(jq -r .class <<<"$d")" \
+        --sig-hint "$(jq -r .sig_hint <<<"$d")" --rung "$(jq -r .rung <<<"$d")" --proposal-file "$tmp/fr$n.md")"
+      frs+="${frs:+,}$out"
+    done < <(jq -c '(.frustrations // [])[]' "$file")
+    mkdir -p "$FRICTION_WIKI/.ingested"; : >"$FRICTION_WIKI/.ingested/$date_"
+  fi
+  jq -nc --argjson items "$(jq '(.items // {}) | length' "$file")" --arg dirs "$ids" --argjson fr "[${frs}]" --argjson skipped "$skipped" \
+    '{items: $items, directions: ($dirs | split(" ") | map(select(length > 0))), frustrations: $fr, skipped_signals: $skipped}'
 }
 
 # --- directions ---------------------------------------------------------------
@@ -391,10 +528,10 @@ dir_tsv() {
 dir_rows() { dir_tsv | jq -Rc 'split("\t") | {id: .[0], rule: .[1], scope: .[2], since: .[3], source: .[4], status: .[5]}'; }
 
 dir_set_status() { # id status suffix
-  local f tmp; f="$(dir_file)"; tmp="$(mktemp)"
+  local f tmp; f="$(dir_file)"; tmp="$(mktemp "$(dir_file).XXXXXX")"
   I="$1" S="$2" X="$3" awk -F'|' 'BEGIN { OFS = "|" }
     $0 ~ "^\\| *" ENVIRON["I"] " *\\|" { src = $6; sub(/ +$/, "", src); $6 = src ENVIRON["X"] " "; $7 = " " ENVIRON["S"] " " }
-    { print }' "$f" >"$tmp" && mv "$tmp" "$f"
+    { print }' "$f" >"$tmp" && chmod 644 "$tmp" && mv "$tmp" "$f"
 }
 
 cmd_dir_add() {
@@ -496,7 +633,8 @@ case "${1:-}" in
   set) shift; cmd_set "$@" ;;
   diary-section) shift; cmd_diary "$@" ;;
   frustration) shift; cmd_frustration "$@" ;;
+  ingest) shift; cmd_ingest "$@" ;;
   directions) shift; cmd_directions "$@" ;;
-  -h|--help|"") sed -n '2,49p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
+  -h|--help|"") sed -n '2,70p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
   *) die "unknown command $1" ;;
 esac
