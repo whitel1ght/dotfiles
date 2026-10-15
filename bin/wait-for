@@ -10,8 +10,8 @@
 # Probes with `glab api user` (gitlab) or `jira-api GET myself` (jira), starting at
 # once and then after 30 s, doubling up to 10 min between probes. When the probe
 # succeeds it leaves `day-note --kind service` ("<service> is back") and logs a
-# friction event (service_down, with the outage duration). On give-up it only logs
-# the friction event and exits 1.
+# friction event (service_down, with the outage duration). On give-up it leaves
+# a note ("<service> still down after <N>h — gave up") and the friction event, and exits 1.
 # One instance per service: a lock directory $WAIT_FOR_DIR/<service>.lock (default
 # ~/.local/state/wait-for); a second instance exits 0 quietly. A detached run logs
 # to $WAIT_FOR_DIR/<service>.log.
@@ -91,6 +91,7 @@ while :; do
   fi
   elapsed=$(( $($WAIT_FOR_NOW) - start ))
   if [ "$elapsed" -ge "$limit" ]; then
+    "$DAY_NOTE" --kind service --session wait-for ${key:+"$key"} "$service still down after ${max_hours}h — gave up" || true
     friction "$service still down after $(human "$elapsed"), gave up"
     echo "wait-for: $service still down after $(human "$elapsed"), gave up" >&2
     exit 1

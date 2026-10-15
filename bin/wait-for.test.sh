@@ -71,7 +71,7 @@ echo "wait-for — give up"
 reset; FAIL_UNTIL=999 run gitlab --max-hours 0.1; rc=$?   # 360 s
 assert_eq "1" "$rc" "exit 1 after max-hours"
 assert_eq "30 60 120 150" "$(sleeps)" "the last nap is cut to fit the limit"
-assert_eq "no" "$([ -e "$SANDBOX/notes" ] && echo yes || echo no)" "no inbox note"
+assert_eq "--kind service --session wait-for gitlab still down after 0.1h — gave up" "$(cat "$SANDBOX/notes")" "an inbox note says it gave up"
 assert_contains "$(cat "$SANDBOX/friction")" "gitlab still down after 6m, gave up" "friction event says it gave up"
 assert_contains "$(cat "$SANDBOX/stderr")" "gave up" "and stderr too"
 

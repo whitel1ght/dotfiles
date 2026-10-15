@@ -204,7 +204,8 @@ Oldest first, and finish one file completely before opening the next. Each holds
    - `progress` → keep the marker, append ` · <summary clip>`.
    - `handback` → refill the brief, append the note as `## Hand-back note`, re-dispatch (step 2).
      Worktree gone: recover it from the hand-off note or the MR's `source_branch`.
-   - `service` → every item with `waiting=<that service>` drops the field and resumes where it stopped (re-dispatch
+   - `service` ending `gave up` → items with `waiting=<that service>` drop the field, get `needs_you=yes` and
+     `· blocked: <service> down` on the diary line; no resume. Otherwise every item with `waiting=<that service>` drops the field and resumes where it stopped (re-dispatch
      into its worktree, or redo the failed check). No diary line, no memory block; `mv` to `inbox/done/$T/`.
    - `offplan` → new line under `**Unplanned**`, immediately above `<!-- start-day:end -->`.
 4. Apply the memory block (step 4; not for `service`), then `diary-links`, then `mv` the file to `inbox/done/$T/`.
