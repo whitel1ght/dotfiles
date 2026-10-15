@@ -54,6 +54,11 @@ Outlook not connected. Google Calendar not connected.
 - [x] re-review dashboard!2232 · note: skipped by user, MR unchanged since my 10-10 review  [↗][ECFX-2648]
 - [ ] check inbox (Slack unavailable) later
 - [x] all good
+<!-- friction:start -->
+## Friction
+
+- F-004 — Jira not connected (redis unavailable) → /fix-friction F-004
+<!-- friction:end -->
 EOT
 printf 'Outlook not connected.\n' >"$DY/2026-10-14.md"
 
@@ -147,6 +152,7 @@ assert_eq "" "$(jq -r '.groups[]|select(.sig|test("fetch failed|sidebar"))' <<<"
 assert_eq "" "$(jq -r '.groups[]|select(.evidence[0]|test("2026-10-14.md"))' <<<"$OUT")" "other days' run state ignored"
 
 echo "friction-mine — diary"
+assert_eq "" "$(grp 'diary:auth:jira not connected')$(grp 'diary:service_down:(redis unavailable)')" "the end-day friction block is not mined"
 g=$(grp "diary:blocked:needs <key> (backend classification)")
 assert_eq "blocked|ECFX-17418" "$(f "$g" '[.kind,.keys[0]]|join("|")')" "[!] ... · blocked: reason"
 g=$(grp "diary:other:skipped by user, mr unchanged since my <n>-<n> review")

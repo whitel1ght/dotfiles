@@ -112,14 +112,15 @@ done
 
 # diary
 f="$DIARY_DIR/$date_.md"
-[ -f "$f" ] && jq -cR --arg f "$f" "$DEF"'
+# lines of the end-day <!-- friction --> block are blanked, not dropped, so line numbers stay true
+[ -f "$f" ] && awk '/^<!-- friction:start -->/ { skip = 1 } { print skip ? "" : $0 } /^<!-- friction:end -->/ { skip = 0 }' "$f" | jq -cR --arg f "$f" "$DEF"'
   ("\($f):\(input_line_number)") as $ev
   | (. as $l | ([match("[A-Za-z]{2,}-[0-9]+"; "g").string] | first // "" | ascii_upcase)) as $key
   | . as $l
   | (if test("^\\s*- \\[!\\].*· blocked:") then rec("diary"; "blocked"; capture("· blocked: (?<r>.*?)(  \\[↗\\]|$)").r; $key; $ev; "high") else empty end),
     (if test("· note: skipped by user") then rec("diary"; "other"; capture("· note: (?<r>skipped by user.*?)(  \\[↗\\]|$)").r; $key; $ev; "high") else empty end),
     ([$l | match("\\([^()]*unavailable[^()]*\\)"; "g").string][] | rec("diary"; "service_down"; .; $key; $ev; "high")),
-    ([$l | match("[A-Z][\\w-]*( [A-Z][\\w-]*)* not connected"; "g").string][] | rec("diary"; "auth"; .; $key; $ev; "high"))' "$f" | emit
+    ([$l | match("[A-Z][\\w-]*( [A-Z][\\w-]*)* not connected"; "g").string][] | rec("diary"; "auth"; .; $key; $ev; "high"))' | emit
 
 # pi-sub agents started that day
 if [ -d "$PI_SUB_STATE_DIR" ]; then
