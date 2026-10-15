@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+# Gather one day's friction from the local sources and print it grouped, as JSON.
+#
+#   friction-mine [--date YYYY-MM-DD] [--ledger PATH]
+#
+#   --date    local date to mine (default today)
+#   --ledger  wiki friction ledger whose `signature` column marks a group as known
+#             (default $FRICTION_LEDGER, else ~/wiki/friction/ledger.md)
+#
+# Sources, each dir overridable for tests:
+#   FRICTION_DIR        <date>.jsonl written by `friction`        (~/.local/state/friction)
+#   RUN_DAY_DIR         <date>.md and done/<date>.md run state    (~/.local/state/run-day)
+#   DIARY_DIR           <date>.md diary                           (~/wiki/diary)
+#   PI_SUB_STATE_DIR    */{meta,exit}.json, events.jsonl          (~/.local/state/pi-sub)
+#   CLAUDE_PROJECTS_DIR */<sid>.jsonl transcripts                 (~/.claude/projects)
+#   PI_SESSIONS_DIR     **/*.jsonl transcripts                    (~/.pi/agent/sessions)
+#
+# Prints {"date", "groups":[{sig, source, kind, count, keys, confidence, samples,
+# evidence, known, ledger_status[, regression]}]}, biggest first. Read-only: no
+# network, no model, nothing written. Corrections are guessed from the wording of
+# user prompts, so they carry confidence "low". The same failing command three or
+# more times in one transcript adds a `retry` record. A group whose signature is in
+# the ledger gets known=<F-id> and ledger_status; status fixed also sets regression.
+set -euo pipefail
+
+FRICTION_DIR="${FRICTION_DIR:-$HOME/.local/state/friction}"
+RUN_DAY_DIR="${RUN_DAY_DIR:-$HOME/.local/state/run-day}"
+DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
+PI_SUB_STATE_DIR="${PI_SUB_STATE_DIR:-$HOME/.local/state/pi-sub}"
+CLAUDE_PROJECTS_DIR="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+PI_SESSIONS_DIR="${PI_SESSIONS_DIR:-$HOME/.pi/agent/sessions}"
+ledger="${FRICTION_LEDGER:-$HOME/wiki/friction/ledger.md}"
+
+die() { echo "friction-mine: $*" >&2; exit 1; }
+
+date_="$(date +%F)"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --date) [ $# -ge 2 ] || die "--date needs a value"; date_="$2"; shift ;;
+    --ledger) [ $# -ge 2 ] || die "--ledger needs a value"; ledger="$2"; shift ;;
+    -h|--help) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown option $1" ;;
+  esac
+  shift
+done
+[[ "$date_" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "--date must be YYYY-MM-DD, got $date_"
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -x "$here/friction" ]; then FRICTION="$here/friction"; else FRICTION="$(command -v friction)" || die "friction not found"; fi
+DEF="$("$FRICTION" jqdef)"
+DEF+='
+def ldate: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | localtime | strftime("%Y-%m-%d");
+def flat: gsub("[\\n\\r\\t]+"; " ") | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ");
+def text: if type == "string" then . else ([.[]? | select(.type == "text") | .text] | join(" ")) end;
+def keyof: (. // "") | [scan("[A-Z]{2,}-[0-9]+")] | last // "";
+def rec($src; $kind; $msg; $key; $ev; $conf): {source: $src, kind: $kind, msg: ($msg | flat | .[0:200]), key: $key, evidence: $ev, confidence: $conf};
+def correction: length <= 600 and test("(^|[^a-z])(no,|don.t|stop|wrong|again|why did you|that.s not)"; "i");
+def errkind: if test("unavailable|overloaded|connection error|econn|enotfound|\\b5\\d\\d\\b"; "i") then "service_down"
+  elif test("unauthori[sz]ed|\\b40[13]\\b|api key|not logged in|oauth|expired"; "i") then "auth"
+  elif test("timed? ?out|timeout"; "i") then "timeout"
+  elif test("abort"; "i") then "interrupt" else "other" end;'
+
+out="$(mktemp -d)"
+trap 'rm -rf "${out:?}"' EXIT
+: >"$out/all.jsonl"
+emit() { cat >>"$out/all.jsonl"; }
+
+# friction events
+f="$FRICTION_DIR/$date_.jsonl"
+[ -f "$f" ] && jq -cR --arg f "$f" 'fromjson? | select(type == "object" and .kind and .sig) |
+  {sig, source: (.source // "unknown"), kind, msg: ((.msg // "") | .[0:200]), key: (.key // ""),
+   evidence: "\($f):\(input_line_number)", confidence: "high"}' "$f" | emit
+
+# run state
+for f in "$RUN_DAY_DIR/$date_.md" "$RUN_DAY_DIR/done/$date_.md"; do
+  [ -f "$f" ] || continue
+  jq -cnR --arg f "$f" "$DEF"'
+    foreach inputs as $l ({notes: false};
+      (if $l == "notes:" then .notes = true else . end);
+      ($l | select(startswith("- "))) as $b
+      | ("\($f):\(input_line_number)") as $ev
+      | if ($b | test(" \\| (class|retries)=")) then
+          ($b[2:] | split(" | ")) as $p
+          | ($p[0] | gsub("^\\s+|\\s+$"; "") | ascii_upcase) as $key
+          | ([$p[1:][] | select(contains("=")) | {key: split("=")[0], value: (split("=")[1:] | join("="))}] | from_entries) as $fd
+          | (if (($fd.retries // "0") | tonumber? // 0) > 0 then rec("run-state"; "retry"; "item retried: retries=\($fd.retries)"; $key; $ev; "high") else empty end),
+            (if $fd.needs_you == "yes" then rec("run-state"; "blocked"; "item needs you: class=\($fd.class // "-")"; $key; $ev; "high") else empty end)
+        elif (.notes and ($b | test("fail|error|retr|timeout|timed out|unavailable|denied|blocked|\\bEOF\\b|not connected|offline|refus"; "i"))) then
+          rec("run-state"; "other"; $b[2:]; ($b | keyof | ascii_upcase); $ev; "low")
+        else empty end)' "$f" | emit
+done
+
+# diary
+f="$DIARY_DIR/$date_.md"
+[ -f "$f" ] && jq -cR --arg f "$f" "$DEF"'
+  ("\($f):\(input_line_number)") as $ev
+  | (. as $l | ([match("[A-Za-z]{2,}-[0-9]+"; "g").string] | first // "" | ascii_upcase)) as $key
+  | . as $l
+  | (if test("^\\s*- \\[!\\].*· blocked:") then rec("diary"; "blocked"; capture("· blocked: (?<r>.*?)(  \\[↗\\]|$)").r; $key; $ev; "high") else empty end),
+    (if test("· note: skipped by user") then rec("diary"; "other"; capture("· note: (?<r>skipped by user.*?)(  \\[↗\\]|$)").r; $key; $ev; "high") else empty end),
+    ([$l | match("\\([^()]*unavailable[^()]*\\)"; "g").string][] | rec("diary"; "service_down"; .; $key; $ev; "high")),
+    ([$l | match("[A-Z][\\w-]*( [A-Z][\\w-]*)* not connected"; "g").string][] | rec("diary"; "auth"; .; $key; $ev; "high"))' "$f" | emit
+
+# pi-sub agents started that day
+if [ -d "$PI_SUB_STATE_DIR" ]; then
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    [ -f "$d/exit.json" ] && jq -c --arg f "$d/exit.json" "$DEF"'
+      select(.how != "done") |
+      if .by == "timeout" then rec("pi-sub"; "timeout"; "agent timed out"; ""; "\($f):1"; "high")
+      elif .how == "stopped" then rec("pi-sub"; "interrupt"; "agent stopped by \(.by // "unknown")"; ""; "\($f):1"; "high")
+      else rec("pi-sub"; "tool_error"; "agent failed: \(.error // "exit code \(.code)")"; ""; "\($f):1"; "high") end' "$d/exit.json" | emit
+    [ -f "$d/events.jsonl" ] && jq -cR --arg f "$d/events.jsonl" "$DEF"'
+      (fromjson? // empty) | select(.type == "auto_retry_start") |
+      rec("pi-sub"; "retry"; "auto retry: \(.errorMessage // "unknown")"; ""; "\($f):\(input_line_number)"; "high")' "$d/events.jsonl" | emit
+  done < <(find "$PI_SUB_STATE_DIR" -maxdepth 2 -name meta.json 2>/dev/null | while IFS= read -r m; do
+    jq -r --arg date "$date_" "$DEF"'select((.started_at // "") | length > 0 and ldate == $date) | input_filename | sub("/meta.json$"; "")' "$m" 2>/dev/null
+  done)
+fi
+
+claude_prog="$DEF"'
+foreach inputs as $e ({tools: {}};
+  if $e.type == "assistant" then
+    .tools += ([$e.message.content[]? | select(.type == "tool_use") |
+      {key: .id, value: {name, cmd: (.input.command // .input.file_path // .input.pattern // .input.url // (.input | tostring))}}] | from_entries)
+  else . end;
+  . as $st
+  | select($e.timestamp != null and ($e.timestamp | ldate) == $date and ($e.type == "user" or $e.type == "assistant"))
+  | ("\(input_filename):\(input_line_number)") as $ev
+  | ($e.cwd | keyof) as $key
+  | if $e.type == "user" and ($e.message.content | type) == "array" then
+      ($e.message.content[] | select(.type == "tool_result" and .is_error == true) |
+        ($st.tools[.tool_use_id] // {name: "tool", cmd: ""}) as $t
+        | (.content | text) as $x
+        | if ($x | test("doesn.t want to proceed|requires approval|permission to use|was denied"; "i")) then rec("claude"; "denied"; "\($t.name) denied by user or permissions"; $key; $ev; "high")
+          elif ($x | startswith("[Request interrupted")) then empty
+          else rec("claude"; "tool_error"; "\($t.name): \($x | split("\n")[0])"; $key; $ev; "high") + {file: input_filename, cmd: "\($t.name) \($t.cmd | flat | .[0:200])"} end),
+      ($e.message.content[] | select(.type == "text") | .text | select(startswith("[Request interrupted")) | rec("claude"; "interrupt"; .; $key; $ev; "high")),
+      (($e.message.content | text) as $x | select(($e.isMeta | not) and ($x | startswith("<") | not) and ($x | startswith("[") | not) and ($x | correction)) | rec("claude"; "correction"; $x; $key; $ev; "low"))
+    elif $e.type == "user" and ($e.message.content | type) == "string" then
+      ($e.message.content) as $x
+      | if ($x | startswith("[Request interrupted")) then rec("claude"; "interrupt"; $x; $key; $ev; "high")
+        elif (($e.isMeta | not) and ($x | startswith("<") | not) and ($x | correction)) then rec("claude"; "correction"; $x; $key; $ev; "low")
+        else empty end
+    else empty end)'
+
+pi_prog="$DEF"'
+foreach inputs as $e ({tools: {}, cwd: ""};
+  if $e.type == "session" then .cwd = ($e.cwd // "")
+  elif $e.message.role == "assistant" then
+    .tools += ([$e.message.content[]? | select(.type == "toolCall") |
+      {key: .id, value: {name, cmd: (.arguments.command // .arguments.path // .arguments.url // (.arguments | tostring))}}] | from_entries)
+  else . end;
+  . as $st
+  | select($e.type == "message" and $e.timestamp != null and ($e.timestamp | ldate) == $date)
+  | ("\(input_filename):\(input_line_number)") as $ev
+  | ($st.cwd | keyof) as $key
+  | $e.message as $m
+  | if $m.role == "toolResult" and $m.isError == true then
+      ($st.tools[$m.toolCallId] // {name: ($m.toolName // "tool"), cmd: ""}) as $t
+      | ($m.content | text) as $x
+      | rec("pi"; "tool_error"; "\($t.name): \($x | split("\n")[0])"; $key; $ev; "high") + {file: input_filename, cmd: "\($t.name) \($t.cmd | flat | .[0:200])"}
+    elif $m.role == "assistant" and ($m.errorMessage // "") != "" then
+      rec("pi"; ($m.errorMessage | errkind); $m.errorMessage; $key; $ev; "high")
+    elif $m.role == "user" then
+      ($m.content | text) as $x
+      | select($x | correction) | rec("pi"; "correction"; $x; $key; $ev; "low")
+    else empty end)'
+
+# transcripts touched on or after the date; jq then filters entries by local date
+mine() {
+  local root="$1" prog="$2" depth="$3"
+  [ -d "$root" ] || return 0
+  find "$root" -maxdepth "$depth" -name '*.jsonl' -newermt "$date_" -print0 2>/dev/null |
+    xargs -0 -n 40 jq -cn --arg date "$date_" "$prog" 2>/dev/null | emit || true
+}
+mine "$CLAUDE_PROJECTS_DIR" "$claude_prog" 2
+mine "$PI_SESSIONS_DIR" "$pi_prog" 3
+
+: >"$out/ledger.tsv"
+[ -f "$ledger" ] && awk -F'|' '/^\| *F-[0-9]+ *\|/ {
+  for (i = 2; i <= 8; i++) gsub(/^ +| +$/, "", $i)
+  print $2 "\t" $3 "\t" $8 }' "$ledger" >"$out/ledger.tsv"
+
+jq -sc --arg date "$date_" --rawfile ledger "$out/ledger.tsv" "$DEF"'
+  ([$ledger | split("\n")[] | select(length > 0) | split("\t") | {key: .[1], value: {id: .[0], status: .[2]}}] | from_entries) as $led
+  | [.[] | . + {sig: (.sig // sig(.source; .kind; .msg))}] as $recs
+  | ([$recs[] | select(.cmd != null)] | group_by([.file, .cmd])
+     | map(select(length >= 3) | .[0] as $f
+       | rec($f.source; "retry"; "repeated failing command x\(length): \($f.cmd)"; $f.key; ([.[].evidence][:5] | first); $f.confidence)
+         + {evidence_all: [.[].evidence]})
+     | map(. + {sig: sig(.source; .kind; .msg)})) as $rep
+  | {date: $date, groups: (
+      [$recs[] | del(.file, .cmd)] + [$rep[] | del(.evidence_all)]
+      | group_by(.sig)
+      | map(. as $g | $led[$g[0].sig] as $l | {
+          sig: $g[0].sig, source: $g[0].source, kind: $g[0].kind, count: length,
+          keys: ([$g[].key | select(. != "")] | unique),
+          confidence: (if any($g[]; .confidence == "high") then "high" else "low" end),
+          samples: ([$g[].msg] | unique | .[:3] | map(.[0:200])),
+          evidence: ([$g[].evidence] | .[:5]),
+          known: ($l.id // null), ledger_status: ($l.status // null)}
+          + (if $l.status == "fixed" then {regression: true} else {} end))
+      | sort_by([-.count, .sig]))}' "$out/all.jsonl"

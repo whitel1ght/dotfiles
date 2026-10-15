@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Append a friction event, or compute a friction signature.
+#
+#   friction [--harness H] [--key K] [--source S] KIND MSG
+#   friction sig SOURCE KIND MSG
+#   friction jqdef
+#
+#   KIND      service_down | auth | timeout | tool_error | retry | blocked | guard |
+#             denied | interrupt | correction | other
+#   --harness claude | pi | script (default script)
+#   --source  the tool or step that hit it, e.g. changes-since (default: unknown)
+#   --key     Jira key, when the friction belongs to a ticket
+#
+# Appends one JSON line {ts, harness, source, kind, key, msg, sig} to
+# $FRICTION_DIR/<today>.jsonl (default ~/.local/state/friction), local date. Prints
+# nothing and always exits 0: a failed write must never break the caller.
+#
+# `sig` prints <source>:<kind>:<norm(msg)>; norm lowercases and replaces URLs, paths,
+# Jira keys, hex ids, ISO timestamps and digit runs with placeholders, then cuts to
+# 120 chars. `jqdef` prints that same normaliser as a jq function (sig_norm) for
+# friction-mine to reuse.
+set -uo pipefail
+
+FRICTION_DIR="${FRICTION_DIR:-$HOME/.local/state/friction}"
+
+JQDEF='def sig_norm:
+  gsub("https?://[^\\s]+"; "<url>")
+  | gsub("(?<![\\w.:<>-])(~|/[\\w.@+-]+)(/[\\w.@+-]+)+"; "<path>")
+  | gsub("\\b[A-Z][A-Z0-9]*-\\d+\\b"; "<key>")
+  | ascii_downcase
+  | gsub("\\d{4}-\\d{2}-\\d{2}([t ]\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(z|[+-]\\d{2}:?\\d{2})?)?|\\b\\d{2}:\\d{2}:\\d{2}\\b"; "<ts>")
+  | gsub("\\b(?=[0-9a-f]*\\d)[0-9a-f]{7,}\\b"; "<hex>")
+  | gsub("\\d+"; "<n>")
+  | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ")
+  | .[0:120];
+def sig($source; $kind; $msg): "\($source):\($kind):\($msg | sig_norm)";'
+
+sig() { jq -rn --arg s "$1" --arg k "$2" --arg m "$3" "$JQDEF"' sig($s; $k; $m)'; }
+
+case "${1:-}" in
+  jqdef) printf '%s\n' "$JQDEF"; exit 0 ;;
+  sig) [ $# -eq 4 ] || { echo "usage: friction sig SOURCE KIND MSG" >&2; exit 0; }
+       sig "$2" "$3" "$4"; exit 0 ;;
+  -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+
+harness=script source=unknown key="" pos=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --harness) harness="${2:-}"; shift ;;
+    --key) key="${2:-}"; shift ;;
+    --source) source="${2:-}"; shift ;;
+    *) pos+=("$1") ;;
+  esac
+  shift || break
+done
+[ ${#pos[@]} -ge 2 ] || { echo "usage: friction [--harness H] [--key K] [--source S] KIND MSG" >&2; exit 0; }
+kind="${pos[0]}"
+msg=$(tr '\n\r\t' '   ' <<<"${pos[*]:1}" | sed 's/  */ /g; s/^ //; s/ $//' | cut -c1-300)
+
+{
+  line=$(jq -cn --arg ts "$(date +%Y-%m-%dT%H:%M:%S%z | sed -E 's/([+-][0-9]{2})([0-9]{2})$/\1:\2/')" \
+    --arg h "$harness" --arg s "$source" --arg k "$kind" --arg key "$key" --arg m "$msg" \
+    --arg sig "$(sig "$source" "$kind" "$msg")" \
+    '{ts:$ts, harness:$h, source:$s, kind:$k, key:$key, msg:$m, sig:$sig}') &&
+  mkdir -p "$FRICTION_DIR" &&
+  printf '%s\n' "$line" >>"$FRICTION_DIR/$(date +%F).jsonl"
+} 2>/dev/null || true
+exit 0
