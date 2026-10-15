@@ -244,3 +244,47 @@ test("AgentsOverlay: opened by id, an agent missing from the list falls back", (
   assert.match(o.render(80)[0], /Subagents/, "unknown id drops back to the list");
   o.dispose();
 });
+
+function hotkeyOverlay(hotkey: string | undefined, rebinds: Record<string, string> = {}) {
+  const state = { closed: 0 };
+  const o = new AgentsOverlay({
+    session: "sess-main",
+    agents: () => [meta("a")],
+    alive: () => false,
+    events: () => [],
+    result: () => undefined,
+    parse: (d) => d,
+    rebinds,
+    hotkey,
+    rowsOnScreen: () => 20,
+    onAction: () => {},
+    done: () => state.closed++,
+    requestRender: () => {},
+    now: () => NOW,
+  });
+  return { o, state };
+}
+
+test("AgentsOverlay: the hotkey closes from list, agent, search and confirm", (t) => {
+  sandbox(t);
+  put(meta("a"));
+  for (const keys of [[], ["l"], ["/"], ["l", "/"], ["x"], ["m"]]) {
+    const { o, state } = hotkeyOverlay("ctrl+space");
+    for (const k of keys) o.handleInput(k);
+    o.handleInput("ctrl+space");
+    assert.equal(state.closed, 1, keys.join(" "));
+  }
+});
+
+test("AgentsOverlay: the hotkey follows the configured key; no hotkey, no toggle", (t) => {
+  sandbox(t);
+  put(meta("a"));
+  const { o, state } = hotkeyOverlay("ctrl+g");
+  o.handleInput("ctrl+space");
+  assert.equal(state.closed, 0);
+  o.handleInput("ctrl+g");
+  assert.equal(state.closed, 1);
+  const bare = hotkeyOverlay(undefined, { q: "ctrl+g" });
+  bare.o.handleInput("ctrl+space");
+  assert.equal(bare.state.closed, 0);
+});

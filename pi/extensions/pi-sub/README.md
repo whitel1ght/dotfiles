@@ -27,7 +27,7 @@ it to one delivery across reopenings. A child quiet for `idle_minutes` (10) flag
 session; one past `max_minutes` (60) is stopped. Agents whose owner is gone appear as
 orphans in a `session_start` notice and in the window.
 
-`ctrl+space` or `/agents [id]` opens the window: `j/k` move, `l` open, `x` stop,
+`ctrl+space` toggles the window and `/agents [id]` opens it: `j/k` move, `l` open, `x` stop,
 `m` flag to main, `/` filter, `zf` show finished, `q` close. Rebind keys under
 `piSub.keys` in settings. `/agents adopt <session>` adopts from the command line.
 

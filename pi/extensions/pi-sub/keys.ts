@@ -216,7 +216,7 @@ function inputKey(view: View, key: string, opts: ReduceOpts): { view: View; acti
 
 /**
  * Raw terminal input → key name ("j", "G", "ctrl+d", "enter", "esc",
- * "backspace", "space", "up", "down", or the typed character). Handles
+ * "backspace", "space", "ctrl+space", "up", "down", or the typed character). Handles
  * legacy sequences and the kitty CSI-u form; undefined for anything else.
  */
 export function keyName(data: string): string | undefined {
@@ -232,6 +232,8 @@ export function keyName(data: string): string | undefined {
       return "backspace";
     case " ":
       return "space";
+    case "\x00":
+      return "ctrl+space";
     case "\x04":
       return "ctrl+d";
     case "\x15":
@@ -250,7 +252,7 @@ export function keyName(data: string): string | undefined {
     if (code === 27) return "esc";
     if (code === 13) return "enter";
     if (code === 127) return "backspace";
-    if (code === 32) return "space";
+    if (code === 32) return mods & 4 ? "ctrl+space" : "space";
     const ch = String.fromCodePoint(code);
     if (mods & 4) return `ctrl+${ch.toLowerCase()}`;
     if (mods & 1) return ch.toUpperCase();

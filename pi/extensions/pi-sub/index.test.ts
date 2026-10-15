@@ -666,3 +666,34 @@ test("resolvePath expands ~ and resolves the rest against the base", () => {
   assert.equal(resolvePath("/base", "sub"), "/base/sub");
   assert.equal(resolvePath("/base", "/abs"), "/abs");
 });
+
+test("a second shortcut press while open does not open another overlay", async (t) => {
+  const root = sandbox(t);
+  const { pi, handlers, shortcuts } = stubPi();
+  piSub(pi);
+  const { ctx, shown } = uiCtx(root);
+  let release!: () => void;
+  ctx.ui.custom = async (factory: any, options: any) => {
+    let closed = false;
+    const c = factory({ requestRender() {}, terminal: { rows: 30 } }, theme, {}, () => (closed = true));
+    shown.push({ c, options, closed: () => closed });
+    await new Promise<void>((r) => (release = r));
+  };
+  try {
+    handlers.session_start({}, ctx);
+    const first = shortcuts["ctrl+space"].handler(ctx);
+    await shortcuts["ctrl+space"].handler(ctx);
+    assert.equal(shown.length, 1);
+    shown[0].c.handleInput("\x00");
+    assert.ok(shown[0].closed());
+    release();
+    await first;
+    const again = shortcuts["ctrl+space"].handler(ctx);
+    assert.equal(shown.length, 2);
+    shown[1].c.handleInput("\x00");
+    release();
+    await again;
+  } finally {
+    handlers.session_shutdown({});
+  }
+});

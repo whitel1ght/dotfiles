@@ -167,3 +167,9 @@ test("translate: rebinds swap keys outside text entry only", () => {
   assert.equal(translate("n", rb, "note"), "n");
   assert.equal(translate("j", rb, "search"), "j");
 });
+
+test("keyName: ctrl+space, legacy NUL and kitty", () => {
+  assert.equal(keyName("\x00"), "ctrl+space");
+  assert.equal(keyName("\x1b[32;5u"), "ctrl+space");
+  assert.equal(keyName("\x1b[32u"), "space");
+});

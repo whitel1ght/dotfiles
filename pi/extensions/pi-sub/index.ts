@@ -146,33 +146,41 @@ export default function piSub(pi: ExtensionAPI) {
     }
   };
 
+  let overlayOpen = false;
+
   const openOverlay = async (ctx: any, openId?: string) => {
-    if (!ctx.hasUI) return;
-    await ctx.ui.custom(
-      (tui: any, theme: any, _kb: unknown, done: (r: undefined) => void) =>
-        new AgentsOverlay(
-          {
-            session,
-            agents: listAgents,
-            alive: isPidAlive,
-            events: readEvents,
-            result: (id) => readFileOrNull(join(agentFolder(id), "result.md")),
-            parse: keyName,
-            rebinds: rebinds(),
-            rowsOnScreen: () => Math.max(10, Math.floor((tui.terminal?.rows ?? 30) * 0.8)),
-            onAction: onAction(ctx),
-            done: () => done(undefined),
-            requestRender: () => tui.requestRender(),
-            paint: {
-              fg: (c, s) => theme.fg(c, s),
-              bg: (c, s) => theme.bg(c, s),
-              bold: (s) => theme.bold(s),
+    if (!ctx.hasUI || overlayOpen) return;
+    overlayOpen = true;
+    try {
+      await ctx.ui.custom(
+        (tui: any, theme: any, _kb: unknown, done: (r: undefined) => void) =>
+          new AgentsOverlay(
+            {
+              session,
+              agents: listAgents,
+              alive: isPidAlive,
+              events: readEvents,
+              result: (id) => readFileOrNull(join(agentFolder(id), "result.md")),
+              parse: keyName,
+              rebinds: rebinds(),
+              hotkey: HOTKEY,
+              rowsOnScreen: () => Math.max(10, Math.floor((tui.terminal?.rows ?? 30) * 0.8)),
+              onAction: onAction(ctx),
+              done: () => done(undefined),
+              requestRender: () => tui.requestRender(),
+              paint: {
+                fg: (c, s) => theme.fg(c, s),
+                bg: (c, s) => theme.bg(c, s),
+                bold: (s) => theme.bold(s),
+              },
             },
-          },
-          openId,
-        ),
-      { overlay: true, overlayOptions: { width: "90%", maxHeight: "80%", anchor: "center" } },
-    );
+            openId,
+          ),
+        { overlay: true, overlayOptions: { width: "90%", maxHeight: "80%", anchor: "center" } },
+      );
+    } finally {
+      overlayOpen = false;
+    }
     refreshFooter();
   };
 

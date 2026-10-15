@@ -325,6 +325,8 @@ export type OverlayDeps = {
   /** Raw terminal input → key name (keys.ts keyName, or pi-tui's parser). */
   parse: (data: string) => string | undefined;
   rebinds: Record<string, string>;
+  /** Key that opened the overlay; pressing it again closes it from any mode. */
+  hotkey?: string;
   rowsOnScreen: () => number;
   onAction: (a: Action) => void;
   done: () => void;
@@ -373,6 +375,11 @@ export class AgentsOverlay {
   handleInput(data: string): void {
     const raw = this.deps.parse(data);
     if (raw === undefined) return;
+    if (raw === this.deps.hotkey) {
+      this.dispose();
+      this.deps.done();
+      return;
+    }
     const key = translate(raw, this.deps.rebinds, this.view.mode);
     const rows = this.rows();
     const h = this.deps.rowsOnScreen();
