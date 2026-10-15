@@ -149,7 +149,7 @@ export default function piSub(pi: ExtensionAPI) {
   const openOverlay = async (ctx: any, openId?: string) => {
     if (!ctx.hasUI) return;
     await ctx.ui.custom(
-      (tui: any, _theme: unknown, _kb: unknown, done: (r: undefined) => void) =>
+      (tui: any, theme: any, _kb: unknown, done: (r: undefined) => void) =>
         new AgentsOverlay(
           {
             session,
@@ -163,6 +163,11 @@ export default function piSub(pi: ExtensionAPI) {
             onAction: onAction(ctx),
             done: () => done(undefined),
             requestRender: () => tui.requestRender(),
+            paint: {
+              fg: (c, s) => theme.fg(c, s),
+              bg: (c, s) => theme.bg(c, s),
+              bold: (s) => theme.bold(s),
+            },
           },
           openId,
         ),

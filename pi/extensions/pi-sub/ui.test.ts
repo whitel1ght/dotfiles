@@ -105,8 +105,26 @@ test("renderList: title counts, columns, cursor, orphan header, exact width", ()
   assert.match(body, /j\/k move · l open · x stop · m flag to main/);
 });
 
-test("renderList: empty list says so; prompts replace the help line", () => {
-  assert.match(renderList(initialView(), [], 80, 10, NOW, "s").join("\n"), /no subagents in this session/);
+test("renderList: themed lines keep the exact width once colour codes are stripped", () => {
+  const tag = (c: string, s: string) => `\x1b[${c.length}m${s}\x1b[0m`;
+  const p = { fg: tag, bg: tag, bold: (s: string) => `\x1b[1m${s}\x1b[22m` };
+  const rows: Row[] = [
+    { meta: meta("a"), ordinal: 1, orphan: false },
+    { meta: meta("b", { label: "x".repeat(300) }), exit: exit("failed"), ordinal: 2, orphan: false },
+  ];
+  for (const r of [rows, []]) {
+    const out = renderList(initialView(), r, 90, 12, NOW, "s", p);
+    assert.ok(out.some((l) => l.includes("\x1b[")), "something is coloured");
+    for (const l of out) assert.equal([...l.replace(/\x1b\[\d+m/g, "")].length, 90, l);
+  }
+});
+
+test("renderList: empty list says so without a column header; prompts replace the help line", () => {
+  const empty = renderList(initialView(), [], 80, 10, NOW, "s").join("\n");
+  assert.match(empty, /No agents active/);
+  assert.doesNotMatch(empty, /state +role/);
+  assert.doesNotMatch(empty, /0 running/);
+  assert.match(renderList({ ...initialView(), filter: "zz" }, [], 80, 10, NOW, "s").join("\n"), /No agents match "zz"/);
   const rows: Row[] = [{ meta: meta("a"), ordinal: 1, orphan: false }];
   const note = renderList({ ...initialView(), mode: "note", openId: "a", back: "list", input: "hey" }, rows, 100, 10, NOW, "s");
   assert.match(note.join("\n"), /Flag #1 worker to main · note: hey/);

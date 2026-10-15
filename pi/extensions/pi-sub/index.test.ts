@@ -577,6 +577,8 @@ test("session_shutdown stops the watcher and leaves children running", async (t)
   }
 });
 
+const theme = { fg: (_c: string, s: string) => s, bg: (_c: string, s: string) => s, bold: (s: string) => s };
+
 /** Stub UI ctx recording setStatus/notify and the component custom() was given. */
 function uiCtx(root: string) {
   const status: (string | undefined)[] = [];
@@ -589,7 +591,7 @@ function uiCtx(root: string) {
       notify: (m: string) => notes.push(m),
       custom: async (factory: any, options: any) => {
         let closed = false;
-        const c = factory({ requestRender() {}, terminal: { rows: 30 } }, {}, {}, () => (closed = true));
+        const c = factory({ requestRender() {}, terminal: { rows: 30 } }, theme, {}, () => (closed = true));
         shown.push({ c, options, closed: () => closed });
         c.handleInput("q");
         return undefined;
