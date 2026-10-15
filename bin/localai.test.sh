@@ -42,6 +42,7 @@ assert_contains "$calls" "lms load qwen2.5-coder-1.5b -c 4096 -y" "start: loads 
 assert_contains "$calls" "webui start" "start: starts Open WebUI"
 assert_contains "$calls" "articles start" "start: starts the articles server"
 assert_contains "$out" "http://127.0.0.1:8080" "start: prints the link"
+assert_contains "$out" "Saved articles: http://127.0.0.1:8765" "start: prints the articles link when it started"
 first="$(head -1 "$CALLS")"
 assert_contains "$first" "server start" "start: server comes up before any load"
 
@@ -67,6 +68,14 @@ assert_contains "$calls" "webui stop" "stop: stops Open WebUI"
 assert_contains "$calls" "articles stop" "stop: stops the articles server"
 assert_contains "$calls" "lms unload --all" "stop: unloads all models"
 assert_contains "$calls" "lms server stop" "stop: stops the server"
+
+# articles failing to start (linked but not installed) must not fail localai.
+printf '#!/bin/bash\necho "articles $*" >>"%s"\n[ "$1" = start ] && { echo "articles: not installed" >&2; exit 1; }\nexit 0\n' "$CALLS" >"$SANDBOX/articles"
+: >"$CALLS"
+out="$("$SCRIPT" start 2>&1)"; code=$?
+[ "$code" -eq 0 ] && pass "start: articles failure does not fail localai" || fail "start: articles failure does not fail localai" "exit $code"
+assert_contains "$out" "Ready." "start: still prints Ready after an articles failure"
+assert_not_contains "$out" "Saved articles:" "start: no articles link when it did not start"
 
 # A failing load must stop the start, not carry on to Open WebUI.
 printf '#!/bin/bash\necho "lms $*" >>"%s"\n[ "$1" = load ] && exit 1\nexit 0\n' "$CALLS" >"$SANDBOX/lms"

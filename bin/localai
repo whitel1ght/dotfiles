@@ -43,17 +43,23 @@ cmd_start() {
   load "$COMPLETE_MODEL" -c 4096
   echo "Open WebUI"
   if [ -n "${LOCALAI_NO_BROWSER:-}" ]; then "$WEBUI" start; else "$WEBUI"; fi
+  # Optional extra: a failure here is reported, never fatal for the rest.
+  local articles_up=""
   if command -v "$ARTICLES" >/dev/null; then
     echo "Articles"
-    "$ARTICLES" start
+    if "$ARTICLES" start; then
+      articles_up=1
+    else
+      echo "  articles did not start (see above); everything else is up" >&2
+    fi
   fi
   cat <<EOF
 
 Ready. Chat and voice: http://127.0.0.1:8080
-Saved articles:  http://127.0.0.1:8765
 nvim: autocomplete is on in new nvim windows; in an open one press <Space>ac.
 Stop everything with: localai stop
 EOF
+  [ -z "$articles_up" ] || echo "Saved articles: http://127.0.0.1:8765"
 }
 
 cmd_stop() {
