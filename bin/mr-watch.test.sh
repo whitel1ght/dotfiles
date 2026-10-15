@@ -151,6 +151,26 @@ echo "mr-watch — GitLab down"
 GLAB_DOWN=1 run check >/dev/null; rc=$?
 assert_eq 2 "$rc" "exits 2 when GitLab is unreachable"
 
+echo "mr-watch — friction capture"
+cat > "$STUBS/friction" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$*" >> "$FIX/friction.log"
+[ -n "${FRICTION_FAIL:-}" ] && exit 1
+exit 0
+STUB
+chmod +x "$STUBS/friction"
+rm -f "$FIX/friction.log"
+GLAB_DOWN=1 run check >/dev/null; rc=$?
+assert_eq 2 "$rc" "still exits 2 with friction present"
+assert_eq "--source mr-watch service_down GitLab unavailable" "$(cat "$FIX/friction.log")" "GitLab down records service_down for mr-watch"
+out=$(FRICTION_FAIL=1 GLAB_DOWN=1 run check); rc=$?
+assert_eq 2 "$rc" "a failing friction leaves exit 2"
+assert_eq "" "$out" "and output empty"
+rm "$STUBS/friction"
+out=$(GLAB_DOWN=1 PATH="$STUBS:$(dirname "$(command -v jq)"):/usr/bin:/bin" FIX="$FIX" MR_WATCH_STATE="$STATE" PROJECTS_DIR="$PROJ" "$SCRIPT" check 2>&1); rc=$?
+assert_eq 2 "$rc" "a missing friction leaves exit 2"
+assert_eq "" "$out" "and output empty without it"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

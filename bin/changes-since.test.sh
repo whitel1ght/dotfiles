@@ -56,6 +56,15 @@ esac
 STUB
 chmod +x "$STUBS/glab"
 
+# friction: records its argv; FRICTION_FAIL=1 makes it exit 1 after recording.
+cat > "$STUBS/friction" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$*" >> "${FIX:?}/friction.log"
+[ -n "${FRICTION_FAIL:-}" ] && exit 1
+exit 0
+STUB
+chmod +x "$STUBS/friction"
+
 reset() {
   rm -rf "$FIX" "$STATE"; mkdir -p "$FIX" "$STATE"
   echo '{"issues":[],"isLast":true}' > "$FIX/jira-assigned.json"
@@ -313,6 +322,29 @@ assert_eq "1" "$rc" "a non-array to-dos body: exit 1"
 assert_eq "" "$out" "and nothing on stdout"
 assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "and the cursor is unchanged"
 assert_contains "$(errs)" "GitLab to-dos unavailable" "stderr names the source"
+
+echo "changes-since — friction capture"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(JIRA_MYSELF_FAIL=1 run); rc=$?
+assert_eq "--source jira service_down Jira unavailable (is JIRA_EMAIL/JIRA_API_TOKEN set? are they still valid?)" "$(cat "$FIX/friction.log")" "a failing Jira records service_down with source jira"
+reset; cursor 2026-10-08T07:00:00Z; echo '{}' > "$FIX/todos.json"
+run >/dev/null
+assert_eq "--source gitlab-todos service_down GitLab to-dos unavailable" "$(cat "$FIX/friction.log")" "a failing to-dos source records source gitlab-todos"
+reset; cursor 2026-10-08T07:00:00Z
+GLAB_FAIL_EXACT="api user" run >/dev/null
+assert_eq "--source gitlab-mrs service_down GitLab MRs unavailable" "$(cat "$FIX/friction.log")" "a failing MR source records source gitlab-mrs"
+reset; cursor 2026-10-08T07:00:00Z
+run >/dev/null
+[ ! -e "$FIX/friction.log" ] && pass "a healthy run records nothing" || fail "a healthy run records nothing" "$(cat "$FIX/friction.log")"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(FRICTION_FAIL=1 JIRA_MYSELF_FAIL=1 run); rc=$?
+assert_eq "1" "$rc" "a failing friction leaves exit 1"
+assert_eq "" "$out" "and stdout empty"
+assert_contains "$(errs)" "Jira unavailable" "and the same stderr"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(JIRA_MYSELF_FAIL=1 PATH="$STUBS:$(dirname "$(command -v jq)"):/usr/bin:/bin" FIX="$FIX" CHANGES_SINCE_STATE="$STATE" TZ=UTC "$SCRIPT" 2>"$SANDBOX/stderr"); rc=$?
+assert_eq "1" "$rc" "a missing friction leaves exit 1"
+assert_contains "$(errs)" "Jira unavailable" "and the same stderr without it"
 
 echo "changes-since — help"
 assert_contains "$("$SCRIPT" --help)" "changes-since [--cursor NAME] [--peek]" "--help prints the usage line"
