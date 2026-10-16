@@ -159,6 +159,22 @@ done
 [ -d "$PI_SRC/modules" ] && \
     link_item "$PI_SRC/modules" "$HOME/.agents/modules"
 
+# Team skills: generated from the claude-components clone Claude Code loads its
+# plugins from, so pi follows `git pull` there instead of keeping hand forks.
+# pi/settings.json lists skills-team; pi/gen/pi_skills.py explains the rewrite.
+CC_SRC="${CLAUDE_COMPONENTS_DIR:-$HOME/projects/claude-components}"
+if [ ! -d "$CC_SRC/plugins" ]; then
+    log_warn "claude-components not found at $CC_SRC; team skills not regenerated"
+elif [ "$DRY_RUN" = 1 ]; then
+    log_info "would regenerate team skills from $CC_SRC into $PI_DEST/skills-team"
+    CHANGED=$((CHANGED + 1))
+elif python3 "$PI_SRC/gen/pi_skills.py" --src "$CC_SRC" --out "$PI_DEST/skills-team" >/dev/null; then
+    log_info "regenerated team skills from $CC_SRC ($(git -C "$CC_SRC" rev-parse --short HEAD 2>/dev/null || echo '?'))"
+else
+    log_error "team skill generation failed"
+    FAILURES=$((FAILURES + 1))
+fi
+
 # billion-context (context compression) reads its config from
 # ~/.config/billion-context/billion-context.json. It seeds that file once with {"providers":{}} and never overwrites an existing
 # one, so the versioned copy is safe to link; a hand-edited file is backed up

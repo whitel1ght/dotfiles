@@ -138,6 +138,26 @@ run_plink --bogus >/dev/null 2>&1
 DOTFILES_DIR=/nonexistent HOME="$HOME_DIR" PI_AGENT_DIR="$DEST" bash "$SCRIPT" >/dev/null 2>&1
 [ $? -eq 1 ] && pass "missing source exits 1" || fail "missing source exits 1" "wrong status"
 
+# --- team skills, generated from a claude-components clone
+CC="$SANDBOX/claude-components"
+mkdir -p "$DOT/pi/gen" "$CC/.claude-plugin" "$CC/plugins/shared/skills/shipit"
+cp "$TEST_DIR/../pi/gen/pi_skills.py" "$DOT/pi/gen/"
+printf '{"name":"x","plugins":[{"name":"shared","source":"./plugins/shared"}]}\n' > "$CC/.claude-plugin/marketplace.json"
+printf -- '---\nname: Ship It\ndescription: d\n---\nbody\n' > "$CC/plugins/shared/skills/shipit/SKILL.md"
+rm -rf "$DEST/skills-team"
+CLAUDE_COMPONENTS_DIR="$CC" run_plink -n >/dev/null
+[ ! -e "$DEST/skills-team" ] && pass "dry run does not generate team skills" \
+    || fail "dry run does not generate team skills" "skills-team was created"
+CLAUDE_COMPONENTS_DIR="$CC" run_plink >/dev/null
+grep -qx 'name: shipit' "$DEST/skills-team/shipit/SKILL.md" 2>/dev/null \
+    && pass "generates team skills from claude-components" \
+    || fail "generates team skills from claude-components" "no $DEST/skills-team/shipit/SKILL.md"
+out="$(CLAUDE_COMPONENTS_DIR="$SANDBOX/nope" run_plink 2>&1)"; status=$?
+[ "$status" -eq 0 ] && pass "missing claude-components does not fail plink" \
+    || fail "missing claude-components does not fail plink" "exit $status"
+case "$out" in *"claude-components not found"*) pass "says why team skills were skipped" ;;
+    *) fail "says why team skills were skipped" "$out" ;; esac
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
