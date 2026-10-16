@@ -83,6 +83,14 @@ Pi/provider authentication stays outside the repo. MCP configuration uses
 `~/.pi/agent/mcp-auth.json`. Claude Bridge is no longer installed or required
 by the active model-selection policy.
 
+### Local-model profile (`pigm`)
+
+`pigm` (zsh alias) runs Gemma 4 E4B from LM Studio with extensions, skills,
+prompts, context files and MCP off, and loads two extensions explicitly with
+`-e`: `pi-web-access` (web search) and [`local-model/wiki-search`](local-model/wiki-search/README.md)
+(`wiki_search` / `wiki_read` over `~/wiki` and saved articles via qmd).
+Verified end to end: Gemma calls both on its own and answers from the results.
+
 ## Delegation
 
 Delegation is **`extensions/pi-sub/`**, which registers `subagent`, `subagent_stop`,
