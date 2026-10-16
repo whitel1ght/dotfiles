@@ -1,37 +1,5 @@
 {
   "providers": {
-    "ollama": {
-      "api": "openai-completions",
-      "apiKey": "ollama",
-      "baseUrl": "http://127.0.0.1:11434/v1",
-      "compat": {
-        "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false
-      },
-      "models": [
-        {
-          "id": "qwen2.5-coder:14b-16k",
-          "name": "Qwen2.5 Coder 14B (16k, local)",
-          "input": [
-            "text"
-          ],
-          "contextWindow": 16384,
-          "maxTokens": 4096,
-          "samplingParams": {
-            "temperature": 0
-          }
-        },
-        {
-          "_launch": true,
-          "id": "qwen3.6:35b",
-          "input": [
-            "text",
-            "image"
-          ],
-          "reasoning": true
-        }
-      ]
-    },
     "opencode-go": {
       "baseUrl": "https://opencode.ai/inference/go/openai/v1",
       "apiKey": "!\"$HOME/.local/bin/opencode-console-auth\" token",

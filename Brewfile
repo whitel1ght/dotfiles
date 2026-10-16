@@ -3,7 +3,6 @@ tap "go-task/tap"
 tap "homebrew/services"
 tap "koekeishiya/formulae"
 tap "nikitabobko/tap"
-tap "opencode-ai/tap"
 # Library for manipulating PNG images
 brew "libpng"
 # Core application library for C
@@ -139,8 +138,6 @@ brew "luarocks"
 brew "mas"
 # Ambitious Vim-fork focused on extensibility and agility
 brew "neovim"
-# RSS/Atom feed reader for text terminals
-brew "newsboat"
 # HTTP/2 C Library
 brew "nghttp2"
 # HTTP(S) server and reverse proxy, and IMAP/POP3 proxy server
@@ -187,7 +184,6 @@ brew "zoxide"
 brew "bufbuild/buf/buf"
 # Task runner / simpler Make alternative written in Go
 brew "go-task/tap/go-task"
-brew "opencode-ai/tap/opencode"
 # Tool for creating locally-trusted development certificates
 brew "mkcert"
 # Deep clean and optimize your Mac

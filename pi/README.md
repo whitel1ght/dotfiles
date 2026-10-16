@@ -73,10 +73,8 @@ the provider-level overrides. The standalone `longcat` provider was removed.
 
 ### Local models and secrets
 
-`models.json` also configures Ollama at `http://127.0.0.1:11434/v1`, including
-`qwen3.6:35b` and `qwen2.5-coder:14b-16k`. Local use requires a running Ollama
-server and the appropriate model. `install.sh` can build the 16k model from the
-repo's Modelfile; `OLLAMA_SETUP=0` skips that setup.
+Local models come from LM Studio (`lmstudio` provider at `http://127.0.0.1:1234/v1`);
+start it with `localai`. See the `pigm` profile below.
 
 Pi/provider authentication stays outside the repo. MCP configuration uses
 `${VAR}` references; export the required values from your local shell setup

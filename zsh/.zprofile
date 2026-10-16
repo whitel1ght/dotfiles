@@ -9,7 +9,6 @@ export PATH="$PATH:/Users/dmitry/.docker/bin"
 export PATH="$PATH:$HOME/.docker/bin"
 
 eval "$(/opt/homebrew/bin/brew shellenv)"
-export PATH="/usr/local/opt/ruby/bin:$PATH"
 
 
 # Added by Toolbox App

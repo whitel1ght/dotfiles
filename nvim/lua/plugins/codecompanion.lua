@@ -1,6 +1,6 @@
 -- Chat and inline edits against LM Studio by default. `ga` in a chat switches to
--- OpenCode Go or to the Claude / ChatGPT subscriptions (ACP agents, chat only).
--- Bridges: npm i -g @agentclientprotocol/claude-agent-acp @agentclientprotocol/codex-acp
+-- OpenCode Go or to the Claude subscription (ACP agent, chat only).
+-- Bridge: npm i -g @agentclientprotocol/claude-agent-acp
 -- (the @zed-industries packages are abandoned and break on current settings).
 -- Claude needs CODECOMPANION_CLAUDE_TOKEN (from `claude setup-token`) in ~/.zshrc.local.
 return {
@@ -87,11 +87,6 @@ return {
           return require('codecompanion.adapters').extend('claude_code', {
             -- Not CLAUDE_CODE_OAUTH_TOKEN itself: exported in zsh it would override the claude CLI login.
             env = { CLAUDE_CODE_OAUTH_TOKEN = 'CODECOMPANION_CLAUDE_TOKEN' },
-          })
-        end,
-        codex = function()
-          return require('codecompanion.adapters').extend('codex', {
-            defaults = { auth_method = 'chat-gpt' },
           })
         end,
       },

@@ -1,3 +1,6 @@
+# Drop duplicate PATH entries: installers and re-sourced files keep prepending.
+typeset -U path PATH
+
 # ============================================================================
 # ZSH CONFIGURATION
 # ============================================================================
@@ -50,7 +53,7 @@ source $ZSH/oh-my-zsh.sh
 # Editor shortcuts
 alias vim="nvim"
 alias vi="nvim"
-alias vimconfig="vim ~/.config/nvim/init.vim"
+alias vimconfig="vim ~/.config/nvim/init.lua"
 alias zshconfig="vim ~/.zshrc"
 
 # Terminal config shortcuts
@@ -72,10 +75,6 @@ alias jtodo='jt -u'   # current Omni sprint, unassigned and To-Do
 alias pull_notes='notes pull'
 alias push_notes='notes push'
 
-# Local Pi chat on the 16k qwen2.5-coder (ollama/*.Modelfile). It cannot call
-# tools, so they are off; feed it with @file and !command instead. No skills or
-# context files either: they would take ~10k of its 16k window.
-alias pil='pi --model ollama/qwen2.5-coder:14b-16k --no-tools -ns -nc -np'
 
 # Local Pi agent on Qwen2.5-Coder 14B in LM Studio (pi/models.json). Load it
 # with `lms load qwen/qwen2.5-coder-14b --context-length 16384`; the default 8k
@@ -95,15 +94,14 @@ alias pigm='pi --model lmstudio/gemma-4-e4b-it-mlx --models lmstudio/gemma-4-e4b
 # Free Pi session, with Longcat as the only scoped model.
 alias pifree='pi --model opencode-go/longcat-2.5-preview-free --models opencode-go/longcat-2.5-preview-free'
 
-# Provider-scoped sessions; Claude uses the subscription bridge, not API billing.
-alias pianthropic='pi --model claude-bridge/claude-opus-5-5 --models "claude-bridge/*"'
+# Provider-scoped sessions.
 alias piopenai='pi --model openai/gpt-6.1-sol --models "openai/*"'
 
 # Longcat leads a ten-model Go pool with coding, reasoning and flash alternatives.
 alias pigo='pi --model opencode-go/longcat-2.5-preview-free --models opencode-go/longcat-2.5-preview-free,opencode-go/gpt-6-luna,opencode-go/glm-5.3,opencode-go/qwen3.8-max,opencode-go/grok-4.7,opencode-go/mimo-v2.6-pro,opencode-go/kimi-k3,opencode-go/glm-5.3-flash,opencode-go/qwen3.8-flash,opencode-go/deepseek-v4.1-flash'
 
 # Better grep
-grep='grep --color=auto --exclude-dir={.bzr,CVS,.git,.hg,.svn}'
+alias grep='grep --color=auto --exclude-dir={.bzr,CVS,.git,.hg,.svn}'
 
 # Architecture-specific
 alias io="arch -x86_64 io"
@@ -119,7 +117,6 @@ export PATH="/opt/homebrew/opt/jpeg/bin:$PATH"
 export PATH="/opt/homebrew/opt/ruby/bin:$PATH"
 
 # User binaries
-export PATH="$HOME/.codeium/windsurf/bin:$PATH"
 export PATH="$HOME/.cargo/bin:$PATH"
 # Where `go install` puts binaries. Without this, installing a Go tool
 # appears to succeed and the command is then simply not found — mrglass,
@@ -130,10 +127,6 @@ export PATH="$HOME/.local/bin:$PATH"
 # -----------------------------------------------------------------------------
 # DEVELOPMENT TOOLS
 # -----------------------------------------------------------------------------
-# Perl
-if (command -v perl && command -v cpanm) >/dev/null 2>&1; then
-  test -d "$HOME/perl5/lib/perl5" && eval $(perl -I "$HOME/perl5/lib/perl5" -Mlocal::lib)
-fi
 
 # Node Version Manager
 #
@@ -314,10 +307,6 @@ export PATH="$HOME/.local/bin:$PATH"
 # opencode
 export PATH=/Users/dmitry/.opencode/bin:$PATH
 export PATH="$HOME/bin:$PATH"
-
-# Qwen Code PATH block begin
-export PATH='/Users/dmitry/.local/bin':$PATH
-# Qwen Code PATH block end
 
 # Added by LM Studio CLI (lms)
 export PATH="$PATH:/Users/dmitry/.lmstudio/bin"
