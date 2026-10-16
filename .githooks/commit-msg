@@ -1,0 +1,4 @@
+#!/bin/sh
+# Stops a commit that changes something the system manual (~/wiki/tools) documents
+# without updating that page; "Docs: none" in the message opts out. See bin/docs-check.
+exec "$(git rev-parse --show-toplevel)/bin/docs-check" commit-msg "$1"

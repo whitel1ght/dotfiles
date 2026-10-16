@@ -10,6 +10,16 @@ Global instructions applied across all projects. Keep this short — project-lev
 - Don't add explanatory comments for self-evident code.
 - Long-term memory: `~/wiki` — read `~/wiki/AGENTS.md` before searching it.
 
+## System manual
+
+- `~/wiki/tools/` is the manual for this whole setup (start at `index.md`). When a
+  task changes how something is used — a script, alias, keybinding, plugin, model,
+  sync or install step, in dotfiles or elsewhere — update the matching page in the
+  same task, and the "Changes in progress" table in `index.md` when a planned
+  change lands. Each page's `<!-- covers: -->` line says what it documents.
+- dotfiles enforces this in its commit-msg hook (`docs-check`); a commit with no
+  user-visible change carries a `Docs: none` line instead.
+
 ## GitLab MR references
 
 - Every MR number in text I show the user is a markdown link with the repo in the link text:

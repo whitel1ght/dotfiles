@@ -474,6 +474,13 @@ if [ -f "$DOTFILES_DIR/bin/webui" ]; then
     create_symlink "$DOTFILES_DIR/bin/webui" "$HOME/.local/bin/webui"
 fi
 
+# docs-check keeps the system manual (~/wiki/tools) in step with this repo; the
+# repo's commit-msg hook runs it, and `docs-check coverage` lists what is undocumented.
+if [ -f "$DOTFILES_DIR/bin/docs-check" ]; then
+    create_symlink "$DOTFILES_DIR/bin/docs-check" "$HOME/.local/bin/docs-check"
+    git -C "$DOTFILES_DIR" config core.hooksPath .githooks
+fi
+
 # localai starts/stops the whole local AI stack: LM Studio, its models, Open WebUI.
 if [ -f "$DOTFILES_DIR/bin/localai" ]; then
     create_symlink "$DOTFILES_DIR/bin/localai" "$HOME/.local/bin/localai"

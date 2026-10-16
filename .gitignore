@@ -32,3 +32,6 @@ claude/personal/
 #pi
 .pi/
 .claude/
+
+# Python bytecode (pi/gen tests)
+__pycache__/
