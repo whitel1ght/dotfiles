@@ -20,6 +20,13 @@ Global instructions applied across all projects. Keep this short — project-lev
 - dotfiles enforces this in its commit-msg hook (`docs-check`); a commit with no
   user-visible change carries a `Docs: none` line instead.
 
+## Artifacts
+
+- Keep the source of every published claude.ai artifact in `~/artifacts/<name>/`:
+  the page as `<name>.html` and its link in a `url` file (see the README there).
+  Write new pages there, not in /tmp or a repo. To change one, edit that file
+  and publish it with the link from `url`, so the same page updates.
+
 ## GitLab MR references
 
 - Every MR number in text I show the user is a markdown link with the repo in the link text:
