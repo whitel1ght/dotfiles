@@ -221,7 +221,7 @@ committed. Set `DAY` again here (new shell):
 ```bash
 DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
 qmd update && qmd embed
-git -C ~/wiki add -A -- diary projects index.md
+git -C ~/wiki add -A -- diary projects index.md tools
 [ -d ~/wiki/reviews ] && git -C ~/wiki add -A -- reviews
 [ -d ~/wiki/friction ] && git -C ~/wiki add -A -- friction
 git -C ~/wiki diff --cached --quiet || git -C ~/wiki commit -m "wiki: $DAY day"
