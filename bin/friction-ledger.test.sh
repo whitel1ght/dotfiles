@@ -154,7 +154,7 @@ for i in $(seq 1 30); do "$SCRIPT" directions add --rule "global rule $i $long" 
 out="$("$SCRIPT" directions render)"
 [ "$(printf '%s' "$out" | wc -c)" -le 2048 ] && pass "render stays within 2 KB" || fail "render size" "$(printf '%s' "$out" | wc -c)"
 assert_eq "yes" "$(grep -q 'Reviews keep one comment \[reviews\]' <<<"$out" && grep -q 'global rule 30 ' <<<"$out" && ! grep -q 'global rule 1 ' <<<"$out" && echo yes || echo no)" "the oldest global rules are folded first"
-grep -Eq '^- [0-9]+ more in ~/wiki/friction/directions.md$' <<<"$out" && pass "the folded rules are summarised in one line" || fail "summary line" "$out"
+grep -Eq '^- [0-9]+ more in ~/wiki/work/friction/directions.md$' <<<"$out" && pass "the folded rules are summarised in one line" || fail "summary line" "$out"
 export FRICTION_WIKI="$SANDBOX/friction"; DF="$FRICTION_WIKI/directions.md"
 
 # --- frustration ----------------------------------------------------------------

@@ -273,7 +273,7 @@ if command -v tmux >/dev/null; then
   for _ in $(seq 1 60); do [ "$(cat "$T"/sessions/*"$SSID"*.jsonl 2>/dev/null | grep -c '"role":"assistant"')" -ge 2 ] && break; sleep 1; done
   tmux send-keys -t "$stm" "/quit" Enter
   summary=""
-  for _ in $(seq 1 40); do summary="$(ls "$T"/wiki/sessions/*/"$SSID".md 2>/dev/null | head -1 || true)"; [ -n "$summary" ] && break; sleep 1; done
+  for _ in $(seq 1 40); do summary="$(ls "$T"/wiki/work/sessions/*/"$SSID".md 2>/dev/null | head -1 || true)"; [ -n "$summary" ] && break; sleep 1; done
   tmux kill-session -t "$stm" 2>/dev/null || true
   if [ -n "$summary" ] && grep -q "^session: $SSID" "$summary"; then
     printf 'PASS  session-summary: quitting wrote %s\n' "$(grep -m1 '^# ' "$summary" | cut -c1-70)"

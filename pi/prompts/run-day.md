@@ -16,7 +16,7 @@ dispatch agents that do, verify their work yourself, and keep the day's records 
 - Inbox: `~/.local/state/run-day/inbox/`, archived to `inbox/done/<T>/`, rejected to `inbox/bad/`
 - Hand-offs: `~/.local/state/run-day/handoff/<KEY>.md`
 - Brief templates: `~/projects/dotfiles/claude/daily/templates/ticket-brief.md` and `review-round-brief.md`
-- Vault rules: `~/wiki/AGENTS.md`; log/decision frontmatter: `~/wiki/_templates/`
+- Vault rules: `~/wiki/AGENTS.md`; log/decision frontmatter: `~/wiki/work/_templates/`
 - Jira writes: `~/.pi/agent/skills/jira-write/SKILL.md` (dry-run, then the user's yes)
 
 The `daily` pi extension injects the plan block and run state as a system section at the start of
@@ -26,7 +26,7 @@ the user edits the diary too. `day-plan` opens today's diary in a tmux popup whe
 ## Write rules
 
 - Subagents never write `~/wiki`. Only this session writes diary markers, log entries and decisions.
-- Only plan-block lines, the run state, inbox moves, `projects/<p>/log/<YYYY>-Q<N>.md` (append) and
+- Only plan-block lines, the run state, inbox moves, `work/projects/<p>/log/<YYYY>-Q<N>.md` (append) and
   `decisions/NNNN-<slug>.md` (create; on an existing one only `status: superseded`). Never `state.md` mid-day (step 8).
 - Never edit project code yourself.
 - Never merge, mark ready, transition Jira, post to Slack or comment on an MR without asking.
@@ -137,9 +137,9 @@ memory:
   state_change: none | <one line>
 ```
 
-- `log` → append to `~/wiki/projects/<p>/log/<YYYY>-Q<N>.md` as `## YYYY-MM-DD <title>`, 100–300 words,
-  frontmatter from `~/wiki/_templates/log-entry.md`.
-- `decision` → new `~/wiki/projects/<p>/decisions/NNNN-<slug>.md` from `~/wiki/_templates/decision.md`
+- `log` → append to `~/wiki/work/projects/<p>/log/<YYYY>-Q<N>.md` as `## YYYY-MM-DD <title>`, 100–300 words,
+  frontmatter from `~/wiki/work/_templates/log-entry.md`.
+- `decision` → new `~/wiki/work/projects/<p>/decisions/NNNN-<slug>.md` from `~/wiki/work/_templates/decision.md`
   (next free number; fill `{{project}} {{date}} {{tickets}} {{repos}} {{num}} {{title}}`). Superseding an
   existing one: add `supersedes:` to the new file and set only `status: superseded` in the old.
 - `state_change` → append under `notes:` in the run state as `<p>: <line>`. Never edit `state.md` here.
@@ -219,6 +219,6 @@ never retry in a loop.
 
 Process the inbox once more, then summarise the day: what shipped, what is blocked, what is deferred.
 
-Then suggest `/end-day` and run it in this session. It consolidates `~/wiki/projects/<p>/state.md`
+Then suggest `/end-day` and run it in this session. It consolidates `~/wiki/work/projects/<p>/state.md`
 from the `notes:` lines you collected and ends the run by moving the run state into
 `~/.local/state/run-day/done/`. Never write `state.md` yourself during the day.

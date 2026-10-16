@@ -5,7 +5,7 @@
 #
 #   --date    local date to mine (default today)
 #   --ledger  wiki friction ledger whose `signature` column marks a group as known
-#             (default $FRICTION_LEDGER, else ~/wiki/friction/ledger.md)
+#             (default $FRICTION_LEDGER, else ~/wiki/work/friction/ledger.md)
 #
 # Sources, each dir overridable for tests:
 #   FRICTION_DIR        <date>.jsonl written by `friction`        (~/.local/state/friction)
@@ -34,7 +34,7 @@ DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
 PI_SUB_STATE_DIR="${PI_SUB_STATE_DIR:-$HOME/.local/state/pi-sub}"
 CLAUDE_PROJECTS_DIR="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
 PI_SESSIONS_DIR="${PI_SESSIONS_DIR:-$HOME/.pi/agent/sessions}"
-ledger="${FRICTION_LEDGER:-$HOME/wiki/friction/ledger.md}"
+ledger="${FRICTION_LEDGER:-$HOME/wiki/work/friction/ledger.md}"
 
 die() { echo "friction-mine: $*" >&2; exit 1; }
 

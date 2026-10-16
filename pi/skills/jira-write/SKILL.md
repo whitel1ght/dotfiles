@@ -17,7 +17,7 @@ Set `J` again in every bash call.
 
 ## Transition
 
-When an MR merges, the ticket goes In MR → **Ready for QA** (transition "Code review completed"), not In QA or Done; it stays In MR while a follow-up MR or a manual check is still open (`~/wiki/projects/ecfx/decisions/0005-merged-tickets-go-to-ready-for-qa.md`).
+When an MR merges, the ticket goes In MR → **Ready for QA** (transition "Code review completed"), not In QA or Done; it stays In MR while a follow-up MR or a manual check is still open (`~/wiki/work/projects/ecfx/decisions/0005-merged-tickets-go-to-ready-for-qa.md`).
 
 1. `"$J" --dry-run transition ECFX-123 "Ready for QA"` resolves the status name to a transition id (case-insensitive) and prints what it would do. Exit 3 lists the statuses reachable from the ticket's current status: show them and ask which one.
 2. Show the user the dry-run line and ask for confirmation.

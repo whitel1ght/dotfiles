@@ -51,7 +51,7 @@ cut_chars() { printf '%s' "$1" | jq -Rrs --argjson n "$2" '.[:$n]'; }
 len() { printf '%s' "$1" | jq -Rrs 'length'; }
 
 head_text="A /run-day session is active for $TODAY. Playbook: ${CLAUDE_PLUGIN_ROOT:-the daily plugin}/commands/run-day.md (re-read it before acting on events).
-Write rules: subagents never write ~/wiki; only this session writes diary markers, ~/wiki/projects/<p>/log entries and decisions; /end-day consolidates state.md.
+Write rules: subagents never write ~/wiki; only this session writes diary markers, ~/wiki/work/projects/<p>/log entries and decisions; /end-day consolidates state.md.
 owner=external:KEY in the run state means that item is in a side session: never dispatch it or start a review round for it.$inbox_line"
 state_text="
 

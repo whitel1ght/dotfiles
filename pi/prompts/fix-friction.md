@@ -17,7 +17,7 @@ Never push. Never merge before the user's explicit approval in step 4. Below, `F
 
 ## 1. Check
 
-Read `~/wiki/friction/$F.md`. Refuse, saying why, and stop, when it is missing or `status` is not
+Read `~/wiki/work/friction/$F.md`. Refuse, saying why, and stop, when it is missing or `status` is not
 `proposed`, `regressed` or `open`. If `$W` or branch `friction-$F` already exists, ask whether to
 continue in it or start over.
 
@@ -66,10 +66,10 @@ SHA="$(git -C ~/projects/dotfiles rev-parse --short HEAD)"
 ```
 
 3. Clean up: `git -C ~/projects/dotfiles worktree remove $W && git -C ~/projects/dotfiles branch -d friction-$F`.
-4. Wiki (this session writes): in `~/wiki/friction/ledger.md` set the row's `status` to `fixed` and
+4. Wiki (this session writes): in `~/wiki/work/friction/ledger.md` set the row's `status` to `fixed` and
    `fix` to `$SHA`; in `$F.md` set frontmatter `status: fixed`, `fix: $SHA`, `rung:` to the rung used,
    and add a `## History` line `- <date>: fixed in <sha> (<rung>)`. Then
-   `git -C ~/wiki add friction && git -C ~/wiki commit -m "wiki: friction $F fixed"`.
+   `git -C ~/wiki add work/friction && git -C ~/wiki commit -m "wiki: friction $F fixed"`.
 5. Tell the user it is in local main and not pushed.
 
 If the user rejects the change, leave the worktree and branch, set nothing in the ledger, and ask

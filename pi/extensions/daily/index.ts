@@ -65,7 +65,7 @@ export function runStateSection(): string | null {
     : "";
   const head =
     `A /run-day session is active for ${p.today}. Playbook: ~/.pi/agent/prompts/run-day.md (re-read it before acting on events).\n` +
-    `Write rules: subagents never write ~/wiki; only this session writes diary markers, ~/wiki/projects/<p>/log entries and decisions; /end-day consolidates state.md.\n` +
+    `Write rules: subagents never write ~/wiki; only this session writes diary markers, ~/wiki/work/projects/<p>/log entries and decisions; /end-day consolidates state.md.\n` +
     `owner=external:KEY in the run state means that item is in a side session: never dispatch it or start a review round for it.${inboxLine}`;
 
   const blockHead = `\n\n## Diary plan block (${p.diary})\n`;
@@ -88,12 +88,12 @@ export function runStateSection(): string | null {
 let directionsCache: { key: string; text: string } | null = null;
 
 /**
- * The standing directions friction-ledger renders from ~/wiki/friction/directions.md,
+ * The standing directions friction-ledger renders from ~/wiki/work/friction/directions.md,
  * cached until the file's mtime changes. A missing file or script, or a failing one,
  * is no section and never an error.
  */
 export function directionsSection(): string | null {
-  const file = join(process.env.FRICTION_WIKI ?? join(homedir(), "wiki/friction"), "directions.md");
+  const file = join(process.env.FRICTION_WIKI ?? join(homedir(), "wiki/work/friction"), "directions.md");
   let key: string;
   try {
     key = `${file}:${statSync(file).mtimeMs}`;

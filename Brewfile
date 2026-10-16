@@ -38,7 +38,7 @@ brew "awscli"
 # Not optional: macOS ships bash 3.2, which has no associative arrays. The
 # fuzzmux tmux plugin declares one at scripts/init.sh:52 under `set -u`, so on
 # stock bash it aborts there — before binding prefix s/w/f/C-p — and tmux
-# reports nothing at all. Same class of limit bin/notes works around by hand.
+# reports nothing at all.
 brew "bash"
 # Clone of cat(1) with syntax highlighting and Git integration
 brew "bat"

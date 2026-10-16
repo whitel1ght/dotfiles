@@ -26,7 +26,7 @@ assert_eq "2026-W41 2026-10-05 2026-10-11 false " "$(summary week 2026-W41)" "th
 assert_eq "2025-W01 2024-12-30 2025-01-05 true " "$(summary week 2025-W01)" "ISO week 1 starts in the previous year"
 assert_eq "2026-10 2026-10-01 2026-10-31 false 2026-W40,2026-W41,2026-W42,2026-W43,2026-W44" "$(summary month 2026-10)" "a week belongs to the month of its Thursday"
 assert_eq "2026-01 2026-01-01 2026-01-31 true 2026-W01,2026-W02,2026-W03,2026-W04,2026-W05" "$(summary month 2026-01)" "January starts with week 1 of the ISO year"
-assert_eq "reviews/2026-W40.md" "$("$RP" week | jq -r .file)" "file path is relative to the vault"
+assert_eq "work/reviews/2026-W40.md" "$("$RP" week | jq -r .file)" "file path is relative to the vault"
 
 echo "== early January defaults =="
 assert_eq "2025-Q4 2025-10-01 2025-12-31 true 2025-10,2025-11,2025-12" "$(REVIEW_TODAY=2026-01-05 summary quarter)" "quarter before Q1 is Q4 of last year"

@@ -19,7 +19,7 @@ Paths used below (`T` is today's date, `date +%F`):
 ## Write rules (never break these)
 
 - Subagents never write to `~/wiki`. This session is the only writer during the day.
-- This session edits only: diary lines inside the plan block, the run-state file, inbox files it moves to `inbox/done/<T>/` or `inbox/bad/`, `~/wiki/projects/<p>/log/<YYYY>-Q<N>.md` (append), `~/wiki/projects/<p>/decisions/NNNN-<slug>.md` (create; and an old decision's `status` (only to `superseded`), section 4). It never edits project code (`/orchestrate`: that goes to subagents).
+- This session edits only: diary lines inside the plan block, the run-state file, inbox files it moves to `inbox/done/<T>/` or `inbox/bad/`, `~/wiki/work/projects/<p>/log/<YYYY>-Q<N>.md` (append), `~/wiki/work/projects/<p>/decisions/NNNN-<slug>.md` (create; and an old decision's `status` (only to `superseded`), section 4). It never edits project code (`/orchestrate`: that goes to subagents).
 - Never merge, mark an MR ready, transition a Jira ticket, post to Slack or post a comment without asking. The one exception is a review round (below), which has its own single confirmation.
 - Every MR number in text you show the user is a markdown link with the repo in the link text, e.g. `[dashboard!2202](https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2202)`, never a bare `!2202`. Known paths: `ecfx/ecfx-backend`, `ecfx/ecfx-dashboard`, `ecfx/ecfx-admin`, `ecfx/ecfx-protobufs`, `ecfx/claude-components`.
 - Each Bash call is a new shell: re-set the variables a block uses in that same call, or use literal values. Nothing set in an earlier block is still there.
@@ -96,20 +96,20 @@ For `project: <p>` (`ecfx`, `epicmax` or `personal`):
 ```bash
 P=ecfx
 Q="$(date +%Y)-Q$(( (10#$(date +%m) + 2) / 3 ))"
-mkdir -p ~/wiki/projects/$P/log ~/wiki/projects/$P/decisions
-LAST="$(ls ~/wiki/projects/$P/decisions | rg -o '^[0-9]{4}' | sort | tail -1)"
+mkdir -p ~/wiki/work/projects/$P/log ~/wiki/work/projects/$P/decisions
+LAST="$(ls ~/wiki/work/projects/$P/decisions | rg -o '^[0-9]{4}' | sort | tail -1)"
 NEXT="$(printf '%04d' $((10#${LAST:-0} + 1)))"
 ```
 
-- **log**: append to `~/wiki/projects/$P/log/$Q.md` a `## YYYY-MM-DD <short title>` heading and the paragraph (100 to 300 words; shorten a longer one). A new file starts with the frontmatter that `~/wiki/_templates/log-entry.md` prescribes (`project`, `type: log`, `date` of its first entry), then a blank line:
+- **log**: append to `~/wiki/work/projects/$P/log/$Q.md` a `## YYYY-MM-DD <short title>` heading and the paragraph (100 to 300 words; shorten a longer one). A new file starts with the frontmatter that `~/wiki/work/_templates/log-entry.md` prescribes (`project`, `type: log`, `date` of its first entry), then a blank line:
 
 ```bash
 P=ecfx
 Q="$(date +%Y)-Q$(( (10#$(date +%m) + 2) / 3 ))"
-LOGF=~/wiki/projects/$P/log/$Q.md
+LOGF=~/wiki/work/projects/$P/log/$Q.md
 [ -f "$LOGF" ] || printf -- '---\nproject: %s\ntype: log\ndate: %s\n---\n\n' "$P" "$(date +%F)" > "$LOGF"
 ```
-- **decision** (not `none`): create `~/wiki/projects/$P/decisions/$NEXT-<slug>.md` from `~/wiki/_templates/decision.md`: copy the template, fill its `{{project}}`, `{{date}}`, `{{tickets}}`, `{{repos}}`, `{{num}}` (`$NEXT`) and `{{title}}` tokens, and replace the `<...>` hints under Context, Decision and Consequences with the block's `context`, `decision` and `consequences`. Keep the template's frontmatter as is (`status: accepted`). Delete the commented `# supersedes:` line, unless the decision replaces one: then make it `supersedes: <NNNN-old-slug>` and change the old file's `status` to `superseded`, the only edit a decision file ever gets.
+- **decision** (not `none`): create `~/wiki/work/projects/$P/decisions/$NEXT-<slug>.md` from `~/wiki/work/_templates/decision.md`: copy the template, fill its `{{project}}`, `{{date}}`, `{{tickets}}`, `{{repos}}`, `{{num}}` (`$NEXT`) and `{{title}}` tokens, and replace the `<...>` hints under Context, Decision and Consequences with the block's `context`, `decision` and `consequences`. Keep the template's frontmatter as is (`status: accepted`). Delete the commented `# supersedes:` line, unless the decision replaces one: then make it `supersedes: <NNNN-old-slug>` and change the old file's `status` to `superseded`, the only edit a decision file ever gets.
 - **state_change**: do not edit `state.md`; `/end-day` consolidates it. Append it as `  <p>: <line>` under `notes:` in the run-state file so it survives compaction.
 
 ## 5. Review rounds (automatic, one confirmation per round)

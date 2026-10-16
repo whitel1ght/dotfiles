@@ -1,5 +1,5 @@
 ---
-description: Write a weekly, monthly, quarterly or yearly review of past work into ~/wiki/reviews
+description: Write a weekly, monthly, quarterly or yearly review of past work into ~/wiki/work/reviews
 argument-hint: "week|month|quarter|year [period, e.g. 2026-W40, 2026-09, 2026-Q3, 2025]"
 ---
 
@@ -79,15 +79,15 @@ For one period with `from`, `to`, `id`, `level`:
    `~/.pi/agent/model-selection.md`). Then end the turn; the `[pi-sub]` wake-up continues here.
    Generate periods one at a time: a month needs its weeks written first.
 
-   > Write the `<level>` review `<id>` (<from> to <to>) for the user's own retrospective. Read `~/wiki/AGENTS.md` and `~/wiki/_templates/review-<level>.md` first and follow the template's section headings and order. Do not write frontmatter, a title or a Numbers section: the parent session adds them. Read these inputs: <paths>. The numbers are already written in `<R>/numbers-<id>.md`: do not state any count that is not in that file or in the inputs you can count directly. Output only these sections, with these exact `## ` headings, in this order: **Shipped** (MRs as markdown links, `[repo!iid](url)`, only those in the `done_mr_links` or `merged_mrs` below), **Per project** (one short paragraph each for ecfx, epicmax, personal where there is anything), **Decisions** (one line each; every line links its decision file or is omitted), **Carry-over & time sinks** (items deferred two or more times, and where time went, from the stats below), **Brag bullets** (3 to 7, impact-phrased: what changed for whom). Every MR link anywhere in the file must appear in the `daily-stats` output below or in a decision or log file you were given: never construct a link. When there are no inputs at all, still write every section, each as `Nothing this period.`; do not ask or stop. Plain, specific, no filler; every claim traceable to an input. Never write anything under `~/wiki`. Write the result to `<R>/review-<id>.md` and reply with only that path. Repeat-deferred items and MR links from `daily-stats`: <the `repeat_deferred`, `done_mr_links` and `merged_mrs` fields of STATS>.
+   > Write the `<level>` review `<id>` (<from> to <to>) for the user's own retrospective. Read `~/wiki/AGENTS.md` and `~/wiki/work/_templates/review-<level>.md` first and follow the template's section headings and order. Do not write frontmatter, a title or a Numbers section: the parent session adds them. Read these inputs: <paths>. The numbers are already written in `<R>/numbers-<id>.md`: do not state any count that is not in that file or in the inputs you can count directly. Output only these sections, with these exact `## ` headings, in this order: **Shipped** (MRs as markdown links, `[repo!iid](url)`, only those in the `done_mr_links` or `merged_mrs` below), **Per project** (one short paragraph each for ecfx, epicmax, personal where there is anything), **Decisions** (one line each; every line links its decision file or is omitted), **Carry-over & time sinks** (items deferred two or more times, and where time went, from the stats below), **Brag bullets** (3 to 7, impact-phrased: what changed for whom). Every MR link anywhere in the file must appear in the `daily-stats` output below or in a decision or log file you were given: never construct a link. When there are no inputs at all, still write every section, each as `Nothing this period.`; do not ask or stop. Plain, specific, no filler; every claim traceable to an input. Never write anything under `~/wiki`. Write the result to `<R>/review-<id>.md` and reply with only that path. Repeat-deferred items and MR links from `daily-stats`: <the `repeat_deferred`, `done_mr_links` and `merged_mrs` fields of STATS>.
 
 4. On the wake-up, assemble and check. The review's shape is fixed by
-   `~/wiki/_templates/review-<level>.md`: frontmatter, then `# {{period}} review`, then
+   `~/wiki/work/_templates/review-<level>.md`: frontmatter, then `# {{period}} review`, then
    `## Numbers`, then the five sections. This session fills the template's tokens and builds the
    file; the subagent contributes only the sections after Numbers:
 
    ```bash
-   TPL=~/wiki/_templates/review-<level>.md
+   TPL=~/wiki/work/_templates/review-<level>.md
    OUT="$R/review-<id>.full.md"
    ~/projects/dotfiles/claude/daily/scripts/review-extract frontmatter "$TPL" <to> <id> > "$OUT"
    printf '\n# <id> review\n\n' >> "$OUT"
@@ -108,13 +108,13 @@ For one period with `from`, `to`, `id`, `level`:
 
    A period with no inputs is still written, without asking: zeros in Numbers and
    `Nothing this period.` in every section. Copy `$R/review-<id>.full.md` to `~/wiki/<file>`
-   (`mkdir -p ~/wiki/reviews` first).
+   (`mkdir -p ~/wiki/work/reviews` first).
 
 ## 4. Index and commit
 
 ```bash
 qmd update && qmd embed
-git -C ~/wiki add reviews
+git -C ~/wiki add work/reviews
 git -C ~/wiki commit -m "wiki: review <id>[, <id>...]"
 ```
 

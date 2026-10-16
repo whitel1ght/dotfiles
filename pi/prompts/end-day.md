@@ -149,7 +149,7 @@ never edit a line outside the block.
 
 ## Consolidate memory
 
-Skip this step, and say so in one line, when `~/wiki/projects` does not exist or the day has
+Skip this step, and say so in one line, when `~/wiki/work/projects` does not exist or the day has
 no log entries below (the commit and the end of the run still happen). It is the only place
 project `state.md` files change; during the day `/run-day` only appends logs and decisions.
 
@@ -164,9 +164,9 @@ DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$AR
 
 For each project `<p>` it prints:
 
-1. Read `~/wiki/projects/<p>/state.md`, the day's log entries
+1. Read `~/wiki/work/projects/<p>/state.md`, the day's log entries
    (`~/.local/bin/end-day entries "$DAY" <p>`), the decisions dated that day
-   (`rg -l "^date: $DAY" ~/wiki/projects/<p>/decisions`), and the `<p>:` lines under `notes:` in
+   (`rg -l "^date: $DAY" ~/wiki/work/projects/<p>/decisions`), and the `<p>:` lines under `notes:` in
    `~/.local/state/run-day/$DAY.md` if it exists (the `state_change` lines `/run-day` collected).
 2. Rewrite `state.md` in full from the old state plus those: current focus, open threads (drop
    what finished, add what started), links to existing notes. Keep the file's frontmatter and
@@ -202,7 +202,7 @@ DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$AR
 
 It sets class, diagnosis and proposals (`proposed` for an item with one, `wontfix` for `external`), adds directions (active from the next session with no confirmation; the diary lists them so I can retire them) and records frustrations (the script sets `proposed` from their second day). On an error, relaunch the subagent once with the error text appended; a second failure is left for tomorrow. Never retype or edit its data by hand.
 
-Then file the section in the diary and let the commit below pick up `friction/`:
+Then file the section in the diary and let the commit below pick up `work/friction/`:
 
 ```bash
 DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
@@ -221,13 +221,14 @@ committed. Set `DAY` again here (new shell):
 ```bash
 DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
 qmd update && qmd embed
-git -C ~/wiki add -A -- diary projects index.md tools
-[ -d ~/wiki/reviews ] && git -C ~/wiki add -A -- reviews
-[ -d ~/wiki/friction ] && git -C ~/wiki add -A -- friction
+git -C ~/wiki add -A -- diary work index.md tools
 git -C ~/wiki diff --cached --quiet || git -C ~/wiki commit -m "wiki: $DAY day"
+~/.local/bin/wiki-sync
 ```
 
-If `qmd` fails, say so in one line and still commit. Never touch `*.pdf` or `*.kdbx`.
+If `qmd` fails, say so in one line and still commit. `wiki-sync` pushes the day (and anything
+else changed) to the VPS; if it fails, show its one-line error and point at `wiki-sync status`.
+Never touch `*.pdf` or `*.kdbx`.
 
 Then end the run: move `~/.local/state/run-day/$DAY.md` into `~/.local/state/run-day/done/`
 (create the directory). That switches off the run-state injection and the event watcher. Skip it

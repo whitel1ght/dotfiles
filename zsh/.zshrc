@@ -22,6 +22,9 @@ typeset -U path PATH
 # Called by absolute path on purpose: ~/.local/bin is added to PATH further
 # down in this file, so `command -v vault-check` finds nothing this early.
 [ -x "$HOME/.local/bin/vault-check" ] && "$HOME/.local/bin/vault-check"
+# Same for the wiki backup: one line when the last git sync to the VPS failed
+# or none succeeded for a day, nothing otherwise.
+[ -x "$HOME/.local/bin/wiki-sync" ] && "$HOME/.local/bin/wiki-sync" check
 
 # -----------------------------------------------------------------------------
 # POWERLEVEL10K INSTANT PROMPT
@@ -70,10 +73,8 @@ alias eza='eza -1 --icons'
 alias jmine='jt -m'   # current sprint, assigned to me
 alias jtodo='jt -u'   # current Omni sprint, unassigned and To-Do
 
-# Wiki sync. The server details live in ~/.zshrc.local; bin/notes reads them
-# from the environment so none of them appear in this public repo.
-alias pull_notes='notes pull'
-alias push_notes='notes push'
+# The wiki backs itself up: a LaunchAgent runs wiki-sync (git commit + push to
+# the VPS) every 15 minutes. `wiki-sync` forces a run, `wiki-sync status` explains.
 
 
 # Local Pi agent on Qwen2.5-Coder 14B in LM Studio (pi/models.json). Load it

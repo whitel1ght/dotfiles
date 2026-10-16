@@ -104,9 +104,9 @@ link_dir_contents() {
 #
 # Each *.example is written to be inert when copied verbatim — its assignments
 # are commented out — so seeding can never introduce a placeholder that looks
-# like a real value. A bogus value is worse than none: bin/notes prints a
-# precise "unset: NOTES_USER" when the variable is absent, but resolves
-# "your.server.ip.here" and fails at DNS when it is set to a placeholder.
+# like a real value. A bogus value is worse than none: a tool prints a precise
+# "unset" error when a variable is absent, but resolves "your.server.ip.here"
+# and fails at DNS when it is set to a placeholder.
 SEEDED_CONFIGS=()
 
 seed_local_config() {
@@ -214,10 +214,9 @@ if [ -f "$DOTFILES_DIR/zsh/.p10k.zsh" ]; then
     create_symlink "$DOTFILES_DIR/zsh/.p10k.zsh" "$HOME/.p10k.zsh"
 fi
 
-# Sourced at the end of .zshrc behind [ -f ]. Holds the wiki-sync server that
-# bin/notes needs; without it `notes pull` stops with "unset: NOTES_USER ...".
+# Sourced at the end of .zshrc behind [ -f ]: machine-local settings, no secrets.
 seed_local_config "$DOTFILES_DIR/zsh/.zshrc.local.example" \
-    "$HOME/.zshrc.local" 600 "wiki sync host for bin/notes (pull_notes/push_notes)"
+    "$HOME/.zshrc.local" 600 "machine-local settings (VPS host, MCP client ids)"
 
 # Every secret lives in ~/.secrets/secrets.env: `secrets` edits it, `secret NAME`
 # reads one value. Nothing sources it, so no shell carries a token. The team's
@@ -387,10 +386,27 @@ if [ -f "$DOTFILES_DIR/bin/vault-check" ]; then
     create_symlink "$DOTFILES_DIR/bin/vault-check" "$HOME/.local/bin/vault-check"
 fi
 
-# notes syncs ~/wiki with the server; pull_notes / push_notes in .zshrc call it.
-# Server details come from ~/.zshrc.local, never from this repo.
-if [ -f "$DOTFILES_DIR/bin/notes" ]; then
-    create_symlink "$DOTFILES_DIR/bin/notes" "$HOME/.local/bin/notes"
+# wiki-sync commits ~/wiki and pushes it to its git repo on the VPS (the
+# remote is in ~/wiki/.git/config, set when the wiki is cloned). A LaunchAgent
+# runs it every 15 minutes; .zshrc runs `wiki-sync check` to warn when it
+# fails. WIKI_SYNC_AGENT=0 skips the agent. It replaced the rsync `notes`.
+if [ -f "$DOTFILES_DIR/bin/wiki-sync" ]; then
+    create_symlink "$DOTFILES_DIR/bin/wiki-sync" "$HOME/.local/bin/wiki-sync"
+    rm -f "$HOME/.local/bin/notes"
+    if [ "${WIKI_SYNC_AGENT:-1}" != "0" ] && [ -d "$HOME/wiki/.git" ]; then
+        agent="$HOME/Library/LaunchAgents/local.wiki-sync.plist"
+        mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.local/state/wiki-sync"
+        sed "s#__HOME__#$HOME#g" "$DOTFILES_DIR/launchd/local.wiki-sync.plist" > "$agent.new"
+        if ! cmp -s "$agent.new" "$agent"; then
+            mv "$agent.new" "$agent"
+            launchctl bootout "gui/$(id -u)/local.wiki-sync" 2>/dev/null || true
+            launchctl bootstrap "gui/$(id -u)" "$agent" \
+                && log_info "Loaded the wiki-sync agent (every 15 minutes)" \
+                || log_warn "Could not load $agent"
+        else
+            rm -f "$agent.new"
+        fi
+    fi
 fi
 
 # ecfx-daily-commits lists today's commits across all ecfx-* repos.

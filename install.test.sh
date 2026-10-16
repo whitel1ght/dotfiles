@@ -24,7 +24,7 @@ trap 'rm -rf "$SANDBOX"' EXIT
 run_install() {
     HOME="$SANDBOX" \
     SKILLS_SYNC=0 MACOS_DAEMONS=0 REPY_SETUP=0 \
-    ECFX_TOOLING=0 ZSH_SETUP=0 KEYBOARD_SETUP=0 TMUX_SETUP=0 PROXY_SETUP=0 \
+    ECFX_TOOLING=0 ZSH_SETUP=0 KEYBOARD_SETUP=0 TMUX_SETUP=0 PROXY_SETUP=0 WIKI_SYNC_AGENT=0 \
     CLAUDE_COMPONENTS_DIR=/nonexistent \
         bash "$SCRIPT" 2>&1
 }
@@ -74,6 +74,13 @@ leaked="$(env -i HOME="$SANDBOX" bash -c '
 [ -z "$leaked" ] \
     && pass "seeded shell configs export nothing" \
     || fail "seeded shell configs export nothing" "these were set: $leaked"
+
+# --- wiki sync ---------------------------------------------------------------
+echo "wiki sync"
+[ -L "$SANDBOX/.local/bin/wiki-sync" ] && pass "wiki-sync is on PATH" || fail "wiki-sync is on PATH" "not linked"
+[ -e "$SANDBOX/.local/bin/notes" ] && fail "the rsync notes command is gone" "still linked" || pass "the rsync notes command is gone"
+[ -e "$SANDBOX/Library/LaunchAgents/local.wiki-sync.plist" ] && fail "WIKI_SYNC_AGENT=0 installs no agent" "plist written" \
+    || pass "WIKI_SYNC_AGENT=0 installs no agent"
 
 # --- ~/.secrets -------------------------------------------------------------
 echo "secrets"

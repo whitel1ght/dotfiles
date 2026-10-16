@@ -29,7 +29,7 @@ export const localDate = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
 
 export function sessionsDir(): string {
-  return join(process.env.WIKI_DIR ?? join(homedir(), "wiki"), "sessions")
+  return join(process.env.WIKI_DIR ?? join(homedir(), "wiki"), "work", "sessions")
 }
 
 /** The `session:` line of today's run state: the session that owns /run-day. */

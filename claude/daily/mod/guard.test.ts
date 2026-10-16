@@ -73,7 +73,7 @@ test('applyEdit mirrors Edit and Write, and gives up on a missing old_string', a
 test('only today\'s diary file is guarded', async () => {
   expect(isTodaysDiary('/Users/d/wiki/diary/2026-10-08.md', '2026-10-08')).toBe(true)
   expect(isTodaysDiary('/Users/d/wiki/diary/2026-10-07.md', '2026-10-08')).toBe(false)
-  expect(isTodaysDiary('/Users/d/wiki/projects/ecfx/state.md', '2026-10-08')).toBe(false)
+  expect(isTodaysDiary('/Users/d/wiki/work/projects/ecfx/state.md', '2026-10-08')).toBe(false)
 })
 
 test('denyMessage names the offending lines', async () => {

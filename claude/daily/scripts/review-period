@@ -88,7 +88,7 @@ def render(p, now):
         "id": p["id"],
         "from": p["from"].isoformat(),
         "to": p["to"].isoformat(),
-        "file": f"reviews/{p['id']}.md",
+        "file": f"work/reviews/{p['id']}.md",
         "ended": p["to"] < now,
     }
 

@@ -96,10 +96,10 @@ printf '' | "$SCRIPT" save 2026-01-07 >/dev/null 2>&1 && fail "refuses an empty 
 
 echo "end-day touched"
 WIKI="$SANDBOX/wiki"
-mkdir -p "$WIKI/projects/ecfx/log" "$WIKI/projects/ecfx/decisions" "$WIKI/projects/epicmax/log" "$WIKI/projects/epicmax/decisions" "$WIKI/projects/personal/log"
-printf -- '---\nproject: ecfx\n---\n\n## 2026-10-07 earlier work\n\ntext\n\n## 2026-10-08 retry button\n\ntext\n' > "$WIKI/projects/ecfx/log/2026-Q4.md"
-printf -- '---\nproject: epicmax\ntype: decision\ndate: 2026-10-08\n---\n# 0003 pick x\n' > "$WIKI/projects/epicmax/decisions/0003-pick-x.md"
-printf -- '---\nproject: personal\ndate: 2026-10-07\n---\n' > "$WIKI/projects/personal/log/2026-Q4.md"
+mkdir -p "$WIKI/work/projects/ecfx/log" "$WIKI/work/projects/ecfx/decisions" "$WIKI/work/projects/epicmax/log" "$WIKI/work/projects/epicmax/decisions" "$WIKI/work/projects/personal/log"
+printf -- '---\nproject: ecfx\n---\n\n## 2026-10-07 earlier work\n\ntext\n\n## 2026-10-08 retry button\n\ntext\n' > "$WIKI/work/projects/ecfx/log/2026-Q4.md"
+printf -- '---\nproject: epicmax\ntype: decision\ndate: 2026-10-08\n---\n# 0003 pick x\n' > "$WIKI/work/projects/epicmax/decisions/0003-pick-x.md"
+printf -- '---\nproject: personal\ndate: 2026-10-07\n---\n' > "$WIKI/work/projects/personal/log/2026-Q4.md"
 touched() { WIKI_DIR="$WIKI" "$SCRIPT" touched "$@"; }
 assert_eq "ecfx
 epicmax" "$(touched 2026-10-08)" "lists projects with a log entry or a decision on that date, one per line"

@@ -247,7 +247,7 @@ PY
 # entry, or whose decisions/ has a file with "date: DATE" in its frontmatter.
 touched() {
   local dir
-  for dir in "$WIKI_DIR"/projects/*/; do
+  for dir in "$WIKI_DIR"/work/projects/*/; do
     [ -d "$dir" ] || continue
     if grep -qs "^## $day " "$dir"log/*.md || grep -qs "^date: $day[[:space:]]*$" "$dir"decisions/*.md; then
       basename "$dir"
@@ -262,7 +262,7 @@ entries() {
   case "$project" in
     */*|*..*) echo "end-day: entries: project must be a plain name, not a path ($project)" >&2; exit 1 ;;
   esac
-  awk -v d="$day" '/^## /{on=index($0,"## " d " ")==1} on' "$WIKI_DIR/projects/$project"/log/*.md 2>/dev/null || true
+  awk -v d="$day" '/^## /{on=index($0,"## " d " ")==1} on' "$WIKI_DIR/work/projects/$project"/log/*.md 2>/dev/null || true
 }
 
 case "$cmd" in

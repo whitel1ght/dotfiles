@@ -6,9 +6,9 @@
 #
 # EVERY EXPORT BELOW IS COMMENTED OUT deliberately. An unfilled copy must
 # export nothing, because a placeholder that looks like a value is worse than
-# no value at all: bin/notes prints a precise "unset: NOTES_USER ..." when the
-# variables are absent, but with CLOUD=your.server.ip.here it instead fails at
-# DNS resolution, which reads like a network problem.
+# no value at all: a missing variable fails with a precise "unset" error, but
+# CLOUD=your.server.ip.here fails at DNS resolution, which reads like a network
+# problem.
 #
 # The PATH line matters too — with PYTHON_UTILS unset, "$PATH:$PYTHON_UTILS"
 # appends an empty element, and an empty element in PATH means the current
@@ -28,15 +28,8 @@
 # setting — which makes it expensive to diagnose. If you find such exports in
 # an existing ~/.zshrc.local, delete them.
 
-# Wiki sync — consumed by dotfiles/bin/notes (`pull_notes` / `push_notes`).
-# NOTES_HOST falls back to $CLOUD above, so it is usually left unset.
-# export NOTES_USER=your-remote-username
-# export NOTES_PORT=22
-# export NOTES_REMOTE_DIR=/home/your-remote-username # the PARENT of the wiki dir
-# export NOTES_LOCAL_DIR="$HOME/wiki"                # default; override if moved
-
-# Personal server aliases
-# (pull_notes / push_notes are defined in .zshrc and call bin/notes)
+# The wiki syncs itself with git (bin/wiki-sync); its VPS remote lives in
+# ~/wiki/.git/config, so nothing about it belongs here.
 
 # Personal project paths
 # export PYTHON_UTILS="$HOME/projects/scripts"

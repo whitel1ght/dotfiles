@@ -548,8 +548,8 @@ file is completely silent.
 That is how a freshly cloned machine ends up with no git identity, no Jira
 token and no wiki-sync host while every script reports success. The failure
 surfaces much later and somewhere else: a commit authored as
-`dmitry@192.168.2.97`, a Jira 401 that reads like an expired token, a `notes
-pull` that stops on `unset: NOTES_USER`.
+`dmitry@192.168.2.97`, a Jira 401 that reads like an expired token, a wiki
+that never gets backed up.
 
 `install.sh` seeds each one from a committed `*.example` and prints what still
 needs filling in:
@@ -557,7 +557,7 @@ needs filling in:
 | Seeded file | Mode | Template | Needed for |
 |---|---|---|---|
 | `~/.gitconfig.local` | 644 | `git/.gitconfig.local.example` | commit authorship |
-| `~/.zshrc.local` | 600 | `zsh/.zshrc.local.example` | wiki sync (`bin/notes`), the Slack MCP client id for Pi |
+| `~/.zshrc.local` | 600 | `zsh/.zshrc.local.example` | the VPS host, the Slack MCP client id for Pi |
 | `~/.secrets/secrets.env` | 600 | `secrets/secrets.env.example` | every secret: Jira, Slack MCP, CodeCompanion, the proxy, nightbot |
 
 Secrets are never sourced into the shell. `secrets` edits the file, scripts
@@ -574,9 +574,9 @@ Each `*.example` has all of its assignments **commented out**, so copying one
 verbatim changes nothing. That is deliberate: a placeholder that looks like a
 value is worse than no value.
 
-- `bin/notes` prints a precise `unset: NOTES_USER (or CLOUD)` when the
-  variables are absent. With `CLOUD=your.server.ip.here` it instead fails at
-  DNS resolution, which reads like a broken network.
+- A missing variable fails with a precise `unset` error. With
+  `CLOUD=your.server.ip.here` a tool instead fails at DNS resolution, which
+  reads like a broken network.
 - `commit.template` pointing at a path that does not exist aborts **every**
   commit, and the error names the template rather than the file that set it.
 - `export PATH="$PATH:$PYTHON_UTILS"` with `PYTHON_UTILS` unset appends an
@@ -593,15 +593,15 @@ A template cannot supply these; they are listed here because their absence is
 equally silent:
 
 - `~/.ssh/known_hosts` — host keys are trust decisions. Missing entries make
-  `rsync`/`ssh` fail with `Host key verification failed`, and rsync has no
-  terminal to accept a fingerprint on.
+  `ssh` and the wiki's background `git push` fail with `Host key verification
+  failed`, and the background sync has no terminal to accept a fingerprint on.
 - The server side of a key pair. A new machine's key must be added to
-  `authorized_keys` before `notes pull` works, and to GitLab/GitHub before
+  `authorized_keys` before the wiki can be cloned, and to GitLab/GitHub before
   pushing.
 - `glab` / `gh` auth — `glab auth login --hostname gitlab.com --web` and
   `gh auth login`. Pass `--hostname`: run from a repo whose origin is GitHub
   and `glab` offers that host as though it were GitLab, then 404s.
-- `~/wiki` itself, restored with `notes pull` — which needs the SSH key that
+- `~/wiki` itself, restored with `git clone` from the VPS — which needs the SSH key that
   the vault inside `~/wiki` is holding. Break the loop with the iCloud copy of
   `machine-rebuild.kdbx`, which is why `vault-sync.sh` refreshes it.
 

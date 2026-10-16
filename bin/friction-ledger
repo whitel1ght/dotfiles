@@ -56,12 +56,12 @@
 # apply creates an entry for a tool_error only with count >= 2 on the day or on a second day
 #         (first sightings are kept in .seen-sigs.tsv).
 #
-# $FRICTION_WIKI (default ~/wiki/friction) holds ledger.md and the F-files. The F-files are
+# $FRICTION_WIKI (default ~/wiki/work/friction) holds ledger.md and the F-files. The F-files are
 # the source of truth; ledger.md is regenerated from them. Only the main session at end-day
 # calls this: subagents never write the wiki.
 set -euo pipefail
 
-FRICTION_WIKI="${FRICTION_WIKI:-$HOME/wiki/friction}"
+FRICTION_WIKI="${FRICTION_WIKI:-$HOME/wiki/work/friction}"
 HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
 
 die() { echo "friction-ledger: $*" >&2; exit 1; }
@@ -609,7 +609,7 @@ cmd_dir_render() {
   done
   dir_rows | jq -rn --arg scope "$scope" --argjson cap 2048 '
     def text($a; $n): ($a | map("- \(.rule)" + (if .scope == "global" then "" else " [\(.scope)]" end)) | join("\n"))
-      + (if $n > 0 then (if ($a | length) > 0 then "\n" else "" end) + "- \($n) more in ~/wiki/friction/directions.md" else "" end);
+      + (if $n > 0 then (if ($a | length) > 0 then "\n" else "" end) + "- \($n) more in ~/wiki/work/friction/directions.md" else "" end);
     def fit($a; $n):
       if ($a | length) == 0 or (text($a; $n) | utf8bytelength) <= $cap then {a: $a, n: $n}
       else (([$a[] | select(.scope == "global")] | sort_by(.since, .id) | first) // ($a | sort_by(.since, .id) | first)) as $d
