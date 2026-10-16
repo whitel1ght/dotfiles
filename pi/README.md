@@ -28,7 +28,8 @@ wrong or broken links are repaired. Review the dry run before applying it.
 | `mcp-servers.json` | `pi/mcp-servers.json`: MCP definitions with environment references |
 | `APPEND_SYSTEM.md`, `model-selection.md` | `pi/`: global assistant rules and delegation policy |
 | `AGENTS.md` | `claude/CLAUDE.md`: shared personal instructions |
-| `skills/` | `pi/skills/`: skills |
+| `skills/` | `pi/skills/`: pi-only skills (handle-ticket, jira-write, qa-comment, …) |
+| `skills-team/` | **generated** by `plink` from `~/projects/claude-components` (see below); not in git |
 | `~/.agents/modules/` | `pi/modules/`: shared context files the skills and agents reference |
 | `agents/` | `pi/agents/`: Pi-specific named subagent definitions |
 | `prompts/` | `pi/prompts/`: slash-command templates |
@@ -83,13 +84,35 @@ Pi/provider authentication stays outside the repo. MCP configuration uses
 `~/.pi/agent/mcp-auth.json`. Claude Bridge is no longer installed or required
 by the active model-selection policy.
 
+### Team skills
+
+The team's skills live in `claude-components`, which Claude Code loads as a
+plugin marketplace. pi gets the same skills **generated**, not copied:
+`plink` runs [`gen/pi_skills.py`](gen/pi_skills.py), which copies every
+`plugins/*/skills/<name>/` folder from the clone into `~/.pi/agent/skills-team/`
+and rewrites the few Claude-only parts (`!`cmd`` context lines, `plugin:name`
+prefixes, `${CLAUDE_SKILL_DIR}` / `${CLAUDE_PLUGIN_ROOT}`, `~/.claude/docs/`), plus
+a short "In pi" note on skills that launch subagents. `settings.json` lists
+`skills-team`. To pick up team changes:
+
+```sh
+git -C ~/projects/claude-components pull && plink
+```
+
+Tests: `python3 -m unittest pi/gen/test_pi_skills.py` (run from `pi/gen`) and
+`bin/plink.test.sh`. Specialist agents in `pi/agents/` are still hand-kept forks.
+
 ### Local-model profile (`pigm`)
 
 `pigm` (zsh alias) runs Gemma 4 E4B from LM Studio with extensions, skills,
-prompts, context files and MCP off, and loads two extensions explicitly with
-`-e`: `pi-web-access` (web search) and [`local-model/wiki-search`](local-model/wiki-search/README.md)
-(`wiki_search` / `wiki_read` over `~/wiki` and saved articles via qmd).
-Verified end to end: Gemma calls both on its own and answers from the results.
+prompts, context files and MCP off, and loads one extension explicitly with
+`-e`: `pi-web-access` (web search). It is for talking things through and
+learning, not agent work. Measured prompt overhead: bare 1.9k tokens, with web
+search 4.3k; loading the skills would add ~16k of Gemma's 32k window.
+[`local-model/wiki-search`](local-model/wiki-search/README.md) (`wiki_search` /
+`wiki_read` over `~/wiki` via qmd, +0.3k tokens) works but is left out of the
+alias until secrets are moved out of the wiki: a model that can read private
+notes and search the web is the combination that can leak them.
 
 ## Delegation
 

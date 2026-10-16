@@ -85,10 +85,12 @@ alias pilm='pi --model lmstudio/qwen/qwen2.5-coder-14b --models lmstudio/qwen/qw
 
 # Same lean setup on Gemma 4 E4B (8-bit MLX, vision + native tool calls). Load it
 # with `lms load gemma-4-e4b-it-mlx -c 32768 --parallel 1`; ~8.4 GB resident (or
-# just run `localai`). Two extensions are loaded explicitly despite -ne: web
-# search (pi-web-access; queries go to Exa) and wiki_search/wiki_read over
-# ~/wiki and saved articles via qmd (pi/local-model/wiki-search).
-alias pigm='pi --model lmstudio/gemma-4-e4b-it-mlx --models lmstudio/gemma-4-e4b-it-mlx -ne -ns -np -nc --no-mcp -e ~/.pi/agent/npm/node_modules/pi-web-access/dist/index.js -e ~/projects/dotfiles/pi/local-model/wiki-search/index.ts'
+# just run `localai`). Meant for talking things through and learning, not for
+# agent work: no skills or context files (they would fill Gemma's 32k window;
+# all skills alone are ~20k tokens). One extension is loaded despite -ne: web
+# search (pi-web-access; queries go to Exa). Prompt overhead is ~4.3k tokens.
+# pi/local-model/wiki-search stays out until secrets are moved out of ~/wiki.
+alias pigm='pi --model lmstudio/gemma-4-e4b-it-mlx --models lmstudio/gemma-4-e4b-it-mlx -ne -ns -np -nc --no-mcp -e ~/.pi/agent/npm/node_modules/pi-web-access/dist/index.js'
 
 # Free Pi session, with Longcat as the only scoped model.
 alias pifree='pi --model opencode-go/longcat-2.5-preview-free --models opencode-go/longcat-2.5-preview-free'
