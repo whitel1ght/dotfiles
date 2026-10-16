@@ -48,6 +48,7 @@ assert_contains "$env_out" "OPENAI_API_BASE_URL=http://127.0.0.1:1234/v1" "point
 assert_contains "$env_out" "DATA_DIR=$WEBUI_HOME/data" "data dir under WEBUI_HOME"
 assert_contains "$env_out" "ANONYMIZED_TELEMETRY=false" "telemetry off"
 assert_contains "$env_out" "WHISPER_MODEL=base" "Whisper base (English)"
+assert_contains "$env_out" "AUDIO_TTS_ENGINE=browser-kokoro" "Kokoro voice (in the browser)"
 
 out="$("$SCRIPT" 2>&1)"
 assert_contains "$out" "already running" "default command reuses a running instance"
