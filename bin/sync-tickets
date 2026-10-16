@@ -19,7 +19,8 @@
 # Every MR is also linked on its ticket with the same globalId GitLab's own
 # integration uses, so a link that already exists is updated, not duplicated.
 #
-# Needs JIRA_EMAIL and JIRA_API_TOKEN (~/.config/mrglass/secrets.env) and glab.
+# Needs JIRA_USER and JIRA_TOKEN in ~/.secrets/secrets.env (or JIRA_EMAIL and
+# JIRA_API_TOKEN in the environment) and glab.
 set -euo pipefail
 
 JIRA_BASE="${JIRA_BASE:-https://ecfxdev.atlassian.net}"
@@ -38,8 +39,9 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-: "${JIRA_EMAIL:?sync-tickets: JIRA_EMAIL unset — see ~/.config/mrglass/secrets.env}"
-: "${JIRA_API_TOKEN:?sync-tickets: JIRA_API_TOKEN unset — see ~/.config/mrglass/secrets.env}"
+: "${JIRA_EMAIL:=$(secret JIRA_USER 2>/dev/null)}" "${JIRA_API_TOKEN:=$(secret JIRA_TOKEN 2>/dev/null)}"
+: "${JIRA_EMAIL:?sync-tickets: JIRA_USER missing — add it with \`secrets\`}"
+: "${JIRA_API_TOKEN:?sync-tickets: JIRA_TOKEN missing — add it with \`secrets\`}"
 
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 
@@ -64,7 +66,7 @@ jira() {
   code="${out##*$'\n'}"
   case "$code" in
     2*) printf '%s' "${out%$'\n'*}" ;;
-    401|403) echo "sync-tickets: Jira returned $code — JIRA_API_TOKEN has likely expired" >&2; return 1 ;;
+    401|403) echo "sync-tickets: Jira returned $code — JIRA_TOKEN has likely expired" >&2; return 1 ;;
     *) echo "sync-tickets: Jira $method $path returned $code" >&2; return 1 ;;
   esac
 }

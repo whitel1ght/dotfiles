@@ -2,6 +2,8 @@
 # Tests for bin/end-day save. Works on a sandbox DIARY_DIR; collect talks to
 # GitLab and Jira and is exercised by running it, not here.
 set -uo pipefail
+# Never fall back to the real secrets file (scripts read Jira credentials from it).
+export SECRETS_FILE=/nonexistent/secrets.env
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$TEST_DIR/end-day"

@@ -25,4 +25,4 @@ Reply with a short summary of its output:
 Leave out skipped tickets unless `-v` was passed. If the script failed, show its error
 line. If the error mentions an expired token, add that a new one comes from
 https://id.atlassian.com/manage-profile/security/api-tokens and goes in
-`~/.config/mrglass/secrets.env`.
+`~/.secrets/secrets.env` as `JIRA_TOKEN` (the user edits it with `secrets`; you never open it).

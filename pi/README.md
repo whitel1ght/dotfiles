@@ -77,8 +77,8 @@ Local models come from LM Studio (`lmstudio` provider at `http://127.0.0.1:1234/
 start it with `localai`. See the `pigm` profile below.
 
 Pi/provider authentication stays outside the repo. MCP configuration uses
-`${VAR}` references; export the required values from your local shell setup
-(see `zsh/.zshrc.local.example`). MCP OAuth state lives in
+`${VAR}` references, filled from the environment (`zsh/.zshrc.local.example`)
+or from `~/.secrets/secrets.env` (secrets such as the Slack client secret). MCP OAuth state lives in
 `~/.pi/agent/mcp-auth.json`. Claude Bridge is no longer installed or required
 by the active model-selection policy.
 

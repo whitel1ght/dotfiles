@@ -107,7 +107,11 @@ alias grep='grep --color=auto --exclude-dir={.bzr,CVS,.git,.hg,.svn}'
 alias io="arch -x86_64 io"
 
 # Merge requests: run `mrglass`. It is a TUI built from ~/projects/mrglass into
-# ~/go/bin (see the PATH entry below), so it needs no alias wrapper.
+# ~/go/bin (see the PATH entry below). Its Jira detail needs JIRA_EMAIL and
+# JIRA_API_TOKEN, handed to that one process from ~/.secrets.
+mrglass() {
+  JIRA_EMAIL="$(secret JIRA_USER)" JIRA_API_TOKEN="$(secret JIRA_TOKEN)" command mrglass "$@"
+}
 
 # -----------------------------------------------------------------------------
 # PATH CONFIGURATION

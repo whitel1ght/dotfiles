@@ -4,9 +4,9 @@
 **/private/
 **/.env
 **/.env.local
-# The real one lives at ~/.config/sing-box/secrets.env, outside this repo — but
-# secrets.env.example sits next to the proxy config and invites a copy here,
-# and `**/.env` does not match this name. This repo is public.
+# The real one lives at ~/.secrets/secrets.env, outside this repo — but the
+# secrets.env.example templates invite a copy here, and `**/.env` does not
+# match this name. This repo is public.
 secrets.env
 
 # macOS

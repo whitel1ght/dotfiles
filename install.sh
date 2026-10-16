@@ -184,9 +184,8 @@ fi
 
 
 # mrglass configuration
-# Only config.yaml is linked. Its sibling secrets.env holds the Jira
-# credentials and is seeded separately below, never symlinked — this file is
-# committed and that one must not be. mrglass also writes state under
+# Only config.yaml is linked. The Jira credentials come from ~/.secrets (the
+# mrglass function in .zshrc passes them in). mrglass also writes state under
 # ~/.local/state, so nothing else here is machine-local.
 if [ -f "$DOTFILES_DIR/mrglass/config.yaml" ]; then
     create_symlink "$DOTFILES_DIR/mrglass/config.yaml" \
@@ -220,11 +219,17 @@ fi
 seed_local_config "$DOTFILES_DIR/zsh/.zshrc.local.example" \
     "$HOME/.zshrc.local" 600 "wiki sync host for bin/notes (pull_notes/push_notes)"
 
-# Sourced by .zshenv for EVERY zsh invocation, so these reach non-interactive
-# shells and tool subprocesses. Without them mrglass shows no ticket detail and
-# the handle-ticket skill gets 401 from the Jira REST API.
-seed_local_config "$DOTFILES_DIR/mrglass/secrets.env.example" \
-    "$HOME/.config/mrglass/secrets.env" 600 "JIRA_EMAIL + JIRA_API_TOKEN for mrglass"
+# Every secret lives in ~/.secrets/secrets.env: `secrets` edits it, `secret NAME`
+# reads one value. Nothing sources it, so no shell carries a token. The team's
+# ops skills read their Jira credentials from ~/.config/ecfx/jira.env, which
+# links to the same file (same KEY=value format, same JIRA_* names).
+seed_local_config "$DOTFILES_DIR/secrets/secrets.env.example" \
+    "$HOME/.secrets/secrets.env" 600 "Jira, Slack MCP, proxy and other tokens (edit with: secrets)"
+chmod 700 "$HOME/.secrets" 2>/dev/null || true
+mkdir -p "$HOME/.config/ecfx" && chmod 700 "$HOME/.config/ecfx"
+create_symlink "$HOME/.secrets/secrets.env" "$HOME/.config/ecfx/jira.env"
+create_symlink "$DOTFILES_DIR/bin/secret" "$HOME/.local/bin/secret"
+create_symlink "$DOTFILES_DIR/bin/secrets" "$HOME/.local/bin/secrets"
 
 # Git configuration
 if [ -f "$DOTFILES_DIR/git/.gitconfig" ]; then
@@ -350,6 +355,25 @@ if [ -f "$DOTFILES_DIR/bin/wt" ]; then
 fi
 
 
+# Agents stay out of ~/.secrets: secrets-guard runs before every Bash call (pi
+# runs it too, through its claude-hooks extension) and the deny rules keep
+# Claude's file tools out. Merged, not linked, since Claude Code rewrites
+# settings.json; re-runs leave one copy of each.
+settings="$HOME/.claude/settings.json"
+mkdir -p "$HOME/.claude"
+[ -f "$settings" ] || echo '{}' > "$settings"
+tmp="$(mktemp)"
+if jq --arg g "$DOTFILES_DIR/bin/secrets-guard" '
+    .hooks.PreToolUse = ([.hooks.PreToolUse[]? | select(([.hooks[]?.command] | index($g)) == null)]
+        + [{matcher: "Bash", hooks: [{type: "command", command: $g}]}])
+    | (.permissions.deny // []) as $deny
+    | .permissions.deny = $deny + (["Read(~/.secrets/**)", "Edit(~/.secrets/**)",
+        "Read(~/.config/ecfx/jira.env)"] - $deny)' "$settings" > "$tmp"; then
+    mv "$tmp" "$settings"
+else
+    rm -f "$tmp"; log_warn "Could not add the secrets guard to $settings"
+fi
+
 # macdict backs repy's "Define Word"; reaches the macOS dictionaries via ctypes,
 # so it needs no venv or third-party package.
 if [ -f "$DOTFILES_DIR/bin/macdict" ]; then
@@ -442,16 +466,18 @@ if [ -f "$DOTFILES_DIR/bin/mr-watch" ]; then
 fi
 
 # jt searches and previews Jira tickets with fzf, on top of jira-cli. jira-cli
-# keeps its own config; the token itself comes from JIRA_API_TOKEN in the
-# mrglass secrets file, so the config only needs the site, login and project.
+# keeps its own config; the token comes from JIRA_API_TOKEN, which jt (and the
+# jira-cli skill) pass from ~/.secrets, so the config only needs the site, login
+# and project.
 if [ -f "$DOTFILES_DIR/bin/jt" ]; then
     create_symlink "$DOTFILES_DIR/bin/jt" "$HOME/.local/bin/jt"
 fi
 if command -v jira >/dev/null 2>&1 && [ ! -f "$HOME/.config/.jira/.config.yml" ] \
-    && [ -n "${JIRA_EMAIL:-}" ] && [ -n "${JIRA_API_TOKEN:-}" ]; then
+    && jira_user="$("$DOTFILES_DIR/bin/secret" JIRA_USER 2>/dev/null)"; then
+    JIRA_API_TOKEN="$("$DOTFILES_DIR/bin/secret" JIRA_TOKEN 2>/dev/null)" \
     jira init --installation cloud --server https://ecfxdev.atlassian.net \
-        --login "$JIRA_EMAIL" --auth-type basic --project ECFX --board None \
-        || echo "jira init failed; run it by hand once JIRA_API_TOKEN works"
+        --login "$jira_user" --auth-type basic --project ECFX --board None \
+        || echo "jira init failed; run it by hand once JIRA_TOKEN in ~/.secrets works"
 fi
 
 # dev switches the dashboard dev server between worktrees (tmux window dev:dashboard).
@@ -585,12 +611,12 @@ fi
 
 # --- Proxy routing (sing-box TUN) -----------------------------------------
 # Routing policy lives in proxy/direct-domains.txt (what stays off the VPS)
-# and proxy/block-domains.txt; secrets stay in
-# ~/.config/sing-box/secrets.env and never enter this repo. Guarded like the
+# and proxy/block-domains.txt; the VLESS_* values stay in
+# ~/.secrets/secrets.env and never enter this repo. Guarded like the
 # vendor sync above: install.sh runs under `set -e`, and an unconfigured proxy
 # must not abort the remaining setup. Set PROXY_SETUP=0 to skip.
 setup_proxy() {
-    local secrets="$HOME/.config/sing-box/secrets.env"
+    local secrets="$HOME/.secrets/secrets.env"
     local plist="/Library/LaunchDaemons/local.singbox.plist"
 
     create_symlink "$DOTFILES_DIR/bin/proxyctl" "$HOME/.local/bin/proxyctl"
@@ -600,9 +626,9 @@ setup_proxy() {
         return 0
     fi
 
-    if [ ! -f "$secrets" ]; then
-        seed_local_config "$DOTFILES_DIR/proxy/secrets.env.example" \
-            "$secrets" 600 "six VLESS values, then: proxyctl on"
+    if ! SECRETS_FILE="$secrets" "$DOTFILES_DIR/bin/secret" VLESS_UUID >/dev/null 2>&1; then
+        log_warn "Proxy not configured: add the six VLESS_* values with \`secrets\`"
+        log_warn "  (proxy/secrets.env.example says where each comes from), then: proxyctl on"
         return 0
     fi
 

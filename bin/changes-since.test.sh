@@ -3,6 +3,8 @@
 # answer from fixture files, so nothing here reaches Jira or GitLab. TZ is
 # pinned to UTC; the cursor is written by hand, so no test depends on the clock.
 set -uo pipefail
+# Never fall back to the real secrets file (scripts read Jira credentials from it).
+export SECRETS_FILE=/nonexistent/secrets.env
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$TEST_DIR/changes-since"
@@ -326,7 +328,7 @@ assert_contains "$(errs)" "GitLab to-dos unavailable" "stderr names the source"
 echo "changes-since — friction capture"
 reset; cursor 2026-10-08T07:00:00Z
 out=$(JIRA_MYSELF_FAIL=1 run); rc=$?
-assert_eq "--source jira service_down Jira unavailable (is JIRA_EMAIL/JIRA_API_TOKEN set? are they still valid?)" "$(cat "$FIX/friction.log")" "a failing Jira records service_down with source jira"
+assert_eq "--source jira service_down Jira unavailable (are JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env still valid?)" "$(cat "$FIX/friction.log")" "a failing Jira records service_down with source jira"
 reset; cursor 2026-10-08T07:00:00Z; echo '{}' > "$FIX/todos.json"
 run >/dev/null
 assert_eq "--source gitlab-todos service_down GitLab to-dos unavailable" "$(cat "$FIX/friction.log")" "a failing to-dos source records source gitlab-todos"

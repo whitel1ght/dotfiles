@@ -557,9 +557,12 @@ needs filling in:
 | Seeded file | Mode | Template | Needed for |
 |---|---|---|---|
 | `~/.gitconfig.local` | 644 | `git/.gitconfig.local.example` | commit authorship |
-| `~/.zshrc.local` | 600 | `zsh/.zshrc.local.example` | wiki sync (`bin/notes`), MCP OAuth clients for Pi |
-| `~/.config/mrglass/secrets.env` | 600 | `mrglass/secrets.env.example` | Jira, for mrglass and `handle-ticket` |
-| `~/.config/sing-box/secrets.env` | 600 | `proxy/secrets.env.example` | the proxy tunnel |
+| `~/.zshrc.local` | 600 | `zsh/.zshrc.local.example` | wiki sync (`bin/notes`), the Slack MCP client id for Pi |
+| `~/.secrets/secrets.env` | 600 | `secrets/secrets.env.example` | every secret: Jira, Slack MCP, CodeCompanion, the proxy, nightbot |
+
+Secrets are never sourced into the shell. `secrets` edits the file, scripts
+read one value with `$(secret NAME)`, and `bin/secrets-guard` (a Claude Code
+hook pi runs too) plus Claude deny rules keep agents out of `~/.secrets`.
 
 An existing file is **never** overwritten — it holds real credentials — so the
 seeding is safe to re-run, and `./install.sh` is safe to run on a configured
@@ -634,7 +637,7 @@ proxyctl logs       # tail /var/log/sing-box.log
 
 To keep a new site off the VPS, add its apex to
 [`proxy/direct-domains.txt`](proxy/direct-domains.txt) and run `proxyctl reload`.
-Credentials live in `~/.config/sing-box/secrets.env` and never enter this repo
+Credentials (the `VLESS_*` values) live in `~/.secrets/secrets.env` and never enter this repo
 — [`proxy/secrets.env.example`](proxy/secrets.env.example) documents where each
 value comes from.
 

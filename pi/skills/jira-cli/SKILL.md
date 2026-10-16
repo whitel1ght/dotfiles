@@ -27,18 +27,20 @@ the dedicated skills instead — see **Interop** below.
   `https://ecfxdev.atlassian.net`, default project `ECFX`, basic auth, login
   `dmitry.mamyrev@epicmax.co`. Override the file with `-c/--config` or
   `JIRA_CONFIG_FILE`; override the project with `-p/--project`.
-- **Credentials**: the API token comes from `JIRA_API_TOKEN` (with
-  `JIRA_EMAIL`), exported from `~/.config/mrglass/secrets.env`. **Never print or
-  echo the token.**
+- **Credentials**: `jira` reads the token from `JIRA_API_TOKEN`, which no shell
+  exports. Hand it to each call inline:
+  `JIRA_API_TOKEN=$(secret JIRA_TOKEN) jira ...` (the value lives in
+  `~/.secrets`, which you never read; a bare `secret` call is blocked).
+  **Never print or echo the token.**
 - **Projects on this instance** include `ECFX` (default), `CSR`, `ER`, `INFRA`.
 
 ## Preflight (once per session)
 
-Run `jira me` on the first Jira-touching call. It prints the login email.
+Run `JIRA_API_TOKEN=$(secret JIRA_TOKEN) jira me` on the first Jira-touching call. It prints the login email.
 
-- If it fails with an authentication error, tell the user that `JIRA_EMAIL` /
-  `JIRA_API_TOKEN` are not set in the shell and **stop** — do not retry in a
-  loop.
+- If it fails with an authentication error, tell the user that `JIRA_TOKEN` in
+  `~/.secrets/secrets.env` is missing or expired and **stop** — do not retry in
+  a loop.
 - `$(jira me)` is also the value for "me" as an assignee or reporter. Cache the
   result for the rest of the session.
 
@@ -158,7 +160,7 @@ moving, or reporting on an issue — use this CLI.
   sprint commands.
 - `-q/--jql` still applies the project context — include `project = ...` in the
   JQL when you want to cross projects.
-- **Never print `JIRA_API_TOKEN`** or paste it into output, tickets, or files.
+- **Never print the token** (`$(secret JIRA_TOKEN)` only inside the command that uses it) or paste it into output, tickets, or files.
 
 ## Quality checklist
 

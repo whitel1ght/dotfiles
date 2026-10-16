@@ -17,7 +17,7 @@
 # branch is one that already has the key in its name (local or origin), else a
 # new <user>/<KEY>_<summary-slug>, as the rest of my branches are named.
 #
-# Needs JIRA_EMAIL and JIRA_API_TOKEN (~/.config/mrglass/secrets.env), fzf, and
+# Needs JIRA_USER and JIRA_TOKEN in ~/.secrets/secrets.env, fzf, and
 # jira-cli for the preview (`jira init` against ecfxdev.atlassian.net).
 set -euo pipefail
 
@@ -29,6 +29,10 @@ TEAM_FILTER="${JT_TEAM_FILTER:-OmniEngineersFilter}"
 MAX_ROWS="${JT_MAX_ROWS:-1000}"
 
 die() { echo "jt: $*" >&2; exit 1; }
+
+# Exported for the jira-cli preview, which reads the token from the environment.
+: "${JIRA_EMAIL:=$(secret JIRA_USER 2>/dev/null)}" "${JIRA_API_TOKEN:=$(secret JIRA_TOKEN 2>/dev/null)}"
+export JIRA_EMAIL JIRA_API_TOKEN
 
 preview_cmd='jira issue view {1} --plain --comments 5 2>&1 | sed "s/[[:space:]]*$//"'
 

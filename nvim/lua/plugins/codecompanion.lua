@@ -2,7 +2,7 @@
 -- OpenCode Go or to the Claude subscription (ACP agent, chat only).
 -- Bridge: npm i -g @agentclientprotocol/claude-agent-acp
 -- (the @zed-industries packages are abandoned and break on current settings).
--- Claude needs CODECOMPANION_CLAUDE_TOKEN (from `claude setup-token`) in ~/.zshrc.local.
+-- Claude needs CODECOMPANION_CLAUDE_TOKEN (from `claude setup-token`) in ~/.secrets/secrets.env.
 return {
   'olimorris/codecompanion.nvim',
   dependencies = { 'nvim-lua/plenary.nvim' },
@@ -86,7 +86,7 @@ return {
         claude_code = function()
           return require('codecompanion.adapters').extend('claude_code', {
             -- Not CLAUDE_CODE_OAUTH_TOKEN itself: exported in zsh it would override the claude CLI login.
-            env = { CLAUDE_CODE_OAUTH_TOKEN = 'CODECOMPANION_CLAUDE_TOKEN' },
+            env = { CLAUDE_CODE_OAUTH_TOKEN = 'cmd:secret CODECOMPANION_CLAUDE_TOKEN' },
           })
         end,
       },

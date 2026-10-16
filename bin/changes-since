@@ -25,7 +25,7 @@
 # never moves it. A failing source is an error: exit 1, nothing on stdout.
 # Nothing changed: exit 0 and no output.
 #
-# Needs jira-api (JIRA_EMAIL/JIRA_API_TOKEN), glab and jq.
+# Needs jira-api (it reads the Jira token from ~/.secrets), glab and jq.
 set -euo pipefail
 
 JIRA_BASE="${JIRA_BASE:-https://ecfxdev.atlassian.net}"
@@ -156,7 +156,7 @@ feed_gitlab_mrs() {
   done < <(jq -r '.[] | [.project_id, .iid] | @tsv' <<<"$mrs")
 }
 
-feed_jira || down jira "Jira unavailable (is JIRA_EMAIL/JIRA_API_TOKEN set? are they still valid?)"
+feed_jira || down jira "Jira unavailable (are JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env still valid?)"
 feed_gitlab_todos || down gitlab-todos "GitLab to-dos unavailable"
 feed_gitlab_mrs || down gitlab-mrs "GitLab MRs unavailable"
 

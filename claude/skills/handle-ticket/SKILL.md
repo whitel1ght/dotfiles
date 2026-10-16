@@ -90,13 +90,13 @@ them decide.
 
 ### P3. Fetch the ticket
 
-Jira lives at `https://ecfxdev.atlassian.net`, authenticated with `JIRA_EMAIL` /
-`JIRA_API_TOKEN` from the shell environment (sourced from
-`~/.config/mrglass/secrets.env`).
+Jira lives at `https://ecfxdev.atlassian.net`, authenticated with `JIRA_USER` /
+`JIRA_TOKEN` from `~/.secrets/secrets.env`, passed inline as `$(secret NAME)`
+(never read that folder or run `secret` bare; both are blocked).
 
 ```bash
 JIRA_BASE="https://ecfxdev.atlassian.net"
-curl -s -w '\n%{http_code}' -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+curl -s -w '\n%{http_code}' -u "$(secret JIRA_USER):$(secret JIRA_TOKEN)" \
   -H "Accept: application/json" \
   "$JIRA_BASE/rest/api/3/issue/ECFX-15234?fields=summary,description,status,issuetype,priority,labels,components,assignee,reporter,comment,issuelinks,parent"
 ```
@@ -499,7 +499,7 @@ Optionally transition the Jira ticket to *In MR* / *In Review* and attach the
 MR link, if the API credentials worked in P3:
 
 ```bash
-curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+curl -s -u "$(secret JIRA_USER):$(secret JIRA_TOKEN)" \
   "$JIRA_BASE/rest/api/3/issue/ECFX-15234/transitions?includeUnavailableTransitions=true"
 ```
 

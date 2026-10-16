@@ -6,7 +6,7 @@ allowed-tools: Bash(*/jira-write --dry-run:*)
 
 # jira-write
 
-Two writes, both over `~/bin/jira-api` (needs `JIRA_EMAIL` and `JIRA_API_TOKEN`). Jira writes are visible to other people, so **you never run one without the user's yes in this conversation for exactly that change**.
+Two writes, both over `~/bin/jira-api` (it reads the Jira token from `~/.secrets` itself). Jira writes are visible to other people, so **you never run one without the user's yes in this conversation for exactly that change**.
 
 Each Bash call is a new shell, so every command below spells out the full script path, unquoted so the permission rule matches it. Only the `--dry-run` form is pre-approved; a real write always prompts.
 

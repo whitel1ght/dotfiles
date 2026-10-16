@@ -35,7 +35,7 @@ run_install() {
 SEEDED="\
 .gitconfig.local:644
 .zshrc.local:600
-.config/mrglass/secrets.env:600"
+.secrets/secrets.env:600"
 
 echo "install.sh — local config seeding"
 
@@ -67,7 +67,6 @@ echo "inertness"
 # never their values.
 leaked="$(env -i HOME="$SANDBOX" bash -c '
     . "$HOME/.zshrc.local" 2>/dev/null
-    . "$HOME/.config/mrglass/secrets.env" 2>/dev/null
     for v in CLOUD NOTES_USER NOTES_PORT NOTES_REMOTE_DIR JIRA_EMAIL JIRA_API_TOKEN; do
         eval "x=\${$v:-}"
         [ -n "$x" ] && printf "%s " "$v"
@@ -75,6 +74,23 @@ leaked="$(env -i HOME="$SANDBOX" bash -c '
 [ -z "$leaked" ] \
     && pass "seeded shell configs export nothing" \
     || fail "seeded shell configs export nothing" "these were set: $leaked"
+
+# --- ~/.secrets -------------------------------------------------------------
+echo "secrets"
+[ "$(stat -f %Lp "$SANDBOX/.secrets")" = "700" ] && pass "~/.secrets has mode 700" \
+    || fail "~/.secrets has mode 700" "got $(stat -f %Lp "$SANDBOX/.secrets")"
+names="$(SECRETS_FILE="$SANDBOX/.secrets/secrets.env" "$TEST_DIR/bin/secret" -l)"
+[ -z "$names" ] && pass "seeded secrets.env sets no name" || fail "seeded secrets.env sets no name" "set: $names"
+[ "$(readlink "$SANDBOX/.config/ecfx/jira.env")" = "$SANDBOX/.secrets/secrets.env" ] \
+    && pass "ecfx jira.env links to secrets.env" || fail "ecfx jira.env links to secrets.env" "$(ls -l "$SANDBOX/.config/ecfx/jira.env" 2>&1)"
+[ -L "$SANDBOX/.local/bin/secret" ] && [ -L "$SANDBOX/.local/bin/secrets" ] \
+    && pass "secret and secrets are on PATH" || fail "secret and secrets are on PATH" "not linked"
+settings="$SANDBOX/.claude/settings.json"
+jq -e --arg g "$TEST_DIR/bin/secrets-guard" \
+    '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[].command] | index($g) != null' "$settings" >/dev/null \
+    && pass "Claude runs secrets-guard before Bash" || fail "Claude runs secrets-guard before Bash" "$(jq -c .hooks.PreToolUse "$settings" 2>&1)"
+jq -e '.permissions.deny | index("Read(~/.secrets/**)") != null and index("Edit(~/.secrets/**)") != null and index("Read(~/.config/ecfx/jira.env)") != null' "$settings" >/dev/null \
+    && pass "Claude file tools are denied ~/.secrets" || fail "Claude file tools are denied ~/.secrets" "$(jq -c .permissions.deny "$settings" 2>&1)"
 
 # An empty trailing PATH element means "current directory" — a real hazard.
 pathv="$( . "$SANDBOX/.zshrc.local" 2>/dev/null; echo "${PATH:-}" )"
@@ -104,6 +120,10 @@ after="$(shasum -a 256 < "$SANDBOX/.zshrc.local")"
     || fail "re-run leaves an existing file untouched" "checksum changed"
 case "$out2" in *"INERT until filled in"*) fail "re-run seeds nothing new" "summary printed again" ;;
                 *) pass "re-run seeds nothing new" ;; esac
+n="$(jq --arg g "$TEST_DIR/bin/secrets-guard" '[.hooks.PreToolUse[]?.hooks[]? | select(.command == $g)] | length' "$SANDBOX/.claude/settings.json")"
+[ "$n" = "1" ] && pass "re-run adds the guard hook once" || fail "re-run adds the guard hook once" "found $n"
+n="$(jq '[.permissions.deny[] | select(. == "Read(~/.secrets/**)")] | length' "$SANDBOX/.claude/settings.json")"
+[ "$n" = "1" ] && pass "re-run adds each deny rule once" || fail "re-run adds each deny rule once" "found $n"
 
 # --- a missing template must warn, not crash ------------------------------
 echo "missing template"

@@ -1,4 +1,5 @@
-# Private/sensitive configurations.
+# Machine-local settings. NOT secrets: tokens and passwords go in
+# ~/.secrets/secrets.env (edit with `secrets`, template secrets/secrets.env.example).
 #
 # Copy to ~/.zshrc.local. install.sh does that copy for you on a fresh machine,
 # and .zshrc sources it behind [ -f ], so a missing file is silent.
@@ -41,15 +42,9 @@
 # export PYTHON_UTILS="$HOME/projects/scripts"
 # export PATH="$PATH:$PYTHON_UTILS"
 
-# Slack incoming webhook for the health-check / verify-release skills (the
-# Development channel). Post-only credential — treat it as a secret and rotate
-# it if it ever lands in a tracked file.
-# export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
-
-# OAuth client for the Slack MCP server (pi/mcp-servers.json; OpenCode's
-# opencode.jsonc has the same under {env:...}). Registered app credentials, not
-# tokens: the tokens sign-in obtains live in ~/.pi/agent/mcp-auth.json.
+# OAuth client id for the Slack MCP server (pi/mcp-servers.json). Its client
+# secret is in ~/.secrets/secrets.env; the tokens sign-in obtains live in
+# ~/.pi/agent/mcp-auth.json.
 # export SLACK_MCP_CLIENT_ID=
-# export SLACK_MCP_CLIENT_SECRET=
 
 # Add any other private environment variables, aliases, or configurations here

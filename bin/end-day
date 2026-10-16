@@ -96,7 +96,8 @@ collect_gitlab() {
 
 collect_jira() {
   section "Jira status changes"
-  [ -n "${JIRA_EMAIL:-}" ] && [ -n "${JIRA_API_TOKEN:-}" ] || { echo "(JIRA_EMAIL/JIRA_API_TOKEN unset)"; return; }
+  : "${JIRA_EMAIL:=$(secret JIRA_USER 2>/dev/null)}" "${JIRA_API_TOKEN:=$(secret JIRA_TOKEN 2>/dev/null)}"
+  [ -n "$JIRA_EMAIL" ] && [ -n "$JIRA_API_TOKEN" ] || { echo "(Jira credentials missing: JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env)"; return; }
   curl -sf -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -G "$JIRA_BASE/rest/api/3/search/jql" \
     --data-urlencode "jql=status CHANGED BY currentUser() DURING (\"$day\", \"$next\")" \
     --data-urlencode fields=status,summary,issuetype \

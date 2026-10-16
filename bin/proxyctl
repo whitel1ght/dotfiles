@@ -5,7 +5,7 @@
 # block-domains.txt (rejected) or reader-domains.txt (blocked except for the
 # feed reader), then `proxyctl reload`. Everything not listed goes through the
 # VPS; there is no runtime switch that overrides the policy.
-# Secrets live in ~/.config/sing-box/secrets.env and never enter git.
+# The VLESS_* values live in ~/.secrets/secrets.env (`secrets`) and never enter git.
 #
 # The iPhone runs Happ with the same split and blocks nothing. `proxyctl
 # happ` shows its routing profile as a QR code to scan with the camera, rendered
@@ -17,7 +17,7 @@ set -euo pipefail
 
 DOTFILES="${DOTFILES:-$HOME/projects/dotfiles}"
 PROXY_DIR="$DOTFILES/proxy"
-SECRETS="$HOME/.config/sing-box/secrets.env"
+SECRETS="${SECRETS_FILE:-$HOME/.secrets/secrets.env}"
 RUNTIME_DIR="/usr/local/etc/sing-box"
 RUNTIME_CFG="$RUNTIME_DIR/config.json"
 PLIST="/Library/LaunchDaemons/local.singbox.plist"
@@ -27,7 +27,7 @@ LOG="/var/log/sing-box.log"
 die() { echo "proxyctl: $*" >&2; exit 1; }
 
 render() {
-  [ -f "$SECRETS" ] || die "missing $SECRETS (copy proxy/secrets.env.example)"
+  [ -f "$SECRETS" ] || die "missing $SECRETS (add the VLESS_* lines from proxy/secrets.env.example with: secrets)"
   local tmp; tmp="$(mktemp)"
   trap 'rm -f "$tmp"' RETURN
   "$PROXY_DIR/render.py" "$PROXY_DIR/config.template.json" \
@@ -71,7 +71,7 @@ case "${1:-status}" in
     ;;
   happ)
     if [ "${2:-}" = server ]; then
-      [ -f "$SECRETS" ] || die "missing $SECRETS (copy proxy/secrets.env.example)"
+      [ -f "$SECRETS" ] || die "missing $SECRETS (add the VLESS_* lines from proxy/secrets.env.example with: secrets)"
       link="$("$PROXY_DIR/render-happ.py" server "$SECRETS")"
       what="the VPS server (contains credentials; don't share or screenshot it)"
     else

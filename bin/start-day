@@ -323,7 +323,8 @@ collect_gitlab_todos() {
 
 collect_jira() {
   section "Jira"
-  [ -n "${JIRA_EMAIL:-}" ] && [ -n "${JIRA_API_TOKEN:-}" ] || { echo "(JIRA_EMAIL/JIRA_API_TOKEN unset)"; return; }
+  : "${JIRA_EMAIL:=$(secret JIRA_USER 2>/dev/null)}" "${JIRA_API_TOKEN:=$(secret JIRA_TOKEN 2>/dev/null)}"
+  [ -n "$JIRA_EMAIL" ] && [ -n "$JIRA_API_TOKEN" ] || { echo "(Jira credentials missing: JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env)"; return; }
   local since_jql
   since_jql=$(date -r "$(epoch_of "$SINCE")" '+%Y/%m/%d %H:%M' 2>/dev/null || date -d "$SINCE" '+%Y/%m/%d %H:%M')
   jql() {

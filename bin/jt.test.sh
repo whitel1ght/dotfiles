@@ -2,6 +2,8 @@
 # Tests for bin/jt. jira, fzf, wt and pbcopy are stubs that log their arguments;
 # git repos are throwaways in a sandbox.
 set -uo pipefail
+# Never fall back to the real secrets file (scripts read Jira credentials from it).
+export SECRETS_FILE=/nonexistent/secrets.env
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$TEST_DIR/jt"

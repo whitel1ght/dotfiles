@@ -5,8 +5,8 @@
 # config/config.example.yaml. Only the deliberate departures are set here.
 #
 # NO CREDENTIALS IN THIS FILE. It is committed. JIRA_EMAIL and JIRA_API_TOKEN
-# live in ~/.config/mrglass/secrets.env (mode 600, seeded by install.sh from
-# mrglass/secrets.env.example), which .zshenv sources into the environment.
+# come from ~/.secrets/secrets.env (JIRA_USER, JIRA_TOKEN): the mrglass function
+# in .zshrc passes them to this process only.
 # GitLab and GitHub auth belong to glab and gh, not here.
 
 # The ecfx repos are all on gitlab.com; mrglass reaches them through glab.

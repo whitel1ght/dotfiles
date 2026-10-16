@@ -3,6 +3,8 @@
 # on PATH, so nothing here reaches GitLab; carry-over and Jira are pointed at
 # an empty sandbox / disabled so only Ready to merge is under test.
 set -uo pipefail
+# Never fall back to the real secrets file (scripts read Jira credentials from it).
+export SECRETS_FILE=/nonexistent/secrets.env
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$TEST_DIR/start-day"

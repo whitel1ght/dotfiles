@@ -142,7 +142,7 @@ proxy/config.template.json   ──┐
 proxy/direct-domains.txt     ──┤
 proxy/block-domains.txt      ──┤
 proxy/reader-domains.txt     ──┼──▶ render.py ──▶ sing-box check ──▶ install
-~/.config/sing-box/secrets.env ┘                        │              -m 600
+~/.secrets/secrets.env  ──────┘                        │              -m 600
                                                         │           root:wheel
                                      invalid? ◀─────────┘              │
                                      nothing is installed              ▼
@@ -301,10 +301,10 @@ in the same list.
 
 ```bash
 brew install sing-box
-./install.sh                       # symlinks proxyctl, seeds secrets.env
+./install.sh                       # symlinks proxyctl, seeds ~/.secrets/secrets.env
 
-# fill in the six values — see proxy/secrets.env.example for where each comes from
-$EDITOR ~/.config/sing-box/secrets.env
+# fill in the six VLESS_* values — proxy/secrets.env.example says where each comes from
+secrets
 
 sudo install -m 644 -o root -g wheel \
   proxy/local.singbox.plist /Library/LaunchDaemons/local.singbox.plist
@@ -313,8 +313,9 @@ proxyctl on
 proxyctl status
 ```
 
-`install.sh` creates `~/.config/sing-box/secrets.env` from the example at mode
-`600` if it does not exist, and never overwrites one that does.
+`install.sh` creates `~/.secrets/secrets.env` (every secret, not just the
+proxy's) from `secrets/secrets.env.example` at mode `600` if it does not exist,
+and never overwrites one that does.
 
 ## Troubleshooting
 
@@ -371,4 +372,4 @@ in a non-interactive shell. If you add a status check, don't reintroduce
 - **No runtime routing switch.** No selector outbound, no Clash API, no local
   port that can flip the policy. `proxyctl off` is the escape hatch.
 - **No secrets in this repository.** They live in
-  `~/.config/sing-box/secrets.env`, mode `600`, outside any git working tree.
+  `~/.secrets/secrets.env`, mode `600`, outside any git working tree.

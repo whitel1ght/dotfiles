@@ -2,6 +2,8 @@
 # Tests for bin/sync-tickets. glab and curl are stubbed on PATH, so nothing
 # here reaches GitLab or Jira; the curl stub logs every write it receives.
 set -uo pipefail
+# Never fall back to the real secrets file (scripts read Jira credentials from it).
+export SECRETS_FILE=/nonexistent/secrets.env
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$TEST_DIR/sync-tickets"
@@ -153,7 +155,7 @@ assert_contains "$(cat "$FIX/writes.log")" '"globalId":"gitlab-mr-backend-10"' "
 
 echo "sync-tickets — expired token"
 out="$(JIRA_FAIL=1 run --since 1d)"; rc=$?
-assert_contains "$out" "JIRA_API_TOKEN has likely expired" "names the likely cause of a 401"
+assert_contains "$out" "JIRA_TOKEN has likely expired" "names the likely cause of a 401"
 [ "$rc" -ne 0 ] && pass "exits non-zero" || fail "exits non-zero" "rc=0"
 
 echo

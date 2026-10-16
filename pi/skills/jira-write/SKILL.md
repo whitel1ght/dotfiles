@@ -5,7 +5,7 @@ description: Move a Jira ticket to a status or add a comment on it (ecfxdev.atla
 
 # jira-write
 
-Two writes, both over `~/bin/jira-api` (needs `JIRA_EMAIL` and `JIRA_API_TOKEN`). Jira writes are visible to other people, so **you never run one without the user's yes in this conversation for exactly that change**. Always run the `--dry-run` form first and show its output.
+Two writes, both over `~/bin/jira-api` (it reads the Jira token from `~/.secrets` itself). Jira writes are visible to other people, so **you never run one without the user's yes in this conversation for exactly that change**. Always run the `--dry-run` form first and show its output.
 
 The script is shared with Claude Code's `daily` plugin; use it in place:
 

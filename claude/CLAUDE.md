@@ -20,6 +20,15 @@ Global instructions applied across all projects. Keep this short — project-lev
 - dotfiles enforces this in its commit-msg hook (`docs-check`); a commit with no
   user-visible change carries a `Docs: none` line instead.
 
+## Secrets
+
+- Every secret lives in `~/.secrets/` (`secrets.env`, `recovery.md`). Never read,
+  list, search or copy that folder or `~/.config/ecfx/jira.env` (a link into
+  it); a hook and deny rules block it anyway. A command that needs a token takes
+  it inline as `$(secret NAME)`; a bare `secret NAME` would print it and is
+  blocked. When a secret is missing or expired, tell the user which name to fix
+  with `secrets`.
+
 ## Artifacts
 
 - Keep the source of every published claude.ai artifact in `~/artifacts/<name>/`:
