@@ -49,6 +49,7 @@ assert_contains "$env_out" "DATA_DIR=$WEBUI_HOME/data" "data dir under WEBUI_HOM
 assert_contains "$env_out" "ANONYMIZED_TELEMETRY=false" "telemetry off"
 assert_contains "$env_out" "WHISPER_MODEL=base" "Whisper base (English)"
 assert_contains "$env_out" "AUDIO_TTS_ENGINE=browser-kokoro" "Kokoro voice (in the browser)"
+assert_contains "$env_out" "WEB_SEARCH_ENGINE=duckduckgo" "web search via DuckDuckGo"
 
 out="$("$SCRIPT" 2>&1)"
 assert_contains "$out" "already running" "default command reuses a running instance"

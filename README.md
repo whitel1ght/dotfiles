@@ -515,7 +515,10 @@ Voice is local and English: speech-to-text is Open WebUI's built-in Whisper
 `base` (on CPU, ~0.5 s per sentence); speech output is Kokoro (voice `af_heart`)
 running in the browser via Kokoro.js. The engine must be set server-wide
 (`AUDIO_TTS_ENGINE=browser-kokoro`): Open WebUI's per-message speak button reads
-the admin setting and ignores the per-account one, falling back to a macOS voice. Russian was tried and dropped: auto-detect mishears
+the admin setting and ignores the per-account one, falling back to a macOS voice.
+
+Web search is on, via DuckDuckGo (no API key; the queries leave the machine,
+the reading and answering stay local). It is toggled per chat: ＋ → Web Search. Russian was tried and dropped: auto-detect mishears
 short Russian phrases, and forcing `ru` garbles English. Run `bin/webui.test.sh` to
 test the script; it uses a stub server and never touches the real install.
 
