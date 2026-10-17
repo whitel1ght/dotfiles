@@ -509,6 +509,11 @@ if command -v jira >/dev/null 2>&1 && [ ! -f "$HOME/.config/.jira/.config.yml" ]
         || echo "jira init failed; run it by hand once JIRA_TOKEN in ~/.secrets works"
 fi
 
+# art opens a published claude.ai artifact from its source in ~/artifacts (fzf picker).
+if [ -f "$DOTFILES_DIR/bin/art" ]; then
+    create_symlink "$DOTFILES_DIR/bin/art" "$HOME/.local/bin/art"
+fi
+
 # dev switches the dashboard dev server between worktrees (tmux window dev:dashboard).
 if [ -f "$DOTFILES_DIR/bin/dev" ]; then
     create_symlink "$DOTFILES_DIR/bin/dev" "$HOME/.local/bin/dev"

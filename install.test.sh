@@ -80,6 +80,7 @@ echo "wiki sync"
 [ -L "$SANDBOX/.local/bin/wiki-sync" ] && pass "wiki-sync is on PATH" || fail "wiki-sync is on PATH" "not linked"
 [ -L "$SANDBOX/.local/bin/decide" ] && [ -L "$SANDBOX/.local/bin/decisions" ] \
     && pass "decide and decisions are on PATH" || fail "decide and decisions are on PATH" "not linked"
+[ -L "$SANDBOX/.local/bin/art" ] && pass "art is on PATH" || fail "art is on PATH" "not linked"
 [ -e "$SANDBOX/.local/bin/notes" ] && fail "the rsync notes command is gone" "still linked" || pass "the rsync notes command is gone"
 [ -e "$SANDBOX/Library/LaunchAgents/local.wiki-sync.plist" ] && fail "WIKI_SYNC_AGENT=0 installs no agent" "plist written" \
     || pass "WIKI_SYNC_AGENT=0 installs no agent"
