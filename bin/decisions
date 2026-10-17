@@ -76,16 +76,18 @@ empty() {
     echo "$msg" >&2
   else
     read -r cols rows <<<"$size"
+    local b="" l="" o=""  # border, label, reset: the fzf colours, on a terminal only
+    if [ -t 2 ]; then b=$'\e[38;2;187;154;247m' l=$'\e[1;38;2;122;162;247m' o=$'\e[0m'; fi
     {
-      printf '╭─%s%s╮\n' "$label" "$(rep ─ $((cols - 3 - ${#label})))"
+      printf '%s╭─%s%s%s%s╮%s\n' "$b" "$l" "$label" "$o$b" "$(rep ─ $((cols - 3 - ${#label})))" "$o"
       for ((r = 1; r <= rows - 2; r++)); do
         if [ "$r" -eq $(((rows - 1) / 2)) ]; then
-          printf '│  %s%*s│\n' "$msg" $((cols - 4 - ${#msg})) ""
+          printf '%s│%s  %s%*s%s│%s\n' "$b" "$o" "$msg" $((cols - 4 - ${#msg})) "" "$b" "$o"
         else
-          printf '│%*s│\n' $((cols - 2)) ""
+          printf '%s│%*s│%s\n' "$b" $((cols - 2)) "" "$o"
         fi
       done
-      printf '╰%s╯' "$(rep ─ $((cols - 2)))"
+      printf '%s╰%s╯%s' "$b" "$(rep ─ $((cols - 2)))" "$o"
     } >&2
   fi
   IFS= read -rsn1 _ || true
@@ -104,6 +106,7 @@ picker() {
     binds+=(--bind "$i:execute('$SELF' --confirm {1} $i)+reload('$SELF' --act list)")
   done
   list | fzf --disabled --no-sort --layout=reverse --no-info --border rounded --border-label ' decisions ' \
+    --color 'border:#bb9af7,label:#7aa2f7:bold' \
     --header '1-9 pick · enter recommended · c ask back · s skip · esc close' \
     --preview "'$SELF' --act preview {1}" --preview-window 'right,60%,wrap' \
     "${binds[@]}" \
