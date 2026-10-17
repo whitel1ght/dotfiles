@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+"""Decision queue for /run-day: the questions the day's work is waiting on.
+
+The /run-day session files a question here instead of asking in the thread; the user
+answers in the `decisions` popup (tmux prefix y), and the answer reaches the session as an
+inbox message (kinds `decision` and `clarify`) that its watcher wakes it with.
+
+  decide add --key K [--mr URL] [--blocks TEXT] --question Q --option O... [--recommend N]
+                                 context on stdin; prints the new id (D-<n>)
+  decide list [--json]           open decisions, blocking first, then oldest first
+  decide show ID                 the decision file
+  decide reply ID TEXT           the session answers a question back
+  decide withdraw ID [REASON]    no longer needed
+  decide close ID                file an answered or withdrawn decision under done/<day>/
+  decide count [--badge]         open decisions (nothing when none; --badge prints "✋ N")
+  decide answer ID N [NOTE]      (popup) pick option N
+  decide ask ID TEXT             (popup) ask a question back
+
+Files: $RUN_DAY_STATE_DIR (default ~/.local/state/run-day)/decisions/D-<n>.md; inbox
+messages in $INBOX_DIR (default <state>/inbox). Every write is a temp file renamed into
+place, so a reader never sees half a file.
+"""
+
+import argparse
+import json
+import os
+import random
+import re
+import string
+import sys
+from datetime import datetime
+from pathlib import Path
+
+STATE = Path(os.environ.get("RUN_DAY_STATE_DIR", "~/.local/state/run-day")).expanduser()
+DIR = STATE / "decisions"
+INBOX = Path(os.environ.get("INBOX_DIR", str(STATE / "inbox"))).expanduser()
+FIELDS = ["id", "day", "key", "mr", "asked", "blocks", "status"]
+SECTIONS = ["Question", "Context", "Options", "Discussion", "Answer"]
+KEY = re.compile(r"[A-Za-z][A-Za-z0-9]*-[0-9]+")
+PLAIN = re.compile(r"[A-Za-z0-9._/:@#?=%+-]*")
+OPTION = re.compile(r"^(\d+)\. (.*)$")
+REC = " (recommended)"
+
+
+class Fail(Exception):
+    pass
+
+
+def now() -> datetime:
+    return datetime.now().astimezone()
+
+
+def scalar(v: str) -> str:
+    return v if PLAIN.fullmatch(v) else json.dumps(v, ensure_ascii=False)
+
+
+def unscalar(v: str) -> str:
+    v = v.strip()
+    return json.loads(v) if v.startswith('"') else v
+
+
+def parse(text: str) -> tuple[dict, dict]:
+    m = re.match(r"---\n(.*?)\n---\n?(.*)\Z", text, re.S)
+    if not m:
+        raise Fail("no frontmatter")
+    meta = {}
+    for line in m.group(1).splitlines():
+        k, sep, v = line.partition(":")
+        if not sep:
+            raise Fail(f"bad frontmatter line {line!r}")
+        meta[k.strip()] = unscalar(v)
+    if not re.fullmatch(r"D-\d+", str(meta.get("id", ""))):
+        raise Fail("no id")
+    sections, name = {}, None
+    for line in m.group(2).splitlines():
+        h = re.match(r"^## (\w+)\s*$", line)
+        if h:
+            name = h.group(1)
+            sections[name] = []
+        elif name:
+            sections[name].append(line)
+    return meta, {k: "\n".join(v).strip() for k, v in sections.items()}
+
+
+def render(meta: dict, sections: dict) -> str:
+    front = "".join(f"{k}: {scalar(str(meta.get(k, '')))}\n" for k in FIELDS)
+    body = "".join(f"## {s}\n{sections[s].strip()}\n\n" for s in SECTIONS if sections.get(s, "").strip())
+    return f"---\n{front}---\n{body}".rstrip("\n") + "\n"
+
+
+def write_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
+def path_of(did: str) -> Path:
+    if not re.fullmatch(r"D-\d+", did):
+        raise Fail(f"not a decision id: {did}")
+    p = DIR / f"{did}.md"
+    if not p.exists():
+        raise Fail(f"{did} not found in {DIR}")
+    return p
+
+
+def load(did: str) -> tuple[Path, dict, dict]:
+    p = path_of(did)
+    meta, sections = parse(p.read_text())
+    return p, meta, sections
+
+
+def options(sections: dict) -> list[tuple[int, str, bool]]:
+    out = []
+    for line in sections.get("Options", "").splitlines():
+        m = OPTION.match(line.strip())
+        if m:
+            text = m.group(2)
+            rec = text.endswith(REC)
+            out.append((int(m.group(1)), text[: -len(REC)] if rec else text, rec))
+    return out
+
+
+def next_id() -> str:
+    nums = [int(m.group(1)) for p in DIR.rglob("D-*.md") if (m := re.fullmatch(r"D-(\d+)\.md", p.name))]
+    return f"D-{max(nums, default=0) + 1}"
+
+
+def open_decisions() -> list[tuple[dict, dict]]:
+    out = []
+    for p in sorted(DIR.glob("D-*.md")):
+        try:
+            meta, sections = parse(p.read_text())
+        except (Fail, ValueError) as e:
+            print(f"decide: skipped {p.name}: {e}", file=sys.stderr)
+            continue
+        if meta.get("status") == "open":
+            out.append((meta, sections))
+    return sorted(out, key=lambda d: (d[0].get("blocks", "") == "", d[0].get("asked", "")))
+
+
+def age(iso: str) -> str:
+    try:
+        mins = int((now() - datetime.fromisoformat(iso)).total_seconds() // 60)
+    except ValueError:
+        return "?"
+    return f"{mins}m" if mins < 60 else f"{mins // 60}h" if mins < 1440 else f"{mins // 1440}d"
+
+
+def mr_short(url: str) -> str:
+    m = re.search(r"/([^/]+)/-/merge_requests/(\d+)", url or "")
+    return f"{m.group(1).removeprefix('ecfx-')}!{m.group(2)}" if m else ""
+
+
+def question_back(sections: dict) -> bool:
+    lines = [ln for ln in sections.get("Discussion", "").splitlines() if ln.strip()]
+    return bool(lines) and " you: " in lines[-1]
+
+
+def summary(meta: dict, sections: dict) -> dict:
+    opts = options(sections)
+    return {
+        "id": meta["id"],
+        "key": meta.get("key", ""),
+        "mr": meta.get("mr", ""),
+        "question": " ".join(sections.get("Question", "").split()),
+        "asked": meta.get("asked", ""),
+        "age": age(meta.get("asked", "")),
+        "blocks": meta.get("blocks", ""),
+        "question_back": question_back(sections),
+        "options": [{"n": n, "text": t, "recommended": r} for n, t, r in opts],
+        "recommended": next((n for n, _, r in opts if r), None),
+    }
+
+
+def line(d: dict) -> str:
+    tail = f" · {d['age']}"
+    if d["blocks"]:
+        tail += f" · blocks {d['blocks']}"
+    if d["question_back"]:
+        tail += " · ?"
+    return f"{d['id']:<5} {d['key'] or 'offplan':<12} {mr_short(d['mr']) or '-':<14} {d['question']}{tail}"
+
+
+def one_line(text: str) -> str:
+    return " ".join(text.split())
+
+
+def cmd_add(a) -> None:
+    opts = [one_line(o) for o in a.option]
+    if not 2 <= len(opts) <= 9 or not all(opts):
+        raise Fail("give 2 to 9 non-empty --option values")
+    if a.recommend is not None and not 1 <= a.recommend <= len(opts):
+        raise Fail(f"--recommend must be 1..{len(opts)}")
+    key = a.key.strip().upper()
+    if key and not KEY.fullmatch(key):
+        raise Fail(f"not a ticket key: {a.key}")
+    question = one_line(a.question)
+    if not question:
+        raise Fail("--question is empty")
+    for meta, sections in open_decisions():
+        if meta.get("key", "").upper() == key and one_line(sections.get("Question", "")) == question:
+            raise Fail(f"{meta['id']} already asks this")
+    context = "" if sys.stdin.isatty() else sys.stdin.read()
+    did, t = next_id(), now()
+    meta = {
+        "id": did,
+        "day": t.date().isoformat(),
+        "key": key,
+        "mr": (a.mr or "").strip(),
+        "asked": t.isoformat(timespec="seconds"),
+        "blocks": one_line(a.blocks or ""),
+        "status": "open",
+    }
+    sections = {
+        "Question": question,
+        "Context": context,
+        "Options": "\n".join(f"{i}. {o}{REC if a.recommend == i else ''}" for i, o in enumerate(opts, 1)),
+    }
+    write_atomic(DIR / f"{did}.md", render(meta, sections))
+    print(did)
+
+
+def cmd_list(a) -> None:
+    items = [summary(m, s) for m, s in open_decisions()]
+    if a.json:
+        print(json.dumps(items, ensure_ascii=False, indent=2))
+    else:
+        for d in items:
+            print(line(d))
+
+
+def cmd_show(a) -> None:
+    print(path_of(a.id).read_text(), end="")
+
+
+def cmd_count(a) -> None:
+    n = len(open_decisions())
+    if n:
+        print(f"✋ {n}" if a.badge else n)
+
+
+def parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="decide", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("add")
+    s.add_argument("--key", required=True)
+    s.add_argument("--mr")
+    s.add_argument("--blocks")
+    s.add_argument("--question", required=True)
+    s.add_argument("--option", action="append", default=[])
+    s.add_argument("--recommend", type=int)
+    s.set_defaults(fn=cmd_add)
+    s = sub.add_parser("list")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_list)
+    s = sub.add_parser("show")
+    s.add_argument("id")
+    s.set_defaults(fn=cmd_show)
+    s = sub.add_parser("count")
+    s.add_argument("--badge", action="store_true")
+    s.set_defaults(fn=cmd_count)
+    return p
+
+
+def main() -> int:
+    a = parser().parse_args()
+    try:
+        a.fn(a)
+    except Fail as e:
+        print(f"decide: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
