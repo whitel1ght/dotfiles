@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""PreToolUse hook (Bash): refuse a Gradle test run while Docker is down.
+
+ECFX specs start Micronaut test-resources / Testcontainers, which need Docker.
+With the daemon stopped a test run does not fail, it hangs waiting for a
+Postgres container. This blocks such a run up front when `docker info` fails
+(or does not answer in 5 s, or docker is not installed).
+
+Acts only on a Gradle command that runs tests: a task named test, check, build,
+or ending in `test` (integrationTest, :core_rest:test), or a `--tests` filter.
+Compile-only runs, `-x test` alone and non-Gradle commands pass without calling
+docker. `DOCKER_GUARD=off ./gradlew test` bypasses it.
+Exit 2 blocks with the reason on stderr; anything unreadable passes.
+Claude Code runs this from ~/.claude/settings.json, pi through claude-hooks.
+"""
+
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+
+GRADLE = {"gradle", "gradlew"}
+TEST_TASKS = {"check", "build"}
+# Options whose next argument is a value, not a task.
+VALUE_OPTS = {"-p", "--project-dir", "-c", "--settings-file", "-b", "--build-file", "-g",
+              "--gradle-user-home", "-I", "--init-script", "--console", "--max-workers",
+              "--project-cache-dir", "--configuration-cache-problems"}
+EXCLUDE_OPTS = {"-x", "--exclude-task"}
+ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+WHY = (
+    "Docker is not running. Gradle test runs need it for Micronaut test-resources/Testcontainers "
+    "and would hang waiting for a Postgres container. Start Docker Desktop (`open -a Docker`) and "
+    "retry. Compile-only tasks (compileJava, compileTestGroovy, classes, assemble) are still fine."
+)
+
+
+def is_test_task(name: str) -> bool:
+    last = name.rsplit(":", 1)[-1].lower()
+    return last in TEST_TASKS or last.endswith("test")
+
+
+def segments(command: str):
+    for part in re.split(r"[;&|\n]+", command):
+        try:
+            words = shlex.split(part)
+        except ValueError:
+            words = part.split()
+        flat = []
+        for w in words:  # `bash -c "./gradlew test"` arrives as one word
+            flat.extend(w.split() if re.search(r"\s", w) else [w])
+        yield flat
+
+
+def runs_tests(words: list[str]) -> tuple[bool, bool]:
+    """(runs Gradle tests, bypass given) for one command segment."""
+    bypass = False
+    i = 0
+    while i < len(words) and ASSIGN.match(words[i]):
+        bypass = bypass or words[i] == "DOCKER_GUARD=off"
+        i += 1
+    for j, w in enumerate(words[i:], i):
+        if os.path.basename(w) in GRADLE:
+            i = j
+            break
+    else:
+        return False, bypass
+    args = words[i + 1:]
+    k = 0
+    while k < len(args):
+        a = args[k]
+        if a == "--tests" or a.startswith("--tests="):
+            return True, bypass
+        if a in EXCLUDE_OPTS:
+            k += 2
+            continue
+        if a in VALUE_OPTS:
+            k += 2
+            continue
+        if not a.startswith("-") and is_test_task(a):
+            return True, bypass
+        k += 1
+    return False, bypass
+
+
+def docker_up() -> bool:
+    try:
+        r = subprocess.run(["docker", "info"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=5)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def main() -> int:
+    try:
+        event = json.load(sys.stdin)
+        if event.get("tool_name") != "Bash":
+            return 0
+        command = str(event["tool_input"]["command"])
+    except Exception:
+        return 0
+    try:
+        hit = False
+        for words in segments(command):
+            tests, bypass = runs_tests(words)
+            if tests and bypass:
+                return 0
+            hit = hit or tests
+    except Exception:
+        return 0
+    if hit and not docker_up():
+        print(WHY, file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

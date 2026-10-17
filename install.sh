@@ -356,15 +356,18 @@ fi
 
 # Agents stay out of ~/.secrets: secrets-guard runs before every Bash call (pi
 # runs it too, through its claude-hooks extension) and the deny rules keep
-# Claude's file tools out. Merged, not linked, since Claude Code rewrites
-# settings.json; re-runs leave one copy of each.
+# Claude's file tools out. docker-guard refuses a Gradle test run while Docker is
+# down (it would hang on Testcontainers). Merged, not linked, since Claude Code
+# rewrites settings.json; re-runs leave one copy of each.
 settings="$HOME/.claude/settings.json"
 mkdir -p "$HOME/.claude"
 [ -f "$settings" ] || echo '{}' > "$settings"
 tmp="$(mktemp)"
-if jq --arg g "$DOTFILES_DIR/bin/secrets-guard" '
-    .hooks.PreToolUse = ([.hooks.PreToolUse[]? | select(([.hooks[]?.command] | index($g)) == null)]
-        + [{matcher: "Bash", hooks: [{type: "command", command: $g}]}])
+if jq --arg g "$DOTFILES_DIR/bin/secrets-guard" --arg d "$DOTFILES_DIR/bin/docker-guard" '
+    .hooks.PreToolUse = ([.hooks.PreToolUse[]?
+            | select(([.hooks[]?.command] | index($g)) == null and ([.hooks[]?.command] | index($d)) == null)]
+        + [{matcher: "Bash", hooks: [{type: "command", command: $g}]},
+           {matcher: "Bash", hooks: [{type: "command", command: $d}]}])
     | (.permissions.deny // []) as $deny
     | .permissions.deny = $deny + (["Read(~/.secrets/**)", "Edit(~/.secrets/**)",
         "Read(~/.config/ecfx/jira.env)"] - $deny)' "$settings" > "$tmp"; then

@@ -99,6 +99,9 @@ settings="$SANDBOX/.claude/settings.json"
 jq -e --arg g "$TEST_DIR/bin/secrets-guard" \
     '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[].command] | index($g) != null' "$settings" >/dev/null \
     && pass "Claude runs secrets-guard before Bash" || fail "Claude runs secrets-guard before Bash" "$(jq -c .hooks.PreToolUse "$settings" 2>&1)"
+jq -e --arg g "$TEST_DIR/bin/docker-guard" \
+    '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[].command] | index($g) != null' "$settings" >/dev/null \
+    && pass "Claude runs docker-guard before Bash" || fail "Claude runs docker-guard before Bash" "$(jq -c .hooks.PreToolUse "$settings" 2>&1)"
 jq -e '.permissions.deny | index("Read(~/.secrets/**)") != null and index("Edit(~/.secrets/**)") != null and index("Read(~/.config/ecfx/jira.env)") != null' "$settings" >/dev/null \
     && pass "Claude file tools are denied ~/.secrets" || fail "Claude file tools are denied ~/.secrets" "$(jq -c .permissions.deny "$settings" 2>&1)"
 
@@ -132,6 +135,8 @@ case "$out2" in *"INERT until filled in"*) fail "re-run seeds nothing new" "summ
                 *) pass "re-run seeds nothing new" ;; esac
 n="$(jq --arg g "$TEST_DIR/bin/secrets-guard" '[.hooks.PreToolUse[]?.hooks[]? | select(.command == $g)] | length' "$SANDBOX/.claude/settings.json")"
 [ "$n" = "1" ] && pass "re-run adds the guard hook once" || fail "re-run adds the guard hook once" "found $n"
+n="$(jq --arg g "$TEST_DIR/bin/docker-guard" '[.hooks.PreToolUse[]?.hooks[]? | select(.command == $g)] | length' "$SANDBOX/.claude/settings.json")"
+[ "$n" = "1" ] && pass "re-run adds the docker hook once" || fail "re-run adds the docker hook once" "found $n"
 n="$(jq '[.permissions.deny[] | select(. == "Read(~/.secrets/**)")] | length' "$SANDBOX/.claude/settings.json")"
 [ "$n" = "1" ] && pass "re-run adds each deny rule once" || fail "re-run adds each deny rule once" "found $n"
 
