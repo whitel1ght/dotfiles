@@ -35,8 +35,10 @@ the user edits the diary too. `day-plan` opens today's diary in a tmux popup whe
 - Only plan-block lines, the run state, inbox moves, `work/projects/<p>/log/<YYYY>-Q<N>.md` (append) and
   `decisions/NNNN-<slug>.md` (create; on an existing one only `status: superseded`). Never `state.md` mid-day (step 8).
 - Never edit project code yourself.
-- Never merge, mark ready, transition Jira, post to Slack or comment on an MR without asking.
-  A review round gets exactly one confirmation (step 5).
+- Never merge, mark ready, transition Jira, post to Slack or comment on an MR without the user's
+  yes. Asking means a decision (step 9); a review round is one decision per round (step 5).
+- Questions for the user go into the decision queue (step 9): never ask the question in the thread,
+  never wait for the answer. The only question asked in the thread is the triage go-ahead (step 1).
 - MR numbers are markdown links with the repo in the text, never a bare `!2202`:
   `[dashboard!2202](https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2202)`. Known paths:
   `ecfx/ecfx-backend`, `ecfx/ecfx-dashboard`, `ecfx/ecfx-admin`, `ecfx/ecfx-protobufs`,
@@ -73,7 +75,7 @@ has a result to read is lost: tell the user and, on their yes, re-dispatch it in
 worktree (step 2, without `wt add`). Otherwise never re-dispatch an item already `[/]` or `[x]`, and
 never one with `owner=external:<KEY>` (a side session works it). Then start the watcher (step 6;
 `run_day_watch` says when it is already running), process the inbox (step 7), and continue at
-step 3.
+step 3. `decide list` shows decisions still waiting: leave them; answers arrive through the inbox.
 
 `--dry`: stop after printing the triage table (step 1). A merge-class `me` row says it is merged in
 the UI by the user, with the MR link, because the API merge returns 405. Then print, for each auto
@@ -253,9 +255,13 @@ session can address it, set `needs_you=yes`, and stop there.
    `wt add <repo> <KEY> <branch>`.
 4. `subagent({role:"worker", model:<runtime choice>, task:<brief>, cwd:<worktree>, label:<KEY>})`;
    it counts toward the cap of 3. It fixes locally and drafts a reply; it does not push.
-5. When it reports, run the step 3 check on the diff and the tests. Set `needs_you=yes`, then show
-   the user: the findings with their status and SHAs, `git log --oneline @{u}..HEAD`, and the
-   **full** draft reply (`cat` the reply file). Ask once: yes / edit / no.
+5. When it reports, run the step 3 check on the diff and the tests. Set `needs_you=yes` and file
+   the round as a decision (step 9): `--blocks reply`, question `Push the fixes and post the review
+   reply on <repo>!<iid>?`, the context the findings with their status and SHAs,
+   `git log --oneline @{u}..HEAD` and the **full** draft reply (`cat` the reply file), and the
+   options `Push and post the reply` (recommended), `Change the reply first (say how with c)`,
+   `Push nothing and post nothing`. When the answer arrives (step 7), option 1 is yes, option 3 is
+   no, and option 2 or a question back with changes is edit.
 6. yes → push,
    `glab api "projects/$ENC/merge_requests/$IID/discussions/$DID/notes" -X POST -F body=@<reply>`
    (`$DID` is the report's `discussion:` line), `needs_you=no`, apply the memory block, offer the
@@ -317,10 +323,10 @@ Only names of that shape are messages; `*.tmp`, `done/`, `bad/` and any other fi
 never moved, and not mentioned in any output.
 Oldest first, and finish one file completely before opening the next. Each holds frontmatter
 (`key kind session repo mr at`) between two `---` lines, one summary paragraph, and a `memory:`
-block.
+block. `decision` and `clarify` messages also carry `decision: D-<n>` and have no `memory:` block.
 
 1. Validate. Malformed: the frontmatter is missing or has no closing `---`; `kind` is not
-   `done|progress|handback|offplan|service`; `key` (case-insensitive; `day-note` upper-cases it) is
+   `done|progress|handback|offplan|service|decision|clarify`; `key` (case-insensitive; `day-note` upper-cases it) is
    not `[A-Za-z][A-Za-z0-9]*-[0-9]+` (an empty key is fine for any kind: it makes the message
    off-plan work); the summary is empty; or the `memory:` project is not `ecfx|epicmax|personal`.
    No `memory:` block is not malformed (`service` has none). Malformed → `mkdir -p` and `mv` it to
@@ -351,6 +357,13 @@ block.
      `· blocked: worktree is gone and the branch was not found`, `needs_you=yes`, tell the user.
      A `handback` for a key not on the plan, or with an empty key: tell the user, apply only its
      memory block.
+   - `decision` → run `decide show <id>` (the `decision:` field) and apply the chosen option
+     (`## Answer`, with any note) as if the user had said it here: dispatch, merge, reply to the
+     reviewer, defer. Clear the item's `needs_you` when `decide list --json` shows no other open
+     decision for its key, run `decide close <id>`, and write one line: `<id>: <what you did>`.
+   - `clarify` → answer with `decide reply <id> "<answer>"` (look it up first: code, MR, ticket;
+     a cheap `researcher` subagent may help). Nothing in the thread but `<id>: answered your
+     question`.
    - `service` ending `gave up` → items with `waiting=<that service>` drop the field, get `needs_you=yes` and
      `· blocked: <service> down` on the diary line; no resume. Otherwise every item with `waiting=<that service>` drops the field and resumes where it stopped (re-dispatch
      into its worktree, or redo the failed check), with no diary line change. No Unplanned line, no
@@ -375,7 +388,7 @@ block.
      the plan changed after it was written: treat it as `progress`.
    - A second message for the same key is handled in file order, each in full: the later marker and
      evidence win, except never downgrade `[x]`; both memory blocks are applied.
-4. Apply the memory block (step 4; not for `service`), then `diary-links`, then `mv` the file to
+4. Apply the memory block (step 4; not for `service`, `decision` or `clarify`), then `diary-links`, then `mv` the file to
    `inbox/done/$T/` (today's date, not the message's).
 
 Only file it after steps 3 and 4 both succeeded. On failure, leave the file in place and tell the user —
@@ -392,3 +405,24 @@ Then suggest `/end-day` and run it in this session. It consolidates `~/wiki/work
 from the `notes:` lines you collected and ends the run by moving the run state into
 `~/.local/state/run-day/done/`. Never write `state.md` yourself during the day, and do not delete
 the run-state file: `/end-day` does.
+
+## 9. Decisions (questions for the user)
+
+When an item needs the user's call — fix a review nit or merge, defer, pick between product
+options, anything a subagent reports with `needs_you` — file it and go on:
+
+```bash
+decide add --key <KEY, or '' for off-plan> --mr <MR url, optional> --blocks "<what waits: merge, dispatch, reply>" \
+  --question "<one line>" --option "<first>" --option "<second>" [--recommend <n>] <<'EOF'
+<what the user needs to decide without opening anything: the reviewer's words, what each option costs, links>
+EOF
+```
+
+- Set the item's `needs_you=yes`, and write one line: `decision D-<n> queued: <question>`. Never
+  ask the question in the thread and never wait: continue with other items.
+- Recommend when one option is clearly better, and say why in the context.
+- A decision that stops mattering (the reviewer resolved it, the MR merged, the item went another
+  way): `decide withdraw <id> "<reason>"` and `decide close <id>`; clear `needs_you` when nothing
+  else is open for the item.
+- The user answers in the popup (tmux prefix `y`). The answer arrives as an inbox message of kind
+  `decision` or `clarify` (step 7), which the watcher wakes you with.

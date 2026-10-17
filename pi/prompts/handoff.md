@@ -61,6 +61,13 @@ MR: <url or none>
 4. Update the run-state line for `<key>`: `agent=-`, `needs_you=no`, `owner=external:<KEY>`. Leave
    every other field (`class`, `worktree`, `mr`, `retries`, ...).
 
+   Withdraw the item's open decisions; the side session asks the user directly:
+
+   ```bash
+   for id in $(decide list --json | jq -r --arg k "<KEY>" '.[] | select(.key == $k) | .id'); do
+     decide withdraw "$id" handed off && decide close "$id"
+   done
+   ```
 5. Diary: set the item to `[/]` with ` · with you: <KEY>` as the first evidence on the line, keeping
    any MR evidence after it, for example
    `- [/] ecfx-18169 fix the 3 majors · with you: ECFX-18169 · draft MR dashboard!2231  [↗][dashboard!2231]`.

@@ -59,6 +59,9 @@ start on the ECFX-1004 calendar fix.
 
 **Blocked / waiting**
 - ECFX-1007 Bulk archive — waiting on product to decide whether it notifies clients
+
+**Waiting on you**
+- D-7 ECFX-18313 Fix the nit, or merge now?
 ```
 
 These tickets are made up to show the shape. Every line you write must come from the
@@ -84,6 +87,9 @@ How to get there:
   else that moved forward. **Picked up** is a ticket that only moved to In Progress, with
   nothing else yet. **Blocked / waiting** is anything waiting on a person, a release or a
   decision. My prompts and the sessions' replies are the best evidence for this.
+  **Waiting on you** lists the open decisions from `decide list` (id, key, question), one
+  line each; leave the group out when there are none. They stay open: the next `/run-day`
+  picks them up.
 - **Account for every ticket.** Before writing, list every ticket key in the digest,
   across all four sections. Each one must end up in a line, or be one you dropped as
   noise on purpose. A ticket with activity in several repos is easy to under-report:
