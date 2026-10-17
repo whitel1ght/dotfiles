@@ -6,15 +6,22 @@ argument-hint: <KEY>
 # /handoff <KEY>
 
 Move an item out of this day's session so a side session can finish it, without losing context.
-Writes the hand-off note, the run state and the diary — asks nothing.
+Run it in the main session (the one running `/run-day`). Writes the hand-off note, the run state and
+the diary — asks nothing. Never write `~/wiki` beyond the item's diary line, and never touch the
+worktree's files.
+
+`<KEY>` is the argument in uppercase (`ECFX-18169`), `<key>` the lowercase form the run state uses.
 
 Stop when any of these hold, and say which:
 
-- no run-state line for `<KEY>` in `~/.local/state/run-day/$(date +%F).md` (there is no active run)
-- the line already has `owner=external:` (already handed off)
+- no run-state file `~/.local/state/run-day/$(date +%F).md`, or no `- <key> | ...` line in it:
+  say `/handoff needs an item tracked by /run-day`
+- the line already has `owner=external:<KEY>` (already handed off): print the pickup command of
+  step 6 again and change nothing
 - `worktree=-` (nothing was dispatched; there is no work to hand over)
 
-1. Collect progress from the worktree on that line — one command per call, no invented facts:
+1. Collect progress from the worktree on that line, not from the agent, and do not wait for the
+   agent — one command per call, no invented facts:
 
 ```bash
 W=<worktree>
@@ -24,40 +31,44 @@ git -C "$W" diff --stat
 git -C "$W" status --short
 ```
 
-2. Leave the item's subagent alone if it is still running (its id is `agent=` in the run state):
-   the side session adopts it by id. Put the id in the note's `Agent:` line, or `-` when none.
+2. If the line has an agent id (`agent=` not `-`) and that subagent is still running,
+   `subagent_stop({ id: "<id>" })`. The worktree is kept exactly as the agent left it. If it already
+   finished, skip this step.
 
-3. Write `~/.local/state/run-day/handoff/<KEY>.md`, exactly this shape:
+3. Write `~/.local/state/run-day/handoff/<KEY>.md` (`mkdir -p` the directory), exactly this shape:
 
 ```markdown
 # Hand-off: <KEY> — <one-line summary>
-
 Handed off: <ISO timestamp>
 Repo: <repo>
 Worktree: <path>
 Branch: <branch>
-MR: <url or ->
-Agent: <subagent id or ->
+MR: <url or none>
 
 ## Original brief
-
-<the filled brief from ~/.local/state/run-day/scratch/brief-<key>.md, verbatim; if it is gone, the plan line and the ticket description>
+<the filled brief from ~/.local/state/run-day/scratch/brief-<key>.md, verbatim; if it is gone, the plan line and the ticket summary>
 
 ## Progress so far
-
-<what the collected git output actually shows: commits, dirty files, test state>
+<what the collected git output actually shows: commits, diff --stat, dirty files; plus the agent's last report if this session received one>
 
 ## Open questions
-
-<what the side session must decide or find out; "none" only if there are none>
+<what the agent's last report said it could not decide, or "none recorded">
 ```
 
-4. Update the run-state line for `<KEY>`: `agent=-`, `needs_you=no`, `owner=external:<KEY>`. Leave every other field.
+   `<repo>` is the name from the worktree's git remote, or, with no remote, the `<repo>` in the
+   worktree path `.../worktrees/<repo>/<KEY>`.
 
-5. Diary: set the item to `[/]` with ` · with you: <KEY>` as the first evidence on the line, then
+4. Update the run-state line for `<key>`: `agent=-`, `needs_you=no`, `owner=external:<KEY>`. Leave
+   every other field (`class`, `worktree`, `mr`, `retries`, ...).
+
+5. Diary: set the item to `[/]` with ` · with you: <KEY>` as the first evidence on the line, keeping
+   any MR evidence after it, for example
+   `- [/] ecfx-18169 fix the 3 majors · with you: ECFX-18169 · draft MR dashboard!2231  [↗][dashboard!2231]`.
+   Edit only that line and keep its trailing refs last, then
    `~/.local/bin/diary-links ~/wiki/diary/$(date +%F).md`.
 
-6. Print the pickup command for the user:
+6. Print the pickup command for the user, and tell them to run `/report-back done` (or `handback`)
+   in that session when they stop:
 
 ```
 cd <worktree> && pi -n <KEY> "/pickup"

@@ -5,26 +5,28 @@ argument-hint: [KEY]
 
 # /pickup [KEY]
 
-You are a **side session** on one ticket. The day's `/run-day` session owns the records.
+You are a **side session** on one ticket: the user drives you directly. The day's `/run-day`
+session owns the records.
 
 - Never write `~/wiki` — not the diary, not a log entry, not a decision, not a single tick.
-  If the work needs a vault write, say so and let the day session do it.
+  If the work needs a vault write, say so and let the day session do it. If the user asks you to
+  write the vault or the diary, refuse and tell them to do it in the day session.
 - Autonomy ends at a pushed branch and a Draft MR. Merging, marking ready, transitioning Jira,
   posting to Slack or replying on an MR all need the user.
 
-1. Resolve the key: `$ARGUMENTS` if given, else
+1. Resolve the key: `$ARGUMENTS` in uppercase if given, else
 
 ```bash
 git branch --show-current | rg -io '[a-z]+-[0-9]+' | head -1 | tr 'a-z' 'A-Z'
 ```
 
-2. Read `~/.local/state/run-day/handoff/<KEY>.md`. If it is missing, fall back to the ticket
-   (`jira` CLI — see `~/.pi/agent/skills/jira-cli/SKILL.md`) and `git log --oneline -20`, and invent nothing.
+   No key either way: ask the user.
+
+2. Read `~/.local/state/run-day/handoff/<KEY>.md`. If it is missing, say so in one line, then fall
+   back to the ticket (`jira` CLI — see `~/.pi/agent/skills/jira-cli/SKILL.md`) and
+   `git log --oneline -20`, and invent nothing.
 
 3. Warn if the current directory is not the note's `Worktree:` — then stop and ask before doing anything.
-
-   If the note's `Agent:` is an id, `subagent_adopt({ id: "<id>" })` so this session is woken
-   when that agent finishes, and read its result once it has.
 
 4. Summarise in ≤8 lines: what the item is, what is already done, what is left, what is unresolved.
    End with: *this session will not write the vault or the diary.*
