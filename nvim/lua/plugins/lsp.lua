@@ -19,6 +19,12 @@ return {
         registries = {
           'github:mason-org/mason-registry',
         },
+        -- ~/.config/pip/pip.conf points pip at the ecfx CodeArtifact index (a 12-hour token,
+        -- and not every public package): Mason's tools come from public PyPI instead, or a
+        -- failed install (flake8) leaves a "Press ENTER" prompt at every start.
+        pip = {
+          install_args = { '--index-url', 'https://pypi.org/simple' },
+        },
       })
     end,
   },

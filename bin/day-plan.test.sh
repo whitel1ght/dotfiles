@@ -37,7 +37,21 @@ assert_eq "0" "$rc" "exit 0"
 L=$(log)
 assert_contains "$L" "|--- tmux |display-popup |-E |-B |-w |85% |-h |85% " "display-popup, closes on exit, no tmux border (a busy pane overwrites it), 85% x 85%"
 assert_contains "$L" "plan · $(date '+%a %F')" "title carries weekday and date"
-assert_contains "$L" "winbar" "title shown as nvim's winbar, inside the popup"
+assert_contains "$L" "lua require('whitelight.day_plan').float('plan · $(date '+%a %F')') " "opens the plan in a framed float with the dated title"
+
+echo "day-plan — the float (headless nvim)"
+NV="$TEST_DIR/../nvim"
+out="$(nvim --headless --clean --cmd "set rtp^=$NV" -c "edit $DIARY/$TODAY.md" \
+  -c "lua require('whitelight.day_plan').float('plan · test')" \
+  -c "lua local c = vim.api.nvim_win_get_config(0); io.write(table.concat({c.relative, vim.inspect(c.border), vim.inspect(c.title)}, '|'))" \
+  -c 'qa!' 2>&1)"
+assert_contains "$out" "editor|" "a float over the whole popup"
+assert_contains "$out" "╭" "rounded border"
+assert_contains "$out" "plan · test" "title in the border"
+out="$(nvim --headless --clean --cmd "set rtp^=$NV" -c "edit $DIARY/$TODAY.md" \
+  -c "lua require('whitelight.day_plan').float('t')" -c 'close' \
+  -c "lua vim.defer_fn(function() io.write('STILL RUNNING') vim.cmd('qa!') end, 300)" 2>&1)"
+assert_eq "" "$out" "closing the float quits nvim"
 assert_contains "$L" "|nvim " "runs nvim"
 assert_contains "$L" "|+/\\V<!-- start-day:start --> |-c |normal! zt " "searches for the plan block then zt"
 assert_contains "$L" "|-c |set autoread |-c |autocmd FocusGained,BufEnter,CursorHold * checktime " "autoread and checktime"
