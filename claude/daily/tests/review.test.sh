@@ -58,7 +58,7 @@ has "$A" "~/wiki/work/projects/ecfx/state.md" "real example maps to the vault fi
 lacks "$A" "~/wiki/work/projects/<collection>" "no projects/<collection> doubling"
 lacks "$A" "~/wiki/<collection>/<relpath>" "no collection-prefixed vault path"
 has "$A" "Never cite a \`qmd://\` path" "forbids citing qmd paths"
-has "$A" "ecfx, epicmax, personal, diary, reviews, notes" "lists all six collections"
+has "$A" "ecfx, epicmax, personal, diary, reviews, notes, saved" "lists all seven collections"
 has "$A" "does not contain it" "no-answer case says memory lacks it"
 has "$A" "Do not offer further searches" "no-answer case offers no extra searches"
 

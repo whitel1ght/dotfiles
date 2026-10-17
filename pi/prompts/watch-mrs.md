@@ -1,5 +1,5 @@
 ---
-description: Watch my open MRs and address every new review finding with subagents, in a loop
+description: Watch my open MRs and address every new review finding with cheap subagents, in a loop
 argument-hint: "[check interval in seconds, default 3600] [--since 2026-09-20T00:00:00Z]"
 ---
 
@@ -38,19 +38,21 @@ directory and the **worktree**. Handle every MR in the summary, in parallel.
      prints the path), then use it.
 
    **Model selection.** Every request includes a `<subagent_models>` block containing the
-   live selected ∩ available exact `provider/id` list. Before each fixer launch, choose a
-   difficulty-, cost-, and capability-appropriate model solely from the current block and
-   pass it explicitly. Do not treat the wider registry as eligibility, call a model gate,
-   persist choices across rounds, omit `model`, or rely on automatic fallback. If the list
-   is empty, stop the watch loop: launch nothing, ack nothing, start no wait, and tell me.
-   See `~/.pi/agent/model-selection.md`.
+   live selected ∩ available exact `provider/id` list. Before each fixer launch, choose the
+   cheapest model in the current block that can do the work (the stronger retry below
+   aside) and pass it explicitly. Do not treat the wider registry as eligibility, call a
+   model gate, persist choices across rounds, omit `model`, or rely on automatic fallback.
+   If the list is empty, stop the watch loop: launch nothing, ack nothing, start no wait,
+   and tell me. See `~/.pi/agent/model-selection.md`.
 
 2. **Fixer.** In one turn, make one `subagent` call per non-DIRTY MR:
    `subagent({ role: "worker", model: "<live exact id>", task: "<filled brief>",
    cwd: "<worktree>", label: "<repo>!<iid>" })`. One call per MR in the same turn is what runs
    them concurrently, and each call carries its own `cwd`, so fixers land in different
    worktrees. The child starts empty and sees none of this conversation: the brief is
-   self-contained. End the turn after launching.
+   self-contained. For ecfx-backend, add to its brief: "Read
+   ~/.pi/agent/agents/java-micronaut-dev.md first and work by it." End the turn after
+   launching.
    Read-only roles cannot write; when specialist analysis is needed, run that lens through
    `reviewer` or `oracle` first and put its concrete guidance in the `worker` brief—never
    expect a read-only role to fix anything.
@@ -60,9 +62,9 @@ directory and the **worktree**. Handle every MR in the summary, in parallel.
    `git -C <wt> status --porcelain` (must be empty),
    `git -C <wt> log --oneline @{u}..HEAD` (the commits the report names), and that the
    round has a `response.md`. If a fixer failed a finding (tests red, stuck), launch a fresh
-   `worker` in the same worktree with a model from the current live list; its brief names
-   the earlier result file and the specific failure to retry. If that attempt also fails, the finding becomes Deferred with
-   the reason.
+   `worker` once in the same worktree with the same model; its brief names the earlier
+   result file and the specific problem. If it fails again, retry once with a stronger model
+   from the current live list. Still failing: that finding becomes Deferred with the reason.
 4. **Push**: `git -C <wt> push`. Never force. If the push is rejected, stop on this MR:
    ack the round, hold its reply and tell me.
 5. **Reply.**
@@ -85,7 +87,7 @@ Address every finding in a GitLab review on <MR ref>.
 Worktree: <path>, branch <branch>. The project's AGENTS.md is the rulebook.
 Review: <round>/review.md. Discussions with a new note are whole; notes marked NEW are
 what to address, and the earlier notes are context. Response format:
-~/.pi/agent/skills/mr-review-response/SKILL.md.
+~/.pi/agent/skills-team/mr-review-response/SKILL.md.
 Read it, but don't post anything: its step 5 is done for you.
 
 0. git fetch; if the branch is behind its upstream, git merge --ff-only @{u}. If it

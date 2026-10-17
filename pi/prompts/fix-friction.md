@@ -5,8 +5,11 @@ argument-hint: <F-NNN>
 
 # /fix-friction <F-NNN>
 
-You orchestrate one fix; a subagent writes it. Follow `/orchestrate` for briefs and checking results,
-and `~/projects/dotfiles/pi/model-selection.md` for the model. The fix ladder is the rule: a failure is
+Arguments: $ARGUMENTS
+
+You orchestrate one fix; a subagent writes it. Follow `/orchestrate`'s rules
+(`~/projects/dotfiles/pi/prompts/orchestrate.md`) for models, briefs and checking results, and
+`~/projects/dotfiles/pi/model-selection.md` for the model. The fix ladder is the rule: a failure is
 handled by a **script** first (retry, health gate, preflight, cache, fallback, background waiter), then
 **config** (re-auth, env var, setting, dropping a dead step), and only then **prompt** text, when the
 problem is the model's judgement. Runtime handling spends no model tokens.
@@ -17,13 +20,13 @@ Never push. Never merge before the user's explicit approval in step 4. Below, `F
 
 ## 1. Check
 
-Read `~/wiki/work/friction/$F.md`. Refuse, saying why, and stop, when it is missing or `status` is not
-`proposed`, `regressed` or `open`. If `$W` or branch `friction-$F` already exists, ask whether to
-continue in it or start over.
+Read `~/wiki/work/friction/$F.md` (frontmatter, `## Evidence`, `## Diagnosis`, `## Proposal`). Refuse,
+saying why, and stop, when the file is missing or `status` is not `proposed`, `regressed` or `open`. If
+`$W` or branch `friction-$F` already exists, say so and ask whether to continue in it or start over.
 
 ## 2. Worktree
 
-Local main is ahead of origin, so the branch starts from local main:
+Local main is ahead of origin, so the branch starts from local main, not origin's default:
 
 ```bash
 git -C ~/projects/dotfiles branch friction-$F main && wt add dotfiles friction-$F
@@ -32,12 +35,13 @@ git -C ~/projects/dotfiles branch friction-$F main && wt add dotfiles friction-$
 ## 3. Implement
 
 Launch one `subagent({ role: "worker", model, task, cwd: "<W>", label: "$F", max_minutes: 90 })`.
-`model` is an exact `provider/id` from the live list, a capable coding model. The task is
-self-contained, since the child starts empty:
+`model` is an exact `provider/id` from the live list, a capable coding model, always given
+explicitly. Write the brief to the scratchpad first and pass it as `task`; it is self-contained, since
+the child starts empty:
 
 - **Goal:** implement the F-file's proposal; paste the full F-file content.
-- **Rung:** lowest rung that works (script > config > prompt). Report the rung and why each lower
-  rung does not fit; a prompt-only fix needs that justification written out.
+- **Rung:** use the lowest rung that works (script > config > prompt). Say which rung you chose and
+  why each lower rung does not fit; a prompt-only fix needs that justification written out.
 - **Test:** add a test that fails without the fix and passes with it. No test, no fix.
 - **Suites:** what the change touches: `bin/<x>.test.sh` for a changed script,
   `claude/daily/tests/run-all.sh` for the plugin, `node --test` in a touched pi extension,

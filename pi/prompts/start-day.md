@@ -32,10 +32,10 @@ when they depend on each other), MRs waiting on my review, and Jira.
 
 **Slack** (the Slack MCP server, registered as `slack`; its tools are named
 `mcp__slack__<tool>`). Do not assume tool names: from a codemode script, discover the
-server's search and read tools with `searchTools` / `describeNamespace("mcp__slack")`
-and use only those. The server can also send messages, react and edit canvases; never
-call those. Find my user ID from what the server's tool descriptions or profile tools
-tell you. Run two searches with `after` set to the window start:
+server's search, thread-read and user-profile tools with `searchTools` /
+`describeNamespace("mcp__slack")` and use only those. The server can also send
+messages, react and edit canvases; never call those. Find my user ID from what the
+server's tool descriptions or profile tools tell you. Run two searches with `after` set to the window start:
 
 - direct messages: filter `is:dm`, sorted by timestamp, then drop app and bot DMs
   (Jira, GitLab and the like), since the digest already covers those sources. The
@@ -50,13 +50,17 @@ at the end of the plan, and carry on.
 
 **Calendars**, from local midnight to midnight, read-only:
 
-- If a read-only calendar tool is actually registered this session, use it to gather
-  today's events; show their times as local time. Otherwise write "Outlook not
-  connected" and "Google Calendar not connected" at the end of the plan, and carry on.
-  ECFX meetings live in Outlook; my epicmax events live in Google Calendar.
+- ECFX meetings live in Outlook. If a read-only Outlook calendar tool is actually
+  registered this session, search the day with query `*`, oldest first. Its times are
+  in the mailbox's time zone, which it names; show them as local time.
+- My epicmax events live in Google Calendar: if a read-only Google Calendar tool is
+  actually registered this session, list the events on the primary calendar.
 
-Never create, change or answer events. List today's events with start time and title,
-merged in time order. Skip events I declined and all-day events that aren't meetings.
+Never create, change or answer events, or send mail. List today's events with start
+time and title, merged in time order. Skip events I declined and all-day events that
+aren't meetings. If a calendar has no such tool or one needs a sign-in, write "Outlook
+not connected" or "Google Calendar not connected" at the end of the plan, and carry on
+with the other.
 
 ## 3. Write the plan
 
@@ -127,6 +131,8 @@ Print the plan in the chat, then save it:
 <the plan, starting with #### Plan>
 PLAN
 ```
+
+Link an MR as plain text with a trailing `[↗][label]` ref, or inline `[dashboard!940](url)`; `save` converts inline links to trailing refs with the URLs listed below the plan.
 
 This puts it at the top of today's `### ECFX` section, creating today's diary entry from
 my template if needed. Running it again the same day replaces the plan and nothing else.

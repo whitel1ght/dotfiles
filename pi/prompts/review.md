@@ -47,7 +47,7 @@ itself), show it and ask before going on.
 
 For one period with `from`, `to`, `id`, `level`:
 
-1. Numbers (the `daily-stats` CLI; output is one JSON object):
+1. Numbers (the `daily-stats` CLI; output is one JSON object, see the spec for its fields):
 
    ```bash
    STATS="$(daily-stats <from> <to>)"
@@ -79,12 +79,13 @@ For one period with `from`, `to`, `id`, `level`:
    `~/.pi/agent/model-selection.md`). Then end the turn; the `[pi-sub]` wake-up continues here.
    Generate periods one at a time: a month needs its weeks written first.
 
-   > Write the `<level>` review `<id>` (<from> to <to>) for the user's own retrospective. Read `~/wiki/AGENTS.md` and `~/wiki/work/_templates/review-<level>.md` first and follow the template's section headings and order. Do not write frontmatter, a title or a Numbers section: the parent session adds them. Read these inputs: <paths>. The numbers are already written in `<R>/numbers-<id>.md`: do not state any count that is not in that file or in the inputs you can count directly. Output only these sections, with these exact `## ` headings, in this order: **Shipped** (MRs as markdown links, `[repo!iid](url)`, only those in the `done_mr_links` or `merged_mrs` below), **Per project** (one short paragraph each for ecfx, epicmax, personal where there is anything), **Decisions** (one line each; every line links its decision file or is omitted), **Carry-over & time sinks** (items deferred two or more times, and where time went, from the stats below), **Brag bullets** (3 to 7, impact-phrased: what changed for whom). Every MR link anywhere in the file must appear in the `daily-stats` output below or in a decision or log file you were given: never construct a link. When there are no inputs at all, still write every section, each as `Nothing this period.`; do not ask or stop. Plain, specific, no filler; every claim traceable to an input. Never write anything under `~/wiki`. Write the result to `<R>/review-<id>.md` and reply with only that path. Repeat-deferred items and MR links from `daily-stats`: <the `repeat_deferred`, `done_mr_links` and `merged_mrs` fields of STATS>.
+   > Write the `<level>` review `<id>` (<from> to <to>) for the user's own retrospective. Read `~/wiki/AGENTS.md` and `~/wiki/work/_templates/review-<level>.md` first and follow the template's section headings and order. Do not write frontmatter, a title or a Numbers section: the parent session adds them. Read these inputs: <paths>. The numbers are already written in `<R>/numbers-<id>.md`: do not state any count that is not in that file or in the inputs you can count directly. Output only these sections, with these exact `## ` headings, in this order: **Shipped** (MRs as markdown links, `[repo!iid](url)`, only those in the `done_mr_links` or `merged_mrs` of the stats below), **Per project** (one short paragraph each for ecfx, epicmax, personal where there is anything), **Decisions** (one line each; every line links its decision file or is omitted), **Carry-over & time sinks** (items deferred two or more times, and where time went, from the stats below), **Brag bullets** (3 to 7, impact-phrased: what changed for whom). Every MR link anywhere in the file must appear in the `daily-stats` output below or in a decision or log file you were given: never construct a link. When there are no inputs at all, still write every section, each as `Nothing this period.`; do not ask or stop. Plain, specific, no filler; every claim traceable to an input. Never write anything under `~/wiki`. Write the result to `<R>/review-<id>.md` and reply with only that path. Repeat-deferred items and MR links from `daily-stats`: <the `repeat_deferred`, `done_mr_links` and `merged_mrs` fields of STATS>.
 
 4. On the wake-up, assemble and check. The review's shape is fixed by
-   `~/wiki/work/_templates/review-<level>.md`: frontmatter, then `# {{period}} review`, then
-   `## Numbers`, then the five sections. This session fills the template's tokens and builds the
-   file; the subagent contributes only the sections after Numbers:
+   `~/wiki/work/_templates/review-<level>.md` (plan-wiki Task 3): frontmatter, then
+   `# {{period}} review`, then `## Numbers`, then the five sections. This session fills the
+   template's tokens and builds the file; the subagent contributes only the sections after
+   Numbers:
 
    ```bash
    TPL=~/wiki/work/_templates/review-<level>.md
@@ -101,7 +102,8 @@ For one period with `from`, `to`, `id`, `level`:
    yourself or re-launch with the failure named if one fails:
    - the frontmatter has `type: review`, `date` and `period`, and no `{{` remains in the file;
    - the `## Numbers` heading appears once and its figures equal `jq '.items'` of
-     `daily-stats <from> <to>` (run it again);
+     `daily-stats <from> <to>` (run it again: shell variables do not carry between bash
+     calls);
    - every `[...](https://...)` link anywhere in the file appears in `done_mr_links` or
      `merged_mrs` or in a decision or log file given to the subagent;
    - no section is empty (write `Nothing this period.` instead).
@@ -119,5 +121,7 @@ git -C ~/wiki commit -m "wiki: review <id>[, <id>...]"
 ```
 
 When a regenerated review is identical to the committed one, nothing to commit is fine: say so
-and go on. If `qmd` fails, say so in one line and still commit. Print the path of the requested
+and go on.
+
+If `qmd` fails, say so in one line and still commit. Print the path of the requested
 review and its Brag bullets.

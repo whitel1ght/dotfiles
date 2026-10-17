@@ -11,9 +11,9 @@ Run the panel from the `mr-review-multi-agent` skill against these MRs, but **re
 the result lands in this chat and in a local file, never on GitLab. Several URLs mean one
 feature spread across projects — review them together as one change, not one by one.
 
-You are the orchestrator and the expensive agent. Spend your context on routing and
-synthesis; let named specialist agents do the reading. Pi specialist agents are read-only
-by default.
+You are the orchestrator and the expensive model. Spend your tokens on routing and
+synthesis; let the reviewers (named specialist agents on a cheaper model) do the reading.
+Pi specialist agents are read-only by default.
 
 ## Hard rules
 
@@ -22,16 +22,18 @@ by default.
   other than GET, `--field`, or `--input`. Do not load the `mr-review-multi-agent`
   skill itself — its posting steps are the part this command replaces.
 - **Never touch the user's working tree.** Review from a detached worktree (step 2).
+- **Every reviewer runs on a cheaper model than yours**, passed explicitly as `model` on
+  the `subagent` call (step 3), whatever its role says. Nothing else reads the diff.
 - Don't read the full diff or the reviewer brief yourself. Files are written by shell
   commands and read by reviewers.
 
 ## 1. Stage
 
 ```bash
-SKILL=~/.pi/agent/skills/mr-review-multi-agent/SKILL.md
+SKILL=~/.pi/agent/skills-team/mr-review-multi-agent/SKILL.md
 RUN=/tmp/review-local/$(date +%Y%m%d-%H%M%S); mkdir -p "$RUN"
 # Reviewer brief (the skill's §3), run path substituted — written, not read by you.
-# Its ~/.agents/modules/ references resolve as-is.
+# plink already resolved its plugin paths to absolute ones.
 awk '/^### 3\. /{p=1} /^### 4\. /{p=0} p' "$SKILL" \
   | sed -e "s#/tmp/mr-review-<iid>/#$RUN/#g" > "$RUN/brief.md"
 echo "RUN=$RUN"
@@ -39,8 +41,8 @@ echo "RUN=$RUN"
 
 Shell variables don't survive between Bash calls — use the echoed literal path from here on.
 
-If the skill file is missing, stop and say the `mr-review-multi-agent` skill isn't
-installed.
+If `$SKILL` is missing, stop and say the team skills aren't generated (`plink` builds
+`~/.pi/agent/skills-team/` from claude-components).
 
 Then read only the panel-selection section into your context:
 `awk '/^### 2\. /{p=1} /^### 3\. /{p=0} p' "$SKILL"`.
@@ -54,7 +56,7 @@ glab mr view <iid> -R <project> --output json \
   | jq '{title, author: .author.username, source_branch, target_branch, draft, description, sha: .diff_refs.head_sha, base: .diff_refs.base_sha}' \
   > "$RUN/<slug>.meta.json"
 glab mr diff <iid> -R <project> > "$RUN/<slug>.diff"
-bash ~/.pi/agent/skills/mr-review/scripts/locate-checkout.sh <project>   # exit 1/2: see below
+bash ~/.pi/agent/skills-team/mr-review/scripts/locate-checkout.sh <project>   # exit 1/2: see below
 git -C <checkout> fetch -q origin <source_branch>
 git -C <checkout> worktree add -q --detach "$RUN/<slug>" <head_sha>
 ```
@@ -71,7 +73,7 @@ you read about the change. Then write `$RUN/context.md`:
   what matters), worktree path, diff path, changed files.
 - For multi-MR: how the MRs relate (API producer/consumer, shared contract, rollout
   order) and an explicit instruction to check the seams between them.
-- Relevant `AGENTS.md` rules from each worktree root — excerpt, not a dump.
+- Relevant `CLAUDE.md` (or `AGENTS.md`) rules from each worktree root — excerpt, not a dump.
 - A file-to-lens map so each reviewer knows where to look first.
 - Unresolved prior discussion points, if any.
 

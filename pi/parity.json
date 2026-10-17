@@ -1,4 +1,12 @@
 {
+  "ask-wiki": "0094852f19747c9f9af5c8a76f5bf1f05b733899",
   "clean-worktrees": "a4c063763c27ecc08cfc8aa04b4de7cad7851b47",
-  "sync-tickets": "aadaa340521e26bd6ca35aa56c8a48679f671bb4"
+  "end-day": "8cdc962b5ed929c14c0a11b5d7e8e1d76b0b16d7",
+  "fix-friction": "ea0032000371142943dced8cc5327c412f1fd2c3",
+  "orchestrate": "ba9967ba11ec036c867afe0b1631e52b7194cae9",
+  "review": "8caa3e666ff27bac39fff996474cf71a7e3256d2",
+  "review-local": "d5197a9514828b175f53c188c87a09a43e6dcb61",
+  "start-day": "cf94fdbd7299c2e9ac7301b8cdb0dd47ec5c970f",
+  "sync-tickets": "aadaa340521e26bd6ca35aa56c8a48679f671bb4",
+  "watch-mrs": "0ae0b2934a2d6ac1dd21d9b19bf6431daaf3d819"
 }

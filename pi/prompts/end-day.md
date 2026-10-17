@@ -24,10 +24,11 @@ fd -d 1 -e md . ~/.local/state/run-day/inbox 2>/dev/null | sort
 ```
 
 Then process any messages waiting in `~/.local/state/run-day/inbox/*.md` the way section 7
-(Inbox) of `~/.pi/agent/prompts/run-day.md` says — read that file first — before the report is
-written, so that what was reported counts as reported. This happens whether or not the day has
-a plan: a missing `<!-- start-day:start -->` block only skips the comparison under "Unreported
-activity", never this step.
+(Inbox) of `~/.pi/agent/prompts/run-day.md` says — read that file first; when the link is
+missing, read `~/projects/dotfiles/pi/prompts/run-day.md` in the main checkout — before the
+report is written, so that what was reported counts as reported. This happens whether or not
+the day has a plan: a missing `<!-- start-day:start -->` block only skips the comparison under
+"Unreported activity", never this step.
 
 ## Write the report
 
@@ -113,7 +114,8 @@ block for the day, read it first and build on it: keep every Done line that carr
 or other evidence, and only add new material or move a line forward. Never regress a line, for
 example `Done` to `In progress`, because this run's digest is thinner than the earlier one.
 When that block already has a `**Standup**` paragraph, rewrite it for the whole day rather
-than appending. Note the path it printed, then continue with the next section.
+than appending. Links in the report may be written inline or as trailing `[↗][label]` refs;
+`save` converts them to refs. Note the path it printed, then continue with the next section.
 
 ## Unreported activity
 
@@ -137,22 +139,24 @@ the edits made by this very report). Only the plan block counts, never the diary
 
 If nothing is unreported, say so in one line. Otherwise show a short list, one line each:
 `<key or topic> - <one-line summary> - <evidence: MR link or commit>`. Ask which to add, then stop
-and wait for my answer (yes or no per item). Do not go on to "Consolidate memory", and do not add
-anything, before the answer arrives. For each yes, add one line under the plan block's
-`**Unplanned**` group (create the group as the last group, just above `<!-- start-day:end -->`,
-when it is missing): `- [x] <key> <summary> · MR <repo>!<iid>  [↗][<repo>!<iid>]` (the URL goes in
-a `[<repo>!<iid>]: <url>` line above the end marker; an inline `[<repo>!<iid>](<url>)` is fine
-too), or `· note: <summary>` when there is no MR, because the diary's tick guard refuses an `[x]`
-without an MR link, `merged` or `· note:`. Use `[/]` for work that is clearly unfinished. After the
-edits run `~/.local/bin/diary-links ~/wiki/diary/$DAY.md`. Never add a line I did not approve and
-never edit a line outside the block.
+and wait for my answer (yes or no per item), and do not continue until answered. Do not go on to
+"Consolidate memory", and do not add anything, before the answer arrives. For each yes, add one
+line under the plan block's `**Unplanned**` group (create the group as the last group, just
+above `<!-- start-day:end -->`, when it is missing):
+`- [x] <key> <summary> · MR <repo>!<iid>  [↗][<repo>!<iid>]` (the URL goes in a
+`[<repo>!<iid>]: <url>` line above the end marker; an inline `[<repo>!<iid>](<url>)` is fine too),
+or `· note: <summary>` when there is no MR, because the diary's tick guard refuses an `[x]` without
+an MR link, `merged` or `· note:`. Use `[/]` for work that is clearly unfinished. After the edits
+run `~/.local/bin/diary-links ~/wiki/diary/$DAY.md`. Never add a line I did not approve and never
+edit a line outside the block.
 
 ## Consolidate memory
 
 Skip this step, and say so in one line, when `~/wiki/work/projects` does not exist or the day has
-no log entries below (the commit and the end of the run still happen). It is the only place
+no log entries below (the commit and the end of the run below still happen). It is the only place
 project `state.md` files change; during the day `/run-day` only appends logs and decisions.
 
+`$DAY` was defined above (set it again in each command, since shell state may not carry over).
 Find which projects were touched — `end-day touched` prints one project name per line, the
 projects with a `## <day> <title>` log entry or a decision dated `<day>`; empty output means
 none:
@@ -173,7 +177,7 @@ For each project `<p>` it prints:
    headings, set its `date` to `$DAY`, and keep it at **60 lines or fewer** (`wc -l` it). It is a
    snapshot, not a history: history lives in the log.
 3. If the project's one-line focus changed, update its line in the `## Long-term memory (projects)`
-   section of `~/wiki/index.md` (edit only that section).
+   section of `~/wiki/index.md` (the existing vault index; edit only that section).
 
 ## Reflect on friction
 
@@ -213,7 +217,7 @@ S="$(~/.local/bin/friction-ledger diary-section --date "$DAY" --mine-json "$M")"
 
 `end-day friction` puts it between its own markers at the end of the diary, so a re-run replaces it and the report is never touched. Mention the counts in one line.
 
-## Commit and end the run
+## Index, commit and end the run
 
 This always runs, even when the memory step was skipped: the report and the diary edits still get
 committed. Set `DAY` again here (new shell):
@@ -230,7 +234,7 @@ If `qmd` fails, say so in one line and still commit. `wiki-sync` pushes the day 
 else changed) to the VPS; if it fails, show its one-line error and point at `wiki-sync status`.
 Never touch `*.pdf` or `*.kdbx`.
 
-Then end the run: move `~/.local/state/run-day/$DAY.md` into `~/.local/state/run-day/done/`
+Finally end the run: move `~/.local/state/run-day/$DAY.md` into `~/.local/state/run-day/done/`
 (create the directory). That switches off the run-state injection and the event watcher. Skip it
 when there is no such file.
 
