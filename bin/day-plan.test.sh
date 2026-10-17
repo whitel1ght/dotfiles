@@ -35,8 +35,9 @@ echo "day-plan — popup (--wait)"
 run --wait; rc=$?
 assert_eq "0" "$rc" "exit 0"
 L=$(log)
-assert_contains "$L" "|--- tmux |display-popup |-E |-w |85% |-h |85% |-b |rounded " "display-popup, closes on exit, 85% x 85%, rounded border"
-assert_contains "$L" "|-T | plan · $(date '+%a %F')  |" "title carries weekday and date"
+assert_contains "$L" "|--- tmux |display-popup |-E |-B |-w |85% |-h |85% " "display-popup, closes on exit, no tmux border (a busy pane overwrites it), 85% x 85%"
+assert_contains "$L" "plan · $(date '+%a %F')" "title carries weekday and date"
+assert_contains "$L" "winbar" "title shown as nvim's winbar, inside the popup"
 assert_contains "$L" "|nvim " "runs nvim"
 assert_contains "$L" "|+/\\V<!-- start-day:start --> |-c |normal! zt " "searches for the plan block then zt"
 assert_contains "$L" "|-c |set autoread |-c |autocmd FocusGained,BufEnter,CursorHold * checktime " "autoread and checktime"

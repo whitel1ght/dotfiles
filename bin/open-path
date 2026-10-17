@@ -198,8 +198,10 @@ picked="$(
             print disp "\t" $1 "\t" $2
           }' \
         | fzf --delimiter='\t' --with-nth=1 --scheme=path \
-              --height=100% --layout=reverse --border=none \
-              --prompt="open in $editor_name > " \
+              --height=100% --layout=reverse \
+              --border=rounded --border-label=" open in $editor_name " \
+              --color='border:#bb9af7,label:#7aa2f7:bold' \
+              --prompt="> " \
               --preview='sed -n 1,200p {2}' \
               --preview-window='down,60%,border-top'
 )"

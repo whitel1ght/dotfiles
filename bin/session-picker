@@ -307,10 +307,10 @@ if [ -z "$windows" ]; then
     exit 0
 fi
 
-# Show every busy window, including the current one. Plain fzf (not fzf-tmux):
-# the caller runs us inside a `tmux popup`, which already frames the overlay — so
-# fzf itself uses no outer border (avoids a double frame), only a thin separator
-# line on the preview.
+# Show every busy window, including the current one. Plain fzf (not fzf-tmux),
+# inside a `tmux popup` opened without a border (-B): with a busy pane underneath,
+# tmux 3.7 paints that pane over the popup's own top border row. So fzf draws the
+# frame (lavender, title as its blue label), with a thin separator on the preview.
 #
 # Column layout from annotate (tab-separated):
 #   f1 = raw "session:window" (hidden; used for selection + preview arg)
@@ -352,9 +352,9 @@ choice="$("$SELF" $rows_flags \
         --no-sort --cycle --multi \
         --layout=reverse \
         --info=inline \
-        --border=none \
+        --border=rounded --border-label=" $title " \
         --padding=0 --margin=0 \
-        --prompt="$title  ›  " \
+        --prompt="›  " \
         --pointer='▎' --marker='●' \
         --header='enter jump · tab mark · ctrl-x close · ctrl-r force · ctrl-/ preview' --header-first \
         --preview="$SELF --preview {1}" \
@@ -364,7 +364,7 @@ choice="$("$SELF" $rows_flags \
         --bind="$focus_bind" \
         --bind="ctrl-x:execute-silent($SELF --close {+1})+reload($SELF $rows_flags)" \
         --bind="ctrl-r:execute-silent($SELF --close --force {+1})+reload($SELF $rows_flags)" \
-        --color='fg:-1,bg:-1,hl:6,fg+:15,bg+:-1,hl+:14,border:8,label:7,prompt:6,pointer:5,header:8,info:8,preview-border:8' \
+        --color='fg:-1,bg:-1,hl:6,fg+:15,bg+:-1,hl+:14,border:#bb9af7,label:#7aa2f7:bold,prompt:6,pointer:5,header:8,info:8,preview-border:8' \
     | cut -f1 | sed 's/ (here)$//')"
 
 [ -n "$choice" ] || exit 0

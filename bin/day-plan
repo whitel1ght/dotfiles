@@ -40,8 +40,14 @@ if grep -qF -- "$START" "$file"; then
   nvim_args=("+/\\V$START" -c 'normal! zt' "${nvim_args[@]}")
 fi
 
+# No tmux border (-B): with a busy pane underneath, tmux 3.7 paints that pane over the popup's
+# top border row and the title vanishes. The title goes in nvim's winbar instead, in the blue of
+# the other popups' labels.
+title="plan · $(date '+%a %F')"
+nvim_args+=(-c 'highlight DayPlanTitle guifg=#7aa2f7 gui=bold'
+            -c "let &l:winbar = '%#DayPlanTitle# $title '")
+
 target=()
 [ -z "${TMUX_PANE:-}" ] || target=(-t "$TMUX_PANE")
-exec tmux display-popup -E -w 85% -h 85% -b rounded "${target[@]}" \
-  -T " plan · $(date '+%a %F') " \
+exec tmux display-popup -E -B -w 85% -h 85% "${target[@]}" \
   nvim "${nvim_args[@]}" -- "$file"
