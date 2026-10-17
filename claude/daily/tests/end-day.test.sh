@@ -53,4 +53,8 @@ has "$F" "(yesterday)" "parenthesised case pattern"
 awk '/^## Consolidate memory/{a=NR} /^## Index, commit and end the run/{b=NR} END{exit !(a&&b&&a<b)}' "$F" && pass "diary commit is its own step after memory" || fail "commit step" "missing"
 lacks "$F" "ls ~/wiki/*" "no zsh-failing globs"
 
+
+has "$F" "**Waiting on you**" "report lists open decisions"
+has "$F" "decide list" "reads them from the queue"
+
 finish

@@ -89,4 +89,9 @@ has "$J" "allowed-tools: Bash(*/jira-write --dry-run:*)" "only the dry run is pr
 lacks "$J" '"${CLAUDE_PLUGIN_ROOT}' "script path is unquoted so the allow rule matches"
 lacks "$J" '"$S"' "no variable carried between Bash calls"
 
+
+H="$C/handoff.md"
+has "$H" "decide withdraw" "handoff withdraws the item's open decisions"
+has "$H" "handed off" "with the reason handed off"
+
 finish

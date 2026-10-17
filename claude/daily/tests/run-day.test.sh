@@ -23,7 +23,8 @@ has "$F" "\${CLAUDE_PLUGIN_ROOT}/templates/ticket-brief.md" "uses the ticket bri
 has "$F" "\${CLAUDE_PLUGIN_ROOT}/templates/review-round-brief.md" "uses the review-round brief"
 has "$F" "no draft-only mode" "records the mr-review-response limitation"
 has "$F" '-F "body=@<reply file>"' "posts the reply with glab api"
-has "$F" "\`yes\` / \`edit\` / \`no\`" "one confirmation per round"
+has "$F" "file the round as a decision (section 9)" "one decision per round"
+has "$F" "option 1 is \`yes\`, option 3 is \`no\`" "maps the answer onto yes / no / edit"
 has "$F" "markdown link with the repo in the link text" "MR link rule"
 has "$F" "dry run: nothing created" "dry-run ending line"
 has "$F" "changes-since --cursor run-day >/dev/null" "seeds the watcher cursor right after creating the run state"
@@ -76,5 +77,16 @@ for pair in 'LOGF=|P=' 'LOGF=|Q=' '$ENC|ENC=' '$IID|IID=' '$INBOX|INBOX=' '$T/|T
   u="${pair%%|*}"; d="${pair##*|}"
   block_sets "$F" "$u" "$d" && pass "blocks using $u set $d" || fail "blocks using $u set $d" "a Bash block relies on $d from another call"
 done
+
+
+echo "== decision queue =="
+has "$F" "## 9. Decisions" "has a decisions section"
+has "$F" "decide add --key" "files decisions with decide add"
+has "$F" "decision D-<n> queued: <question>" "one thread line per decision"
+has "$F" "never ask the question in the thread" "no questions in the thread"
+has "$F" "\`done\`, \`progress\`, \`handback\`, \`offplan\`, \`service\`, \`decision\`, \`clarify\`" "inbox accepts the two new kinds"
+has "$F" "\`decision\`: run \`decide show <id>\`" "applies an answer"
+has "$F" "\`clarify\`: answer with \`decide reply <id> " "answers a question back in the decision"
+has "$F" "For every kind but \`service\`, \`decision\` and \`clarify\`" "no memory block for the new kinds"
 
 finish

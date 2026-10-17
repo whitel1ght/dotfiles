@@ -46,6 +46,13 @@ MR: <url or none>
 ```
 
 5. Run state: set `agent=-`, `needs_you=no`, `owner=external:<KEY>` on the line; leave `class`, `worktree`, `mr`, `retries`.
+   Withdraw the item's open decisions; the side session asks the user directly:
+
+   ```bash
+   for id in $(decide list --json | jq -r --arg k "<KEY>" '.[] | select(.key == $k) | .id'); do
+     decide withdraw "$id" handed off && decide close "$id"
+   done
+   ```
 6. Diary: set the item's line to `[/]` and put `· with you: <KEY>` first in its evidence, keeping any MR evidence after it (for example `- [/] ecfx-18169 fix the 3 majors · with you: ECFX-18169 · draft MR dashboard!2231  [↗][dashboard!2231]`). Edit only that line, keep its trailing refs last, then run `diary-links ~/wiki/diary/$(date +%F).md`.
 7. Print, and tell the user to run `/report-back done` (or `handback`) in that session when they stop:
 

@@ -20,7 +20,8 @@ Paths used below (`T` is today's date, `date +%F`):
 
 - Subagents never write to `~/wiki`. This session is the only writer during the day.
 - This session edits only: diary lines inside the plan block, the run-state file, inbox files it moves to `inbox/done/<T>/` or `inbox/bad/`, `~/wiki/work/projects/<p>/log/<YYYY>-Q<N>.md` (append), `~/wiki/work/projects/<p>/decisions/NNNN-<slug>.md` (create; and an old decision's `status` (only to `superseded`), section 4). It never edits project code (`/orchestrate`: that goes to subagents).
-- Never merge, mark an MR ready, transition a Jira ticket, post to Slack or post a comment without asking. The one exception is a review round (below), which has its own single confirmation.
+- Never merge, mark an MR ready, transition a Jira ticket, post to Slack or post a comment without the user's yes. Asking means a decision (section 9); a review round (below) is one decision per round.
+- Questions for the user go into the decision queue (section 9): never ask the question in the thread, never wait for the answer. The only question asked in the thread is the triage go-ahead (section 1).
 - Every MR number in text you show the user is a markdown link with the repo in the link text, e.g. `[dashboard!2202](https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2202)`, never a bare `!2202`. Known paths: `ecfx/ecfx-backend`, `ecfx/ecfx-dashboard`, `ecfx/ecfx-admin`, `ecfx/ecfx-protobufs`, `ecfx/claude-components`.
 - Each Bash call is a new shell: re-set the variables a block uses in that same call, or use literal values. Nothing set in an earlier block is still there.
 - A GitLab API merge returns 405 on these repos: for a merge item, give the user the MR link to merge in the UI.
@@ -112,7 +113,7 @@ LOGF=~/wiki/work/projects/$P/log/$Q.md
 - **decision** (not `none`): create `~/wiki/work/projects/$P/decisions/$NEXT-<slug>.md` from `~/wiki/work/_templates/decision.md`: copy the template, fill its `{{project}}`, `{{date}}`, `{{tickets}}`, `{{repos}}`, `{{num}}` (`$NEXT`) and `{{title}}` tokens, and replace the `<...>` hints under Context, Decision and Consequences with the block's `context`, `decision` and `consequences`. Keep the template's frontmatter as is (`status: accepted`). Delete the commented `# supersedes:` line, unless the decision replaces one: then make it `supersedes: <NNNN-old-slug>` and change the old file's `status` to `superseded`, the only edit a decision file ever gets.
 - **state_change**: do not edit `state.md`; `/end-day` consolidates it. Append it as `  <p>: <line>` under `notes:` in the run-state file so it survives compaction.
 
-## 5. Review rounds (automatic, one confirmation per round)
+## 5. Review rounds (automatic, one decision per round)
 
 Trigger: a prompt line `[daily-event] review | ...` or `[daily-event] comment | ...` for an MR attached to a today item (the watcher only sends those; event line format: `[daily-event] <kind> | <repo>!<iid> | <TICKET> | <summary> | <url>`).
 
@@ -131,7 +132,7 @@ printf '%s %s %s\n' "$PROJECT_PATH" "$IID" "$ENC"
    `<urlencoded path>` below means the `$ENC` value printed by this block (write it out literally in later calls, or derive it again in the same call), `{{PROJECT_PATH}}` is `$PROJECT_PATH`, `{{MR_IID}}` is `$IID`. If the url is `-` or does not match, use the `mr=<group>/<repo>!<iid>` field of the item's run-state line instead; if that is empty too, ask the user for the MR link.
    Find the item's worktree in the run-state file. If it has none, get the branch with `glab api "projects/<urlencoded path>/merge_requests/<iid>" | jq -r .source_branch` and run `wt add <repo> <KEY> <branch>`.
 2. Spawn a background `sonnet` subagent (counts toward the cap of 3) with `${CLAUDE_PLUGIN_ROOT}/templates/review-round-brief.md` filled in. `{{REPLY_FILE}}` is `<scratchpad>/round-<repo>-<iid>.md`. The template's ten placeholders are {{BRANCH}}, {{EVENT_LINE}}, {{KEY}}, {{MR_IID}}, {{MR_URL}}, {{PROJECT_PATH}}, {{PROJECT}}, {{REPLY_FILE}}, {{REPO}}, {{WORKTREE}} (the template is the source of truth); `grep -c '{{'` on the filled review-round brief must print 0. The agent fixes (commits locally, no push) or declines or defers every finding and drafts the reply; `shared:mr-review-response` has no draft-only mode, so the brief stops it before its post step.
-3. When it reports: run the check from step 3 on the diff and tests. Set `needs_you=yes`. Show the user: the findings with their status and SHAs, `git log --oneline` of the new commits, and the full draft reply (`cat` the reply file). Ask: `yes` / `edit` / `no`.
+3. When it reports: run the check from step 3 on the diff and tests. Set `needs_you=yes` and file the round as a decision (section 9): `--blocks reply`, question `Push the fixes and post the review reply on <repo>!<iid>?`, the context the findings with their status and SHAs, `git log --oneline` of the new commits and the full draft reply (`cat` the reply file), and the options `Push and post the reply` (recommended), `Change the reply first (say how with c)`, `Push nothing and post nothing`. When the answer arrives (section 7), option 1 is `yes`, option 3 is `no`, and option 2 or a question back with changes is `edit`.
 4. `yes`: `git -C <worktree> push`, then post the reply into the review's discussion:
 
 ```bash
@@ -139,7 +140,7 @@ glab api --method POST "projects/<urlencoded path>/merge_requests/<iid>/discussi
 ```
 
    `<discussion id>` comes from the agent's `discussion:` report line. Then set `needs_you=no`, apply the `memory:` block, and say that a Jira one-liner with the new head SHA is available (post it only if the user says so, through the `jira-write` skill).
-   `edit`: apply the user's changes to the reply file or send the agent back (`SendMessage`) and show again. `no`: push and post nothing; leave the commits in the worktree; set the item `[!]` with `· note: review round declined by user` only if the user says to.
+   `edit`: apply the user's changes (the decision's note and Discussion) to the reply file or send the agent back (`SendMessage`), then file a new decision for the revised reply. `no`: push and post nothing; leave the commits in the worktree; set the item `[!]` with `· note: review round declined by user` only if the user says to.
 
 ## 6. Other events
 
@@ -168,7 +169,7 @@ File names start with a timestamp, so that order is **oldest first**. Handle one
 ```
 ---
 key: ECFX-18169            # empty for off-plan work without a ticket
-kind: done | progress | handback | offplan | service   # service: key is optional, no memory block
+kind: done | progress | handback | offplan | service | decision | clarify   # service, decision, clarify: no memory block; decision, clarify carry decision: D-<n>
 session: ECFX-18169
 repo: ecfx-dashboard       # optional
 mr: https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2231   # optional
@@ -183,7 +184,7 @@ memory:
   state_change: "<one line>" | none
 ```
 
-1. **Validate.** The message is malformed when: the frontmatter is missing or has no closing `---`; `kind` is not one of `done`, `progress`, `handback`, `offplan`, `service`; `key` (compare case-insensitively; `day-note` upper-cases it) is not `[A-Za-z][A-Za-z0-9]*-[0-9]+` (an empty key is fine for any kind, it makes the message off-plan work, step 2); the summary is empty; or the `memory:` block names a `project` other than `ecfx`, `epicmax` or `personal`. A message with no `memory:` block is not malformed, there is just nothing to apply. A malformed file goes to `~/.local/state/run-day/inbox/bad/`:
+1. **Validate.** The message is malformed when: the frontmatter is missing or has no closing `---`; `kind` is not one of `done`, `progress`, `handback`, `offplan`, `service`, `decision`, `clarify`; `key` (compare case-insensitively; `day-note` upper-cases it) is not `[A-Za-z][A-Za-z0-9]*-[0-9]+` (an empty key is fine for any kind, it makes the message off-plan work, step 2); the summary is empty; or the `memory:` block names a `project` other than `ecfx`, `epicmax` or `personal`. A message with no `memory:` block is not malformed, there is just nothing to apply. A malformed file goes to `~/.local/state/run-day/inbox/bad/`:
 
 ```bash
 INBOX=~/.local/state/run-day/inbox
@@ -198,6 +199,8 @@ mkdir -p "$INBOX/bad"; mv "$f" "$INBOX/bad/"
    - `progress`, key on the plan: `[/]`, suffix `· progress: <summary clip>` (after `· with you: <KEY>` when the owner is external); `owner` stays. A line that is already `[x]` is left entirely as it is (a late `progress` is a no-op; never downgrade a ticked line).
    - A key with no run-state line (a `me` item, or one added to the plan later): skip every run-state edit, apply only the diary line and the memory block.
    - `handback`, key on the plan: `owner=main`, `agent=-`, `needs_you=no`, marker `[ ]`, suffix `· handed back: <summary clip>`; the item goes back into the dispatch queue (section 2.2) in plan order. When it is dispatched, append the message body to the filled brief as a `## Hand-back note` section so the agent starts from it. If `test -d <worktree>` fails, the worktree is gone: take the branch from `~/.local/state/run-day/handoff/<KEY>.md` or from the MR (`glab api "projects/<urlencoded path>/merge_requests/<iid>" | jq -r .source_branch`) and run `wt add <repo> <KEY> <branch>`; if no branch can be found, mark `[!]` with `· blocked: worktree is gone and the branch was not found`, `needs_you=yes`, and tell the user. Tell the user the item was re-queued. A `handback` for a key that is not on the plan, or with an empty key, has no item to queue: tell the user and only apply its memory block.
+   - `decision`: run `decide show <id>` (the `decision:` field) and apply the chosen option (`## Answer`, with any note) as if the user had said it here: dispatch, merge, reply to the reviewer, defer. Then clear the item's `needs_you` when `decide list --json` shows no other open decision for its key, run `decide close <id>`, and write one line in the thread: `<id>: <what you did>`.
+   - `clarify`: answer with `decide reply <id> "<answer>"` (look it up first: code, MR, ticket; a cheap research agent may help). Nothing in the thread but `<id>: answered your question`.
    - `service`: the summary names the service. A summary ending `gave up` means it stayed down: every item whose run-state line has `waiting=<that service>` loses the field, gets `needs_you=yes` and `· blocked: <service> down` on its diary line, and is not resumed. Otherwise (`gitlab is back`) every item whose run-state line has `waiting=<that service>` loses the field and is picked up again where it stopped: re-dispatch into its existing worktree (section 2.2, without `wt add`), or redo the check that failed. No diary line changes, there is no Unplanned line, and no memory block (step 4 does not apply).
    - `offplan`, or `done` / `progress` for a key that is not on the plan, or an empty key: write one line under the `**Unplanned**` group, the last group of the block. Unplanned lines always go immediately above `<!-- start-day:end -->`; when the group does not exist yet, create it in the same Edit (old_string `<!-- start-day:end -->`):
 
@@ -212,7 +215,7 @@ mkdir -p "$INBOX/bad"; mv "$f" "$INBOX/bad/"
 
      The line is `- [x] <key lowercase, if any> <summary clip, 80 characters> · <evidence>`: `[x]` by default, `[/]` when the summary says the work is unfinished (wip, started, in progress, continuing); evidence is `MR <repo>!<iid>  [↗][<repo>!<iid>]` when `mr` is set, else `note: <summary clip>`. No run-state line. If the same key already has an Unplanned line, update that line instead of adding another. An `offplan` message whose key is on the plan means the plan changed after it was written: treat it as `progress`.
    - A second message for the same key is handled in file order, each in full: the later marker and evidence win, except that you never downgrade `[x]`, and both `memory:` blocks are applied (two log entries).
-4. **Memory.** For every kind but `service`, apply the `memory:` block (section 4) with the `project` it names.
+4. **Memory.** For every kind but `service`, `decision` and `clarify`, apply the `memory:` block (section 4) with the `project` it names.
 5. **File it away.** Once steps 3 and 4 succeeded, move the file to `~/.local/state/run-day/inbox/done/$T/` (today's date, not the message's):
 
 ```bash
@@ -229,3 +232,20 @@ When the queue is empty, print one line per message: file name, what changed. MR
 ## 8. Finish
 
 When no item is `[ ]` or `[/]` any more (or the user says so; a `[/] · with you: <KEY>` line is still open), process the inbox once more, then print a summary: done, blocked, deferred, what needs the user. Suggest `/end-day`. The same session runs `/end-day`; do not delete the run-state file, `/end-day` does.
+
+## 9. Decisions (questions for the user)
+
+When an item needs the user's call — fix a review nit or merge, defer, pick between product options, anything an agent reports with `needs_you` — file it and go on:
+
+```bash
+decide add --key <KEY, or '' for off-plan> --mr <MR url, optional> --blocks "<what waits: merge, dispatch, reply>" \
+  --question "<one line>" --option "<first>" --option "<second>" [--recommend <n>] <<'EOF'
+<what the user needs to decide without opening anything: the reviewer's words, what each option costs, links>
+EOF
+```
+
+- Set the item's `needs_you=yes`, and write one line in the thread: `decision D-<n> queued: <question>`. Never ask the question in the thread and never wait: continue with other items.
+- Recommend when one option is clearly better, and say why in the context.
+- A decision that stops mattering (the reviewer resolved it, the MR merged, the item went another way): `decide withdraw <id> "<reason>"` and `decide close <id>`; clear `needs_you` when nothing else is open for the item.
+- The user answers in the popup (tmux prefix `y`). The answer arrives as an inbox message of kind `decision` or `clarify` (section 7).
+- On a resume (section 0), `decide list` shows what is still waiting: leave it; answers arrive through the inbox.
