@@ -66,6 +66,50 @@ check "badge" "✋ 2" "$(run count --badge)"
 rm -rf "$D"
 check "count is empty when nothing is open" "" "$(run count)"
 
+echo "answer, ask, reply"
+export INBOX_DIR="$SANDBOX/inbox"
+id="$(run add --key ECFX-1 --question 'Merge?' --option yes --option no --recommend 2 </dev/null)"
+run ask "$id" 'is it safe: really | "sure"?' >/dev/null; check "ask exits 0" "0" "$?"
+has "ask goes in Discussion" "$(run show "$id")" 'you: is it safe: really | "sure"?'
+check "list marks the question back" "true" "$(run list --json | jq -r --arg id "$id" '.[] | select(.id==$id) | .question_back')"
+msg="$(ls "$INBOX_DIR")"
+[[ "$msg" =~ ^[0-9]{8}T[0-9]{6}-ECFX-1-[A-Za-z0-9]{4}\.md$ ]] && pass "inbox name passes the run-day rule" || fail "inbox name passes the run-day rule" "$msg"
+has "clarify kind" "$(cat "$INBOX_DIR/$msg")" "kind: clarify"
+has "names the decision" "$(cat "$INBOX_DIR/$msg")" "decision: $id"
+rm "$INBOX_DIR/$msg"
+run reply "$id" 'yes, the pipeline is green' >/dev/null
+has "reply goes in Discussion" "$(run show "$id")" "session: yes, the pipeline is green"
+check "question back answered" "false" "$(run list --json | jq -r --arg id "$id" '.[] | select(.id==$id) | .question_back')"
+run answer "$id" 7 >/dev/null; check "answer with a missing option exits 1" "1" "$?"
+run answer "$id" 1 'ship it: today' >/dev/null; check "answer exits 0" "0" "$?"
+has "Answer section" "$(run show "$id")" "1 — yes"
+has "note kept" "$(run show "$id")" "note: ship it: today"
+has "status answered" "$(run show "$id")" "status: answered"
+msg="$(ls "$INBOX_DIR")"
+has "decision kind" "$(cat "$INBOX_DIR/$msg")" "kind: decision"
+has "summary says the choice" "$(cat "$INBOX_DIR/$msg")" "$id answered: 1 — yes. Note: ship it: today."
+[ -z "$(ls -A "$INBOX_DIR" | grep '\.tmp$')" ] && pass "no inbox temp file left" || fail "no inbox temp file left" "$(ls -A "$INBOX_DIR")"
+run answer "$id" 2 >/dev/null; check "answering twice exits 1" "1" "$?"
+run reply "$id" 'done, merged' >/dev/null
+has "a reply after the answer keeps the Answer" "$(run show "$id")" "1 — yes"
+
+echo "offplan inbox message"
+oid="$(run add --key '' --question 'New ticket today?' --option yes --option no </dev/null)"
+run answer "$oid" 2 >/dev/null
+has "empty key goes as offplan in the name" "$(ls "$INBOX_DIR")" "-offplan-"
+
+echo "withdraw and close"
+wid="$(run add --key ECFX-2 --question 'Defer?' --option yes --option no </dev/null)"
+run close "$wid" >/dev/null; check "closing an open one exits 1" "1" "$?"
+run withdraw "$wid" reviewer resolved it >/dev/null; check "withdraw exits 0" "0" "$?"
+has "withdraw reason recorded" "$(run show "$wid")" "withdrawn: reviewer resolved it"
+before="$(run count)"
+run close "$id" >/dev/null; run close "$wid" >/dev/null
+day="$(date +%F)"
+[ -f "$D/done/$day/$id.md" ] && [ -f "$D/done/$day/$wid.md" ] && pass "closed ones move to done/<day>" || fail "closed ones move to done/<day>" "$(find "$D" -name 'D-*')"
+nid="$(run add --key ECFX-3 --question 'Next?' --option a --option b </dev/null)"
+check "numbering continues past done/" "D-$(( ${wid#D-} + 1 ))" "$nid"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
