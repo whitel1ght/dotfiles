@@ -191,11 +191,32 @@ if [ -d "$PI_SRC/prompts" ]; then
     link_item "$PI_SRC/prompts" "$PI_DEST/prompts"
 fi
 
-# Pi agent metadata and tool restrictions differ from skill frontmatter.
-[ -d "$PI_SRC/agents" ] && \
+# Agents: the team's come from the same claude-components clone, written with
+# pi's header (pi/gen/pi_agents.py); the pi-only ones in pi/agents are linked in
+# beside them. Without the clone, agents/ links straight to pi/agents, unless an
+# earlier run already generated it, which is kept rather than lose the team ones.
+if [ -d "$CC_SRC/plugins" ] && [ -f "$PI_SRC/gen/pi_agents.py" ]; then
+    if [ "$DRY_RUN" = 1 ]; then
+        log_info "would regenerate agents from $CC_SRC and $PI_SRC/agents into $PI_DEST/agents"
+        CHANGED=$((CHANGED + 1))
+    elif out="$(python3 "$PI_SRC/gen/pi_agents.py" --src "$CC_SRC" --local "$PI_SRC/agents" --out "$PI_DEST/agents" 2>&1)"; then
+        log_info "${out#pi_agents: }"
+    else
+        log_error "agent generation failed: $out"
+        FAILURES=$((FAILURES + 1))
+    fi
+elif [ -f "$PI_DEST/agents/.generated.json" ]; then
+    log_warn "claude-components not found; keeping the generated $PI_DEST/agents"
+elif [ -d "$PI_SRC/agents" ]; then
     link_item "$PI_SRC/agents" "$PI_DEST/agents"
+fi
 
 [ -d "$PI_SRC/extensions" ] && link_item "$PI_SRC/extensions" "$PI_DEST/extensions"
+
+# Playbooks are hand-kept on both sides; say when a Claude one moved on.
+if [ -x "$DOTFILES_DIR/bin/pi-parity" ] && git -C "$DOTFILES_DIR" rev-parse >/dev/null 2>&1; then
+    parity="$(cd "$DOTFILES_DIR" && bin/pi-parity check 2>&1)" || log_warn "$parity"
+fi
 
 if [ "$DRY_RUN" = 1 ]; then
     log_info "$CHANGED change(s) pending (dry run)"

@@ -48,13 +48,17 @@ that `settings.json` does not enable: ignore it unless the user asks. Hooks neve
 name, so each one is `MISSING` until `parity.md` accounts for it.
 
 When the user named one feature, port that one; otherwise show the `MISSING` rows grouped by
-kind and ask which to do. A `ported` prompt can still be behind: when the user says pi lacks
-something Claude does (as with `/end-day`'s standup paragraph), diff the pair:
+kind and ask which to do. A `ported` prompt can still be behind its Claude twin. `pi-parity`
+tracks that: it lists every pi prompt whose Claude command changed since the pi side last
+caught up (or was never compared), and `pi-parity diff <name>` shows what moved on the Claude
+side since then:
 
 ```bash
-diff <(sed 1,/^---$/d ~/projects/dotfiles/claude/commands/<name>.md | sed 1,/^---$/d) \
-     <(sed 1,/^---$/d ~/projects/dotfiles/pi/prompts/<name>.md | sed 1,/^---$/d)
+cd ~/projects/dotfiles && bin/pi-parity && bin/pi-parity diff <name>
 ```
+
+For a pair never compared there is no baseline: read both files whole and port every
+difference that is not a harness mechanic.
 
 Read the whole Claude source and anything it calls (scripts, skills, modules) before writing.
 
@@ -109,6 +113,12 @@ checkout's `pi/prompts`, `pi/extensions`, `pi/settings.json`, the run-day state 
   `claude-hooks` does, so a fix in one place fixes both harnesses.
 - Then add or edit the `parity.md` line if the inventory cannot see the counterpart by name,
   and an `adapted:` line with the source digest for every skill whose pi copy differs.
+- **Prompt brought in step:** `bin/pi-parity mark <name>` and commit `pi/parity.json` with the
+  prompt. The commit hook stops a commit that changes a Claude command without this (unless
+  its message says `Pi: later`).
+- **Agents** need no porting: plink generates every team agent into `~/.pi/agent/agents`
+  (`pi/gen/pi_agents.py`). Change a team agent in claude-components; only pi-only agents
+  live in `pi/agents/`.
 
 ## 4. Verify
 
