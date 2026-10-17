@@ -1,7 +1,7 @@
 {
   "ask-wiki": "0094852f19747c9f9af5c8a76f5bf1f05b733899",
   "clean-worktrees": "a4c063763c27ecc08cfc8aa04b4de7cad7851b47",
-  "end-day": "f6d1a9aed2c8690e1706ebe5043684856d614c1d",
+  "end-day": "beb40019d154e3b2b070dc6bd711b4349bf23d74",
   "fix-friction": "ea0032000371142943dced8cc5327c412f1fd2c3",
   "handoff": "f591c369454fef62766730b2d287de5a962a4d78",
   "orchestrate": "ba9967ba11ec036c867afe0b1631e52b7194cae9",
@@ -11,6 +11,6 @@
   "review-local": "d5197a9514828b175f53c188c87a09a43e6dcb61",
   "run-day": "40735f829ff946863a5a283bdf41f6da4a5117f5",
   "start-day": "cf94fdbd7299c2e9ac7301b8cdb0dd47ec5c970f",
-  "sync-tickets": "aadaa340521e26bd6ca35aa56c8a48679f671bb4",
+  "sync-tickets": "88bd42ddfca91417ee8884d28d00a223e0f425d7",
   "watch-mrs": "0ae0b2934a2d6ac1dd21d9b19bf6431daaf3d819"
 }

@@ -8,11 +8,14 @@
 #
 # Each ticket is judged on ALL of its MRs, across every repo, found by the key in
 # the branch name (title as fallback): any open ready MR → In MR; otherwise any
-# open draft → In Progress; otherwise merged → In QA. Closed MRs don't count.
+# open draft → In Progress; otherwise merged → Ready for QA (not In QA: QA
+# has not started, and they move it on themselves). Closed MRs don't count.
 #
-# Changes only go forward (To-Do → In Progress → In MR → In QA), because they are
-# applied unattended: a draft follow-up must not pull a ticket back out of QA.
-# A ticket behind its MRs is reported, never moved back. Tickets assigned to
+# Changes only go forward (To-Do → In Progress → In MR → Ready for QA)
+# because they are applied unattended: a draft follow-up must not pull a ticket back out
+# of QA.
+# A ticket merged and already In QA is in step: nothing moved, nothing printed. A ticket
+# behind its MRs is reported, never moved back. Tickets assigned to
 # someone else, or in any other status (Rejected Incomplete, Awaiting Details,
 # Done, Closed), are left alone.
 #
@@ -99,23 +102,26 @@ plan=$(jq -rn --argjson recent "$recent" --argjson open "$open" --arg p "$JIRA_P
   | select($m | length > 0)
   | (if any($m[]; .state == "opened" and (.draft | not)) then "In MR"
      elif any($m[]; .state == "opened") then "In Progress"
-     else "In QA" end) as $target
+     else "Ready for QA" end) as $target
   | [$k, $target, ($m | map({url: .web_url, ref: .references.full, title}) | tojson | @base64)] | @tsv')
 
 rank() {
   case "$1" in
-    To-Do) echo 0 ;; "In Progress") echo 1 ;; "In MR") echo 2 ;; "In QA") echo 3 ;; *) echo -1 ;;
+    To-Do) echo 0 ;; "In Progress") echo 1 ;; "In MR") echo 2 ;; "Ready for QA") echo 3 ;; "In QA") echo 4 ;; *) echo -1 ;;
   esac
 }
 
-# In MR is only reachable from In Progress, so a To-Do ticket takes two steps.
+# Without a direct transition it steps to the nearest status below the target that Jira
+# offers (Ready for QA: In MR, else In Progress), so a To-Do ticket may take several steps.
 transition_to() {
   local key="$1" target="$2" step id
-  for step in 1 2 3; do
+  for step in 1 2 3 4; do
     [ "$(jira GET "/rest/api/3/issue/$key?fields=status" | jq -r .fields.status.name)" = "$target" ] && return 0
     id=$(jira GET "/rest/api/3/issue/$key/transitions" \
       | jq -r --arg t "$target" '.transitions as $all
-          | (($all | map(select(.to.name == $t)) | first) // ($all | map(select(.to.name == "In Progress")) | first))
+          | (($all | map(select(.to.name == $t)) | first)
+             // (if $t == "Ready for QA" then ($all | map(select(.to.name == "In MR")) | first) else null end)
+             // ($all | map(select(.to.name == "In Progress")) | first))
           | .id // empty')
     [ -n "$id" ] || { echo "sync-tickets: no transition from $key towards $target" >&2; return 1; }
     jira POST "/rest/api/3/issue/$key/transitions" "{\"transition\":{\"id\":\"$id\"}}" >/dev/null || return 1
@@ -145,6 +151,7 @@ while IFS=$'\t' read -r key target mrs_b64; do
     if [ "$dry" -eq 1 ]; then echo "  would  $key $status → $target ($refs)"; moved=$((moved + 1))
     elif transition_to "$key" "$target"; then echo "  moved  $key $status → $target ($refs)"; moved=$((moved + 1))
     else failed=$((failed + 1)); fi
+  elif [ "$status" = "In QA" ] && [ "$target" = "Ready for QA" ]; then :  # QA picked it up: in step
   elif [ "$(rank "$target")" -lt "$(rank "$status")" ]; then
     echo "  behind $key is $status, MRs say $target ($refs) — left alone"; behind=$((behind + 1))
   fi

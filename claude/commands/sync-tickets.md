@@ -14,6 +14,8 @@ Run exactly this, once, and nothing else:
 
 The script does all the work and has already applied its changes when it returns.
 Don't re-run it, don't call Jira or GitLab yourself, and don't try to fix anything.
+A ticket whose MRs are all merged goes to Ready for QA, never In QA: QA has not started,
+and they move it on themselves.
 
 Reply with a short summary of its output:
 

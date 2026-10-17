@@ -3,6 +3,14 @@ description: Standup report of the day's work across commits, MRs, Jira and pi s
 argument-hint: "[yesterday | YYYY-MM-DD]"
 ---
 
+Sync Jira to the MRs first, so the digest's Jira section is already true:
+
+```bash
+~/.local/bin/sync-tickets
+```
+
+Report what it did in one line (its last line is the summary).
+
 Collect the day's work:
 
 ```bash
