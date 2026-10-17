@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# The decision queue popup (tmux prefix y): answer what /run-day is waiting on.
+#
+#   decisions                       the picker (fzf); outside tmux it runs in this terminal
+#   decisions --act list            the list lines, skipped ones last
+#   decisions --act preview ID      one decision as the preview pane shows it
+#   decisions --act skip ID         move ID to the bottom for this popup
+#   decisions --confirm ID N|rec    confirm and answer (keys from the terminal)
+#   decisions --ask ID              type a question back
+#
+# Picker keys: 1-9 pick that option · enter the recommended one · c ask back · s skip ·
+# esc/q close. Answers and questions go through `decide`, which tells the /run-day session
+# through its inbox. The session files the decisions; you only answer them here.
+set -euo pipefail
+
+DECIDE="${DECIDE:-$(command -v decide || echo "$HOME/.local/bin/decide")}"
+SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+list() {
+  local lines
+  lines="$("$DECIDE" list 2>/dev/null)" || return 0
+  [ -n "$lines" ] || return 0
+  if [ -n "${DECISIONS_SKIP:-}" ] && [ -s "$DECISIONS_SKIP" ]; then
+    grep -vwF -f "$DECISIONS_SKIP" <<<"$lines" || true
+    grep -wF -f "$DECISIONS_SKIP" <<<"$lines" || true
+  else
+    printf '%s\n' "$lines"
+  fi
+}
+
+preview() {
+  "$DECIDE" list --json | jq -r --arg id "$1" '.[] | select(.id == $id)
+    | "\(.id) · \(if .key == "" then "offplan" else .key end) · asked \(.age) ago"
+      + (if .blocks != "" then " · blocks \(.blocks)" else "" end)'
+  echo
+  "$DECIDE" show "$1" | awk 'NR == 1 && /^---$/ { fm = 1; next } fm && /^---$/ { fm = 0; next } !fm' \
+    | sed -E 's/ \(recommended\)$/   ← recommended/'
+}
+
+confirm() {
+  local id="$1" n="$2" json text k note
+  json="$("$DECIDE" list --json)"
+  if [ "$n" = rec ]; then
+    n="$(jq -r --arg id "$id" '.[] | select(.id == $id) | .recommended // empty' <<<"$json")"
+    [ -n "$n" ] || { read -r -p "$id has no recommended option; number: " n || return 0; }
+  fi
+  [[ "$n" =~ ^[1-9]$ ]] || return 0
+  text="$(jq -r --arg id "$id" --argjson n "$n" '.[] | select(.id == $id) | .options[] | select(.n == $n) | .text' <<<"$json")"
+  [ -n "$text" ] || { echo "$id has no option $n"; sleep 1; return 0; }
+  printf '%s → %s %s\n  enter confirm · n add a note · esc back\n' "$id" "$n" "$text"
+  IFS= read -rsn1 k || return 0
+  case "$k" in
+    "") "$DECIDE" answer "$id" "$n" ;;
+    n) read -r -p "note: " note || true; "$DECIDE" answer "$id" "$n" "$note" ;;
+    *) return 0 ;;
+  esac
+}
+
+ask_back() {
+  local q=""
+  read -r -p "question for the session: " q || true
+  [ -z "$q" ] || "$DECIDE" ask "$1" "$q"
+}
+
+empty() {
+  # stderr: after the last answer fzf's `become` runs this with fzf's stdout, which is /dev/null
+  echo "nothing waiting on you" >&2
+  IFS= read -rsn1 _ || true
+}
+
+picker() {
+  DECISIONS_SKIP="$(mktemp)"
+  export DECISIONS_SKIP
+  trap 'rm -f "$DECISIONS_SKIP"' EXIT
+  if [ -z "$(list)" ]; then
+    empty
+    return 0
+  fi
+  local binds=() i
+  for i in 1 2 3 4 5 6 7 8 9; do
+    binds+=(--bind "$i:execute('$SELF' --confirm {1} $i)+reload('$SELF' --act list)")
+  done
+  list | fzf --disabled --no-sort --layout=reverse --no-info \
+    --header '1-9 pick · enter recommended · c ask back · s skip · esc close' \
+    --preview "'$SELF' --act preview {1}" --preview-window 'right,60%,wrap' \
+    "${binds[@]}" \
+    --bind "enter:execute('$SELF' --confirm {1} rec)+reload('$SELF' --act list)" \
+    --bind "c:execute('$SELF' --ask {1})+reload('$SELF' --act list)" \
+    --bind "s:execute-silent('$SELF' --act skip {1})+reload('$SELF' --act list)" \
+    --bind 'q:abort' \
+    --bind "zero:become('$SELF' --empty)" >/dev/null || true
+}
+
+case "${1:-}" in
+  --act)
+    case "${2:-}" in
+      list) list ;;
+      preview) preview "$3" ;;
+      skip) [ -n "${DECISIONS_SKIP:-}" ] && printf '%s\n' "$3" >> "$DECISIONS_SKIP" ;;
+      *) echo "decisions: --act list|preview ID|skip ID" >&2; exit 2 ;;
+    esac ;;
+  --confirm) confirm "$2" "$3" ;;
+  --ask) ask_back "$2" ;;
+  --empty) empty ;;
+  "") picker ;;
+  -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "decisions: unknown option $1" >&2; exit 2 ;;
+esac
