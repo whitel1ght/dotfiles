@@ -109,5 +109,13 @@ else
     fail "session-picker is not executable"
 fi
 
+# Esc in the picker: fzf exits 130. Under set -e + pipefail that used to end the script with 130,
+# which tmux run-shell then showed as an error. The pick pipeline must tolerate a cancel.
+if grep -q "| cut -f1 | sed 's/ (here)\$//')\" || true" /Users/dmitry/projects/dotfiles/bin/session-picker; then
+    pass
+else
+    fail "a cancelled pick (fzf exit 130) must not fail the script"
+fi
+
 echo "passed: $PASSED failed: $FAILED"
 [ "$FAILED" -eq 0 ]

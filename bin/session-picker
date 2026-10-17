@@ -365,7 +365,7 @@ choice="$("$SELF" $rows_flags \
         --bind="ctrl-x:execute-silent($SELF --close {+1})+reload($SELF $rows_flags)" \
         --bind="ctrl-r:execute-silent($SELF --close --force {+1})+reload($SELF $rows_flags)" \
         --color='fg:-1,bg:-1,hl:6,fg+:15,bg+:-1,hl+:14,border:#bb9af7,label:#7aa2f7:bold,prompt:6,pointer:5,header:8,info:8,preview-border:8' \
-    | cut -f1 | sed 's/ (here)$//')"
+    | cut -f1 | sed 's/ (here)$//')" || true  # esc / ctrl-c: fzf exits 130, a cancel, not an error
 
 [ -n "$choice" ] || exit 0
 
