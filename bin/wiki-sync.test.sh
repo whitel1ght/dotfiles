@@ -70,6 +70,11 @@ touch -t 202001010000 "$WIKI_SYNC_STATE/last-ok"
 case "$(run check)" in *wiki*) pass "warns when the last good sync is over a day old" ;; *) fail "warns when stale" "silent" ;; esac
 run >/dev/null
 
+echo "named"
+echo "x" > "$WIKI_SYNC_STATE/failed"
+case "$(WIKI_SYNC_NAME=artifacts run check)" in *"artifacts sync failed"*) pass "check names what it syncs" ;; *) fail "check names what it syncs" "$(WIKI_SYNC_NAME=artifacts run check)" ;; esac
+rm -f "$WIKI_SYNC_STATE/failed"
+
 echo "guards"
 mkdir -p "$WIKI_SYNC_STATE/lock"
 echo "x" > "$WIKI_DIR/locked.md"

@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Backs ~/wiki up to its git repo on the VPS every 15 minutes (bin/wiki-sync).
-     install.sh replaces __HOME__ and loads it into ~/Library/LaunchAgents. -->
+<!-- Backs a folder up to its git repo on the VPS every 15 minutes (bin/wiki-sync): install.sh
+     makes one agent per folder (~/wiki, ~/artifacts), filling in __LABEL__, __DIR__, __STATE__,
+     __NAME__ and __HOME__, and loads it into ~/Library/LaunchAgents. -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>local.wiki-sync</string>
+  <string>__LABEL__</string>
   <key>ProgramArguments</key>
   <array>
     <string>__HOME__/.local/bin/wiki-sync</string>
@@ -14,6 +15,12 @@
   <dict>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>WIKI_DIR</key>
+    <string>__DIR__</string>
+    <key>WIKI_SYNC_STATE</key>
+    <string>__STATE__</string>
+    <key>WIKI_SYNC_NAME</key>
+    <string>__NAME__</string>
   </dict>
   <key>StartInterval</key>
   <integer>900</integer>
@@ -22,6 +29,6 @@
   <key>ProcessType</key>
   <string>Background</string>
   <key>StandardErrorPath</key>
-  <string>__HOME__/.local/state/wiki-sync/agent.log</string>
+  <string>__STATE__/agent.log</string>
 </dict>
 </plist>

@@ -22,9 +22,11 @@ typeset -U path PATH
 # Called by absolute path on purpose: ~/.local/bin is added to PATH further
 # down in this file, so `command -v vault-check` finds nothing this early.
 [ -x "$HOME/.local/bin/vault-check" ] && "$HOME/.local/bin/vault-check"
-# Same for the wiki backup: one line when the last git sync to the VPS failed
-# or none succeeded for a day, nothing otherwise.
+# Same for the git backups of ~/wiki and ~/artifacts: one line when the last
+# sync to the VPS failed or none succeeded for a day, nothing otherwise.
 [ -x "$HOME/.local/bin/wiki-sync" ] && "$HOME/.local/bin/wiki-sync" check
+[ -x "$HOME/.local/bin/wiki-sync" ] && WIKI_DIR="$HOME/artifacts" WIKI_SYNC_NAME=artifacts \
+    WIKI_SYNC_STATE="$HOME/.local/state/artifacts-sync" "$HOME/.local/bin/wiki-sync" check
 
 # -----------------------------------------------------------------------------
 # POWERLEVEL10K INSTANT PROMPT

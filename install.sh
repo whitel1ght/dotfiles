@@ -386,27 +386,34 @@ if [ -f "$DOTFILES_DIR/bin/vault-check" ]; then
     create_symlink "$DOTFILES_DIR/bin/vault-check" "$HOME/.local/bin/vault-check"
 fi
 
-# wiki-sync commits ~/wiki and pushes it to its git repo on the VPS (the
-# remote is in ~/wiki/.git/config, set when the wiki is cloned). A LaunchAgent
-# runs it every 15 minutes; .zshrc runs `wiki-sync check` to warn when it
-# fails. WIKI_SYNC_AGENT=0 skips the agent. It replaced the rsync `notes`.
+# wiki-sync commits a folder and pushes it to its git repo on the VPS (the remote
+# is in the folder's .git/config, set when it is cloned): ~/wiki, and ~/artifacts
+# (the sources of published claude.ai pages). One LaunchAgent per folder runs it
+# every 15 minutes; .zshrc runs `wiki-sync check` for each to warn when it fails.
+# WIKI_SYNC_AGENT=0 skips the agents. It replaced the rsync `notes`.
 if [ -f "$DOTFILES_DIR/bin/wiki-sync" ]; then
     create_symlink "$DOTFILES_DIR/bin/wiki-sync" "$HOME/.local/bin/wiki-sync"
     rm -f "$HOME/.local/bin/notes"
-    if [ "${WIKI_SYNC_AGENT:-1}" != "0" ] && [ -d "$HOME/wiki/.git" ]; then
-        agent="$HOME/Library/LaunchAgents/local.wiki-sync.plist"
-        mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.local/state/wiki-sync"
-        sed "s#__HOME__#$HOME#g" "$DOTFILES_DIR/launchd/local.wiki-sync.plist" > "$agent.new"
+    for spec in "wiki:$HOME/wiki:$HOME/.local/state/wiki-sync" \
+                "artifacts:$HOME/artifacts:$HOME/.local/state/artifacts-sync"; do
+        name="${spec%%:*}"; rest="${spec#*:}"; dir="${rest%%:*}"; state="${rest#*:}"
+        [ "${WIKI_SYNC_AGENT:-1}" != "0" ] && [ -d "$dir/.git" ] || continue
+        label="local.$name-sync"
+        agent="$HOME/Library/LaunchAgents/$label.plist"
+        mkdir -p "$HOME/Library/LaunchAgents" "$state"
+        sed -e "s#__LABEL__#$label#g" -e "s#__DIR__#$dir#g" -e "s#__STATE__#$state#g" \
+            -e "s#__NAME__#$name#g" -e "s#__HOME__#$HOME#g" \
+            "$DOTFILES_DIR/launchd/autosync.plist" > "$agent.new"
         if ! cmp -s "$agent.new" "$agent"; then
             mv "$agent.new" "$agent"
-            launchctl bootout "gui/$(id -u)/local.wiki-sync" 2>/dev/null || true
+            launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
             launchctl bootstrap "gui/$(id -u)" "$agent" \
-                && log_info "Loaded the wiki-sync agent (every 15 minutes)" \
+                && log_info "Loaded the $name sync agent (every 15 minutes)" \
                 || log_warn "Could not load $agent"
         else
             rm -f "$agent.new"
         fi
-    fi
+    done
 fi
 
 # ecfx-daily-commits lists today's commits across all ecfx-* repos.
