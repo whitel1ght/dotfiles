@@ -52,6 +52,11 @@ check "empty queue exits 0" "0" "$code"
 has "says so" "$out" "nothing waiting on you"
 out="$("$SCRIPT" --empty </dev/null 2>&1 >/dev/null)"
 has "still says so when stdout is discarded (fzf become keeps fzf's /dev/null)" "$out" "nothing waiting on you"
+out="$(DECISIONS_SIZE="40 7" "$SCRIPT" --empty </dev/null 2>&1)"
+has "framed like the list: top edge with the label" "$out" "╭─ decisions "
+has "framed: bottom edge" "$out" "╰"
+check "framed: fills the popup height" "7" "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+check "framed: every row as wide as the popup" "40" "$(printf '%s\n' "$out" | python3 -c 'import sys; print(*sorted({len(l.rstrip("\n")) for l in sys.stdin}))')"
 
 echo
 echo "passed: $PASS  failed: $FAIL"
