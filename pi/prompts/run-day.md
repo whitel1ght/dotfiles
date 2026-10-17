@@ -71,8 +71,9 @@ orphaned agents (their launching session is gone, e.g. after a crash), decide ea
 plan block too: the user edits the diary directly. A `[/]` item whose agent is neither running nor
 has a result to read is lost: tell the user and, on their yes, re-dispatch it into its existing
 worktree (step 2, without `wt add`). Otherwise never re-dispatch an item already `[/]` or `[x]`, and
-never one with `owner=external:<KEY>` (a side session works it). Then start the watcher (step 6)
-unless `bg_list` shows `run-day watch` running, process the inbox (step 7), and continue at step 3.
+never one with `owner=external:<KEY>` (a side session works it). Then start the watcher (step 6;
+`run_day_watch` says when it is already running), process the inbox (step 7), and continue at
+step 3.
 
 `--dry`: stop after printing the triage table (step 1). A merge-class `me` row says it is merged in
 the UI by the user, with the MR link, because the API merge returns 405. Then print, for each auto
@@ -267,39 +268,34 @@ session can address it, set `needs_you=yes`, and stop there.
 
 ## 6. Other events
 
-Watch with one background sleeper: `bg_start` with title `run-day watch` and this command. It
-exits only when something is new (a new inbox message, or events), and pi wakes you:
+Start the watcher with `run_day_watch({ action: "start" })`. It runs inside this session (the
+`daily` extension), checks the inbox every 30 s and GitLab/Jira events every 3 min, and stops by
+itself when `/end-day` moves the run state away. If it says another pi session is already
+watching, tell the user: one session drives a day. `run_day_watch({ action: "status" })` says
+whether it runs; never start a loop of your own.
 
-```bash
-I=~/.local/state/run-day/inbox; re='^[0-9]{8}T[0-9]{6}-[A-Za-z0-9-]+-[A-Za-z0-9]{4}\.md$'
-seen=$(ls -1 "$I" 2>/dev/null | grep -E "$re"); n=0
-while :; do
-  now=$(ls -1 "$I" 2>/dev/null | grep -E "$re")
-  new=$(printf '%s\n' "$now" | grep -vxF -f <(printf '%s\n' "$seen") | grep -c .)
-  [ "$new" -gt 0 ] && { echo "inbox: $new new"; exit 0; }
-  if [ $((n % 10)) -eq 0 ]; then
-    out=$(~/.local/bin/changes-since --cursor run-day 2>/dev/null)
-    [ -n "$out" ] && { printf '%s\n' "$out"; exit 0; }
-  fi
-  n=$((n + 1)); sleep 30
-done
-```
+It sorts the events the way Claude Code's daily plugin does (same code), and sends:
 
-On wake, restart it; never have two running. On every wake — the sleeper or a `[pi-sub]` agent
-report — first list the inbox (step 7) and process what is waiting, then re-read the plan block:
-the user edits the diary too. An item they ticked or removed is theirs; do not touch it.
+- `[daily-event] <kind> | <repo>!<iid> | <TICKET> | <summary> | <url>`, which starts a turn: a
+  `review`, `comment` or `pipeline_failed` on an MR or ticket of today's plan, or a new
+  `assigned` ticket that is not on it. Several arrive as one message, one line each.
+- `[daily-event:info] ...` lines, added without a turn: everything else (approvals, merges,
+  pipelines fixed, ticket moves, mentions, other MRs).
+- `inbox: <N> new` when report-backs or hand-offs land.
+- A notice (not a message) when event checks start failing, and again when they work again.
 
-Events are JSON lines `{kind, project, ticket, mr, repo, summary, url, at}`. An event is **for
-today** when its MR (`<repo without ecfx->!<mr>`) is on a plan line (MR link or `[↗]` ref) or in a
-run-state `mr=`, or, when it has no MR, its `ticket` is on the plan:
+On every wake — a watcher message or a `[pi-sub]` agent report — first list the inbox (step 7)
+and process what is waiting, then re-read the plan block: the user edits the diary too. An item
+they ticked or removed is theirs; do not touch it.
 
-- `review` / `comment` for today → step 5.
-- `pipeline_failed` for today → dispatch a fix agent (step 2, ticket brief with done-when: the
+Then:
+
+- `[daily-event] review | ...` / `comment | ...` → step 5.
+- `[daily-event] pipeline_failed | ...` → dispatch a fix agent (step 2, ticket brief with done-when: the
   pipeline on the branch is green), within the cap of 3.
-- `assigned` for a ticket not on the plan → offer to add it; on yes add one
+- `[daily-event] assigned | ...` → offer to add the ticket; on yes add one
   `- [ ] <key> <summary>` line under `**Today**` (never on your own) and triage it like step 1.
-- Anything else (`pipeline_fixed`, `ticket_updated`, `mention`, `approved`, `merged`, or not for
-  today) is information: no action; mention it only if the user asks what changed.
+- `[daily-event:info] ...` lines: no action. Mention them only if the user asks what changed.
 - GitLab or Jira unavailable (5xx, timeout, connection refused; not 401/403/404) → no retry. Add `waiting=<service>`
   to the item's run-state line, run `wait-for <service> --detach --key <KEY>` (no-op if one is waiting) and move on.
   A sub-agent that hits it reports back; park its item the same way.

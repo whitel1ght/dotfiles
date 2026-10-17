@@ -178,6 +178,7 @@ test("registers both handlers and blocks only on a bad tick", () => {
     on(event: string, callback: (event: unknown, ctx: unknown) => unknown) {
       handlers[event] = callback;
     },
+    registerTool() {},
   } as never);
   assert.ok(handlers.before_agent_start);
   assert.ok(handlers.tool_call);
@@ -268,7 +269,7 @@ test("directions: missing file, missing script or failing script inject nothing"
 test("directions: before_agent_start sets the section, and never throws without one", () => {
   const { root, file } = directionsSandbox("#!/bin/sh\necho '- never retry with the model'\n");
   const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
-  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb) } as never);
+  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb), registerTool: () => {} } as never);
   writeFileSync(file, "x");
   const options = { sections: {} as Record<string, string> };
   handlers.before_agent_start({ systemPromptOptions: options }, { ui: undefined });
@@ -296,7 +297,7 @@ async function waitFor(path: string) {
 
 function blockedTick(diary: string) {
   const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
-  daily({ on: (event: string, cb: (e: unknown, c: unknown) => unknown) => (handlers[event] = cb) } as never);
+  daily({ on: (event: string, cb: (e: unknown, c: unknown) => unknown) => (handlers[event] = cb), registerTool: () => {} } as never);
   return handlers.tool_call(
     { toolName: "edit", input: { path: diary, edits: [{ oldText: "- [ ] ecfx-1001 fix the export", newText: "- [x] ecfx-1001 fix the export" }] } },
     {},
@@ -350,4 +351,53 @@ test("a failing or missing friction leaves the block verdict unchanged", async (
     process.env.PATH = path;
     cleanup(root);
   }
+});
+
+/** A pi stand-in that keeps the registered tools, handlers and sent messages. */
+function fakePi() {
+  const tools: Record<string, { execute: (id: string, params: unknown) => Promise<{ content: { text: string }[] }> }> = {};
+  const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
+  const sent: { content: string; triggerTurn?: boolean }[] = [];
+  const pi = {
+    on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb),
+    registerTool: (tool: { name: string }) => void (tools[tool.name] = tool as never),
+    sendMessage: (m: { content: string }, o?: { triggerTurn?: boolean }) => void sent.push({ content: m.content, triggerTurn: o?.triggerTurn }),
+  };
+  daily(pi as never);
+  handlers.session_start?.({}, { sessionManager: { getSessionId: () => "sess-1" }, ui: { notify: () => {} } });
+  const run = async (action: string) => (await tools.run_day_watch.execute("t", { action })).content[0].text;
+  return { tools, handlers, sent, run };
+}
+
+test("run_day_watch: starts with a run state, holds the lock, stops and releases it", async () => {
+  const { root, stateDir } = sandbox();
+  const { run, handlers } = fakePi();
+  const lock = join(stateDir, "watch.lock");
+  assert.match(await run("start"), /watching/i);
+  assert.ok(existsSync(lock), "lock written");
+  assert.match(await run("status"), /watching/i);
+  assert.match(await run("start"), /already watching|watching/i, "a second start in the same session is harmless");
+  assert.match(await run("stop"), /stopped/i);
+  assert.ok(!existsSync(lock), "lock released");
+  assert.match(await run("status"), /not watching/i);
+  await run("start");
+  handlers.session_shutdown?.({}, {});
+  assert.ok(!existsSync(lock), "shutdown releases the lock");
+  cleanup(root);
+});
+
+test("run_day_watch: refuses to start without today's run state", async () => {
+  const { root, stateDir } = sandbox({ runState: false });
+  const { run } = fakePi();
+  assert.match(await run("start"), /no run state/i);
+  assert.ok(!existsSync(join(stateDir, "watch.lock")));
+  cleanup(root);
+});
+
+test("run_day_watch: refuses while another live process holds the lock", async () => {
+  const { root, stateDir } = sandbox();
+  writeFileSync(join(stateDir, "watch.lock"), JSON.stringify({ pid: process.ppid, session: "other" }));
+  const { run } = fakePi();
+  assert.match(await run("start"), /other/);
+  cleanup(root);
 });

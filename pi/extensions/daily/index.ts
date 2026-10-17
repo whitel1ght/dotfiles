@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { applyEdit, checkTicks, denyMessage, isTodaysDiary } from "./mod/guard.t
 import type { OnBlock } from "./mod/guard.ts";
 import { messageFiles } from "./mod/inbox.ts";
 import { parseRunState } from "./mod/runstate.ts";
+import { acquireLock, DayWatcher, INBOX_MS, releaseLock, WATCH_MS, type Exec } from "./watch.ts";
 
 const MAX_CHARS = 6000;
 const BLOCK_MAX = 3000;
@@ -177,7 +178,119 @@ export function guardVerdict(
   return result.ok ? undefined : denyMessage(result.lines);
 }
 
+/** changes-since --cursor run-day, without blocking pi; a timeout reports exit 124. */
+function changesSince(): Promise<Exec> {
+  const cmd = 'exec "$(command -v changes-since || echo "$HOME/.local/bin/changes-since")" --cursor run-day';
+  return new Promise((resolve) => {
+    execFile("/bin/sh", ["-c", cmd], { timeout: 60_000, maxBuffer: 4 << 20 }, (err, stdout, stderr) => {
+      const e = err as (NodeJS.ErrnoException & { killed?: boolean; code?: number | string }) | null;
+      const code = !e ? 0 : e.killed ? 124 : typeof e.code === "number" ? e.code : 1;
+      resolve({ code, stdout: String(stdout), stderr: String(stderr || e?.message || "") });
+    });
+  });
+}
+
+type Ui = { notify?: (message: string, type?: "info" | "warning" | "error") => void } | undefined;
+
+/**
+ * The run_day_watch tool: /run-day starts the watcher in its own session, so other pi
+ * sessions open the same day (side sessions, unrelated work) are never woken by it. A lock
+ * file in the state dir keeps a second pi session from consuming the same event cursor.
+ */
+function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => string) {
+  let timers: ReturnType<typeof setInterval>[] = [];
+  const lockPath = () => join(paths().stateDir, "watch.lock");
+  const send = (content: string, wake: boolean) =>
+    pi.sendMessage(
+      { customType: "daily-event", content, display: true },
+      wake ? { triggerTurn: true, deliverAs: "followUp" } : { deliverAs: "nextTurn" },
+    );
+  const watcher = new DayWatcher({
+    paths: () => paths(),
+    changes: changesSince,
+    listInbox: () => {
+      try {
+        return readdirSync(paths().inbox);
+      } catch {
+        return [];
+      }
+    },
+    wake: (t) => send(t, true),
+    note: (t) => send(t, false),
+    notify: (m, level) => getUi()?.notify?.(m, level),
+    friction: (kind, msg, source) => friction(kind, msg, source),
+  });
+
+  const stop = () => {
+    for (const t of timers) clearInterval(t);
+    timers = [];
+    releaseLock(lockPath(), process.pid);
+  };
+  const tick = (fn: () => unknown) => () => {
+    if (!watcher.active()) {
+      stop(); // /end-day moved the run state away: the day is over
+      getUi()?.notify?.("run-day ended: watcher stopped", "info");
+      return;
+    }
+    void fn();
+  };
+  const start = (): string => {
+    if (!watcher.active()) return `No run state for ${paths().today}: nothing to watch. /run-day creates it.`;
+    if (timers.length > 0) return "Already watching this day in this session.";
+    const refused = acquireLock(lockPath(), { pid: process.pid, session: getSession() });
+    if (refused) return `Not started: ${refused}. Only one pi session watches a day.`;
+    const every = (ms: number, fn: () => unknown) => {
+      const t = setInterval(tick(fn), ms);
+      t.unref?.();
+      timers.push(t);
+    };
+    every(INBOX_MS, () => watcher.checkInbox());
+    every(WATCH_MS, () => watcher.checkEvents());
+    return (
+      "Watching: the inbox every 30 s, GitLab/Jira events every 3 min. New inbox messages arrive " +
+      'as "inbox: N new"; events for today\'s MRs and tickets as [daily-event] lines that start a ' +
+      "turn; the rest as [daily-event:info] lines without one. It stops when the run state goes."
+    );
+  };
+
+  pi.registerTool({
+    name: "run_day_watch",
+    label: "Run-day watch",
+    description:
+      "Start, stop or check the /run-day watcher in this session: it wakes you with new inbox messages and " +
+      "GitLab/Jira events for today's plan. Only the session running /run-day starts it.",
+    promptSnippet: "run_day_watch: start/stop/status of the /run-day inbox and event watcher",
+    parameters: {
+      type: "object",
+      properties: { action: { type: "string", enum: ["start", "stop", "status"], description: "start, stop or status" } },
+      required: ["action"],
+    } as never,
+    async execute(_id: string, params: unknown) {
+      const action = String((params as { action?: unknown })?.action ?? "status");
+      let text: string;
+      if (action === "start") text = start();
+      else if (action === "stop") {
+        const was = timers.length > 0;
+        stop();
+        text = was ? "Watcher stopped." : "Watcher was not running.";
+      } else text = timers.length > 0 ? "Watching this day in this session." : "Not watching in this session.";
+      return { content: [{ type: "text" as const, text }], details: { action } };
+    },
+  } as never);
+
+  return stop;
+}
+
 export default function daily(pi: ExtensionAPI) {
+  let ui: Ui;
+  let session = "unknown";
+  pi.on("session_start", (_event, ctx) => {
+    ui = ctx?.ui as Ui;
+    session = ctx?.sessionManager?.getSessionId?.() ?? session;
+  });
+  const stopWatch = registerWatch(pi, () => ui, () => session);
+  pi.on("session_shutdown", () => stopWatch());
+
   // before_agent_start, not context_with_system: measured on pi 1.2.0, a section added to the
   // system message there never reaches the provider request — pi rebuilds the system head from
   // its own sections. Mutating systemPromptOptions.sections does reach it.
