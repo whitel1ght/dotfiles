@@ -7,6 +7,10 @@
 #   art --url <query>  open the published page instead of the local file
 #   art --list         name<TAB>title, one per artifact
 #
+# pi's artifacts are here too, as pi/<project>/<slug> (pi/extensions/artifacts-home
+# links each project's .pi/artifacts into ~/artifacts/pi/); they have no published
+# page, only the local one.
+#
 # The local page needs no claude.ai account (see ~/artifacts/README.md); the
 # published one opens only for the account that owns it.
 #
@@ -16,20 +20,36 @@ set -euo pipefail
 A="${ARTIFACTS_DIR:-$HOME/artifacts}"
 OPEN="${OPEN_CMD:-open}"
 
+title_of() {
+  sed -n 's:.*<title>\(.*\)</title>.*:\1:p' "$1" | head -1 \
+    | sed -e 's/&#39;/'"'"'/g' -e 's/&quot;/"/g' -e 's/&amp;/\&/g'
+}
+
 list() {
-  local d name page title
+  local d f name page title
   for d in "$A"/*/; do
     name="$(basename "$d")"
     page="$d$name.html"
     [ -f "$page" ] || continue
-    title="$(sed -n 's:.*<title>\(.*\)</title>.*:\1:p' "$page" | head -1 \
-      | sed -e 's/&#39;/'"'"'/g' -e 's/&quot;/"/g' -e 's/&amp;/\&/g')"
+    title="$(title_of "$page")"
     printf '%s\t%s\n' "$name" "${title:-$name}"
+  done
+  for f in "$A"/pi/*/*.html; do
+    [ -f "$f" ] || continue
+    name="${f#"$A"/}"
+    name="${name%.html}"
+    title="$(title_of "$f")"
+    printf '%s\t%s\n' "$name" "${title:-$(basename "$name")}"
   done
 }
 
-page_of() { printf '%s/%s/%s.html' "$A" "$1" "$1"; }
-url_of() { head -1 "$A/$1/url" 2>/dev/null; }
+page_of() {
+  case "$1" in
+    pi/*) printf '%s/%s.html' "$A" "$1" ;;
+    *) printf '%s/%s/%s.html' "$A" "$1" "$1" ;;
+  esac
+}
+url_of() { case "$1" in pi/*) ;; *) head -1 "$A/$1/url" 2>/dev/null ;; esac; }
 
 preview() {
   local name="$1" page
@@ -46,7 +66,7 @@ open_one() {  # open_one NAME local|url
   local name="$1" target
   if [ "$2" = url ]; then
     target="$(url_of "$name")"
-    [ -n "$target" ] || { echo "art: $name has no url file" >&2; exit 1; }
+    [ -n "$target" ] || { echo "art: $name has no published link (pi artifacts are local only)" >&2; exit 1; }
   else
     target="$(page_of "$name")"
   fi

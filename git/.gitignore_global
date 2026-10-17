@@ -2,3 +2,6 @@
 .DS_Store
 
 **/.claude/settings.local.json
+
+# pi-artifacts output: a link into ~/artifacts (pi/extensions/artifacts-home), never repo content
+.pi/artifacts

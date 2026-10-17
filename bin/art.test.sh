@@ -20,6 +20,9 @@ mk system-map "Dmitry's System Map" https://claude.ai/artifact/AAA
 mk daily-run-system "Daily Run System" https://claude.ai/artifact/BBB
 mk retrieve-v2-ui-decisions "Retrieve v2 UI Decisions" https://claude.ai/artifact/CCC
 mkdir -p "$A/not-an-artifact"   # a folder without a page is skipped
+mkdir -p "$A/pi/projects-x"      # pi artifacts (bin: pi/extensions/artifacts-home)
+printf '<title>Review of !12</title>\n' > "$A/pi/projects-x/review-12.html"
+printf '{}' > "$A/pi/projects-x/review-12.annotations.json"
 
 BIN="$SANDBOX/bin"; mkdir -p "$BIN"
 LOG="$SANDBOX/open.log"
@@ -36,15 +39,22 @@ run() { : > "$LOG"; "$SCRIPT" "$@" 2>&1; }
 
 echo "list"
 out="$(run --list)"
-check "one line per artifact with a page" "3" "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+check "one line per artifact with a page" "4" "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
 has "name, then title" "$out" "system-map	Dmitry's System Map"
 has "title read from the page" "$out" "Retrieve v2 UI Decisions"
 case "$out" in *not-an-artifact*) fail "folders without a page are skipped" "$out" ;; *) pass "folders without a page are skipped" ;; esac
+
+has "pi artifacts listed under pi/<project>/" "$out" "pi/projects-x/review-12	Review of !12"
+case "$out" in *annotations*) fail "pi sidecar files are not listed" "$out" ;; *) pass "pi sidecar files are not listed" ;; esac
 
 echo "open by name"
 run map >/dev/null; check "a unique match opens the local page" "$A/system-map/system-map.html" "$(cat "$LOG")"
 run Retrieve >/dev/null; check "matching is case-insensitive and covers the title" "$A/retrieve-v2-ui-decisions/retrieve-v2-ui-decisions.html" "$(cat "$LOG")"
 run --url daily >/dev/null; check "--url opens the published page" "https://claude.ai/artifact/BBB" "$(cat "$LOG")"
+run review-12 >/dev/null; check "a pi artifact opens its local page" "$A/pi/projects-x/review-12.html" "$(cat "$LOG")"
+out="$(run --url review-12)"; code=$?
+check "a pi artifact has no published page: exit 1" "1" "$code"
+has "and says so" "$out" "no published link"
 out="$(run nothing-like-this)"; code=$?
 check "no match exits 1" "1" "$code"
 has "and says so" "$out" "no artifact matches"
