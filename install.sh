@@ -476,6 +476,12 @@ if [ -f "$DOTFILES_DIR/bin/day-plan" ]; then
     create_symlink "$DOTFILES_DIR/bin/day-plan" "$HOME/.local/bin/day-plan"
 fi
 
+# decide files the questions /run-day is waiting on; decisions is the popup that answers
+# them (tmux prefix+y). The answers reach the session through the run-day inbox.
+for f in decide decisions; do
+    [ -f "$DOTFILES_DIR/bin/$f" ] && create_symlink "$DOTFILES_DIR/bin/$f" "$HOME/.local/bin/$f"
+done
+
 # mr-watch finds new review notes on my MRs and posts the replies; driven by /watch-mrs.
 if [ -f "$DOTFILES_DIR/bin/mr-watch" ]; then
     create_symlink "$DOTFILES_DIR/bin/mr-watch" "$HOME/.local/bin/mr-watch"
