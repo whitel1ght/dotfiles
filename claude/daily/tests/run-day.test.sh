@@ -89,4 +89,13 @@ has "$F" "\`decision\`: run \`decide show <id>\`" "applies an answer"
 has "$F" "\`clarify\`: answer with \`decide reply <id> " "answers a question back in the decision"
 has "$F" "For every kind but \`service\`, \`decision\` and \`clarify\`" "no memory block for the new kinds"
 
+echo "== decision queue: review fixes =="
+has "$F" "no diary change and no Unplanned line, whatever the key" "answers never write diary lines"
+has "$F" "withdraw and close the old decision first" "edit after a question back does not deadlock"
+has "$F" "Change the reply first (add a note with n)" "option 2 names the popup's note key"
+lacks "$F" "on their yes" "resume re-dispatch is a decision"
+lacks "$F" "ask the user for the MR link" "a missing MR link is a decision"
+lacks "$F" "post it only if the user says so" "the Jira one-liner is a decision"
+lacks "$F" "offer to add the ticket to today's plan; on yes" "a new assignment is a decision"
+
 finish

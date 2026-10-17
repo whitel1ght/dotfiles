@@ -71,8 +71,8 @@ wake-up named — or `subagent_result({id})` when none arrived yet. If a session
 orphaned agents (their launching session is gone, e.g. after a crash), decide each before any dispatch:
 `subagent_adopt({from:"<old session id>"})` to keep them, or `subagent_stop({id})`. Re-read the
 plan block too: the user edits the diary directly. A `[/]` item whose agent is neither running nor
-has a result to read is lost: tell the user and, on their yes, re-dispatch it into its existing
-worktree (step 2, without `wt add`). Otherwise never re-dispatch an item already `[/]` or `[x]`, and
+has a result to read is lost: file a decision (step 9) with the options `Re-dispatch into its
+existing worktree` and `Leave it`, and on the first re-dispatch it (step 2, without `wt add`). Otherwise never re-dispatch an item already `[/]` or `[x]`, and
 never one with `owner=external:<KEY>` (a side session works it). Then start the watcher (step 6;
 `run_day_watch` says when it is already running), process the inbox (step 7), and continue at
 step 3. `decide list` shows decisions still waiting: leave them; answers arrive through the inbox.
@@ -244,7 +244,8 @@ session can address it, set `needs_you=yes`, and stop there.
    `PROJECT_PATH=$(sed -E 's#.*gitlab.com/(.*)/-/merge_requests/([0-9]+).*#\1#' <<<"$URL")`,
    `IID=$(sed -E 's#.*/merge_requests/([0-9]+).*#\1#' <<<"$URL")`, `ENC=$(python3 -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=""))' "$PROJECT_PATH")`.
    The url is empty or does not match: use the item's run-state `mr=<group>/<repo>!<iid>`; empty
-   too: ask the user for the MR link.
+   too: file a decision asking for the MR link (the user answers with a question back, `c`, or a
+   note) and skip the round until it arrives.
 2. Fill `templates/review-round-brief.md` into `scratch/round-brief-<repo>-<iid>.md` — all 10 tokens
    replaced ({{BRANCH}}, {{EVENT_LINE}}, {{KEY}}, {{MR_IID}}, {{MR_URL}}, {{PROJECT_PATH}},
    {{PROJECT}}, {{REPLY_FILE}}, {{REPO}}, {{WORKTREE}}; the template is the source of truth),
@@ -259,16 +260,18 @@ session can address it, set `needs_you=yes`, and stop there.
    the round as a decision (step 9): `--blocks reply`, question `Push the fixes and post the review
    reply on <repo>!<iid>?`, the context the findings with their status and SHAs,
    `git log --oneline @{u}..HEAD` and the **full** draft reply (`cat` the reply file), and the
-   options `Push and post the reply` (recommended), `Change the reply first (say how with c)`,
+   options `Push and post the reply` (recommended), `Change the reply first (add a note with n)`,
    `Push nothing and post nothing`. When the answer arrives (step 7), option 1 is yes, option 3 is
    no, and option 2 or a question back with changes is edit.
 6. yes → push,
    `glab api "projects/$ENC/merge_requests/$IID/discussions/$DID/notes" -X POST -F body=@<reply>`
-   (`$DID` is the report's `discussion:` line), `needs_you=no`, apply the memory block, offer the
-   Jira one-liner with the new head SHA (post it only on yes, through `jira-write`).
+   (`$DID` is the report's `discussion:` line), `needs_you=no`, apply the memory block, file a
+   decision without `--blocks`, `Post a Jira one-liner with the new head SHA on <KEY>?` (options
+   `Post it` and `No`); on `Post it`, post it through `jira-write`.
    edit → apply the user's changes to the reply file yourself, or launch a fresh `subagent` worker
-   in the same worktree whose task names the earlier result file and the requested edits; come
-   back to step 5.
+   in the same worktree whose task names the earlier result file and the requested edits. When the
+   changes came as a question back, the round's decision is still open: withdraw and close the old
+   decision first. Then come back to step 5, which files a new decision for the revised reply.
    no → push and post nothing, leave the commits in the worktree, `needs_you=no`. Set the item `[!]`
    with `· note: review round declined by user` only if the user says to.
 
@@ -299,8 +302,9 @@ Then:
 - `[daily-event] review | ...` / `comment | ...` → step 5.
 - `[daily-event] pipeline_failed | ...` → dispatch a fix agent (step 2, ticket brief with done-when: the
   pipeline on the branch is green), within the cap of 3.
-- `[daily-event] assigned | ...` → offer to add the ticket; on yes add one
-  `- [ ] <key> <summary>` line under `**Today**` (never on your own) and triage it like step 1.
+- `[daily-event] assigned | ...` → file a decision `Add <KEY> to today's plan?` (options `Add it`
+  and `Not today`); on `Add it`, add one `- [ ] <key> <summary>` line under `**Today**` (never on
+  your own) and triage it like step 1.
 - `[daily-event:info] ...` lines: no action. Mention them only if the user asks what changed.
 - GitLab or Jira unavailable (5xx, timeout, connection refused; not 401/403/404) → no retry. Add `waiting=<service>`
   to the item's run-state line, run `wait-for <service> --detach --key <KEY>` (no-op if one is waiting) and move on.
@@ -357,6 +361,7 @@ block. `decision` and `clarify` messages also carry `decision: D-<n>` and have n
      `· blocked: worktree is gone and the branch was not found`, `needs_you=yes`, tell the user.
      A `handback` for a key not on the plan, or with an empty key: tell the user, apply only its
      memory block.
+   - `decision` and `clarify` make no diary change and no Unplanned line, whatever the key.
    - `decision` → run `decide show <id>` (the `decision:` field) and apply the chosen option
      (`## Answer`, with any note) as if the user had said it here: dispatch, merge, reply to the
      reviewer, defer. Clear the item's `needs_you` when `decide list --json` shows no other open
