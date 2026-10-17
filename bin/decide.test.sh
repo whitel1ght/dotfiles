@@ -30,7 +30,7 @@ has "key upper-cased" "$(cat "$f")" "key: ECFX-18313"
 has "status open" "$(cat "$f")" "status: open"
 has "context from stdin" "$(cat "$f")" '@adam: "rename to trackCount" (nit)'
 has "options numbered, recommended marked" "$(cat "$f")" "1. Fix now, then merge (recommended)"
-[ -z "$(ls -A "$D" | grep -v '^D-1.md$')" ] && pass "no temp file left" || fail "no temp file left" "$(ls -A "$D")"
+[ -z "$(ls -A "$D" | grep -v -e '^D-1.md$' -e '^.lock$')" ] && pass "no temp file left" || fail "no temp file left" "$(ls -A "$D")"
 
 id2="$(run add --key '' --blocks 'reply: a "quoted" | piped' --question 'Weird: text | "quotes" ✓' --option a --option b </dev/null)"
 check "second id" "D-2" "$id2"
@@ -109,6 +109,21 @@ day="$(date +%F)"
 [ -f "$D/done/$day/$id.md" ] && [ -f "$D/done/$day/$wid.md" ] && pass "closed ones move to done/<day>" || fail "closed ones move to done/<day>" "$(find "$D" -name 'D-*')"
 nid="$(run add --key ECFX-3 --question 'Next?' --option a --option b </dev/null)"
 check "numbering continues past done/" "D-$(( ${wid#D-} + 1 ))" "$nid"
+
+echo "review fixes"
+hid="$(printf 'Reviewer said:\n## Summary\nrename it\n## Answer\nnot a real answer\n' | run add --key ECFX-50 --question 'Headings in context?' --option a --option b)"
+run reply "$hid" 'noted' >/dev/null
+has "a ## heading in the context survives a rewrite" "$(run show "$hid")" "rename it"
+has "even one named like a section" "$(run show "$hid")" "not a real answer"
+check "and the real Answer section is still absent" "open" "$(run list --json | jq -r --arg id "$hid" '.[] | select(.id==$id) | "open"')"
+lost=0
+for i in $(seq 1 15); do
+  rid="$(run add --key ECFX-6$i --question "Race $i?" --option a --option b </dev/null)"
+  "$SCRIPT" reply "$rid" "session reply $i" >/dev/null 2>&1 & "$SCRIPT" answer "$rid" 1 >/dev/null 2>&1 & wait
+  f2="$D/$rid.md"
+  grep -q "session reply $i" "$f2" && grep -q 'status: answered' "$f2" && grep -q '^## Answer' "$f2" || lost=$((lost + 1))
+done
+check "concurrent reply and answer: neither is lost (15 runs)" "0" "$lost"
 
 echo
 echo "passed: $PASS  failed: $FAIL"
