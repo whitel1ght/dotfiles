@@ -333,7 +333,8 @@ reset; cursor 2026-10-08T07:00:00Z; echo '{}' > "$FIX/todos.json"
 run >/dev/null
 assert_eq "--source gitlab-todos service_down GitLab to-dos unavailable" "$(cat "$FIX/friction.log")" "a failing to-dos source records source gitlab-todos"
 reset; cursor 2026-10-08T07:00:00Z
-GLAB_FAIL_EXACT="api user" run >/dev/null
+echo '{"message":"401 Unauthorized"}' > "$FIX/mrs.json"
+run >/dev/null
 assert_eq "--source gitlab-mrs service_down GitLab MRs unavailable" "$(cat "$FIX/friction.log")" "a failing MR source records source gitlab-mrs"
 reset; cursor 2026-10-08T07:00:00Z
 run >/dev/null
@@ -347,6 +348,37 @@ reset; cursor 2026-10-08T07:00:00Z
 out=$(JIRA_MYSELF_FAIL=1 PATH="$STUBS:$(dirname "$(command -v jq)"):/usr/bin:/bin" FIX="$FIX" CHANGES_SINCE_STATE="$STATE" TZ=UTC "$SCRIPT" 2>"$SANDBOX/stderr"); rc=$?
 assert_eq "1" "$rc" "a missing friction leaves exit 1"
 assert_contains "$(errs)" "Jira unavailable" "and the same stderr without it"
+
+echo "changes-since — GitLab outage gate"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(GLAB_FAIL_EXACT="api user" run); rc=$?
+assert_eq "1" "$rc" "probe fails: exit 1"
+assert_eq "" "$out" "nothing on stdout"
+assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor unchanged"
+assert_eq "--source gitlab service_down GitLab unavailable" "$(cat "$FIX/friction.log")" "one service_down line for both GitLab feeds"
+assert_eq "api user" "$(cat "$FIX/glab.log")" "one probe call, no feed call behind it"
+assert_contains "$(errs)" "GitLab unavailable" "stderr names the source"
+jira_calls=$(wc -l < "$FIX/jira.log")
+out=$(run); rc=$?
+assert_eq "1" "$rc" "second run inside the window: exit 1"
+assert_eq "" "$out" "nothing on stdout"
+assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor still unchanged"
+assert_eq "1" "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "no second friction line"
+assert_eq "1" "$(wc -l < "$FIX/glab.log" | tr -d ' ')" "no second glab call"
+assert_eq "$jira_calls" "$(wc -l < "$FIX/jira.log")" "and no Jira call either, the run could not succeed"
+assert_contains "$(errs)" "GitLab unavailable" "stderr still says why"
+printf '%s\n' "$(($(date +%s) - 901))" > "$STATE/gitlab:down"
+out=$(run); rc=$?
+assert_eq "0" "$rc" "after 15 minutes the probe runs again and a recovered GitLab works"
+assert_eq "4" "$(wc -l < "$FIX/glab.log" | tr -d ' ')" "the probe ran again, then the to-dos and MR feeds (the probe's answer serves as the user lookup)"
+[ ! -e "$STATE/gitlab:down" ] && pass "a healthy probe clears the marker" || fail "a healthy probe clears the marker" "marker left"
+reset; cursor 2026-10-08T07:00:00Z; echo '{}' > "$FIX/todos.json"
+run >/dev/null
+glab_calls=$(wc -l < "$FIX/glab.log")
+run >/dev/null; rc=$?
+assert_eq "1" "$rc" "a failing to-dos feed also holds off the next runs"
+assert_eq "1" "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "to-dos: still one friction line"
+assert_eq "$glab_calls" "$(wc -l < "$FIX/glab.log")" "to-dos: no glab call inside the window"
 
 echo "changes-since — help"
 assert_contains "$("$SCRIPT" --help)" "changes-since [--cursor NAME] [--peek]" "--help prints the usage line"
