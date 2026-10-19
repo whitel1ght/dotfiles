@@ -30,6 +30,12 @@
 # dir (gitlab:down) holds off both the probe and the log for 15 minutes; runs in
 # that window exit 1 at once, like any failing source, so nothing is lost.
 #
+# Every Jira and glab call is bounded: CHANGES_SINCE_CALL_TIMEOUT seconds (10),
+# one retry after CHANGES_SINCE_BACKOFF seconds (1), and the whole run stops at
+# CHANGES_SINCE_BUDGET seconds (40), inside the 60 s the daily watcher allows. A
+# call that times out twice fails the run with exit 75 and "timed out" on
+# stderr, no service_down line and no cursor move: the caller skips that tick.
+#
 # Needs jira-api (it reads the Jira token from ~/.secrets), glab and jq.
 set -euo pipefail
 
@@ -40,7 +46,10 @@ STATE_DIR="${CHANGES_SINCE_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/changes-
 
 die() { echo "changes-since: $*" >&2; exit 1; }
 friction_log() { command -v friction >/dev/null 2>&1 && friction "$@" >/dev/null 2>&1 || true; }
-down() { friction_log --source "$1" service_down "$2"; die "$2"; }
+down() {
+  [ ! -e "$TIMED_OUT" ] || { echo "changes-since: timed out waiting for Jira or GitLab" >&2; exit 75; }
+  friction_log --source "$1" service_down "$2"; die "$2"
+}
 GITLAB_DOWN="$STATE_DIR/gitlab:down" GITLAB_HOLD=900
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 epoch_of() { date -j -u -f %Y-%m-%dT%H:%M:%SZ "$1" +%s 2>/dev/null || date -u -d "$1" +%s; }
@@ -70,16 +79,46 @@ def utc: if test("Z$") or test("\\+00:?00$") then sub("\\.[0-9]+"; "") | sub("\\
   else capture("^(?<t>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<s>[+-])(?<h>[0-9]{2}):?(?<m>[0-9]{2})$")
     | ((.t + "Z") | fromdateiso8601) - ((.s + "1" | tonumber) * ((.h | tonumber) * 3600 + (.m | tonumber) * 60)) | todate end;
 '
-EVENTS="$(mktemp)"; trap 'rm -f "$EVENTS"' EXIT
+EVENTS="$(mktemp)"; TIMED_OUT="$EVENTS.timeout"; trap 'rm -f "$EVENTS" "$TIMED_OUT"' EXIT
+
+CALL_TIMEOUT="${CHANGES_SINCE_CALL_TIMEOUT:-10}" BACKOFF="${CHANGES_SINCE_BACKOFF:-1}" BUDGET="${CHANGES_SINCE_BUDGET:-40}"
+
+with_timeout() {
+  perl -e '
+    my $t = shift;
+    my $pid = fork // exit 127;
+    if (!$pid) { setpgrp(0, 0); exec @ARGV; exit 127 }
+    my $kill = sub { kill "KILL", -$pid; waitpid $pid, 0 };
+    $SIG{ALRM} = sub { $kill->(); exit 124 };
+    $SIG{INT} = $SIG{TERM} = sub { $kill->(); exit 130 };
+    alarm $t;
+    waitpid $pid, 0;
+    exit($? & 127 ? 128 + ($? & 127) : $? >> 8);
+  ' "$@"
+}
+
+bounded() {
+  local attempt left t rc
+  for attempt in 1 2; do
+    left=$((BUDGET - ($(date +%s) - now)))
+    [ "$left" -gt 0 ] || break
+    t=$CALL_TIMEOUT; [ "$t" -le "$left" ] || t=$left
+    with_timeout "$t" "$@"; rc=$?
+    [ "$rc" -eq 124 ] || return "$rc"
+    [ "$attempt" -eq 2 ] || sleep "$BACKOFF"
+  done
+  : > "$TIMED_OUT"
+  return 124
+}
 
 feed_jira() {
   local jql_since assigned updated tz
   # JQL reads dates in the Jira profile's time zone, not this machine's.
-  tz=$("$JIRA_API" GET myself | jq -er .timeZone) || return 1
+  tz=$(bounded "$JIRA_API" GET myself | jq -er .timeZone) || return 1
   jql_since=$(TZ="$tz" date -r "$(epoch_of "$SINCE")" '+%Y/%m/%d %H:%M' 2>/dev/null || TZ="$tz" date -d "$SINCE" '+%Y/%m/%d %H:%M')
   jira_issues() {
     local resp
-    resp=$("$JIRA_API" POST search/jql "$(jq -cn --arg jql "$1" \
+    resp=$(bounded "$JIRA_API" POST search/jql "$(jq -cn --arg jql "$1" \
       '{jql: $jql, fields: ["summary", "status", "updated"], maxResults: 100}')") || return 1
     jq -e '.issues | type == "array"' <<<"$resp" >/dev/null || return 1
     jq -c .issues <<<"$resp"
@@ -98,7 +137,7 @@ feed_jira() {
   done
 }
 
-gitlab_json() { glab api --paginate "$1" | jq -s 'add // []'; }
+gitlab_json() { bounded glab api --paginate "$1" | jq -s 'add // []'; }
 
 feed_gitlab_todos() {
   local todos
@@ -124,12 +163,12 @@ feed_gitlab_mrs() {
   mrs=$(gitlab_json "merge_requests?scope=created_by_me&state=all&updated_after=$SINCE&per_page=100") || return 1
   jq -e 'type == "array"' <<<"$mrs" >/dev/null || return 1
   while IFS=$'\t' read -r pid iid; do
-    detail=$(glab api "projects/$pid/merge_requests/$iid") || return 1
-    notes=$(glab api "projects/$pid/merge_requests/$iid/notes?sort=desc&order_by=created_at&per_page=100") || return 1
+    detail=$(bounded glab api "projects/$pid/merge_requests/$iid") || return 1
+    notes=$(bounded glab api "projects/$pid/merge_requests/$iid/notes?sort=desc&order_by=created_at&per_page=100") || return 1
     pipelines='[]'
     # The previous pipeline only matters when the head one just went green.
     if jq -e --arg since "$SINCE" "$JQ_DEFS"'.state == "opened" and .head_pipeline.status == "success" and (.head_pipeline.updated_at | utc) >= $since' <<<"$detail" >/dev/null; then
-      pipelines=$(glab api "projects/$pid/merge_requests/$iid/pipelines") || return 1
+      pipelines=$(bounded glab api "projects/$pid/merge_requests/$iid/pipelines") || return 1
     fi
     jq -c --arg since "$SINCE" --arg me "$ME" --arg jp "$JIRA_PROJECT" --argjson notes "$notes" --argjson pipelines "$pipelines" "$JQ_DEFS"'
       def latest: map(.created_at | utc) | max;
@@ -161,7 +200,7 @@ feed_gitlab_mrs() {
   done < <(jq -r '.[] | [.project_id, .iid] | @tsv' <<<"$mrs")
 }
 
-gitlab_down() { mkdir -p "$STATE_DIR" && date +%s > "$GITLAB_DOWN" || true; down "$@"; }
+gitlab_down() { [ -e "$TIMED_OUT" ] || { mkdir -p "$STATE_DIR" && date +%s > "$GITLAB_DOWN"; } || true; down "$@"; }
 
 if [ -s "$GITLAB_DOWN" ]; then
   held=$(cat "$GITLAB_DOWN")
@@ -171,7 +210,7 @@ if [ -s "$GITLAB_DOWN" ]; then
 fi
 
 feed_jira || down jira "Jira unavailable (are JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env still valid?)"
-ME=$(glab api user | jq -er .username) || gitlab_down gitlab "GitLab unavailable"
+ME=$(bounded glab api user | jq -er .username) || gitlab_down gitlab "GitLab unavailable"
 rm -f "$GITLAB_DOWN"
 feed_gitlab_todos || gitlab_down gitlab-todos "GitLab to-dos unavailable"
 feed_gitlab_mrs || gitlab_down gitlab-mrs "GitLab MRs unavailable"

@@ -12,6 +12,8 @@ import { joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts
 
 const REFRESH_MS = 5_000
 const WATCH_MS = 180_000
+const TIMEOUTS_BEFORE_FRICTION = 3
+const CHANGES_SINCE_TIMED_OUT = 75
 const INBOX_MS = 30_000
 const DAY_PLAN = 'exec "$(command -v day-plan || echo "$HOME/.local/bin/day-plan")"'
 const INBOX_LS = 'ls -1 "$HOME/.local/state/run-day/inbox" 2>/dev/null; true'
@@ -52,7 +54,7 @@ async function load($: EngineInterface) {
   return { day, active: true as const, items: parseItems(diary), runs: parseRunState(state) }
 }
 
-const flags = { lastNeeds: null as Set<string> | null, isWatching: false, hasWatchFailed: false, hasRefreshFailed: false, isListing: false, hasInboxFailed: false }
+const flags = { lastNeeds: null as Set<string> | null, isWatching: false, timeouts: 0, hasWatchFailed: false, hasRefreshFailed: false, isListing: false, hasInboxFailed: false }
 
 // Fire-and-forget: a missing or failing friction must never slow or change the caller.
 function friction($: EngineInterface, kind: string, msg: string, source = 'changes-since') {
@@ -95,6 +97,13 @@ async function safeRefresh($: EngineInterface) {
   }
 }
 
+// A timed-out tick is not a failure: the next tick tries again, and friction is
+// recorded once when it keeps happening.
+function skipTick($: EngineInterface, why: string) {
+  flags.timeouts++
+  if (flags.timeouts === TIMEOUTS_BEFORE_FRICTION) friction($, 'timeout', `${why} (${flags.timeouts} ticks in a row)`)
+}
+
 async function watch($: EngineInterface) {
   if (flags.isWatching) return
   flags.isWatching = true
@@ -105,13 +114,14 @@ async function watch($: EngineInterface) {
       ['/bin/sh', '-c', 'exec "$(command -v changes-since || echo "$HOME/.local/bin/changes-since")" --cursor run-day'],
       { timeoutMs: 60_000 },
     )
+    if (ran.exitCode === CHANGES_SINCE_TIMED_OUT || ran.exitCode === 124) {
+      skipTick($, `changes-since timed out (exit ${ran.exitCode}): ${ran.stderr.split('\n')[0]}`)
+      return
+    }
+    flags.timeouts = 0
     if (ran.exitCode !== 0) {
-      if (!flags.hasWatchFailed) {
-        $.ui.toast(`changes-since failed (exit ${ran.exitCode}): ${ran.stderr.split('\n')[0]}`)
-        // changes-since logs its own service_down; only its timeout is invisible to it
-        const timedOut = ran.exitCode === 124 || /timed? ?out/i.test(ran.stderr)
-        if (timedOut) friction($, 'timeout', `changes-since failed (exit ${ran.exitCode}): ${ran.stderr.split('\n')[0]}`)
-      }
+      // changes-since logs its own service_down
+      if (!flags.hasWatchFailed) $.ui.toast(`changes-since failed (exit ${ran.exitCode}): ${ran.stderr.split('\n')[0]}`)
       flags.hasWatchFailed = true
       return
     }
@@ -149,12 +159,16 @@ async function watch($: EngineInterface) {
       }
     }
   } catch (err) {
-    if (!flags.hasWatchFailed) {
-      const why = err instanceof Error ? err.message : String(err)
-      $.ui.toast(`daily watcher: ${why}`)
-      friction($, /timed? ?out/i.test(why) ? 'timeout' : 'tool_error', `daily watcher: ${why}`)
+    const why = err instanceof Error ? err.message : String(err)
+    if (/timed? ?out|still running after/i.test(why)) {
+      skipTick($, `daily watcher: ${why}`)
+    } else {
+      if (!flags.hasWatchFailed) {
+        $.ui.toast(`daily watcher: ${why}`)
+        friction($, 'tool_error', `daily watcher: ${why}`)
+      }
+      flags.hasWatchFailed = true
     }
-    flags.hasWatchFailed = true
   } finally {
     flags.isWatching = false
   }

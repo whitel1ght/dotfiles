@@ -7,7 +7,7 @@ const STATE = '/home/t/.local/state/run-day/2026-10-08.md'
 
 type Run = { exitCode: number; stdout: string; stderr: string }
 
-async function start($: any, on: any, opts: { day: Run; refuse?: boolean; frictionDenied?: boolean }) {
+async function start($: any, on: any, opts: { day: Run | (() => Run); refuse?: boolean; frictionDenied?: boolean }) {
   const clock = mock.clock(on)
   const calls: string[][] = []
   const toasts: string[] = []
@@ -17,7 +17,7 @@ async function start($: any, on: any, opts: { day: Run; refuse?: boolean; fricti
   on('process.run', (_$: any, e: any) => {
     calls.push(e.argv)
     if (opts.frictionDenied && isFriction(e.argv)) return { deny: 'friction exploded' }
-    return { value: e.argv[0] === 'date' ? { exitCode: 0, stdout: '2026-10-08\n', stderr: '' } : opts.day } as never
+    return { value: e.argv[0] === 'date' ? { exitCode: 0, stdout: '2026-10-08\n', stderr: '' } : typeof opts.day === 'function' ? (isChangesSince(e.argv) ? opts.day() : OK) : opts.day } as never
   })
   on('fs.read', (_$: any, e: any) => (e.path === WIKI ? { value: DIARY } : e.path === STATE ? { value: RUN_STATE } : { deny: 'ENOENT' }))
   on('command.register', (_$: any, e: any) => {
@@ -47,6 +47,8 @@ async function start($: any, on: any, opts: { day: Run; refuse?: boolean; fricti
 const isFriction = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('friction')
 const frictionFor = (calls: string[][], source: string) => calls.filter(a => isFriction(a) && a[7] === source)
 const OK: Run = { exitCode: 0, stdout: '', stderr: '' }
+const isChangesSince = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('changes-since')
+const TIMED_OUT: Run = { exitCode: 75, stdout: '', stderr: 'changes-since: timed out waiting for Jira or GitLab\n' }
 const isDayPlan = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('day-plan')
 
 test('/day-plan runs day-plan without blocking and reports it opened', async ($, on) => {
@@ -81,17 +83,37 @@ test('a failing changes-since watch toasts once and leaves service_down to the s
   expect(s.toasts.filter(t => t.startsWith('changes-since failed')).length).toBe(1)
 })
 
-test('a timed-out changes-since watch is recorded as a timeout', async ($, on) => {
-  const s = await start($, on, { day: { exitCode: 124, stdout: '', stderr: '' } })
+test('a timed-out changes-since tick is skipped quietly and the watcher keeps polling', async ($, on) => {
+  const s = await start($, on, { day: TIMED_OUT })
+  for (let i = 0; i < 2; i++) await s.clock.advance(180_000)
+  expect(s.toasts.filter(t => t.startsWith('changes-since failed')).length).toBe(0)
+  expect(frictionFor(s.calls, 'changes-since').length).toBe(0)
   await s.clock.advance(180_000)
-  expect(frictionFor(s.calls, 'changes-since')[0][8]).toBe('timeout')
+  await s.clock.advance(180_000)
+  expect(s.calls.filter(isChangesSince).length).toBe(4)
+})
+
+test('three timed-out ticks in a row record one timeout, however long it goes on', async ($, on) => {
+  const s = await start($, on, { day: TIMED_OUT })
+  for (let i = 0; i < 6; i++) await s.clock.advance(180_000)
+  const events = frictionFor(s.calls, 'changes-since')
+  expect(events.length).toBe(1)
+  expect(events[0][8]).toBe('timeout')
+})
+
+test('a tick that answers resets the timeout count', async ($, on) => {
+  const answers = [TIMED_OUT, TIMED_OUT, OK, TIMED_OUT, TIMED_OUT]
+  const s = await start($, on, { day: () => answers.shift() ?? OK })
+  for (let i = 0; i < 5; i++) await s.clock.advance(180_000)
+  expect(frictionFor(s.calls, 'changes-since').length).toBe(0)
 })
 
 test('a failing friction call does not change the toast or break the watcher', async ($, on) => {
-  const s = await start($, on, { day: { exitCode: 124, stdout: '', stderr: 'boom\n' }, frictionDenied: true })
-  await s.clock.advance(180_000)
+  const s = await start($, on, { day: TIMED_OUT, frictionDenied: true })
+  for (let i = 0; i < 4; i++) await s.clock.advance(180_000)
   expect(frictionFor(s.calls, 'changes-since').length).toBe(1)
-  expect(s.toasts).toContain('changes-since failed (exit 124): boom')
+  expect(s.toasts.filter(t => t.startsWith('changes-since failed')).length).toBe(0)
+  expect(s.calls.filter(isChangesSince).length).toBe(4)
 })
 
 test('a healthy watch records nothing', async ($, on) => {

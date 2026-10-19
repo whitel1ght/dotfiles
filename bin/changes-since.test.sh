@@ -27,6 +27,8 @@ mkdir -p "$STUBS"
 cat > "$STUBS/jira-api" <<'STUB'
 #!/bin/bash
 echo "$*" >> "${FIX:?}/jira.log"
+[ -e "$FIX/jira-hang-once" ] && { rm -f "$FIX/jira-hang-once"; sleep 30; }
+[ -n "${JIRA_SLEEP:-}" ] && sleep "$JIRA_SLEEP"
 [ "$1 $2" = "GET myself" ] && { [ -n "${JIRA_MYSELF_FAIL:-}" ] && exit 1; printf '{"timeZone":"%s"}\n' "${JIRA_TZ:-UTC}"; exit 0; }
 [ -n "${JIRA_DOWN:-}" ] && { echo '{"errorMessages":["Unauthorized"]}'; exit 0; }
 case "$3" in
@@ -41,6 +43,7 @@ chmod +x "$STUBS/jira-api"
 cat > "$STUBS/glab" <<'STUB'
 #!/bin/bash
 echo "$*" >> "${FIX:?}/glab.log"
+[ -n "${GLAB_SLEEP_ON:-}" ] && case "$*" in *"$GLAB_SLEEP_ON"*) sleep 30 ;; esac
 [ -n "${GLAB_FAIL:-}" ] && case "$*" in *"$GLAB_FAIL"*) exit 1 ;; esac
 [ -n "${GLAB_FAIL_EXACT:-}" ] && [ "$*" = "$GLAB_FAIL_EXACT" ] && exit 1
 case "$*" in
@@ -379,6 +382,42 @@ run >/dev/null; rc=$?
 assert_eq "1" "$rc" "a failing to-dos feed also holds off the next runs"
 assert_eq "1" "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "to-dos: still one friction line"
 assert_eq "$glab_calls" "$(wc -l < "$FIX/glab.log")" "to-dos: no glab call inside the window"
+
+echo "changes-since — bounded calls"
+export CHANGES_SINCE_CALL_TIMEOUT=1 CHANGES_SINCE_BACKOFF=0 CHANGES_SINCE_BUDGET=20
+reset; cursor 2026-10-08T07:00:00Z
+start=$SECONDS
+out=$(JIRA_SLEEP=30 run); rc=$?
+elapsed=$((SECONDS - start))
+assert_eq "75" "$rc" "a Jira call that hangs: exit 75, the skipped-tick code"
+assert_eq "" "$out" "nothing on stdout"
+[ "$elapsed" -le 4 ] && pass "returns within bound + retry (${elapsed}s), not after the 30s the call would take" || fail "returns within bound + retry" "took ${elapsed}s"
+assert_eq "2" "$(wc -l < "$FIX/jira.log" | tr -d ' ')" "the hung call was retried once"
+assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor unchanged"
+assert_contains "$(errs)" "timed out" "stderr says it timed out"
+[ ! -e "$FIX/friction.log" ] && pass "a timeout logs no service_down" || fail "a timeout logs no service_down" "$(cat "$FIX/friction.log")"
+[ ! -e "$STATE/gitlab:down" ] && pass "and sets no GitLab outage marker" || fail "and sets no GitLab outage marker" "marker written"
+
+reset; cursor 2026-10-08T07:00:00Z; touch "$FIX/jira-hang-once"
+out=$(run); rc=$?
+assert_eq "0" "$rc" "a call that hangs once and answers on the retry: exit 0"
+[ "$(cat "$STATE/default")" != "2026-10-08T07:00:00Z" ] && pass "cursor moved" || fail "cursor moved" "unchanged"
+
+reset; cursor 2026-10-08T07:00:00Z
+out=$(GLAB_SLEEP_ON="todos" run --peek); rc=$?
+assert_eq "75" "$rc" "a glab call that hangs: exit 75"
+assert_eq "" "$out" "nothing on stdout"
+assert_eq "2" "$(grep -c todos "$FIX/glab.log")" "the to-dos call was retried once"
+[ ! -e "$FIX/friction.log" ] && pass "no service_down for a glab timeout" || fail "no service_down for a glab timeout" "$(cat "$FIX/friction.log")"
+[ ! -e "$STATE/gitlab:down" ] && pass "no marker for a glab timeout" || fail "no marker for a glab timeout" "marker written"
+
+reset; cursor 2026-10-08T07:00:00Z
+start=$SECONDS
+out=$(CHANGES_SINCE_CALL_TIMEOUT=30 CHANGES_SINCE_BUDGET=2 JIRA_SLEEP=30 run); rc=$?
+elapsed=$((SECONDS - start))
+assert_eq "75" "$rc" "the whole-run budget caps a long per-call bound: exit 75"
+[ "$elapsed" -le 4 ] && pass "within the budget (${elapsed}s)" || fail "within the budget" "took ${elapsed}s"
+unset CHANGES_SINCE_CALL_TIMEOUT CHANGES_SINCE_BACKOFF CHANGES_SINCE_BUDGET
 
 echo "changes-since — help"
 assert_contains "$("$SCRIPT" --help)" "changes-since [--cursor NAME] [--peek]" "--help prints the usage line"
