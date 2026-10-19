@@ -22,7 +22,9 @@
 # not a short answer to an assistant question), so they carry confidence "low". The
 # same failing command three or more times in one transcript adds a `retry` record. A
 # group whose signature is in the ledger gets known=<F-id> and ledger_status; status
-# fixed also sets regression.
+# fixed also sets regression. A Claude Bash failure that is only "Exit code N" is kept
+# only when its command (any pipeline segment) is one of our tools (glab, jira, secret,
+# end-day and the like); other commands, or none found, are dropped.
 # user_signals: broad-recall candidate user prompts (direction and frustration markers,
 # or sent right after an interrupt) with the preceding assistant text, at most 40,
 # most-marked first; injected, meta and command-expansion messages are skipped.
@@ -43,7 +45,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --date) [ $# -ge 2 ] || die "--date needs a value"; date_="$2"; shift ;;
     --ledger) [ $# -ge 2 ] || die "--ledger needs a value"; ledger="$2"; shift ;;
-    -h|--help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown option $1" ;;
   esac
   shift
@@ -80,7 +82,13 @@ def realprompt: type == "string" and length > 0 and length <= 3000 and (startswi
 def errkind: if test("unavailable|overloaded|connection error|econn|enotfound|\\b5\\d\\d\\b"; "i") then "service_down"
   elif test("unauthori[sz]ed|\\b40[13]\\b|api key|not logged in|oauth|expired"; "i") then "auth"
   elif test("timed? ?out|timeout"; "i") then "timeout"
-  elif test("abort"; "i") then "interrupt" else "other" end;'
+  elif test("abort"; "i") then "interrupt" else "other" end;
+def ourtool: any(splits("[;&|\\n]+");
+    gsub("^[\\s({]+"; "")
+    | until(test("^[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+") | not; sub("^[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+"; ""))
+    | (match("^\\S*").string | sub(".*/"; ""))
+    | IN("glab", "jira", "secret", "secrets", "changes-since", "mr-watch", "end-day", "start-day", "day-plan", "day-note", "diary-links",
+         "friction", "friction-mine", "friction-ledger", "jt", "wt", "wait-for", "sync-tickets", "wiki-sync", "cs", "cs-add", "plink", "decide", "decisions"));'
 
 out="$(mktemp -d)"
 trap 'rm -rf "${out:?}"' EXIT
@@ -165,6 +173,7 @@ foreach inputs as $e ({f: null, tools: {}, lastq: false, atext: "", int: false, 
         | (.content | text) as $x
         | if ($x | test("doesn.t want to proceed|requires approval|permission to use|was denied"; "i")) then rec("claude"; "denied"; "\($t.name) denied by user or permissions"; $key; $ev; "high")
           elif ($x | startswith("[Request interrupted")) then empty
+          elif ($x | split("\n")[0] | test("^Exit code [0-9]+$")) and ($t.cmd | ourtool | not) then empty
           else rec("claude"; "tool_error"; "\($t.name): \($x | split("\n")[0])"; $key; $ev; "high") + {file: input_filename, cmd: "\($t.name) \($t.cmd | flat | .[0:200])"} end),
       ($e.message.content[] | select(.type == "text") | .text | select(startswith("[Request interrupted")) | rec("claude"; "interrupt"; .; $key; $ev; "high")),
       (($e.message.content | text) as $x | select(($e.isMeta | not) and ($x | startswith("<") | not) and ($x | startswith("[") | not) and ($x | correction($st.lastq))) | rec("claude"; "correction"; $x; $key; $ev; "low"))
