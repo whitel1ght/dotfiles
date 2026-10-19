@@ -124,6 +124,32 @@ class TransformTests(Fixture):
         self.assertEqual(self.gen(), ["tdd-flow"])
         self.assertFalse((self.out / "shipit").exists())
 
+    def description(self, name):
+        front = (self.out / name / "SKILL.md").read_text().split("---\n")[1]
+        return next(l for l in front.splitlines() if l.startswith("description: "))[len("description: "):]
+
+    def test_a_description_over_pis_limit_is_cut_at_a_word(self):
+        long = "Reads the suite and maps it. " * 50  # ~1450 characters
+        write(self.src / "plugins/shared/skills/long/SKILL.md", f"---\nname: long\ndescription: {long.strip()}\n---\nBody.\n")
+        self.gen()
+        d = self.description("long")
+        self.assertLessEqual(len(d), 1024)
+        self.assertTrue(d.endswith("…"))
+        self.assertTrue(d[:-1].endswith("it."), d[-40:])  # cut after a whole sentence
+        self.assertIn("Body.", (self.out / "long/SKILL.md").read_text())
+
+    def test_a_quoted_long_description_stays_quoted(self):
+        long = "Reads the suite: maps it. " * 50
+        write(self.src / "plugins/shared/skills/q/SKILL.md", f'---\nname: q\ndescription: "{long.strip()}"\n---\nBody.\n')
+        self.gen()
+        d = json.loads(self.description("q"))
+        self.assertLessEqual(len(d), 1024)
+        self.assertTrue(d.endswith("…"))
+
+    def test_a_short_description_is_untouched(self):
+        self.gen()
+        self.assertEqual(self.description("shipit"), "Ship the branch.")
+
     def test_refuses_to_wipe_a_folder_it_did_not_create(self):
         write(self.out / "mine/SKILL.md", "hand-written")
         with self.assertRaises(SystemExit):

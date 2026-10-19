@@ -12,6 +12,7 @@ and its markdown gets the few Claude-only constructs rewritten:
   ~/.claude/docs/          ->  ~/.agents/docs/
   ${CLAUDE_SKILL_DIR}      ->  the generated skill folder
   ${CLAUDE_PLUGIN_ROOT}    ->  the plugin folder in the clone
+  description: <1395 chars> ->  cut to 1024 (pi's limit) after a sentence, with …
 
 Skills that delegate or chain skills get a short "In pi" note on how to do that
 in pi. The output folder is owned by this script: it is rebuilt from scratch on
@@ -80,12 +81,39 @@ def transform_text(text: str, *, skill_out: Path, plugin_src: Path, plugins: lis
     return resolve_vars(text, skill_out=skill_out, plugin_src=plugin_src)
 
 
+DESC_MAX = 1024  # the Agent Skills limit; pi warns past it, Claude Code does not
+
+
+def shorten(text: str) -> str:
+    """Cut to DESC_MAX with an ellipsis: after the last sentence that fits, else the last word."""
+    if len(text) <= DESC_MAX:
+        return text
+    head = text[: DESC_MAX - 1]
+    cut = max(head.rfind(". "), head.rfind("; "))
+    cut = cut + 1 if cut > DESC_MAX // 2 else head.rfind(" ")
+    return head[:cut].rstrip() + "…"
+
+
+def fit_description(front: str) -> str:
+    def fix(m: re.Match) -> str:
+        value = m.group(1)
+        if value.startswith('"'):
+            try:
+                return "description: " + json.dumps(shorten(json.loads(value)), ensure_ascii=False)
+            except ValueError:
+                return m.group(0)
+        if value[:1] in ("|", ">", "'"):
+            return m.group(0)
+        return "description: " + shorten(value)
+    return re.sub(r"(?m)^description: (.+)$", fix, front, count=1)
+
+
 def transform_skill_md(text: str, *, name: str, skill_out: Path, plugin_src: Path, plugins: list[str]) -> str:
     match = re.match(r"---\n(.*?)\n---\n", text, re.DOTALL)
     if not match:
         raise ValueError("SKILL.md has no front matter")
     front = re.sub(r"(?m)^name:.*$", f"name: {name}", match.group(1), count=1)
-    front = resolve_vars(front, skill_out=skill_out, plugin_src=plugin_src)
+    front = fit_description(resolve_vars(front, skill_out=skill_out, plugin_src=plugin_src))
     body = transform_text(text[match.end():], skill_out=skill_out, plugin_src=plugin_src, plugins=plugins)
     if DELEGATES.search(text[match.end():]):
         body = "\n" + PI_NOTE + body
