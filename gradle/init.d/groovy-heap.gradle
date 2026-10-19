@@ -1,0 +1,5 @@
+allprojects {
+    tasks.withType(GroovyCompile).configureEach {
+        groovyOptions.forkOptions.memoryMaximumSize = '2g'
+    }
+}

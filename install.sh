@@ -192,6 +192,13 @@ if [ -f "$DOTFILES_DIR/mrglass/config.yaml" ]; then
         "$HOME/.config/mrglass/config.yaml"
 fi
 
+# Gradle init script: the forked Groovy compiler defaults to a 512 MB heap, and
+# a backend build that outgrows it hangs instead of failing. Only init.d is
+# linked; ~/.gradle also holds caches and gradle.properties.
+if [ -f "$DOTFILES_DIR/gradle/init.d/groovy-heap.gradle" ]; then
+    create_symlink "$DOTFILES_DIR/gradle/init.d/groovy-heap.gradle" "$HOME/.gradle/init.d/groovy-heap.gradle"
+fi
+
 # Neovim configuration
 if [ -d "$DOTFILES_DIR/nvim" ]; then
     create_symlink "$DOTFILES_DIR/nvim" "$HOME/.config/nvim"

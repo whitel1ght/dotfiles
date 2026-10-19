@@ -85,6 +85,12 @@ echo "wiki sync"
 [ -e "$SANDBOX/Library/LaunchAgents/local.wiki-sync.plist" ] && fail "WIKI_SYNC_AGENT=0 installs no agent" "plist written" \
     || pass "WIKI_SYNC_AGENT=0 installs no agent"
 
+# --- gradle ------------------------------------------------------------------
+echo "gradle"
+[ "$(readlink "$SANDBOX/.gradle/init.d/groovy-heap.gradle")" = "$TEST_DIR/gradle/init.d/groovy-heap.gradle" ] \
+    && pass "groovy-heap.gradle is linked into ~/.gradle/init.d" \
+    || fail "groovy-heap.gradle is linked into ~/.gradle/init.d" "$(ls -l "$SANDBOX/.gradle/init.d/groovy-heap.gradle" 2>&1)"
+
 # --- ~/.secrets -------------------------------------------------------------
 echo "secrets"
 [ "$(stat -f %Lp "$SANDBOX/.secrets")" = "700" ] && pass "~/.secrets has mode 700" \
