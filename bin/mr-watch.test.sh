@@ -159,10 +159,17 @@ printf '%s\n' "$*" >> "$FIX/friction.log"
 exit 0
 STUB
 chmod +x "$STUBS/friction"
-rm -f "$FIX/friction.log"
+rm -f "$FIX/friction.log" "$STATE/gitlab-down"
 GLAB_DOWN=1 run check >/dev/null; rc=$?
 assert_eq 2 "$rc" "still exits 2 with friction present"
 assert_eq "--source mr-watch service_down GitLab unavailable" "$(cat "$FIX/friction.log")" "GitLab down records service_down for mr-watch"
+GLAB_DOWN=1 run check >/dev/null; rc=$?
+assert_eq 2 "$rc" "a second down poll still exits 2"
+assert_eq 1 "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "two consecutive down polls record one friction line"
+run check --since 2026-09-20T00:00:00Z >/dev/null
+GLAB_DOWN=1 run check >/dev/null
+assert_eq 2 "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "a down poll after a successful one records again"
+rm -f "$STATE/gitlab-down"
 out=$(FRICTION_FAIL=1 GLAB_DOWN=1 run check); rc=$?
 assert_eq 2 "$rc" "a failing friction leaves exit 2"
 assert_eq "" "$out" "and output empty"
