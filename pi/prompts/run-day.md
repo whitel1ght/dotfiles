@@ -1,6 +1,6 @@
 ---
 description: Drive today's plan — triage, dispatch ticket agents, apply inbox reports, handle review rounds, keep the diary honest
-argument-hint: [--dry]
+argument-hint: "[--dry]"
 ---
 
 # /run-day

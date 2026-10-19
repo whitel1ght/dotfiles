@@ -1,6 +1,6 @@
 ---
 description: Resume a handed-off ticket in a side session from its hand-off note, without touching the vault
-argument-hint: [KEY]
+argument-hint: "[KEY]"
 ---
 
 # /pickup [KEY]

@@ -1,6 +1,6 @@
 ---
 description: Report this side session's work back to the day session as one inbox message
-argument-hint: [done|progress|handback] [one-line summary]
+argument-hint: "[done|progress|handback] [one-line summary]"
 ---
 
 # /report-back [done|progress|handback] [one-line summary]
