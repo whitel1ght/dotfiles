@@ -8,6 +8,7 @@ inbox message (kinds `decision` and `clarify`) that its watcher wakes it with.
   decide add --key K [--mr URL] [--blocks TEXT] --question Q --option O... [--recommend N]
                                  context on stdin; prints the new id (D-<n>)
   decide list [--json]           open decisions, blocking first, then oldest first
+                                 (--json: every field, context and discussion too)
   decide show ID                 the decision file
   decide reply ID TEXT           the session answers a question back
   decide withdraw ID [REASON]    no longer needed
@@ -173,12 +174,24 @@ def question_back(sections: dict) -> bool:
     return bool(lines) and " you: " in lines[-1]
 
 
+DISCUSSION = re.compile(r"^- (\d{2}:\d{2}) (\w+): (.*)$")
+
+
+def discussion(sections: dict) -> list[dict]:
+    return [
+        {"at": m.group(1), "who": m.group(2), "text": m.group(3)}
+        for ln in sections.get("Discussion", "").splitlines()
+        if (m := DISCUSSION.match(ln.strip()))
+    ]
+
+
 def summary(meta: dict, sections: dict) -> dict:
     opts = options(sections)
     return {
         "id": meta["id"],
         "key": meta.get("key", ""),
         "mr": meta.get("mr", ""),
+        "mr_short": mr_short(meta.get("mr", "")),
         "question": " ".join(sections.get("Question", "").split()),
         "asked": meta.get("asked", ""),
         "age": age(meta.get("asked", "")),
@@ -186,6 +199,8 @@ def summary(meta: dict, sections: dict) -> dict:
         "question_back": question_back(sections),
         "options": [{"n": n, "text": t, "recommended": r} for n, t, r in opts],
         "recommended": next((n for n, _, r in opts if r), None),
+        "context": sections.get("Context", ""),
+        "discussion": discussion(sections),
     }
 
 
