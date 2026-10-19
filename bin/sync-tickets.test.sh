@@ -101,7 +101,7 @@ case "$method $path" in
         case "$(jq -r .fields.status.name "$FIX/issue/$key")" in
             To-Do) printf '{"transitions":[{"id":"11","to":{"name":"In Progress"}}]}' ;;
             "In Progress") printf '{"transitions":[{"id":"21","to":{"name":"In MR"}}]}' ;;
-            "In MR") printf '{"transitions":[{"id":"25","to":{"name":"Ready for QA"}}]}' ;;
+            "In MR") printf '{"transitions":[{"id":"31","to":{"name":"In QA"}},{"id":"25","to":{"name":"Ready for QA"}}]}' ;;
             *) printf '{"transitions":[{"id":"31","to":{"name":"In QA"}}]}' ;;
         esac ;;
     "POST "*/transitions)
@@ -127,6 +127,7 @@ echo "sync-tickets — dry run"
 out="$(run -n -v --since 1d)"
 assert_contains "$out" "would  ECFX-1 In Progress → In MR" "ready MR beside a draft means In MR"
 assert_contains "$out" "would  ECFX-2 In MR → Ready for QA" "all merged means Ready for QA, not In QA"
+assert_lacks "$out" "ECFX-2 In MR → In QA" "a merged MR never targets In QA, though Jira offers it from In MR"
 assert_lacks "$out" "ECFX-9 is In QA" "a merged ticket already in In QA is neither moved nor reported behind"
 assert_contains "$out" "behind ECFX-11 is Ready for QA, MRs say In MR" "a Ready for QA ticket with an open ready MR is reported behind"
 assert_lacks "$out" "would  ECFX-10 " "a merged ticket already in Ready for QA is left alone"
@@ -152,6 +153,7 @@ out="$(run --since 1d)"
 [ "$(status_of ECFX-6)" = "In MR" ] && pass "takes To-Do to In MR via In Progress" \
     || fail "takes To-Do to In MR via In Progress" "$(status_of ECFX-6)"
 [ "$(status_of ECFX-2)" = "Ready for QA" ] && pass "moves a merged ticket from In MR to Ready for QA" || fail "moves a merged ticket from In MR to Ready for QA" "$(status_of ECFX-2)"
+assert_lacks "$(cat "$FIX/writes.log")" '"id":"31"' "no merged ticket is sent through the In QA transition"
 [ "$(status_of ECFX-9)" = "In QA" ] && pass "does not move In QA back to Ready for QA" || fail "does not move In QA back to Ready for QA" "$(status_of ECFX-9)"
 [ "$(status_of ECFX-10)" = "Ready for QA" ] && pass "leaves Ready for QA where it is" || fail "leaves Ready for QA where it is" "$(status_of ECFX-10)"
 [ "$(status_of ECFX-3)" = "In QA" ] && pass "never moves a ticket backwards" || fail "never moves a ticket backwards" "$(status_of ECFX-3)"
