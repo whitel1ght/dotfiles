@@ -64,8 +64,8 @@ check() {
   default_floor=$(iso $(($(date +%s) - 7 * 86400)))
   [ "${1:-}" = --since ] && [ -n "${2:-}" ] && default_floor="$2"
   local me mrs
-  me=$(glab api user | jq -r .username) || down
-  mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || down
+  me=$(glab api user | jq -r .username) || { down; return 2; }
+  mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { down; return 2; }
   rm -f "$STATE_DIR/gitlab-down"
   mkdir -p "$STATE_DIR/seen" "$STATE_DIR/rounds"
   local found=0 re stamp
@@ -76,9 +76,9 @@ check() {
     floor=$(cat "$STATE_DIR/seen/$key" 2>/dev/null || echo "$default_floor")
     [[ "$updated" > "$floor" ]] || continue
     local approvals disc picked
-    approvals=$(glab api "projects/$pid/merge_requests/$iid/approvals") || down
+    approvals=$(glab api "projects/$pid/merge_requests/$iid/approvals") || { down; return 2; }
     jq -e '.approved and (.approved_by | length > 0)' <<<"$approvals" >/dev/null && continue
-    disc=$(glab api --paginate "projects/$pid/merge_requests/$iid/discussions?per_page=100" | jq -s 'add') || down
+    disc=$(glab api --paginate "projects/$pid/merge_requests/$iid/discussions?per_page=100" | jq -s 'add') || { down; return 2; }
     picked=$(jq --arg me "$me" --arg re "$re" --arg floor "$floor" '
       def human: (.system | not) and .author.username != $me and (.author.username | test($re) | not);
       ([.[].notes[] | select(.system | not) | select(.author.username == $me) | .created_at] | max // "") as $mine

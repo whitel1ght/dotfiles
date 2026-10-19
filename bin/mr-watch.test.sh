@@ -173,6 +173,20 @@ rm -f "$STATE/gitlab-down"
 out=$(FRICTION_FAIL=1 GLAB_DOWN=1 run check); rc=$?
 assert_eq 2 "$rc" "a failing friction leaves exit 2"
 assert_eq "" "$out" "and output empty"
+rm -f "$FIX/friction.log" "$STATE/gitlab-down"
+mkdir -p "$SANDBOX/waitstubs"
+cat > "$SANDBOX/waitstubs/sleep" <<'STUB'
+#!/bin/bash
+n=$(($(cat "$FIX/sleeps" 2>/dev/null || echo 0) + 1)); echo "$n" > "$FIX/sleeps"
+[ "$n" -ge 3 ] && kill -TERM "$PPID"
+exit 0
+STUB
+chmod +x "$SANDBOX/waitstubs/sleep"
+rm -f "$FIX/sleeps"
+{ GLAB_DOWN=1 PATH="$SANDBOX/waitstubs:$PATH" run wait --every 1 >/dev/null; } 2>/dev/null
+assert_eq 3 "$(cat "$FIX/sleeps")" "wait slept three times, so polled twice"
+assert_eq 1 "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "wait records one friction line over two down polls"
+[ -e "$STATE/gitlab-down" ]; assert_eq 0 "$?" "wait keeps the outage marker between down polls"
 rm "$STUBS/friction"
 out=$(GLAB_DOWN=1 PATH="$STUBS:$(dirname "$(command -v jq)"):/usr/bin:/bin" FIX="$FIX" MR_WATCH_STATE="$STATE" PROJECTS_DIR="$PROJ" "$SCRIPT" check 2>&1); rc=$?
 assert_eq 2 "$rc" "a missing friction leaves exit 2"
