@@ -1,4 +1,4 @@
--- The frame of the nvim tmux popups (plan, decisions): a float that fills the popup, with a
+-- The frame of the nvim tmux popups (the plan popup): a float that fills the popup, with a
 -- rounded lavender border, the title in its top edge and hints in the bottom one, like the fzf
 -- popups. The popups have no tmux border, because a busy pane underneath paints over a tmux
 -- popup's top border row.
