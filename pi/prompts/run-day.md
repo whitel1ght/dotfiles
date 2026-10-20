@@ -369,7 +369,10 @@ block. `decision` and `clarify` messages also carry `decision: D-<n>` and have n
    - `decision` and `clarify` make no diary change and no Unplanned line, whatever the key.
    - `decision` → run `decide show <id>` (the `decision:` field) and apply the chosen option
      (`## Answer`, with any note) as if the user had said it here: dispatch, merge, reply to the
-     reviewer, defer. Clear the item's `needs_you` when `decide list --json` shows no other open
+     reviewer, defer. An answer that reads `your words — <text>` (summary `answered in your own
+     words`) picked none of the options: `<text>` is the user's instruction, so follow it as if they
+     had typed it in the thread, and ask back with `decide add` only when it is unclear. Clear the
+     item's `needs_you` when `decide list --json` shows no other open
      decision for its key, run `decide close <id>`, and write one line: `<id>: <what you did>`.
    - `clarify` → answer with `decide reply <id> "<answer>"` (look it up first: code, MR, ticket;
      a cheap `researcher` subagent may help). Nothing in the thread but `<id>: answered your

@@ -333,6 +333,10 @@ impl Backend for Demo {
         Ok(s.open.clone())
     }
 
+    fn tell(&self, id: &str, _text: &str) -> Result<(), String> {
+        self.answer(id, 0, None)
+    }
+
     fn answer(&self, id: &str, _n: u8, _note: Option<&str>) -> Result<(), String> {
         if id == FAILS_ANSWER {
             return Err("demo: answering this card always fails".into());
@@ -493,5 +497,13 @@ mod tests {
             band(age(d, T0)) == Band::Fresh && band(age(d, T0 + 30 * SEC)) == Band::Warm
         });
         assert_eq!(soon.count(), 1);
+    }
+
+    #[test]
+    fn telling_takes_the_card_off_except_on_the_failing_one() {
+        let (demo, _) = demo();
+        demo.tell("D-1", "close it").unwrap();
+        assert!(!ids(&demo.list().unwrap()).contains(&"D-1"));
+        assert!(demo.tell(FAILS_ANSWER, "close it").is_err());
     }
 }

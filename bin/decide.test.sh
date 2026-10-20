@@ -101,6 +101,18 @@ run answer "$id" 2 >/dev/null; check "answering twice exits 1" "1" "$?"
 run reply "$id" 'done, merged' >/dev/null
 has "a reply after the answer keeps the Answer" "$(run show "$id")" "1 — yes"
 
+echo "tell: an answer in your own words"
+rm -f "$INBOX_DIR"/*.md
+tid="$(run add --key ECFX-3 --question 'Ship?' --option yes --option no </dev/null)"
+run tell "$tid" 'none of these: close it as a duplicate of ECFX-1' >/dev/null; check "tell exits 0" "0" "$?"
+has "Answer section in your words" "$(run show "$tid")" "your words — none of these: close it as a duplicate of ECFX-1"
+has "tell answers it" "$(run show "$tid")" "status: answered"
+msg="$(ls "$INBOX_DIR")"
+has "tell sends a decision" "$(cat "$INBOX_DIR/$msg")" "kind: decision"
+has "summary in your own words" "$(cat "$INBOX_DIR/$msg")" "$tid answered in your own words: none of these: close it as a duplicate of ECFX-1."
+run tell "$tid" 'again' >/dev/null; check "telling an answered decision exits 1" "1" "$?"
+check "tell needs text" "2" "$("$SCRIPT" tell "$tid" >/dev/null 2>&1; echo $?)"
+
 echo "offplan inbox message"
 oid="$(run add --key '' --question 'New ticket today?' --option yes --option no </dev/null)"
 run answer "$oid" 2 >/dev/null

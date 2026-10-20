@@ -48,6 +48,14 @@ fresh note
 drive 2 n "use staging" $'\r' q >/dev/null
 assert_contains "$(inbox)" "D-1 answered: 2 — No. Note: use staging" "a note goes with the answer"
 
+fresh tell
+drive 3 "close it as a duplicate" $'\r' q >/dev/null
+assert_contains "$(inbox)" "D-1 answered in your own words: close it as a duplicate." "the last slot answers in your own words"
+
+fresh cardnote
+drive n "use staging" $'\r' 1 q >/dev/null
+assert_contains "$(inbox)" "D-1 answered: 1 — Yes. Note: use staging." "a note written before answering goes with the answer"
+
 fresh ask
 drive a "which one?" $'\r' q >/dev/null
 assert_contains "$(inbox)" "D-1: the user asks: which one?" "ask back reaches the session"

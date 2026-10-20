@@ -53,6 +53,11 @@ pub enum Command {
         id: String,
         text: String,
     },
+    /// An answer in the user's own words, none of the options.
+    Tell {
+        id: String,
+        text: String,
+    },
     OpenUrl(String),
     Quit,
 }
@@ -85,8 +90,19 @@ pub enum Side {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputKind {
+    /// A note on the answer in its undo window.
     Note,
-    Ask { id: String },
+    /// A note on a card before it is answered; the answer carries it.
+    CardNote {
+        id: String,
+    },
+    Ask {
+        id: String,
+    },
+    /// The last slot: an answer in the user's own words.
+    Tell {
+        id: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -100,6 +116,7 @@ pub struct Pending {
     pub decision: Decision,
     pub n: u8,
     pub note: Option<String>,
+    pub custom: Option<String>,
     pub due: i64,
     pub paused: bool,
 }
@@ -108,6 +125,7 @@ pub struct Pending {
 pub struct Failed {
     pub n: u8,
     pub note: Option<String>,
+    pub custom: Option<String>,
     pub error: String,
 }
 
@@ -131,6 +149,7 @@ pub struct State {
     pub failed: HashMap<String, Failed>,
     pub asking: HashMap<String, String>,
     pub ask_failed: HashMap<String, AskFailed>,
+    pub notes: HashMap<String, String>,
     pub input: Option<Input>,
     pub help: bool,
     pub error: Option<String>,
@@ -334,7 +353,7 @@ fn front_key(s: &mut State, k: Key, out: &mut Vec<Command>) {
     match k {
         Key::Char('j' | 'k' | 'g' | 'G') | Key::Down | Key::Up => {
             let Some(d) = s.current() else { return };
-            let max = d.options.len().saturating_sub(1);
+            let max = d.options.len();
             s.cursor = Some(match (k, s.cursor) {
                 (Key::Char('g'), _) => 0,
                 (Key::Char('G'), _) => max,
@@ -389,6 +408,7 @@ fn skip(s: &mut State) {
         return;
     }
     let d = s.queue.remove(s.cur);
+    s.notes.remove(&d.id);
     s.skipped.retain(|id| id != &d.id);
     s.skipped.push(d.id.clone());
     s.queue.push(d);
@@ -434,18 +454,31 @@ fn to_front(s: &mut State, id: &str) {
 }
 
 fn choose(s: &mut State, n: u8, out: &mut Vec<Command>) {
-    if s.current()
-        .is_some_and(|d| d.options.iter().any(|o| o.n == n))
-    {
-        throw(s, n, None, out);
+    let Some(d) = s.current() else { return };
+    if usize::from(n) == d.options.len() + 1 {
+        open_tell(s);
+    } else if d.options.iter().any(|o| o.n == n) {
+        throw(s, n, None, None, out);
+    }
+}
+
+fn open_tell(s: &mut State) {
+    if let Some(id) = s.current().map(|d| d.id.clone()) {
+        s.input = Some(Input {
+            kind: InputKind::Tell { id },
+            text: String::new(),
+        });
     }
 }
 
 fn enter(s: &mut State, out: &mut Vec<Command>) {
     let Some(d) = s.current() else { return };
     if let Some(f) = s.failed.get(&d.id) {
-        let (n, note) = (f.n, f.note.clone());
-        return throw(s, n, note, out);
+        let (n, note, custom) = (f.n, f.note.clone(), f.custom.clone());
+        return throw(s, n, note, custom, out);
+    }
+    if s.cursor == Some(d.options.len()) {
+        return open_tell(s);
     }
     let n = s
         .cursor
@@ -453,22 +486,36 @@ fn enter(s: &mut State, out: &mut Vec<Command>) {
         .map(|o| o.n)
         .or(d.recommended);
     if let Some(n) = n {
-        throw(s, n, None, out);
+        throw(s, n, None, None, out);
     }
 }
 
-fn throw(s: &mut State, n: u8, note: Option<String>, out: &mut Vec<Command>) {
+/// Throws the current card: option `n`, or the user's own words in `custom`. A note
+/// attached to the card before goes with it.
+fn throw(
+    s: &mut State,
+    n: u8,
+    note: Option<String>,
+    custom: Option<String>,
+    out: &mut Vec<Command>,
+) {
     if s.current().is_none() {
         return;
     }
     send_pending(s, out);
     let d = s.queue.remove(s.cur);
     s.failed.remove(&d.id);
+    let note = note.or_else(|| s.notes.remove(&d.id));
+    let (note, custom) = match (custom, note) {
+        (Some(text), Some(note)) => (None, Some(format!("{text} (note: {note})"))),
+        (custom, note) => (note, custom),
+    };
     s.ghost = Some((d.clone(), s.now + GHOST_MS));
     s.pending = Some(Pending {
         decision: d,
         n,
         note,
+        custom,
         due: s.now + UNDO_MS,
         paused: false,
     });
@@ -479,12 +526,19 @@ fn throw(s: &mut State, n: u8, note: Option<String>, out: &mut Vec<Command>) {
 
 fn send_pending(s: &mut State, out: &mut Vec<Command>) {
     if let Some(p) = s.pending.take() {
-        out.push(Command::Answer {
-            id: p.decision.id.clone(),
-            n: p.n,
-            note: p.note.clone(),
+        let id = p.decision.id.clone();
+        out.push(match &p.custom {
+            Some(text) => Command::Tell {
+                id: id.clone(),
+                text: text.clone(),
+            },
+            None => Command::Answer {
+                id: id.clone(),
+                n: p.n,
+                note: p.note.clone(),
+            },
         });
-        s.sending.insert(p.decision.id.clone(), p);
+        s.sending.insert(id, p);
     }
 }
 
@@ -497,12 +551,19 @@ fn undo(s: &mut State) {
     }
 }
 
+/// n: a note on the answer in its undo window, else a note on the current card.
 fn note(s: &mut State) {
     if let Some(p) = s.pending.as_mut() {
         p.paused = true;
         s.input = Some(Input {
             kind: InputKind::Note,
             text: String::new(),
+        });
+    } else if let Some(id) = s.current().map(|d| d.id.clone()) {
+        let text = s.notes.get(&id).cloned().unwrap_or_default();
+        s.input = Some(Input {
+            kind: InputKind::CardNote { id },
+            text,
         });
     }
 }
@@ -553,6 +614,25 @@ fn input_key(s: &mut State, k: Key, out: &mut Vec<Command>) {
                     }
                     send_pending(s, out);
                 }
+                InputKind::CardNote { id } => {
+                    if text.is_empty() {
+                        s.notes.remove(&id);
+                    } else {
+                        s.notes.insert(id, text);
+                    }
+                }
+                InputKind::Tell { id } => {
+                    if text.is_empty() {
+                        return;
+                    }
+                    match s.queue.iter().position(|d| d.id == id) {
+                        Some(i) => {
+                            s.cur = i;
+                            throw(s, 0, None, Some(text), out);
+                        }
+                        None => s.toast(format!("{id} was closed elsewhere")),
+                    }
+                }
                 InputKind::Ask { id } => {
                     if !text.is_empty() {
                         out.push(Command::Ask {
@@ -594,6 +674,7 @@ fn sent(s: &mut State, id: String, ask: bool, result: Result<(), String>, out: &
                     Failed {
                         n: p.n,
                         note: p.note.clone(),
+                        custom: p.custom.clone(),
                         error,
                     },
                 );
@@ -687,12 +768,12 @@ mod tests {
         for _ in 0..5 {
             press(&mut s, Key::Char('j'));
         }
-        assert_eq!(s.cursor, Some(2));
+        assert_eq!(s.cursor, Some(3), "three options, then the tell slot");
         press(&mut s, Key::Char('k'));
-        assert_eq!(s.cursor, Some(1));
+        assert_eq!(s.cursor, Some(2));
         assert_eq!(s.cur, 0, "j/k stay on the card");
         press(&mut s, Key::Up);
-        assert_eq!(s.cursor, Some(0), "the arrows do the same");
+        assert_eq!(s.cursor, Some(1), "the arrows do the same");
         press(&mut s, Key::Char('J'));
         assert_eq!(s.cursor, None, "a new card starts without a cursor");
     }
@@ -701,7 +782,7 @@ mod tests {
     fn g_and_shift_g_jump_to_the_first_and_last_option() {
         let mut s = loaded(many(4));
         press(&mut s, Key::Char('G'));
-        assert_eq!(s.cursor, Some(2));
+        assert_eq!(s.cursor, Some(3), "the tell slot is last");
         press(&mut s, Key::Char('g'));
         assert_eq!(s.cursor, Some(0));
         assert_eq!(s.cur, 0);
@@ -1264,5 +1345,144 @@ mod tests {
         press(&mut s, Key::Char('1'));
         assert_eq!(s.side, Side::Front);
         assert_eq!(s.scroll, 0);
+    }
+
+    fn tell(id: &str, text: &str) -> Command {
+        Command::Tell {
+            id: id.into(),
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn the_number_after_the_options_opens_the_tell_line() {
+        let mut s = loaded(fixture());
+        press(&mut s, Key::Char('4'));
+        assert_eq!(
+            s.input.as_ref().unwrap().kind,
+            InputKind::Tell { id: "D-1".into() }
+        );
+        type_text(&mut s, "close it");
+        assert!(
+            press(&mut s, Key::Enter).is_empty(),
+            "held for the undo window"
+        );
+        assert_eq!(ids(&s), ["D-2"]);
+        assert_eq!(
+            update(&mut s, Event::Tick, T0 + UNDO_MS),
+            [tell("D-1", "close it")]
+        );
+    }
+
+    #[test]
+    fn the_cursor_reaches_the_tell_slot_and_enter_opens_it() {
+        let mut s = loaded(fixture());
+        press(&mut s, Key::Char('G'));
+        assert_eq!(s.cursor, Some(3), "three options, then the slot");
+        press(&mut s, Key::Enter);
+        assert!(matches!(
+            s.input.as_ref().unwrap().kind,
+            InputKind::Tell { .. }
+        ));
+    }
+
+    #[test]
+    fn an_empty_tell_or_esc_throws_nothing() {
+        let mut s = loaded(fixture());
+        press(&mut s, Key::Char('4'));
+        press(&mut s, Key::Enter);
+        assert!(s.pending.is_none() && s.input.is_none());
+        press(&mut s, Key::Char('4'));
+        type_text(&mut s, "x");
+        press(&mut s, Key::Esc);
+        assert!(s.pending.is_none());
+        assert_eq!(s.queue.len(), 2);
+    }
+
+    #[test]
+    fn a_tell_can_be_undone_and_quit_sends_it() {
+        let mut s = loaded(fixture());
+        press(&mut s, Key::Char('4'));
+        type_text(&mut s, "close it");
+        press(&mut s, Key::Enter);
+        press(&mut s, Key::Char('u'));
+        assert_eq!(s.current().unwrap().id, "D-1");
+        press(&mut s, Key::Char('4'));
+        type_text(&mut s, "close it");
+        press(&mut s, Key::Enter);
+        assert_eq!(press(&mut s, Key::Char('q')), [tell("D-1", "close it")]);
+    }
+
+    #[test]
+    fn a_failed_tell_comes_back_and_enter_retries_it() {
+        let mut s = loaded(fixture());
+        press(&mut s, Key::Char('4'));
+        type_text(&mut s, "close it");
+        press(&mut s, Key::Enter);
+        update(&mut s, Event::Tick, T0 + UNDO_MS);
+        update(&mut s, sent("D-1", false, Err("disk full")), T0 + UNDO_MS);
+        assert_eq!(s.current().unwrap().id, "D-1");
+        press(&mut s, Key::Enter);
+        assert_eq!(
+            update(&mut s, Event::Tick, T0 + 2 * UNDO_MS),
+            [tell("D-1", "close it")]
+        );
+    }
+
+    #[test]
+    fn n_before_answering_attaches_a_note_the_answer_carries() {
+        let mut s = loaded(fixture());
+        press(&mut s, Key::Char('n'));
+        assert_eq!(
+            s.input.as_ref().unwrap().kind,
+            InputKind::CardNote { id: "D-1".into() }
+        );
+        type_text(&mut s, "use staging");
+        press(&mut s, Key::Enter);
+        assert_eq!(s.notes["D-1"], "use staging");
+        press(&mut s, Key::Char('J'));
+        press(&mut s, Key::Char('K'));
+        assert_eq!(
+            s.notes["D-1"], "use staging",
+            "kept when moving away and back"
+        );
+        press(&mut s, Key::Char('2'));
+        assert_eq!(
+            update(&mut s, Event::Tick, T0 + UNDO_MS),
+            [answer("D-1", 2, Some("use staging"))]
+        );
+        assert!(s.notes.is_empty());
+    }
+
+    #[test]
+    fn n_again_edits_the_note_and_an_empty_one_removes_it() {
+        let mut s = loaded(fixture());
+        press(&mut s, Key::Char('n'));
+        type_text(&mut s, "ab");
+        press(&mut s, Key::Enter);
+        press(&mut s, Key::Char('n'));
+        assert_eq!(s.input.as_ref().unwrap().text, "ab");
+        press(&mut s, Key::Backspace);
+        press(&mut s, Key::Backspace);
+        press(&mut s, Key::Enter);
+        assert!(s.notes.is_empty());
+    }
+
+    #[test]
+    fn skipping_a_card_drops_its_note() {
+        let mut s = loaded(many(2));
+        press(&mut s, Key::Char('n'));
+        type_text(&mut s, "x");
+        press(&mut s, Key::Enter);
+        press(&mut s, Key::Char('s'));
+        assert!(s.notes.is_empty());
+    }
+
+    #[test]
+    fn n_during_the_undo_window_still_notes_the_pending_answer() {
+        let mut s = loaded(fixture());
+        press(&mut s, Key::Char('2'));
+        press(&mut s, Key::Char('n'));
+        assert_eq!(s.input.as_ref().unwrap().kind, InputKind::Note);
     }
 }

@@ -16,6 +16,7 @@ inbox message (kinds `decision` and `clarify`) that its watcher wakes it with.
   decide count [--badge]         open decisions (nothing when none; --badge prints "✋ N")
   decide answer ID N [NOTE]      (popup) pick option N
   decide ask ID TEXT             (popup) ask a question back
+  decide tell ID TEXT            (popup) answer in your own words, none of the options
 
 Files: $RUN_DAY_STATE_DIR (default ~/.local/state/run-day)/decisions/D-<n>.md; inbox
 messages in $INBOX_DIR (default <state>/inbox). Every write is a temp file renamed into
@@ -351,6 +352,16 @@ def cmd_answer(a) -> None:
     save_and_tell(p, before, meta, s, "decision", text)
 
 
+def cmd_tell(a) -> None:
+    p, meta, s = load(a.id)
+    require_open(a.id, meta)
+    before = p.read_text()
+    text = one_line(" ".join(a.text))
+    s["Answer"] = f"your words — {text}\nat: {now().isoformat(timespec='seconds')}"
+    meta["status"] = "answered"
+    save_and_tell(p, before, meta, s, "decision", f"{a.id} answered in your own words: {text}.")
+
+
 def cmd_ask(a) -> None:
     p, meta, s = load(a.id)
     require_open(a.id, meta)
@@ -399,6 +410,10 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("id")
     s.add_argument("text", nargs="+")
     s.set_defaults(fn=cmd_ask)
+    s = sub.add_parser("tell")
+    s.add_argument("id")
+    s.add_argument("text", nargs="+")
+    s.set_defaults(fn=cmd_tell)
     return p
 
 

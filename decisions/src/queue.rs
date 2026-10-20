@@ -67,6 +67,7 @@ pub trait Backend: Send + Sync {
     fn list(&self) -> Result<Vec<Decision>, String>;
     fn answer(&self, id: &str, n: u8, note: Option<&str>) -> Result<(), String>;
     fn ask(&self, id: &str, text: &str) -> Result<(), String>;
+    fn tell(&self, id: &str, text: &str) -> Result<(), String>;
 }
 
 impl Backend for Decide {
@@ -80,6 +81,10 @@ impl Backend for Decide {
 
     fn ask(&self, id: &str, text: &str) -> Result<(), String> {
         Decide::ask(self, id, text)
+    }
+
+    fn tell(&self, id: &str, text: &str) -> Result<(), String> {
+        Decide::tell(self, id, text)
     }
 }
 
@@ -111,6 +116,10 @@ impl Decide {
 
     pub fn ask(&self, id: &str, text: &str) -> Result<(), String> {
         self.run(&["ask", id, text]).map(|_| ())
+    }
+
+    pub fn tell(&self, id: &str, text: &str) -> Result<(), String> {
+        self.run(&["tell", id, text]).map(|_| ())
     }
 
     fn run(&self, args: &[&str]) -> Result<String, String> {
@@ -231,6 +240,11 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&log).unwrap(),
             "ask|D-2|which run?|"
+        );
+        decide.tell("D-2", "close it as a duplicate").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "tell|D-2|close it as a duplicate|"
         );
     }
 

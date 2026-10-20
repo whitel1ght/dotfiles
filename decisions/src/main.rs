@@ -66,6 +66,7 @@ impl Runner {
                 self.send(id, false, move |d, id| d.answer(id, n, note.as_deref()))
             }
             Command::Ask { id, text } => self.send(id, true, move |d, id| d.ask(id, &text)),
+            Command::Tell { id, text } => self.send(id, false, move |d, id| d.tell(id, &text)),
             Command::OpenUrl(url) => {
                 let _ = std::process::Command::new("open")
                     .arg(url)

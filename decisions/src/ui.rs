@@ -40,7 +40,8 @@ const KEYS: &[(&str, &str)] = &[
     ("space", "flip: context and discussion"),
     ("^d / ^u", "page the back"),
     ("u", "undo the last answer"),
-    ("n", "add a note to the last answer"),
+    ("n", "note on the card, or on the last answer"),
+    ("last row", "something else: tell the agent in your words"),
     ("a", "ask the session back"),
     ("s", "skip to the end of the stack"),
     ("o", "open the MR"),
@@ -143,8 +144,12 @@ fn header(s: &State) -> String {
 
 fn footer(s: &State) -> String {
     let keys = match (&s.input, s.help, s.side, &s.pending) {
-        (Some(i), ..) if i.kind == InputKind::Note => "⏎ send with note · esc no note",
-        (Some(_), ..) => "⏎ ask · esc cancel",
+        (Some(i), ..) => match i.kind {
+            InputKind::Note => "⏎ send with note · esc no note",
+            InputKind::CardNote { .. } => "⏎ attach the note (empty removes it) · esc cancel",
+            InputKind::Tell { .. } => "⏎ answer in your own words · esc cancel",
+            InputKind::Ask { .. } => "⏎ ask · esc cancel",
+        },
         (None, true, ..) => "any key closes help",
         (None, false, Side::Back, _) => {
             "j/k scroll · ^d/^u page · J/K cards · space front · 1-9 answer · ? help"
@@ -163,6 +168,8 @@ fn status(s: &State) -> Option<Line<'static>> {
         let prompt = match &i.kind {
             InputKind::Note => " note › ".to_string(),
             InputKind::Ask { id } => format!(" ask {id} › "),
+            InputKind::CardNote { id } => format!(" note for {id} › "),
+            InputKind::Tell { id } => format!(" tell {id} › "),
         };
         return Some(Line::from(vec![
             Span::styled(prompt, bold(theme::LAVENDER)),
@@ -177,12 +184,18 @@ fn status(s: &State) -> Option<Line<'static>> {
         ));
     }
     if let Some(p) = &s.pending {
-        let text = p
-            .decision
-            .options
-            .iter()
-            .find(|o| o.n == p.n)
-            .map_or("", |o| o.text.as_str());
+        let choice = match &p.custom {
+            Some(text) => format!("✎ {text}"),
+            None => {
+                let text = p
+                    .decision
+                    .options
+                    .iter()
+                    .find(|o| o.n == p.n)
+                    .map_or("", |o| o.text.as_str());
+                format!("{}  {text}", p.n)
+            }
+        };
         let left = (p.due - s.now).clamp(0, UNDO_MS);
         let filled = ((left * 10 + UNDO_MS - 1) / UNDO_MS) as usize;
         let bar = format!(
@@ -193,7 +206,7 @@ fn status(s: &State) -> Option<Line<'static>> {
         );
         return Some(Line::from(vec![
             Span::styled(
-                format!(" ✓ {} → {}  {text}", p.decision.id, p.n),
+                format!(" ✓ {} → {choice}", p.decision.id),
                 bold(theme::GREEN),
             ),
             Span::styled("   u undo · n note  ", Style::new().fg(theme::MUTED)),
@@ -299,9 +312,20 @@ fn front(f: &mut Frame, s: &State, d: &Decision, rect: Rect) {
         ),
         Line::default(),
     ];
-    if let Some(fl) = s.failed.get(&d.id) {
+    if let Some(note) = s.notes.get(&d.id) {
         lines.push(Line::styled(
-            format!("send failed: {} · ⏎ retries {}", fl.error, fl.n),
+            format!("✎ note: {note}"),
+            Style::new().fg(theme::LAVENDER),
+        ));
+        lines.push(Line::default());
+    }
+    if let Some(fl) = s.failed.get(&d.id) {
+        let what = fl
+            .custom
+            .as_ref()
+            .map_or_else(|| fl.n.to_string(), |text| format!("✎ {text}"));
+        lines.push(Line::styled(
+            format!("send failed: {} · ⏎ retries {what}", fl.error),
             Style::new().fg(theme::RED),
         ));
         lines.push(Line::default());
@@ -327,6 +351,20 @@ fn front(f: &mut Frame, s: &State, d: &Decision, rect: Rect) {
         let star = if o.recommended { "★" } else { " " };
         lines.push(Line::styled(format!("{star} {}  {}", o.n, o.text), style));
     }
+    let slot = d.options.len() + 1;
+    let number = if slot <= 9 {
+        slot.to_string()
+    } else {
+        " ".into()
+    };
+    let mut style = Style::new().fg(theme::MUTED);
+    if s.cursor == Some(d.options.len()) {
+        style = style.fg(theme::TEXT).bg(theme::SELECT);
+    }
+    lines.push(Line::styled(
+        format!("✎ {number}  Something else… tell the agent"),
+        style,
+    ));
     lines.push(Line::default());
     lines.push(Line::styled(
         format!(
@@ -615,6 +653,7 @@ mod tests {
             app::Failed {
                 n: 2,
                 note: None,
+                custom: None,
                 error: "boom".into(),
             },
         );
@@ -764,5 +803,48 @@ mod tests {
         s.demo = true;
         let all = screen(&render(&s, 80, 24).0);
         assert!(all.contains("decisions · demo · 2 waiting"), "{all}");
+    }
+
+    #[test]
+    fn the_tell_slot_is_the_last_row_and_takes_the_cursor() {
+        let mut s = state(fixture(), T0);
+        let all = screen(&render(&s, 80, 24).0);
+        assert!(all.contains("✎ 4  Something else… tell the agent"), "{all}");
+        s.cursor = Some(3);
+        let (buf, _) = render(&s, 80, 24);
+        let (x, y) = find(&buf, "✎ 4  Something else");
+        assert_eq!(buf[(x, y)].bg, theme::SELECT);
+    }
+
+    #[test]
+    fn a_card_note_shows_under_the_question() {
+        let mut s = state(fixture(), T0);
+        s.notes.insert("D-1".into(), "use staging".into());
+        assert!(screen(&render(&s, 80, 24).0).contains("✎ note: use staging"));
+    }
+
+    #[test]
+    fn the_tell_and_card_note_lines_name_the_card() {
+        let mut s = state(fixture(), T0);
+        app::update(&mut s, Event::Key(Key::Char('4')), T0);
+        assert!(screen(&render(&s, 80, 24).0).contains("tell D-1 › "));
+        let mut s = state(fixture(), T0);
+        app::update(&mut s, Event::Key(Key::Char('n')), T0);
+        assert!(screen(&render(&s, 80, 24).0).contains("note for D-1 › "));
+    }
+
+    #[test]
+    fn the_undo_bar_shows_an_answer_in_your_own_words() {
+        let mut s = state(fixture(), T0);
+        app::update(&mut s, Event::Key(Key::Char('4')), T0);
+        for c in "close it".chars() {
+            app::update(
+                &mut s,
+                Event::Key(if c == ' ' { Key::Space } else { Key::Char(c) }),
+                T0,
+            );
+        }
+        app::update(&mut s, Event::Key(Key::Enter), T0);
+        assert!(screen(&render(&s, 80, 24).0).contains("✓ D-1 → ✎ close it"));
     }
 }
