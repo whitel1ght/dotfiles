@@ -1,22 +1,25 @@
 #!/usr/bin/env bash
 # The decision queue view (tmux prefix y): answer what /run-day is waiting on.
 #
-#   decisions        the view, in nvim (nvim/lua/whitelight/decisions.lua); outside tmux it
-#                    runs in this terminal
+#   decisions          the deck-of-cards app (decisions/, built by install.sh) when it is
+#                      installed, else the nvim view; ? in the app lists its keys
+#   decisions --nvim   the nvim view (nvim/lua/whitelight/decisions.lua), during the rollout
 #
-# Keys: j/k and every vim motion read the card · J/K next/previous decision · 1-9 answer with
+# nvim view keys: j/k and every vim motion read the card · J/K next/previous decision · 1-9 answer with
 # that option · enter the option under the cursor, else the recommended one (on a queue row:
 # show that decision) · a ask the session back · s skip · o open the MR · r reload · q close.
 # An answer waits on a confirm line: enter sends, n adds a note, esc cancels.
 #
 # Answers and questions go through `decide`, which tells the /run-day session through its
 # inbox. The session files the decisions; you only answer them here. Env: DECIDE (the decide
-# command), RUN_DAY_STATE_DIR.
+# command), RUN_DAY_STATE_DIR, DECISIONS_APP (the app binary).
 set -euo pipefail
 
+app="${DECISIONS_APP:-$HOME/.local/share/decisions/bin/decisions}"
 case "${1:-}" in
-  -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-  "") ;;
+  -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  --nvim) ;;
+  "") if [ -x "$app" ]; then exec "$app"; fi ;;
   *) echo "decisions: unknown option $1" >&2; exit 2 ;;
 esac
 

@@ -499,6 +499,31 @@ for f in decide decisions; do
     [ -f "$DOTFILES_DIR/bin/$f" ] && create_symlink "$DOTFILES_DIR/bin/$f" "$HOME/.local/bin/$f"
 done
 
+# The decisions popup (tmux prefix+y) is a Rust app in decisions/. It is rebuilt only when
+# its sources change (a hash of them is kept beside the binary), and installed under
+# ~/.local/share/decisions so ~/.local/bin/decisions can stay a link into this repo; the
+# bin/decisions launcher runs it. Needs cargo (the Brewfile's rust). DECISIONS_SETUP=0 skips.
+setup_decisions() {
+    local crate="$DOTFILES_DIR/decisions" root="$HOME/.local/share/decisions" sum
+    [ -f "$crate/Cargo.toml" ] || return 0
+    if ! command -v cargo >/dev/null 2>&1; then
+        log_warn "cargo not found - the decisions popup stays on the nvim view"
+        return 0
+    fi
+    sum=$(cd "$crate" && find Cargo.toml Cargo.lock src -type f | LC_ALL=C sort | xargs shasum | shasum | cut -d' ' -f1)
+    if [ -x "$root/bin/decisions" ] && [ "$(cat "$root/src.sha" 2>/dev/null)" = "$sum" ]; then
+        log_info "decisions app up to date"
+        return 0
+    fi
+    cargo install --locked --quiet --path "$crate" --root "$root" || return 1
+    printf '%s\n' "$sum" > "$root/src.sha"
+    log_info "Built the decisions app"
+}
+
+if [ "${DECISIONS_SETUP:-1}" != "0" ]; then
+    setup_decisions || log_warn "decisions app build failed - the popup stays on the nvim view"
+fi
+
 # mr-watch finds new review notes on my MRs and posts the replies; driven by /watch-mrs.
 if [ -f "$DOTFILES_DIR/bin/mr-watch" ]; then
     create_symlink "$DOTFILES_DIR/bin/mr-watch" "$HOME/.local/bin/mr-watch"

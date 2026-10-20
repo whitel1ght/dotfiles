@@ -23,7 +23,7 @@ trap 'rm -rf "$SANDBOX"' EXIT
 
 run_install() {
     HOME="$SANDBOX" \
-    SKILLS_SYNC=0 MACOS_DAEMONS=0 REPY_SETUP=0 \
+    SKILLS_SYNC=0 MACOS_DAEMONS=0 REPY_SETUP=0 DECISIONS_SETUP="${DECISIONS_SETUP:-0}" \
     ECFX_TOOLING=0 ZSH_SETUP=0 KEYBOARD_SETUP=0 TMUX_SETUP=0 PROXY_SETUP=0 WIKI_SYNC_AGENT=0 \
     CLAUDE_COMPONENTS_DIR=/nonexistent \
         bash "$SCRIPT" 2>&1
@@ -174,6 +174,23 @@ for cmd in "$TEST_DIR"/claude/commands/*.md; do
     [ -L "$SANDBOX/.claude/commands/$name" ] && pass "$name linked into ~/.claude/commands" \
         || fail "$name linked into ~/.claude/commands" "no symlink in sandbox"
 done
+
+# --- decisions app ------------------------------------------------------------
+echo "decisions app"
+STUB="$SANDBOX/stub-bin"; mkdir -p "$STUB"
+cat > "$STUB/cargo" <<'EOF'
+#!/bin/bash
+echo "$*" >> "$HOME/cargo.log"
+root=""; while [ $# -gt 0 ]; do [ "$1" = --root ] && root="$2"; shift; done
+mkdir -p "$root/bin" && printf '#!/bin/sh\n' > "$root/bin/decisions" && chmod +x "$root/bin/decisions"
+EOF
+chmod +x "$STUB/cargo"
+run_decisions() { PATH="$STUB:$PATH" DECISIONS_SETUP=1 run_install; }
+run_decisions >/dev/null
+[ -x "$SANDBOX/.local/share/decisions/bin/decisions" ] && pass "builds the decisions app" || fail "builds the decisions app" "$(cat "$SANDBOX/cargo.log" 2>&1)"
+assert_contains "$(cat "$SANDBOX/cargo.log")" "install --locked --quiet --path $TEST_DIR/decisions --root $SANDBOX/.local/share/decisions" "with cargo install --locked into ~/.local/share/decisions"
+run_decisions >/dev/null
+[ "$(wc -l < "$SANDBOX/cargo.log" | tr -d ' ')" = 1 ] && pass "skips the build when the sources did not change" || fail "skips the build when the sources did not change" "$(cat "$SANDBOX/cargo.log")"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

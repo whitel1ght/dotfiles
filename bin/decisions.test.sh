@@ -16,9 +16,12 @@ has() { case "$2" in *"$3"*) pass "$1" ;; *) fail "$1" "[$3] not in: $2" ;; esac
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "$SANDBOX"' EXIT
 export RUN_DAY_STATE_DIR="$SANDBOX/state" INBOX_DIR="$SANDBOX/inbox" DECIDE="$TEST_DIR/decide"
+export DECISIONS_APP=/nonexistent
 
 echo "launcher"
 has "--help describes the view" "$("$SCRIPT" --help)" "prefix y"
+printf '#!/bin/sh\necho app\n' > "$SANDBOX/app"; chmod +x "$SANDBOX/app"
+has "runs the deck app when it is installed" "$(DECISIONS_APP="$SANDBOX/app" "$SCRIPT")" "app"
 
 cat > "$SANDBOX/driver.lua" <<'EOF'
 package.path = vim.env.REPO .. '/nvim/lua/?.lua;' .. package.path
