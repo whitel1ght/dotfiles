@@ -321,24 +321,24 @@ fn key(s: &mut State, k: Key, out: &mut Vec<Command>) {
         Key::Char('r') => out.push(Command::Reload),
         Key::Char('?') => s.help = true,
         Key::Space => flip(s),
+        Key::Char('J') => go(s, s.cur + 1),
+        Key::Char('K') if s.cur > 0 => go(s, s.cur - 1),
         _ if s.side == Side::Back => back_key(s, k),
         _ => front_key(s, k, out),
     }
 }
 
+/// On the front, j/k (and the arrows) move between the card's options; J/K change cards.
 fn front_key(s: &mut State, k: Key, out: &mut Vec<Command>) {
-    let last = s.queue.len().saturating_sub(1);
     match k {
-        Key::Char('j') => go(s, s.cur + 1),
-        Key::Char('k') if s.cur > 0 => go(s, s.cur - 1),
-        Key::Char('g') => go(s, 0),
-        Key::Char('G') => go(s, last),
-        Key::Down | Key::Up => {
+        Key::Char('j' | 'k' | 'g' | 'G') | Key::Down | Key::Up => {
             let Some(d) = s.current() else { return };
             let max = d.options.len().saturating_sub(1);
             s.cursor = Some(match (k, s.cursor) {
-                (Key::Down, None) => 0,
-                (Key::Down, Some(c)) => (c + 1).min(max),
+                (Key::Char('g'), _) => 0,
+                (Key::Char('G'), _) => max,
+                (Key::Char('j') | Key::Down, None) => 0,
+                (Key::Char('j') | Key::Down, Some(c)) => (c + 1).min(max),
                 (_, None) => max,
                 (_, Some(c)) => c.saturating_sub(1),
             });
@@ -663,43 +663,56 @@ mod tests {
     }
 
     #[test]
-    fn j_and_k_move_between_cards_and_stop_at_the_ends() {
+    fn shift_j_and_k_switch_cards_and_stop_at_the_ends() {
         let mut s = loaded(many(3));
-        press(&mut s, Key::Char('k'));
+        press(&mut s, Key::Char('K'));
         assert_eq!(s.cur, 0);
         assert!(s.anims.is_empty());
-        press(&mut s, Key::Char('j'));
-        press(&mut s, Key::Char('j'));
-        press(&mut s, Key::Char('j'));
+        press(&mut s, Key::Char('J'));
+        press(&mut s, Key::Char('J'));
+        press(&mut s, Key::Char('J'));
         assert_eq!(s.cur, 2);
         assert_eq!(s.anims, [Anim::Next, Anim::Next]);
-        press(&mut s, Key::Char('k'));
+        press(&mut s, Key::Char('K'));
         assert_eq!(s.cur, 1);
         assert_eq!(s.anims.last(), Some(&Anim::Prev));
     }
 
     #[test]
-    fn g_and_shift_g_jump_to_the_ends() {
+    fn j_and_k_move_between_the_options_on_the_front() {
+        let mut s = loaded(fixture());
+        press(&mut s, Key::Char('j'));
+        assert_eq!(s.cursor, Some(0));
+        for _ in 0..5 {
+            press(&mut s, Key::Char('j'));
+        }
+        assert_eq!(s.cursor, Some(2));
+        press(&mut s, Key::Char('k'));
+        assert_eq!(s.cursor, Some(1));
+        assert_eq!(s.cur, 0, "j/k stay on the card");
+        press(&mut s, Key::Up);
+        assert_eq!(s.cursor, Some(0), "the arrows do the same");
+        press(&mut s, Key::Char('J'));
+        assert_eq!(s.cursor, None, "a new card starts without a cursor");
+    }
+
+    #[test]
+    fn g_and_shift_g_jump_to_the_first_and_last_option() {
         let mut s = loaded(many(4));
         press(&mut s, Key::Char('G'));
-        assert_eq!(s.cur, 3);
+        assert_eq!(s.cursor, Some(2));
         press(&mut s, Key::Char('g'));
+        assert_eq!(s.cursor, Some(0));
         assert_eq!(s.cur, 0);
     }
 
     #[test]
-    fn arrows_move_the_option_cursor_within_the_options() {
-        let mut s = loaded(fixture());
-        press(&mut s, Key::Down);
-        assert_eq!(s.cursor, Some(0));
-        for _ in 0..5 {
-            press(&mut s, Key::Down);
-        }
-        assert_eq!(s.cursor, Some(2));
-        press(&mut s, Key::Up);
-        assert_eq!(s.cursor, Some(1));
-        press(&mut s, Key::Char('j'));
-        assert_eq!(s.cursor, None, "a new card starts without a cursor");
+    fn shift_j_from_the_back_goes_to_the_next_card_front() {
+        let mut s = loaded(many(2));
+        press(&mut s, Key::Space);
+        press(&mut s, Key::Char('J'));
+        assert_eq!(s.cur, 1);
+        assert_eq!(s.side, Side::Front);
     }
 
     #[test]
@@ -759,7 +772,7 @@ mod tests {
     #[test]
     fn skipping_the_last_card_goes_back_to_the_first() {
         let mut s = loaded(many(2));
-        press(&mut s, Key::Char('j'));
+        press(&mut s, Key::Char('J'));
         press(&mut s, Key::Char('s'));
         assert_eq!(s.cur, 0);
     }
@@ -767,7 +780,7 @@ mod tests {
     #[test]
     fn a_reload_keeps_the_same_card_in_front() {
         let mut s = loaded(many(3));
-        press(&mut s, Key::Char('j'));
+        press(&mut s, Key::Char('J'));
         let mut list = many(3);
         list.insert(0, {
             let mut d = list[2].clone();
@@ -782,7 +795,7 @@ mod tests {
     #[test]
     fn a_card_closed_elsewhere_leaves_and_the_next_one_takes_its_place() {
         let mut s = loaded(many(3));
-        press(&mut s, Key::Char('j'));
+        press(&mut s, Key::Char('J'));
         press(&mut s, Key::Space);
         s.anims.clear();
         let mut list = many(3);
@@ -820,7 +833,7 @@ mod tests {
                 "https://gitlab.com/ecfx/ecfx-backend/-/merge_requests/870".into()
             )]
         );
-        press(&mut s, Key::Char('j'));
+        press(&mut s, Key::Char('J'));
         assert!(press(&mut s, Key::Char('o')).is_empty());
         assert_eq!(s.toast.as_ref().unwrap().0, "no MR on D-2");
         update(&mut s, Event::Tick, T0 + TOAST_MS);
@@ -832,7 +845,7 @@ mod tests {
         let mut s = loaded(many(2));
         press(&mut s, Key::Char('?'));
         assert!(s.help);
-        press(&mut s, Key::Char('j'));
+        press(&mut s, Key::Char('J'));
         assert!(!s.help);
         assert_eq!(s.cur, 0);
     }
@@ -931,7 +944,7 @@ mod tests {
     #[test]
     fn enter_without_star_or_cursor_does_nothing() {
         let mut s = loaded(fixture());
-        press(&mut s, Key::Char('j'));
+        press(&mut s, Key::Char('J'));
         assert!(press(&mut s, Key::Enter).is_empty());
         assert!(s.pending.is_none());
     }
@@ -952,7 +965,7 @@ mod tests {
     #[test]
     fn undo_puts_the_card_back_in_front_and_sends_nothing() {
         let mut s = loaded(many(3));
-        press(&mut s, Key::Char('j'));
+        press(&mut s, Key::Char('J'));
         press(&mut s, Key::Char('1'));
         press(&mut s, Key::Char('u'));
         assert_eq!(ids(&s), ["D-2", "D-1", "D-3"]);
@@ -1127,7 +1140,7 @@ mod tests {
     #[test]
     fn a_failed_ask_keeps_its_text_and_marks_the_card_until_retried() {
         let mut s = loaded(many(3));
-        press(&mut s, Key::Char('j'));
+        press(&mut s, Key::Char('J'));
         press(&mut s, Key::Char('a'));
         type_text(&mut s, "why not");
         press(&mut s, Key::Enter);
@@ -1191,7 +1204,7 @@ mod tests {
     #[test]
     fn a_failed_send_brings_the_card_back_and_enter_retries_it() {
         let mut s = loaded(many(3));
-        press(&mut s, Key::Char('j'));
+        press(&mut s, Key::Char('J'));
         press(&mut s, Key::Char('2'));
         update(&mut s, Event::Tick, T0 + UNDO_MS);
         update(
@@ -1239,7 +1252,7 @@ mod tests {
         press(&mut s, Key::Char('1'));
         press(&mut s, Key::Space);
         assert!(s.ghost.is_none(), "the flip key ended the ghost");
-        press(&mut s, Key::Char('j'));
+        press(&mut s, Key::Char('J'));
         assert!(s.flip.is_none());
     }
 

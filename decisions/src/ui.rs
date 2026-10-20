@@ -31,11 +31,12 @@ pub struct Drawn {
 }
 
 const KEYS: &[(&str, &str)] = &[
-    ("j / k", "next / previous card (back: scroll)"),
-    ("g / G", "first / last card (back: top / bottom)"),
+    ("J / K", "next / previous card"),
+    ("j / k", "move between the options (back: scroll)"),
+    ("g / G", "first / last option (back: top / bottom)"),
     ("1-9", "answer with that option"),
     ("⏎", "option under the cursor, else ★"),
-    ("↑ / ↓", "move the option cursor"),
+    ("↑ / ↓", "same as j / k"),
     ("space", "flip: context and discussion"),
     ("^d / ^u", "page the back"),
     ("u", "undo the last answer"),
@@ -141,11 +142,11 @@ fn footer(s: &State) -> String {
         (Some(_), ..) => "⏎ ask · esc cancel",
         (None, true, ..) => "any key closes help",
         (None, false, Side::Back, _) => {
-            "j/k scroll · ^d/^u page · space front · 1-9 answer · ? help"
+            "j/k scroll · ^d/^u page · J/K cards · space front · 1-9 answer · ? help"
         }
-        (None, false, Side::Front, Some(_)) => "u undo · n note · j/k cards · 1-9 answer · ? help",
+        (None, false, Side::Front, Some(_)) => "u undo · n note · J/K cards · 1-9 answer · ? help",
         (None, false, Side::Front, None) => {
-            "j/k cards · 1-9 answer · ⏎ ★ · space flip · a ask · ? help"
+            "J/K cards · j/k options · 1-9 answer · ⏎ pick · space flip · ? help"
         }
     };
     format!(" {keys} ")
@@ -520,7 +521,7 @@ mod tests {
             "★ 1  Push and post",
             "  2  Push only",
             "space: context · 10 lines · discussion · 0",
-            "j/k cards · 1-9 answer · ⏎ ★ · space flip · a ask · ? help",
+            "J/K cards · j/k options · 1-9 answer · ⏎ pick · space flip · ? help",
         ] {
             assert!(all.contains(want), "{want:?} missing:\n{all}");
         }
@@ -570,7 +571,7 @@ mod tests {
     #[test]
     fn the_back_shows_context_and_discussion() {
         let mut s = state(fixture(), T0);
-        app::update(&mut s, Event::Key(Key::Char('j')), T0);
+        app::update(&mut s, Event::Key(Key::Char('J')), T0);
         app::update(&mut s, Event::Key(Key::Space), T0);
         s.flip = None;
         let all = screen(&render(&s, 60, 16).0);
