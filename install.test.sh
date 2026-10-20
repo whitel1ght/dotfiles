@@ -185,12 +185,17 @@ root=""; while [ $# -gt 0 ]; do [ "$1" = --root ] && root="$2"; shift; done
 mkdir -p "$root/bin" && printf '#!/bin/sh\n' > "$root/bin/decisions" && chmod +x "$root/bin/decisions"
 EOF
 chmod +x "$STUB/cargo"
-run_decisions() { PATH="$STUB:$PATH" DECISIONS_SETUP=1 run_install; }
+FIXTURE="$SANDBOX/decisions-src"; mkdir -p "$FIXTURE/src"
+printf '[package]\nname = "decisions"\n' > "$FIXTURE/Cargo.toml"; printf 'fn main() {}\n' > "$FIXTURE/src/main.rs"; : > "$FIXTURE/Cargo.lock"
+run_decisions() { PATH="$STUB:$PATH" DECISIONS_SETUP=1 DECISIONS_SRC="$FIXTURE" run_install; }
 run_decisions >/dev/null
 [ -x "$SANDBOX/.local/share/decisions/bin/decisions" ] && pass "builds the decisions app" || fail "builds the decisions app" "$(cat "$SANDBOX/cargo.log" 2>&1)"
-assert_contains "$(cat "$SANDBOX/cargo.log")" "install --locked --quiet --path $TEST_DIR/decisions --root $SANDBOX/.local/share/decisions" "with cargo install --locked into ~/.local/share/decisions"
+assert_contains "$(cat "$SANDBOX/cargo.log")" "install --locked --quiet --path $FIXTURE --root $SANDBOX/.local/share/decisions" "with cargo install --locked into ~/.local/share/decisions"
 run_decisions >/dev/null
 [ "$(wc -l < "$SANDBOX/cargo.log" | tr -d ' ')" = 1 ] && pass "skips the build when the sources did not change" || fail "skips the build when the sources did not change" "$(cat "$SANDBOX/cargo.log")"
+[ "$(readlink "$SANDBOX/.local/bin/run-day-inbox-answer")" = "$TEST_DIR/bin/run-day-inbox-answer" ] && pass "the run-day inbox hook is linked" || fail "the run-day inbox hook is linked" "$(ls -l "$SANDBOX/.local/bin/run-day-inbox-answer" 2>&1)"
+out="$(PATH="$STUB:$PATH" DECISIONS_SETUP=1 DECISIONS_SRC="$SANDBOX/nowhere" run_install)"
+assert_contains "$out" "clone https://github.com/whitel1ght/decisions" "a missing source says where to get it"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

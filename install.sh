@@ -493,21 +493,26 @@ if [ -f "$DOTFILES_DIR/bin/day-plan" ]; then
     create_symlink "$DOTFILES_DIR/bin/day-plan" "$HOME/.local/bin/day-plan"
 fi
 
-# decide files the questions /run-day is waiting on; decisions is the popup that answers
-# them (tmux prefix+y). The answers reach the session through the run-day inbox.
-for f in decide decisions; do
+# decide files the questions /run-day is waiting on; decisions is the deck that answers them
+# (tmux prefix+y). Both are a wrapper around the standalone decisions binary; answers reach
+# the session through run-day-inbox-answer, which writes the run-day inbox.
+for f in decide decisions run-day-inbox-answer; do
     [ -f "$DOTFILES_DIR/bin/$f" ] && create_symlink "$DOTFILES_DIR/bin/$f" "$HOME/.local/bin/$f"
 done
 
-# The decisions popup (tmux prefix+y) is a Rust app in decisions/. It is rebuilt only when
-# its sources change (a hash of them is kept beside the binary), and installed under
-# ~/.local/share/decisions so ~/.local/bin/decisions can stay a link into this repo; the
-# bin/decisions launcher runs it. Needs cargo (the Brewfile's rust). DECISIONS_SETUP=0 skips.
+# The decisions binary (the deck, decide's commands, the MCP server) is the standalone
+# project at ~/projects/decisions (DECISIONS_SRC). It is rebuilt only when its sources change
+# (a hash of them is kept beside the binary), and installed under ~/.local/share/decisions so
+# ~/.local/bin/decisions can stay a link to the bin/decisions wrapper. Needs cargo (the
+# Brewfile's rust). DECISIONS_SETUP=0 skips.
 setup_decisions() {
-    local crate="$DOTFILES_DIR/decisions" root="$HOME/.local/share/decisions" sum
-    [ -f "$crate/Cargo.toml" ] || return 0
+    local crate="${DECISIONS_SRC:-$HOME/projects/decisions}" root="$HOME/.local/share/decisions" sum
+    if [ ! -f "$crate/Cargo.toml" ]; then
+        log_warn "no decisions source at $crate - clone https://github.com/whitel1ght/decisions there"
+        return 0
+    fi
     if ! command -v cargo >/dev/null 2>&1; then
-        log_warn "cargo not found - the decisions popup stays on the nvim view"
+        log_warn "cargo not found - decide and the decisions popup need it: run ./brew-install.sh"
         return 0
     fi
     sum=$(cd "$crate" && find Cargo.toml Cargo.lock src -type f | LC_ALL=C sort | xargs shasum | shasum | cut -d' ' -f1)
@@ -521,7 +526,7 @@ setup_decisions() {
 }
 
 if [ "${DECISIONS_SETUP:-1}" != "0" ]; then
-    setup_decisions || log_warn "decisions app build failed - the popup stays on the nvim view"
+    setup_decisions || log_warn "decisions build failed - decide and the popup keep the last built binary"
 fi
 
 # mr-watch finds new review notes on my MRs and posts the replies; driven by /watch-mrs.

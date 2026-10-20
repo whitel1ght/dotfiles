@@ -14,6 +14,8 @@ has() { case "$2" in *"$3"*) pass "$1" ;; *) fail "$1" "[$3] not in: $2" ;; esac
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "$SANDBOX"' EXIT
 export RUN_DAY_STATE_DIR="$SANDBOX/state"
+cargo build --quiet --manifest-path "$HOME/projects/decisions/Cargo.toml" || { echo "build ~/projects/decisions first"; exit 1; }
+export DECISIONS_BIN="$HOME/projects/decisions/target/debug/decisions"
 D="$RUN_DAY_STATE_DIR/decisions"
 run() { "$SCRIPT" "$@" 2>&1; }
 
@@ -144,6 +146,15 @@ for i in $(seq 1 15); do
   grep -q "session reply $i" "$f2" && grep -q 'status: answered' "$f2" && grep -q '^## Answer' "$f2" || lost=$((lost + 1))
 done
 check "concurrent reply and answer: neither is lost (15 runs)" "0" "$lost"
+
+echo "wrapper"
+out="$(DECISIONS_BIN=/nonexistent "$SCRIPT" count 2>&1)"; code=$?
+check "a missing binary exits 1" "1" "$code"
+has "a missing binary says how to build it" "$out" "install.sh"
+legacy="$RUN_DAY_STATE_DIR/decisions/D-900.md"
+printf -- '---\nid: D-900\nday: 2026-10-19\nkey: ECFX-9\nmr: ""\nasked: 2026-10-19T09:00:00+03:00\nblocks: ""\nstatus: open\n---\n## Question\nLegacy?\n\n## Options\n1. yes (recommended)\n2. no\n' > "$legacy"
+has "a file written by the Python decide is listed" "$(run list)" "D-900"
+run answer D-900 1 >/dev/null; check "and answered" "0" "$?"
 
 echo
 echo "passed: $PASS  failed: $FAIL"
