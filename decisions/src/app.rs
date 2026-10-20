@@ -32,8 +32,10 @@ pub enum Event {
     Tick,
     Changed,
     Loaded(Result<Vec<Decision>, String>),
+    /// A `decide` call finished; `ask` tells an ask back from an answer on the same card.
     Sent {
         id: String,
+        ask: bool,
         result: Result<(), String>,
     },
     Signal,
@@ -109,6 +111,12 @@ pub struct Failed {
     pub error: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct AskFailed {
+    pub text: String,
+    pub error: String,
+}
+
 #[derive(Debug, Default)]
 pub struct State {
     pub queue: Vec<Decision>,
@@ -121,6 +129,8 @@ pub struct State {
     pub pending: Option<Pending>,
     pub sending: HashMap<String, Pending>,
     pub failed: HashMap<String, Failed>,
+    pub asking: HashMap<String, String>,
+    pub ask_failed: HashMap<String, AskFailed>,
     pub input: Option<Input>,
     pub help: bool,
     pub error: Option<String>,
@@ -132,6 +142,7 @@ pub struct State {
     pub now: i64,
     pub loaded: bool,
     pub quitting: bool,
+    pub quit_failed: bool,
 }
 
 pub fn band(age_ms: i64) -> Band {
@@ -196,8 +207,12 @@ pub fn update(s: &mut State, ev: Event, now: i64) -> Vec<Command> {
         Event::Changed => out.push(Command::Reload),
         Event::Loaded(Ok(list)) => loaded(s, list),
         Event::Loaded(Err(e)) => s.error = Some(e),
-        Event::Sent { id, result } => sent(s, id, result),
-        Event::Signal => quit(s, &mut out),
+        Event::Sent { id, ask, result } => sent(s, id, ask, result, &mut out),
+        Event::Signal => {
+            send_pending(s, &mut out);
+            s.quitting = true;
+            out.push(Command::Quit);
+        }
         Event::Key(k) => key(s, k, &mut out),
     }
     out
@@ -252,7 +267,7 @@ fn loaded(s: &mut State, list: Vec<Decision>) {
     let mut list: Vec<Decision> = list.into_iter().filter(|d| !held.contains(&d.id)).collect();
     s.skipped.retain(|id| list.iter().any(|d| &d.id == id));
     list.sort_by_key(|d| {
-        if s.failed.contains_key(&d.id) {
+        if s.failed.contains_key(&d.id) || s.ask_failed.contains_key(&d.id) {
             (0, 0)
         } else if let Some(i) = s.skipped.iter().position(|id| id == &d.id) {
             (2, i)
@@ -393,10 +408,28 @@ fn open(s: &mut State, out: &mut Vec<Command>) {
     }
 }
 
+/// A keyboard quit sends what is pending and waits for every `decide` call to land, so a
+/// failure can still be shown; a second quit leaves at once.
 fn quit(s: &mut State, out: &mut Vec<Command>) {
+    if s.quitting {
+        out.push(Command::Quit);
+        return;
+    }
     send_pending(s, out);
     s.quitting = true;
-    out.push(Command::Quit);
+    s.quit_failed = false;
+    if s.sending.is_empty() && s.asking.is_empty() {
+        out.push(Command::Quit);
+    }
+}
+
+fn to_front(s: &mut State, id: &str) {
+    if let Some(i) = s.queue.iter().position(|d| d.id == id) {
+        let d = s.queue.remove(i);
+        s.queue.insert(0, d);
+        s.cur = 0;
+        s.reset_view();
+    }
 }
 
 fn choose(s: &mut State, n: u8, out: &mut Vec<Command>) {
@@ -475,9 +508,14 @@ fn note(s: &mut State) {
 
 fn ask(s: &mut State) {
     if let Some(id) = s.current().map(|d| d.id.clone()) {
+        let text = s
+            .ask_failed
+            .get(&id)
+            .map(|f| f.text.clone())
+            .unwrap_or_default();
         s.input = Some(Input {
             kind: InputKind::Ask { id },
-            text: String::new(),
+            text,
         });
     }
 }
@@ -518,9 +556,10 @@ fn input_key(s: &mut State, k: Key, out: &mut Vec<Command>) {
                     if !text.is_empty() {
                         out.push(Command::Ask {
                             id: id.clone(),
-                            text,
+                            text: text.clone(),
                         });
-                        s.toast(format!("asked {id}"));
+                        s.asking.insert(id.clone(), text);
+                        s.toast(format!("asking {id}…"));
                     }
                 }
             }
@@ -529,30 +568,48 @@ fn input_key(s: &mut State, k: Key, out: &mut Vec<Command>) {
     }
 }
 
-fn sent(s: &mut State, id: String, result: Result<(), String>) {
-    let Some(p) = s.sending.remove(&id) else {
-        if let Err(e) = result {
-            s.error = Some(e);
+fn sent(s: &mut State, id: String, ask: bool, result: Result<(), String>, out: &mut Vec<Command>) {
+    if ask {
+        let text = s.asking.remove(&id).unwrap_or_default();
+        match result {
+            Ok(()) => {
+                s.ask_failed.remove(&id);
+                s.toast(format!("asked {id}"));
+            }
+            Err(error) => {
+                s.ask_failed.insert(id.clone(), AskFailed { text, error });
+                to_front(s, &id);
+                s.quit_failed |= s.quitting;
+            }
         }
-        return;
-    };
-    match result {
-        Ok(()) => {
-            s.failed.remove(&id);
+    } else if let Some(p) = s.sending.remove(&id) {
+        match result {
+            Ok(()) => {
+                s.failed.remove(&id);
+            }
+            Err(error) => {
+                s.failed.insert(
+                    id.clone(),
+                    Failed {
+                        n: p.n,
+                        note: p.note.clone(),
+                        error,
+                    },
+                );
+                s.queue.retain(|d| d.id != id);
+                s.queue.insert(0, p.decision);
+                s.cur = 0;
+                s.reset_view();
+                s.quit_failed |= s.quitting;
+            }
         }
-        Err(error) => {
-            s.failed.insert(
-                id.clone(),
-                Failed {
-                    n: p.n,
-                    note: p.note.clone(),
-                    error,
-                },
-            );
-            s.queue.retain(|d| d.id != id);
-            s.queue.insert(0, p.decision);
-            s.cur = 0;
-            s.reset_view();
+    }
+    if s.quitting && s.sending.is_empty() && s.asking.is_empty() {
+        if std::mem::take(&mut s.quit_failed) {
+            s.quitting = false;
+            s.toast("not sent: the card is back in front · q to quit anyway".into());
+        } else {
+            out.push(Command::Quit);
         }
     }
 }
@@ -974,30 +1031,76 @@ mod tests {
                 text: "why".into()
             }]
         );
-        assert_eq!(s.toast.as_ref().unwrap().0, "asked D-1");
+        assert_eq!(s.toast.as_ref().unwrap().0, "asking D-1…");
         assert_eq!(s.queue.len(), 2, "asking does not answer");
         press(&mut s, Key::Char('a'));
         assert!(press(&mut s, Key::Enter).is_empty());
         assert!(s.input.is_none());
     }
 
+    fn sent(id: &str, ask: bool, result: Result<(), &str>) -> Event {
+        Event::Sent {
+            id: id.into(),
+            ask,
+            result: result.map_err(String::from),
+        }
+    }
+
+    fn type_text(s: &mut State, text: &str) {
+        for c in text.chars() {
+            press(s, if c == ' ' { Key::Space } else { Key::Char(c) });
+        }
+    }
+
     #[test]
-    fn q_esc_signal_and_interrupt_send_the_pending_answer_then_quit() {
-        for k in [
-            Event::Key(Key::Char('q')),
-            Event::Key(Key::Esc),
-            Event::Signal,
-            Event::Key(Key::Interrupt),
-        ] {
+    fn a_signal_sends_the_pending_answer_and_quits_at_once() {
+        let mut s = loaded(fixture());
+        press(&mut s, Key::Char('3'));
+        assert_eq!(
+            update(&mut s, Event::Signal, T0),
+            [answer("D-1", 3, None), Command::Quit]
+        );
+    }
+
+    #[test]
+    fn q_esc_and_interrupt_send_the_pending_answer_and_quit_once_it_lands() {
+        for k in [Key::Char('q'), Key::Esc, Key::Interrupt] {
             let mut s = loaded(fixture());
             press(&mut s, Key::Char('3'));
+            assert_eq!(press(&mut s, k), [answer("D-1", 3, None)], "{k:?}");
+            assert!(s.quitting);
             assert_eq!(
-                update(&mut s, k.clone(), T0),
-                [answer("D-1", 3, None), Command::Quit],
+                update(&mut s, sent("D-1", false, Ok(())), T0),
+                [Command::Quit],
                 "{k:?}"
             );
-            assert!(s.quitting);
         }
+    }
+
+    #[test]
+    fn quitting_with_nothing_in_flight_is_immediate() {
+        let mut s = loaded(fixture());
+        assert_eq!(press(&mut s, Key::Char('q')), [Command::Quit]);
+    }
+
+    #[test]
+    fn a_send_that_fails_while_quitting_cancels_the_quit() {
+        let mut s = loaded(fixture());
+        press(&mut s, Key::Char('2'));
+        press(&mut s, Key::Char('q'));
+        assert!(update(&mut s, sent("D-1", false, Err("disk full")), T0).is_empty());
+        assert!(!s.quitting);
+        assert_eq!(s.current().unwrap().id, "D-1");
+        assert!(s.toast.as_ref().unwrap().0.contains("not sent"));
+        assert_eq!(press(&mut s, Key::Char('q')), [Command::Quit]);
+    }
+
+    #[test]
+    fn q_again_while_sending_quits_anyway() {
+        let mut s = loaded(fixture());
+        press(&mut s, Key::Char('2'));
+        press(&mut s, Key::Char('q'));
+        assert_eq!(press(&mut s, Key::Char('q')), [Command::Quit]);
     }
 
     #[test]
@@ -1005,9 +1108,72 @@ mod tests {
         let mut s = loaded(fixture());
         press(&mut s, Key::Char('2'));
         press(&mut s, Key::Char('n'));
+        assert_eq!(press(&mut s, Key::Interrupt), [answer("D-1", 2, None)]);
+        assert!(s.quitting);
+    }
+
+    #[test]
+    fn an_ask_says_asked_only_once_it_lands() {
+        let mut s = loaded(fixture());
+        press(&mut s, Key::Char('a'));
+        type_text(&mut s, "why");
+        press(&mut s, Key::Enter);
+        assert_eq!(s.toast.as_ref().unwrap().0, "asking D-1…");
+        update(&mut s, sent("D-1", true, Ok(())), T0);
+        assert_eq!(s.toast.as_ref().unwrap().0, "asked D-1");
+        assert!(s.asking.is_empty());
+    }
+
+    #[test]
+    fn a_failed_ask_keeps_its_text_and_marks_the_card_until_retried() {
+        let mut s = loaded(many(3));
+        press(&mut s, Key::Char('j'));
+        press(&mut s, Key::Char('a'));
+        type_text(&mut s, "why not");
+        press(&mut s, Key::Enter);
+        update(&mut s, sent("D-2", true, Err("no such decision")), T0);
+        assert_eq!(s.current().unwrap().id, "D-2");
+        assert_eq!(s.ask_failed["D-2"].error, "no such decision");
+        update(&mut s, Event::Loaded(Ok(many(3))), T0);
+        assert!(
+            s.ask_failed.contains_key("D-2"),
+            "a reload does not clear it"
+        );
+        assert_eq!(s.current().unwrap().id, "D-2", "it stays in front");
+        press(&mut s, Key::Char('a'));
+        assert_eq!(s.input.as_ref().unwrap().text, "why not");
+        press(&mut s, Key::Enter);
+        update(&mut s, sent("D-2", true, Ok(())), T0);
+        assert!(s.ask_failed.is_empty());
+    }
+
+    #[test]
+    fn an_ask_result_does_not_settle_an_answer_on_the_same_card() {
+        let mut s = loaded(fixture());
+        press(&mut s, Key::Char('a'));
+        type_text(&mut s, "why");
+        press(&mut s, Key::Enter);
+        press(&mut s, Key::Char('1'));
+        update(&mut s, Event::Tick, T0 + UNDO_MS);
+        update(&mut s, sent("D-1", true, Ok(())), T0 + UNDO_MS);
+        assert!(
+            s.sending.contains_key("D-1"),
+            "the answer is still in flight"
+        );
+        update(&mut s, sent("D-1", false, Err("disk full")), T0 + UNDO_MS);
+        assert_eq!(s.failed["D-1"].error, "disk full");
+    }
+
+    #[test]
+    fn quitting_waits_for_an_ask_too() {
+        let mut s = loaded(fixture());
+        press(&mut s, Key::Char('a'));
+        type_text(&mut s, "why");
+        press(&mut s, Key::Enter);
+        assert!(press(&mut s, Key::Char('q')).is_empty());
         assert_eq!(
-            press(&mut s, Key::Interrupt),
-            [answer("D-1", 2, None), Command::Quit]
+            update(&mut s, sent("D-1", true, Ok(())), T0),
+            [Command::Quit]
         );
     }
 
@@ -1032,6 +1198,7 @@ mod tests {
             &mut s,
             Event::Sent {
                 id: "D-2".into(),
+                ask: false,
                 result: Err("disk full".into()),
             },
             T0 + UNDO_MS,
@@ -1058,25 +1225,12 @@ mod tests {
             &mut s,
             Event::Sent {
                 id: "D-1".into(),
+                ask: false,
                 result: Ok(()),
             },
             T0 + UNDO_MS,
         );
         assert!(s.sending.is_empty() && s.failed.is_empty());
-    }
-
-    #[test]
-    fn a_failed_ask_shows_as_an_error() {
-        let mut s = loaded(fixture());
-        update(
-            &mut s,
-            Event::Sent {
-                id: "D-1".into(),
-                result: Err("no such decision".into()),
-            },
-            T0,
-        );
-        assert_eq!(s.error.as_deref(), Some("no such decision"));
     }
 
     #[test]

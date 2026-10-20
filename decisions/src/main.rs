@@ -23,7 +23,8 @@ const USAGE: &str = "decisions — answer what /run-day is waiting on (tmux pref
 
 Reads and answers through `decide` ($DECIDE, else decide on PATH) and watches
 $RUN_DAY_STATE_DIR/decisions (default ~/.local/state/run-day/decisions).
-An answer waits 5 s for undo; quitting sends it at once.";
+An answer waits 5 s for undo; q sends it at once and closes once it has landed
+(q again closes without waiting).";
 
 const RELOAD_EVERY: Duration = Duration::from_secs(30);
 const SEND_WAIT: Duration = Duration::from_secs(10);
@@ -58,9 +59,9 @@ impl Runner {
         match cmd {
             Command::Reload => self.reload(),
             Command::Answer { id, n, note } => {
-                self.send(id, move |d, id| d.answer(id, n, note.as_deref()))
+                self.send(id, false, move |d, id| d.answer(id, n, note.as_deref()))
             }
-            Command::Ask { id, text } => self.send(id, move |d, id| d.ask(id, &text)),
+            Command::Ask { id, text } => self.send(id, true, move |d, id| d.ask(id, &text)),
             Command::OpenUrl(url) => {
                 let _ = std::process::Command::new("open")
                     .arg(url)
@@ -95,13 +96,14 @@ impl Runner {
     fn send(
         &mut self,
         id: String,
+        ask: bool,
         call: impl FnOnce(&Decide, &str) -> Result<(), String> + Send + 'static,
     ) {
         self.in_flight += 1;
         let (decide, tx) = (self.decide.clone(), self.tx.clone());
         thread::spawn(move || {
             let result = call(&decide, &id);
-            let _ = tx.send(Event::Sent { id, result });
+            let _ = tx.send(Event::Sent { id, ask, result });
         });
     }
 }

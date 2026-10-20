@@ -99,7 +99,21 @@ pub fn draw(f: &mut Frame, s: &State) -> Drawn {
         rows.height -= 1;
     }
     let deck = rows.inner(Margin::new(1, 0));
-    if s.queue.is_empty() && s.ghost.is_none() {
+    if !s.loaded {
+        if s.error.is_none() {
+            let msg = Paragraph::new("loading…")
+                .alignment(Alignment::Center)
+                .style(Style::new().fg(theme::MUTED));
+            f.render_widget(
+                msg,
+                Rect {
+                    y: deck.y + deck.height / 2,
+                    height: 1,
+                    ..deck
+                },
+            );
+        }
+    } else if s.queue.is_empty() && s.ghost.is_none() {
         drawn.areas.empty = Some(empty(f, deck));
     } else {
         deck_draw(f, s, deck, &mut drawn);
@@ -112,6 +126,7 @@ pub fn draw(f: &mut Frame, s: &State) -> Drawn {
 
 fn header(s: &State) -> String {
     match s.queue.len() {
+        _ if !s.loaded => " decisions · loading… ".into(),
         0 => " decisions · nothing waiting ".into(),
         n => format!(
             " decisions · {n} waiting · oldest {} ",
@@ -148,6 +163,12 @@ fn status(s: &State) -> Option<Line<'static>> {
             Span::styled(i.text.clone(), Style::new().fg(theme::TEXT)),
             Span::styled("▏", Style::new().fg(theme::LAVENDER)),
         ]));
+    }
+    if s.quitting {
+        return Some(Line::styled(
+            " sending… · q again to quit anyway",
+            Style::new().fg(theme::YELLOW),
+        ));
     }
     if let Some(p) = &s.pending {
         let text = p
@@ -275,6 +296,13 @@ fn front(f: &mut Frame, s: &State, d: &Decision, rect: Rect) {
     if let Some(fl) = s.failed.get(&d.id) {
         lines.push(Line::styled(
             format!("send failed: {} · ⏎ retries {}", fl.error, fl.n),
+            Style::new().fg(theme::RED),
+        ));
+        lines.push(Line::default());
+    }
+    if let Some(af) = s.ask_failed.get(&d.id) {
+        lines.push(Line::styled(
+            format!("ask failed: {} · a retries", af.error),
             Style::new().fg(theme::RED),
         ));
         lines.push(Line::default());
@@ -689,5 +717,38 @@ mod tests {
         s.error = Some("x".into());
         app::update(&mut s, Event::Key(Key::Char('1')), T0);
         render(&s, 50, 14);
+    }
+
+    #[test]
+    fn before_the_first_load_it_says_loading_not_nothing_waiting() {
+        let s = State::new(T0);
+        let (buf, d) = render(&s, 80, 24);
+        let all = screen(&buf);
+        assert!(all.contains("loading…"), "{all}");
+        assert!(!all.contains("nothing waiting"), "{all}");
+        assert!(d.areas.empty.is_none());
+    }
+
+    #[test]
+    fn a_failed_ask_shows_on_its_card() {
+        let mut s = state(fixture(), T0);
+        s.ask_failed.insert(
+            "D-1".into(),
+            app::AskFailed {
+                text: "why".into(),
+                error: "boom".into(),
+            },
+        );
+        let all = screen(&render(&s, 80, 24).0);
+        assert!(all.contains("ask failed: boom · a retries"), "{all}");
+    }
+
+    #[test]
+    fn quitting_says_what_it_waits_for() {
+        let mut s = state(fixture(), T0);
+        app::update(&mut s, Event::Key(Key::Char('1')), T0);
+        app::update(&mut s, Event::Key(Key::Char('q')), T0);
+        let all = screen(&render(&s, 80, 24).0);
+        assert!(all.contains("sending… · q again to quit anyway"), "{all}");
     }
 }
