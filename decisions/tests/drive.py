@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the decisions binary in a pseudo-terminal (100x30), type steps, wait for it to exit.
 
-usage: drive.py BIN STEP...
+usage: drive.py BIN STEP...   (DRIVE_ARGS: space-separated arguments for BIN)
 A STEP is text to type (one key every 0.15 s), `sleep:SECONDS`, or `signal:NAME` (TERM, HUP).
 Prints the exit code, or `timeout` (and exits 1) when the app is still running 15 s later.
 """
@@ -32,7 +32,7 @@ def main():
     pid, fd = pty.fork()
     if pid == 0:
         fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
-        os.execv(binary, [binary])
+        os.execv(binary, [binary, *os.environ.get("DRIVE_ARGS", "").split()])
     drain(fd, 1.5)
     for step in steps:
         if step.startswith("sleep:"):

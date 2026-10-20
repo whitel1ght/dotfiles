@@ -143,6 +143,7 @@ pub struct State {
     pub loaded: bool,
     pub quitting: bool,
     pub quit_failed: bool,
+    pub demo: bool,
 }
 
 pub fn band(age_ms: i64) -> Band {

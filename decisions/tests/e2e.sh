@@ -65,6 +65,12 @@ fresh hup
 drive 1 signal:HUP >/dev/null
 assert_contains "$(inbox)" "D-1 answered: 1 — Yes" "SIGHUP with an answer pending sends it"
 
+fresh demo
+rc=$(DRIVE_ARGS=--demo DECIDE=/nonexistent/decide drive 1 sleep:6 2 q)
+assert_eq 0 "$rc" "--demo runs without decide and quits cleanly"
+assert_eq "" "$(inbox)" "--demo answers never reach the inbox"
+assert_eq 2 "$("$DECIDE" count)" "--demo leaves the real queue alone"
+
 fresh nodecide
 rc=$(DECIDE=/nonexistent/decide drive q)
 assert_eq 0 "$rc" "a missing decide still opens and quits cleanly"

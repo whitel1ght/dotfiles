@@ -62,6 +62,27 @@ pub fn decode(json: &str) -> Result<Vec<Decision>, String> {
     serde_json::from_str(json).map_err(|e| format!("bad JSON from decide: {e}"))
 }
 
+/// Where the queue comes from: the real `decide`, or the in-memory demo.
+pub trait Backend: Send + Sync {
+    fn list(&self) -> Result<Vec<Decision>, String>;
+    fn answer(&self, id: &str, n: u8, note: Option<&str>) -> Result<(), String>;
+    fn ask(&self, id: &str, text: &str) -> Result<(), String>;
+}
+
+impl Backend for Decide {
+    fn list(&self) -> Result<Vec<Decision>, String> {
+        Decide::list(self)
+    }
+
+    fn answer(&self, id: &str, n: u8, note: Option<&str>) -> Result<(), String> {
+        Decide::answer(self, id, n, note)
+    }
+
+    fn ask(&self, id: &str, text: &str) -> Result<(), String> {
+        Decide::ask(self, id, text)
+    }
+}
+
 pub struct Decide {
     pub bin: String,
 }

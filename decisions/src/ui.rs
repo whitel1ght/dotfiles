@@ -126,11 +126,16 @@ pub fn draw(f: &mut Frame, s: &State) -> Drawn {
 }
 
 fn header(s: &State) -> String {
+    let name = if s.demo {
+        "decisions · demo"
+    } else {
+        "decisions"
+    };
     match s.queue.len() {
-        _ if !s.loaded => " decisions · loading… ".into(),
-        0 => " decisions · nothing waiting ".into(),
+        _ if !s.loaded => format!(" {name} · loading… "),
+        0 => format!(" {name} · nothing waiting "),
         n => format!(
-            " decisions · {n} waiting · oldest {} ",
+            " {name} · {n} waiting · oldest {} ",
             age_label(s.oldest_ms())
         ),
     }
@@ -751,5 +756,13 @@ mod tests {
         app::update(&mut s, Event::Key(Key::Char('q')), T0);
         let all = screen(&render(&s, 80, 24).0);
         assert!(all.contains("sending… · q again to quit anyway"), "{all}");
+    }
+
+    #[test]
+    fn the_demo_says_so_in_the_header() {
+        let mut s = state(fixture(), T0);
+        s.demo = true;
+        let all = screen(&render(&s, 80, 24).0);
+        assert!(all.contains("decisions · demo · 2 waiting"), "{all}");
     }
 }

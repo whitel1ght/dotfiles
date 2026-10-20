@@ -1,4 +1,5 @@
 pub mod app;
+pub mod demo;
 pub mod fx;
 pub mod keys;
 pub mod markdown;

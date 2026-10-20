@@ -10,9 +10,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crossterm::event::{self, Event as TermEvent};
 use decisions::app::{self, Command, Event, State};
+use decisions::demo::Demo;
 use decisions::fx::Fx;
 use decisions::keys;
-use decisions::queue::Decide;
+use decisions::queue::{Backend, Decide};
 use decisions::ui::{self, Areas};
 use notify_debouncer_mini::notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
@@ -20,6 +21,8 @@ use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
 const USAGE: &str = "decisions — answer what /run-day is waiting on (tmux prefix y)
 
   decisions        the queue as a deck of cards; ? lists the keys
+  decisions --demo a made-up queue held in memory, to try the screen and the keys;
+                   nothing reaches decide or the /run-day session
 
 Reads and answers through `decide` ($DECIDE, else decide on PATH) and watches
 $RUN_DAY_STATE_DIR/decisions (default ~/.local/state/run-day/decisions).
@@ -27,6 +30,7 @@ An answer waits 5 s for undo; q sends it at once and closes once it has landed
 (q again closes without waiting).";
 
 const RELOAD_EVERY: Duration = Duration::from_secs(30);
+const DEMO_RELOAD_EVERY: Duration = Duration::from_secs(2);
 const SEND_WAIT: Duration = Duration::from_secs(10);
 
 fn now_ms() -> i64 {
@@ -46,7 +50,7 @@ fn decisions_dir() -> PathBuf {
 
 /// Runs the app's commands: `decide` calls on threads, results back as events.
 struct Runner {
-    decide: Arc<Decide>,
+    decide: Arc<dyn Backend>,
     tx: mpsc::Sender<Event>,
     in_flight: usize,
     loading: bool,
@@ -97,12 +101,12 @@ impl Runner {
         &mut self,
         id: String,
         ask: bool,
-        call: impl FnOnce(&Decide, &str) -> Result<(), String> + Send + 'static,
+        call: impl FnOnce(&dyn Backend, &str) -> Result<(), String> + Send + 'static,
     ) {
         self.in_flight += 1;
         let (decide, tx) = (self.decide.clone(), self.tx.clone());
         thread::spawn(move || {
-            let result = call(&decide, &id);
+            let result = call(&*decide, &id);
             let _ = tx.send(Event::Sent { id, ask, result });
         });
     }
@@ -147,17 +151,23 @@ fn watch(tx: mpsc::Sender<Event>) -> Option<Debouncer<RecommendedWatcher>> {
 }
 
 fn main() -> ExitCode {
-    match env::args().nth(1).as_deref() {
+    let demo = match env::args().nth(1).as_deref() {
         Some("-h" | "--help") => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
         }
+        Some("--demo") => true,
         Some(other) => {
             eprintln!("decisions: unknown option {other}");
             return ExitCode::from(2);
         }
-        None => {}
-    }
+        None => false,
+    };
+    let (backend, reload_every): (Arc<dyn Backend>, Duration) = if demo {
+        (Arc::new(Demo::new()), DEMO_RELOAD_EVERY)
+    } else {
+        (Arc::new(Decide::from_env()), RELOAD_EVERY)
+    };
 
     let (tx, rx) = mpsc::channel::<Event>();
     let signalled = Arc::new(AtomicBool::new(false));
@@ -171,13 +181,14 @@ fn main() -> ExitCode {
     let stop = Arc::new(AtomicBool::new(false));
     let mut terminal = ratatui::init();
     spawn_keys(tx.clone(), stop.clone());
-    let _watcher = watch(tx.clone());
+    let _watcher = if demo { None } else { watch(tx.clone()) };
 
     let mut s = State::new(now_ms());
+    s.demo = demo;
     let mut fx = Fx::default();
     let mut areas = Areas::default();
     let mut runner = Runner {
-        decide: Arc::new(Decide::from_env()),
+        decide: backend,
         tx,
         in_flight: 0,
         loading: false,
@@ -187,7 +198,7 @@ fn main() -> ExitCode {
 
     let mut last_frame = Instant::now();
     let mut next_tick = Instant::now() + Duration::from_secs(1);
-    let mut next_reload = Instant::now() + RELOAD_EVERY;
+    let mut next_reload = Instant::now() + reload_every;
     'main: loop {
         let elapsed = last_frame.elapsed();
         last_frame = Instant::now();
@@ -226,7 +237,7 @@ fn main() -> ExitCode {
             events.push(Event::Tick);
         }
         if Instant::now() >= next_reload {
-            next_reload = Instant::now() + RELOAD_EVERY;
+            next_reload = Instant::now() + reload_every;
             runner.reload();
         }
         for ev in events {

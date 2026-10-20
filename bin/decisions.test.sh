@@ -22,6 +22,9 @@ echo "launcher"
 has "--help describes the view" "$("$SCRIPT" --help)" "prefix y"
 printf '#!/bin/sh\necho app\n' > "$SANDBOX/app"; chmod +x "$SANDBOX/app"
 has "runs the deck app when it is installed" "$(DECISIONS_APP="$SANDBOX/app" "$SCRIPT")" "app"
+printf '#!/bin/sh\necho "app $*"\n' > "$SANDBOX/app-args"; chmod +x "$SANDBOX/app-args"
+has "--demo goes to the app" "$(DECISIONS_APP="$SANDBOX/app-args" "$SCRIPT" --demo 2>&1)" "app --demo"
+has "--demo without the app says how to get it" "$("$SCRIPT" --demo 2>&1)" "install.sh"
 
 cat > "$SANDBOX/driver.lua" <<'EOF'
 package.path = vim.env.REPO .. '/nvim/lua/?.lua;' .. package.path

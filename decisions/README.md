@@ -10,7 +10,8 @@ through `bin/decide`; never touches the decision files itself.
 - Modules: `queue` runs `decide`; `app` is all behaviour as a pure `update(state, event, now)`;
   `ui` draws; `fx` runs the tachyonfx effects; `keys` maps terminal keys; `main` wires the
   terminal, watcher, signals and threads.
-- Try it on a sandbox queue, so nothing real is answered:
+- Try the screen and keys on made-up data: `decisions --demo` (or `cargo run -- --demo`); it
+  never runs `decide`. To try it against the real `decide` on a sandbox queue instead:
 
   ```bash
   S=$(mktemp -d); export RUN_DAY_STATE_DIR=$S INBOX_DIR=$S/inbox DECIDE=$PWD/../bin/decide
