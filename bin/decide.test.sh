@@ -156,6 +156,8 @@ printf -- '---\nid: D-900\nday: 2026-10-19\nkey: ECFX-9\nmr: ""\nasked: 2026-10-
 has "a file written by the Python decide is listed" "$(run list)" "D-900"
 run answer D-900 1 >/dev/null; check "and answered" "0" "$?"
 
+run --nvim >/dev/null 2>&1; check "--nvim is gone" "2" "$?"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
