@@ -30,6 +30,13 @@ unset INBOX_DIR
 HOME="$SANDBOX/home" RUN_DAY_STATE_DIR= bash -c "$(printf '%q' "$SCRIPT")" < <(ev answered ECFX-2 'D-7 answered: 1 — Yes.')
 check "writes under ~/.local/state/run-day/inbox" "1" "$(ls "$SANDBOX/home/.local/state/run-day/inbox" | wc -l | tr -d ' ')"
 
+echo "questions from other sessions"
+export INBOX_DIR="$SANDBOX/inbox2"
+printf '{"event":"answered","id":"D-8","key":"","source":"claude-code · repo","option":1,"note":null,"text":"D-8 answered: 1 — Yes.","at":"2026-10-20T11:20:00+03:00"}\n' | "$SCRIPT"
+check "an answer to another session's question exits 0" "0" "$?"
+check "and writes no run-day inbox file" "" "$(ls "$INBOX_DIR" 2>/dev/null)"
+unset INBOX_DIR
+
 echo "bad input"
 echo 'not json' | "$SCRIPT" 2>/dev/null; check "bad JSON exits 1" "1" "$?"
 echo

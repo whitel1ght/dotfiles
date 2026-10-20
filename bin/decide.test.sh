@@ -14,6 +14,8 @@ has() { case "$2" in *"$3"*) pass "$1" ;; *) fail "$1" "[$3] not in: $2" ;; esac
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "$SANDBOX"' EXIT
 export RUN_DAY_STATE_DIR="$SANDBOX/state"
+# The wrapper runs whatever ~/projects/decisions has checked out (a debug build), so these checks
+# follow the standalone source, not the installed binary.
 cargo build --quiet --manifest-path "$HOME/projects/decisions/Cargo.toml" || { echo "build ~/projects/decisions first"; exit 1; }
 export DECISIONS_BIN="$HOME/projects/decisions/target/debug/decisions"
 D="$RUN_DAY_STATE_DIR/decisions"

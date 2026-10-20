@@ -12,7 +12,7 @@ BIN="${DECISIONS_BIN:-$HOME/.local/share/decisions/bin/decisions}"
 STATE="${RUN_DAY_STATE_DIR:-$HOME/.local/state/run-day}"
 export DECISIONS_DIR="${DECISIONS_DIR:-$STATE/decisions}"
 export DECISIONS_MR_STRIP="${DECISIONS_MR_STRIP-ecfx-}"
-export DECISIONS_ON_ANSWER="${DECISIONS_ON_ANSWER-$HERE/run-day-inbox-answer}"
+export DECISIONS_ON_ANSWER="${DECISIONS_ON_ANSWER-$(printf %q "$HERE/run-day-inbox-answer")}"
 
 if [ ! -x "$BIN" ]; then
   echo "$(basename "$0"): the decisions binary is not built ($BIN); run ./install.sh in ~/projects/dotfiles" >&2
