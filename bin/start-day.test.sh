@@ -224,6 +224,19 @@ assert_eq "- [ ] ECFX-1 thing dashboard!1  [↗][dashboard!1]
 [dashboard!1]: https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/1" "$saved" "save files the plan with trailing refs"
 rm -f "$DIARY/$(date +%F).md"
 
+echo "start-day save — one line per ticket"
+save() { (PATH="$STUBS:$PATH" DIARY_DIR="$DIARY" START_DAY_STATE="$STATE" "$SCRIPT" save 2>&1 >/dev/null); }
+reset
+err=$(printf '%s\n' '**Merge**' '- [ ] merge backend!6718 (ecfx-14260)' '**First**' '- [ ] ECFX-14260 reply to @bob on backend!6718' | save); rc=$?
+assert_eq 1 "$rc" "a ticket on two lines is refused"
+assert_contains "$err" "ecfx-14260" "the refusal names the ticket"
+[ ! -e "$DIARY/$(date +%F).md" ] && pass "nothing is filed when refused" || fail "nothing is filed when refused" "diary was written"
+err=$(printf '%s\n' '- [ ] ecfx-14260 backend!6718: reply to @bob, then merge' '  - [ ] reply to @bob (ecfx-14260)' '  - [ ] merge' \
+  '- [ ] ecfx-17419 dashboard half waits on ecfx-17418' '- [ ] ecfx-17418 offer Retry only for recoverable failures' \
+  '- [ ] reply to @anna in DM' '- [ ] review @carol'"'"'s dashboard!9' | save); rc=$?
+assert_eq 0 "$rc" "children, later mentions and keyless lines are not duplicates ($err)"
+rm -f "$DIARY/$(date +%F).md"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

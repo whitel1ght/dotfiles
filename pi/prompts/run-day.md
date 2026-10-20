@@ -177,6 +177,11 @@ An agent's report is a claim, not evidence. Before any `[x]`:
 All good: tick `[x]` with `· draft MR <repo>!<iid>  [↗][<repo>!<iid>]`, apply the report's
 `memory:` block (step 4), set `mr=` on the run-state line, and dispatch the next queued item.
 
+A ticket has one top-level line on the plan; indented `  - [ ]` children under it are the
+user's breakdown, which the tick guard and panel ignore: mark and annotate the parent line only,
+and never add a second top-level line for a key already on the plan (put the new action on its
+line instead).
+
 Markers: `[ ]` not started · `[/]` in progress · `[x]` done · `[!]` blocked, needs the user ·
 `[>]` deferred. Evidence goes after the first ` · ` on the line: an MR link, `merged`, or
 `note: <why>`; e.g. `· draft MR dashboard!2240  [↗][dashboard!2240]` or `· blocked: <reason>`.
