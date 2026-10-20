@@ -49,30 +49,53 @@ const KEYS: &[(&str, &str)] = &[
 
 pub fn draw(f: &mut Frame, s: &State) -> Drawn {
     let area = f.area();
-    f.render_widget(Block::new().style(Style::new().bg(theme::BG).fg(theme::TEXT)), area);
-    let mut drawn = Drawn { areas: Areas::default(), scroll_max: 0 };
+    f.render_widget(
+        Block::new().style(Style::new().bg(theme::BG).fg(theme::TEXT)),
+        area,
+    );
+    let mut drawn = Drawn {
+        areas: Areas::default(),
+        scroll_max: 0,
+    };
     if area.width < MIN_W || area.height < MIN_H {
         let msg = Paragraph::new(format!("make the window larger ({MIN_W}×{MIN_H})"))
             .alignment(Alignment::Center)
             .style(Style::new().fg(theme::MUTED));
-        f.render_widget(msg, Rect { y: area.y + area.height / 2, height: 1, ..area });
+        f.render_widget(
+            msg,
+            Rect {
+                y: area.y + area.height / 2,
+                height: 1,
+                ..area
+            },
+        );
         return drawn;
     }
     let frame = Block::bordered()
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(theme::LAVENDER))
-        .title(Line::from(header(s)).style(Style::new().fg(theme::BLUE).add_modifier(Modifier::BOLD)))
+        .title(
+            Line::from(header(s)).style(Style::new().fg(theme::BLUE).add_modifier(Modifier::BOLD)),
+        )
         .title_bottom(Line::from(footer(s)).style(Style::new().fg(theme::MUTED)));
     let mut rows = frame.inner(area);
     f.render_widget(frame, area);
     if let Some(e) = &s.error {
-        let line = Paragraph::new(format!(" decide failed: {e} · r retry")).style(Style::new().fg(theme::RED));
+        let line = Paragraph::new(format!(" decide failed: {e} · r retry"))
+            .style(Style::new().fg(theme::RED));
         f.render_widget(line, Rect { height: 1, ..rows });
         rows.y += 1;
         rows.height -= 1;
     }
     if let Some(line) = status(s) {
-        f.render_widget(Paragraph::new(line), Rect { y: rows.bottom() - 1, height: 1, ..rows });
+        f.render_widget(
+            Paragraph::new(line),
+            Rect {
+                y: rows.bottom() - 1,
+                height: 1,
+                ..rows
+            },
+        );
         rows.height -= 1;
     }
     let deck = rows.inner(Margin::new(1, 0));
@@ -90,7 +113,10 @@ pub fn draw(f: &mut Frame, s: &State) -> Drawn {
 fn header(s: &State) -> String {
     match s.queue.len() {
         0 => " decisions · nothing waiting ".into(),
-        n => format!(" decisions · {n} waiting · oldest {} ", age_label(s.oldest_ms())),
+        n => format!(
+            " decisions · {n} waiting · oldest {} ",
+            age_label(s.oldest_ms())
+        ),
     }
 }
 
@@ -99,9 +125,13 @@ fn footer(s: &State) -> String {
         (Some(i), ..) if i.kind == InputKind::Note => "⏎ send with note · esc no note",
         (Some(_), ..) => "⏎ ask · esc cancel",
         (None, true, ..) => "any key closes help",
-        (None, false, Side::Back, _) => "j/k scroll · ^d/^u page · space front · 1-9 answer · ? help",
+        (None, false, Side::Back, _) => {
+            "j/k scroll · ^d/^u page · space front · 1-9 answer · ? help"
+        }
         (None, false, Side::Front, Some(_)) => "u undo · n note · j/k cards · 1-9 answer · ? help",
-        (None, false, Side::Front, None) => "j/k cards · 1-9 answer · ⏎ ★ · space flip · a ask · ? help",
+        (None, false, Side::Front, None) => {
+            "j/k cards · 1-9 answer · ⏎ ★ · space flip · a ask · ? help"
+        }
     };
     format!(" {keys} ")
 }
@@ -120,28 +150,51 @@ fn status(s: &State) -> Option<Line<'static>> {
         ]));
     }
     if let Some(p) = &s.pending {
-        let text = p.decision.options.iter().find(|o| o.n == p.n).map_or("", |o| o.text.as_str());
+        let text = p
+            .decision
+            .options
+            .iter()
+            .find(|o| o.n == p.n)
+            .map_or("", |o| o.text.as_str());
         let left = (p.due - s.now).clamp(0, UNDO_MS);
         let filled = ((left * 10 + UNDO_MS - 1) / UNDO_MS) as usize;
-        let bar = format!("{}{} {}s", "█".repeat(filled), "░".repeat(10 - filled), (left + 999) / 1000);
+        let bar = format!(
+            "{}{} {}s",
+            "█".repeat(filled),
+            "░".repeat(10 - filled),
+            (left + 999) / 1000
+        );
         return Some(Line::from(vec![
-            Span::styled(format!(" ✓ {} → {}  {text}", p.decision.id, p.n), bold(theme::GREEN)),
+            Span::styled(
+                format!(" ✓ {} → {}  {text}", p.decision.id, p.n),
+                bold(theme::GREEN),
+            ),
             Span::styled("   u undo · n note  ", Style::new().fg(theme::MUTED)),
             Span::styled(bar, Style::new().fg(theme::GREEN)),
         ]));
     }
-    s.toast.as_ref().map(|(m, _)| Line::styled(format!(" {m}"), Style::new().fg(theme::YELLOW)))
+    s.toast
+        .as_ref()
+        .map(|(m, _)| Line::styled(format!(" {m}"), Style::new().fg(theme::YELLOW)))
 }
 
 fn deck_draw(f: &mut Frame, s: &State, deck: Rect, drawn: &mut Drawn) {
     let ahead = s.queue.len().saturating_sub(s.cur + 1);
     let n_edges = ahead.min(MAX_EDGES) as u16;
-    let card = Rect { height: deck.height.saturating_sub(n_edges), ..deck };
+    let card = Rect {
+        height: deck.height.saturating_sub(n_edges),
+        ..deck
+    };
     drawn.areas.card = card;
     drawn.areas.current = s.current().map(|d| d.id.clone());
     for i in 1..=n_edges {
         let d = &s.queue[s.cur + usize::from(i)];
-        let rect = Rect { x: deck.x + i, y: card.bottom() + i - 1, width: deck.width.saturating_sub(2 * i), height: 1 };
+        let rect = Rect {
+            x: deck.x + i,
+            y: card.bottom() + i - 1,
+            width: deck.width.saturating_sub(2 * i),
+            height: 1,
+        };
         let more = (i == n_edges && ahead > MAX_EDGES).then(|| ahead - MAX_EDGES);
         edge(f, s, d, rect, more);
         drawn.areas.edges.push((d.id.clone(), rect));
@@ -155,11 +208,11 @@ fn deck_draw(f: &mut Frame, s: &State, deck: Rect, drawn: &mut Drawn) {
             Side::Back => drawn.scroll_max = back(f, s, d, rect),
         }
     }
-    if let Some((d, until)) = &s.ghost {
-        if s.now < *until {
-            f.render_widget(Clear, card);
-            front(f, s, d, card);
-        }
+    if let Some((d, until)) = &s.ghost
+        && s.now < *until
+    {
+        f.render_widget(Clear, card);
+        front(f, s, d, card);
     }
 }
 
@@ -171,7 +224,10 @@ fn edge(f: &mut Frame, s: &State, d: &Decision, rect: Rect, more: Option<usize>)
     }
     let fill = usize::from(rect.width).saturating_sub(label.chars().count() + 3);
     let line = format!("╰{}{label}─╯", "─".repeat(fill));
-    f.render_widget(Paragraph::new(line).style(Style::new().fg(theme::band_color(band(age)))), rect);
+    f.render_widget(
+        Paragraph::new(line).style(Style::new().fg(theme::band_color(band(age)))),
+        rect,
+    );
 }
 
 fn card_block(color: Color) -> Block<'static> {
@@ -184,30 +240,50 @@ fn card_block(color: Color) -> Block<'static> {
 
 fn front(f: &mut Frame, s: &State, d: &Decision, rect: Rect) {
     let age = s.age_ms(d);
-    let mut title = vec![Span::raw(" "), Span::styled(d.id.clone(), Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD))];
+    let mut title = vec![
+        Span::raw(" "),
+        Span::styled(
+            d.id.clone(),
+            Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD),
+        ),
+    ];
     for part in [d.key.to_lowercase(), d.mr_short.clone(), d.blocks.clone()] {
         if !part.is_empty() {
-            title.push(Span::styled(format!(" · {part}"), Style::new().fg(theme::MUTED)));
+            title.push(Span::styled(
+                format!(" · {part}"),
+                Style::new().fg(theme::MUTED),
+            ));
         }
     }
     title.push(Span::raw(" "));
     if d.question_back {
-        title.push(Span::styled("↩ reply ", Style::new().fg(theme::GREEN).add_modifier(Modifier::BOLD)));
+        title.push(Span::styled(
+            "↩ reply ",
+            Style::new().fg(theme::GREEN).add_modifier(Modifier::BOLD),
+        ));
     }
     let block = card_block(theme::band_color(band(age)))
         .title(Line::from(title))
         .title_top(Line::from(format!(" ⏱ {} ", age_label(age))).right_aligned());
     let mut lines = vec![
-        Line::styled(d.question.clone(), Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD)),
+        Line::styled(
+            d.question.clone(),
+            Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD),
+        ),
         Line::default(),
     ];
     if let Some(fl) = s.failed.get(&d.id) {
-        lines.push(Line::styled(format!("send failed: {} · ⏎ retries {}", fl.error, fl.n), Style::new().fg(theme::RED)));
+        lines.push(Line::styled(
+            format!("send failed: {} · ⏎ retries {}", fl.error, fl.n),
+            Style::new().fg(theme::RED),
+        ));
         lines.push(Line::default());
     }
     for (i, o) in d.options.iter().enumerate() {
         let mut style = if o.recommended {
-            Style::new().fg(theme::LAVENDER).add_modifier(Modifier::BOLD)
+            Style::new()
+                .fg(theme::LAVENDER)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::new().fg(theme::TEXT)
         };
@@ -219,10 +295,19 @@ fn front(f: &mut Frame, s: &State, d: &Decision, rect: Rect) {
     }
     lines.push(Line::default());
     lines.push(Line::styled(
-        format!("space: context · {} lines · discussion · {}", d.context.lines().count(), d.discussion.len()),
+        format!(
+            "space: context · {} lines · discussion · {}",
+            d.context.lines().count(),
+            d.discussion.len()
+        ),
         Style::new().fg(theme::MUTED),
     ));
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }).block(block), rect);
+    f.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(block),
+        rect,
+    );
 }
 
 /// Draws the back; returns how far it can scroll.
@@ -230,10 +315,16 @@ fn back(f: &mut Frame, s: &State, d: &Decision, rect: Rect) -> u16 {
     let width = rect.width.saturating_sub(4);
     let mut lines = markdown::render(&d.context, width);
     lines.push(Line::default());
-    lines.push(Line::styled(format!("── discussion · {} ──", d.discussion.len()), Style::new().fg(theme::MUTED)));
+    lines.push(Line::styled(
+        format!("── discussion · {} ──", d.discussion.len()),
+        Style::new().fg(theme::MUTED),
+    ));
     for e in &d.discussion {
         lines.push(Line::from(vec![
-            Span::styled(e.who.clone(), Style::new().fg(theme::BLUE).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                e.who.clone(),
+                Style::new().fg(theme::BLUE).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(format!(" · {}", e.at), Style::new().fg(theme::MUTED)),
         ]));
         lines.extend(markdown::render(&e.text, width));
@@ -243,45 +334,83 @@ fn back(f: &mut Frame, s: &State, d: &Decision, rect: Rect) -> u16 {
     let top = s.scroll.min(max);
     let block = card_block(theme::band_color(band(s.age_ms(d))))
         .padding(Padding::horizontal(1))
-        .title(Line::from(format!(" {} · context ", d.id)).style(Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD)))
+        .title(
+            Line::from(format!(" {} · context ", d.id))
+                .style(Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD)),
+        )
         .title_top(Line::from(format!(" {}/{} ", top + 1, total.max(1))).right_aligned());
     f.render_widget(Paragraph::new(lines).scroll((top, 0)).block(block), rect);
     max
 }
 
 fn flipping(s: &State, card: Rect) -> (Rect, Side) {
-    let Some(t) = s.flip else { return (card, s.side) };
+    let Some(t) = s.flip else {
+        return (card, s.side);
+    };
     let p = ((s.now - t) as f32 / FLIP_MS as f32).clamp(0.0, 1.0);
-    let w = ((f32::from(card.width) * (1.0 - 2.0 * p).abs()).round() as u16).clamp(2, card.width.max(2));
+    let w = ((f32::from(card.width) * (1.0 - 2.0 * p).abs()).round() as u16)
+        .clamp(2, card.width.max(2));
     let side = match (p < 0.5, s.side) {
         (true, Side::Front) => Side::Back,
         (true, Side::Back) => Side::Front,
         (false, side) => side,
     };
-    (Rect { x: card.x + (card.width.saturating_sub(w)) / 2, width: w, ..card }, side)
+    (
+        Rect {
+            x: card.x + (card.width.saturating_sub(w)) / 2,
+            width: w,
+            ..card
+        },
+        side,
+    )
 }
 
 fn empty(f: &mut Frame, deck: Rect) -> Rect {
     let (w, h) = (deck.width.min(44), deck.height.min(4));
-    let r = Rect { x: deck.x + (deck.width - w) / 2, y: deck.y + (deck.height - h) / 2, width: w, height: h };
+    let r = Rect {
+        x: deck.x + (deck.width - w) / 2,
+        y: deck.y + (deck.height - h) / 2,
+        width: w,
+        height: h,
+    };
     let text = vec![
-        Line::styled("nothing waiting", Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD)),
+        Line::styled(
+            "nothing waiting",
+            Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD),
+        ),
         Line::styled("new decisions appear here", Style::new().fg(theme::MUTED)),
     ];
-    let block = Block::bordered().border_type(BorderType::Rounded).border_style(Style::new().fg(theme::MUTED));
-    f.render_widget(Paragraph::new(text).alignment(Alignment::Center).block(block), r);
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(theme::MUTED));
+    f.render_widget(
+        Paragraph::new(text)
+            .alignment(Alignment::Center)
+            .block(block),
+        r,
+    );
     r
 }
 
 fn help(f: &mut Frame, area: Rect) {
     let (w, h) = (52.min(area.width), (KEYS.len() as u16 + 2).min(area.height));
-    let r = Rect { x: area.x + (area.width - w) / 2, y: area.y + (area.height - h) / 2, width: w, height: h };
+    let r = Rect {
+        x: area.x + (area.width - w) / 2,
+        y: area.y + (area.height - h) / 2,
+        width: w,
+        height: h,
+    };
     f.render_widget(Clear, r);
     let lines: Vec<Line> = KEYS
         .iter()
         .map(|(k, what)| {
             Line::from(vec![
-                Span::styled(format!(" {k:<9}"), Style::new().fg(theme::LAVENDER).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!(" {k:<9}"),
+                    Style::new()
+                        .fg(theme::LAVENDER)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(*what, Style::new().fg(theme::TEXT)),
             ])
         })
@@ -333,7 +462,9 @@ mod tests {
     }
 
     fn rows(buf: &Buffer) -> Vec<String> {
-        (0..buf.area.height).map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect()).collect()
+        (0..buf.area.height)
+            .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect())
+            .collect()
     }
 
     fn screen(buf: &Buffer) -> String {
@@ -381,7 +512,12 @@ mod tests {
 
     #[test]
     fn the_card_border_takes_the_colour_of_its_age() {
-        for (mins, colour) in [(5, theme::BLUE), (20, theme::YELLOW), (120, theme::ORANGE), (240, theme::RED)] {
+        for (mins, colour) in [
+            (5, theme::BLUE),
+            (20, theme::YELLOW),
+            (120, theme::ORANGE),
+            (240, theme::RED),
+        ] {
             let s = state(fixture(), T0 + mins * MIN);
             let (buf, d) = render(&s, 80, 24);
             let c = d.areas.card;
@@ -410,7 +546,15 @@ mod tests {
         app::update(&mut s, Event::Key(Key::Space), T0);
         s.flip = None;
         let all = screen(&render(&s, 60, 16).0);
-        for want in ["D-2 · context", "Short context.", "── discussion · 2 ──", "you · 11:04", "Which QA run?", "1/", "j/k scroll"] {
+        for want in [
+            "D-2 · context",
+            "Short context.",
+            "── discussion · 2 ──",
+            "you · 11:04",
+            "Which QA run?",
+            "1/",
+            "j/k scroll",
+        ] {
             assert!(all.contains(want), "{want:?} missing:\n{all}");
         }
     }
@@ -432,7 +576,14 @@ mod tests {
         let mut list = fixture();
         list[0].question_back = true;
         let mut s = state(list, T0);
-        s.failed.insert("D-1".into(), app::Failed { n: 2, note: None, error: "boom".into() });
+        s.failed.insert(
+            "D-1".into(),
+            app::Failed {
+                n: 2,
+                note: None,
+                error: "boom".into(),
+            },
+        );
         let all = screen(&render(&s, 80, 24).0);
         assert!(all.contains("↩ reply"), "{all}");
         assert!(all.contains("send failed: boom · ⏎ retries 2"), "{all}");
@@ -463,7 +614,9 @@ mod tests {
     fn a_read_error_shows_under_the_header() {
         let mut s = state(fixture(), T0);
         s.error = Some("decide not runnable".into());
-        assert!(screen(&render(&s, 80, 24).0).contains("decide failed: decide not runnable · r retry"));
+        assert!(
+            screen(&render(&s, 80, 24).0).contains("decide failed: decide not runnable · r retry")
+        );
     }
 
     #[test]
@@ -471,7 +624,10 @@ mod tests {
         let s = state(vec![], T0);
         let (buf, d) = render(&s, 80, 24);
         let all = screen(&buf);
-        assert!(all.contains("nothing waiting") && all.contains("new decisions appear here"), "{all}");
+        assert!(
+            all.contains("nothing waiting") && all.contains("new decisions appear here"),
+            "{all}"
+        );
         assert!(all.contains("decisions · nothing waiting"), "{all}");
         assert!(d.areas.empty.is_some());
     }
@@ -487,7 +643,10 @@ mod tests {
         let mut s = state(fixture(), T0);
         s.help = true;
         let all = screen(&render(&s, 80, 24).0);
-        assert!(all.contains("undo the last answer") && all.contains("ask the session back"), "{all}");
+        assert!(
+            all.contains("undo the last answer") && all.contains("ask the session back"),
+            "{all}"
+        );
     }
 
     #[test]

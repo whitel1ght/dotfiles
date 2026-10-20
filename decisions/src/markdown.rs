@@ -19,7 +19,10 @@ pub fn render(text: &str, width: u16) -> Vec<Line<'static>> {
             continue;
         }
         if fenced {
-            out.push(Line::styled(format!("  {line}"), Style::new().fg(theme::CODE)));
+            out.push(Line::styled(
+                format!("  {line}"),
+                Style::new().fg(theme::CODE),
+            ));
             continue;
         }
         if line.is_empty() {
@@ -27,7 +30,11 @@ pub fn render(text: &str, width: u16) -> Vec<Line<'static>> {
             continue;
         }
         let (prefix, body, style) = if let Some(h) = heading(line) {
-            ("", h, Style::new().fg(theme::BLUE).add_modifier(Modifier::BOLD))
+            (
+                "",
+                h,
+                Style::new().fg(theme::BLUE).add_modifier(Modifier::BOLD),
+            )
         } else if let Some(b) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
             ("• ", b, base)
         } else {
@@ -88,10 +95,17 @@ fn wrap(prefix: &str, spans: Vec<(String, Style)>, width: usize) -> Vec<Line<'st
         for word in text.split_inclusive(' ') {
             let need = word.trim_end().width();
             if used + need > width && used > indent.len() {
-                lines.push(finish(std::mem::replace(&mut line, vec![Span::raw(indent.clone())])));
+                lines.push(finish(std::mem::replace(
+                    &mut line,
+                    vec![Span::raw(indent.clone())],
+                )));
                 used = indent.len();
             }
-            let word = if used == indent.len() { word.trim_start() } else { word };
+            let word = if used == indent.len() {
+                word.trim_start()
+            } else {
+                word
+            };
             used += word.width();
             line.push(Span::styled(word.to_string(), style));
         }
@@ -114,7 +128,10 @@ mod tests {
     use ratatui::style::Modifier;
 
     fn plain(lines: &[Line]) -> Vec<String> {
-        lines.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect()).collect()
+        lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
     }
 
     #[test]
@@ -127,14 +144,21 @@ mod tests {
 
     #[test]
     fn bullets_get_a_dot_and_wrapped_lines_indent_under_it() {
-        assert_eq!(plain(&render("- one two three four five six", 14)), ["• one two", "  three four", "  five six"]);
+        assert_eq!(
+            plain(&render("- one two three four five six", 14)),
+            ["• one two", "  three four", "  five six"]
+        );
     }
 
     #[test]
     fn inline_code_and_bold_lose_their_markers() {
         let l = render("a **two** and `x`", 40);
         assert_eq!(plain(&l), ["a two and x"]);
-        let bold = l[0].spans.iter().find(|s| s.content.contains("two")).unwrap();
+        let bold = l[0]
+            .spans
+            .iter()
+            .find(|s| s.content.contains("two"))
+            .unwrap();
         assert!(bold.style.add_modifier.contains(Modifier::BOLD));
         let code = l[0].spans.iter().find(|s| s.content.contains('x')).unwrap();
         assert_eq!(code.style.fg, Some(theme::CODE));
@@ -155,7 +179,10 @@ mod tests {
     #[test]
     fn a_word_longer_than_the_width_gets_its_own_line() {
         let url = "https://gitlab.com/ecfx/ecfx-backend/-/merge_requests/870#note_4026396373";
-        assert_eq!(plain(&render(&format!("see {url} now"), 20)), ["see", url, "now"]);
+        assert_eq!(
+            plain(&render(&format!("see {url} now"), 20)),
+            ["see", url, "now"]
+        );
     }
 
     #[test]
@@ -163,7 +190,16 @@ mod tests {
         let ctx = "### Why\n\nThe reviewer asked for **two** paths.\n\n- `fallbackMeter` misses the DMS save\n- the retry path\n\n```\ncode line\n```";
         assert_eq!(
             plain(&render(ctx, 60)),
-            ["Why", "", "The reviewer asked for two paths.", "", "• fallbackMeter misses the DMS save", "• the retry path", "", "  code line"]
+            [
+                "Why",
+                "",
+                "The reviewer asked for two paths.",
+                "",
+                "• fallbackMeter misses the DMS save",
+                "• the retry path",
+                "",
+                "  code line"
+            ]
         );
     }
 }

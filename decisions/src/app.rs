@@ -32,15 +32,25 @@ pub enum Event {
     Tick,
     Changed,
     Loaded(Result<Vec<Decision>, String>),
-    Sent { id: String, result: Result<(), String> },
+    Sent {
+        id: String,
+        result: Result<(), String>,
+    },
     Signal,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Reload,
-    Answer { id: String, n: u8, note: Option<String> },
-    Ask { id: String, text: String },
+    Answer {
+        id: String,
+        n: u8,
+        note: Option<String>,
+    },
+    Ask {
+        id: String,
+        text: String,
+    },
     OpenUrl(String),
     Quit,
 }
@@ -135,12 +145,19 @@ pub fn band(age_ms: i64) -> Band {
 
 pub fn age_label(age_ms: i64) -> String {
     let m = age_ms.max(0) / 60_000;
-    if m < 60 { format!("{m}m") } else { format!("{}h {:02}m", m / 60, m % 60) }
+    if m < 60 {
+        format!("{m}m")
+    } else {
+        format!("{}h {:02}m", m / 60, m % 60)
+    }
 }
 
 impl State {
     pub fn new(now: i64) -> Self {
-        Self { now, ..Self::default() }
+        Self {
+            now,
+            ..Self::default()
+        }
     }
 
     pub fn current(&self) -> Option<&Decision> {
@@ -187,7 +204,10 @@ pub fn update(s: &mut State, ev: Event, now: i64) -> Vec<Command> {
 }
 
 fn tick(s: &mut State, out: &mut Vec<Command>) {
-    if s.pending.as_ref().is_some_and(|p| !p.paused && s.now >= p.due) {
+    if s.pending
+        .as_ref()
+        .is_some_and(|p| !p.paused && s.now >= p.due)
+    {
         send_pending(s, out);
     }
     if s.ghost.as_ref().is_some_and(|(_, until)| s.now >= *until) {
@@ -203,12 +223,16 @@ fn tick(s: &mut State, out: &mut Vec<Command>) {
 }
 
 fn track_bands(s: &mut State) {
-    let bands: Vec<(String, Band)> = s.queue.iter().map(|d| (d.id.clone(), band(s.age_ms(d)))).collect();
+    let bands: Vec<(String, Band)> = s
+        .queue
+        .iter()
+        .map(|d| (d.id.clone(), band(s.age_ms(d))))
+        .collect();
     for (id, to) in bands {
-        if let Some(from) = s.bands.insert(id.clone(), to) {
-            if from != to {
-                s.anims.push(Anim::AgeBand { id, from, to });
-            }
+        if let Some(from) = s.bands.insert(id.clone(), to)
+            && from != to
+        {
+            s.anims.push(Anim::AgeBand { id, from, to });
         }
     }
 }
@@ -219,7 +243,12 @@ fn loaded(s: &mut State, list: Vec<Decision>) {
     s.loaded = true;
     let before: Vec<String> = s.queue.iter().map(|d| d.id.clone()).collect();
     let cur_id = s.current().map(|d| d.id.clone());
-    let held: Vec<String> = s.pending.iter().map(|p| p.decision.id.clone()).chain(s.sending.keys().cloned()).collect();
+    let held: Vec<String> = s
+        .pending
+        .iter()
+        .map(|p| p.decision.id.clone())
+        .chain(s.sending.keys().cloned())
+        .collect();
     let mut list: Vec<Decision> = list.into_iter().filter(|d| !held.contains(&d.id)).collect();
     s.skipped.retain(|id| list.iter().any(|d| &d.id == id));
     list.sort_by_key(|d| {
@@ -321,7 +350,8 @@ fn go(s: &mut State, idx: usize) {
     if idx >= s.queue.len() || idx == s.cur {
         return;
     }
-    s.anims.push(if idx > s.cur { Anim::Next } else { Anim::Prev });
+    s.anims
+        .push(if idx > s.cur { Anim::Next } else { Anim::Prev });
     s.cur = idx;
     s.reset_view();
 }
@@ -370,7 +400,9 @@ fn quit(s: &mut State, out: &mut Vec<Command>) {
 }
 
 fn choose(s: &mut State, n: u8, out: &mut Vec<Command>) {
-    if s.current().is_some_and(|d| d.options.iter().any(|o| o.n == n)) {
+    if s.current()
+        .is_some_and(|d| d.options.iter().any(|o| o.n == n))
+    {
         throw(s, n, None, out);
     }
 }
@@ -381,7 +413,11 @@ fn enter(s: &mut State, out: &mut Vec<Command>) {
         let (n, note) = (f.n, f.note.clone());
         return throw(s, n, note, out);
     }
-    let n = s.cursor.and_then(|c| d.options.get(c)).map(|o| o.n).or(d.recommended);
+    let n = s
+        .cursor
+        .and_then(|c| d.options.get(c))
+        .map(|o| o.n)
+        .or(d.recommended);
     if let Some(n) = n {
         throw(s, n, None, out);
     }
@@ -395,7 +431,13 @@ fn throw(s: &mut State, n: u8, note: Option<String>, out: &mut Vec<Command>) {
     let d = s.queue.remove(s.cur);
     s.failed.remove(&d.id);
     s.ghost = Some((d.clone(), s.now + GHOST_MS));
-    s.pending = Some(Pending { decision: d, n, note, due: s.now + UNDO_MS, paused: false });
+    s.pending = Some(Pending {
+        decision: d,
+        n,
+        note,
+        due: s.now + UNDO_MS,
+        paused: false,
+    });
     s.anims.push(Anim::Throw);
     s.cur = s.cur.min(s.queue.len().saturating_sub(1));
     s.reset_view();
@@ -403,7 +445,11 @@ fn throw(s: &mut State, n: u8, note: Option<String>, out: &mut Vec<Command>) {
 
 fn send_pending(s: &mut State, out: &mut Vec<Command>) {
     if let Some(p) = s.pending.take() {
-        out.push(Command::Answer { id: p.decision.id.clone(), n: p.n, note: p.note.clone() });
+        out.push(Command::Answer {
+            id: p.decision.id.clone(),
+            n: p.n,
+            note: p.note.clone(),
+        });
         s.sending.insert(p.decision.id.clone(), p);
     }
 }
@@ -420,18 +466,26 @@ fn undo(s: &mut State) {
 fn note(s: &mut State) {
     if let Some(p) = s.pending.as_mut() {
         p.paused = true;
-        s.input = Some(Input { kind: InputKind::Note, text: String::new() });
+        s.input = Some(Input {
+            kind: InputKind::Note,
+            text: String::new(),
+        });
     }
 }
 
 fn ask(s: &mut State) {
     if let Some(id) = s.current().map(|d| d.id.clone()) {
-        s.input = Some(Input { kind: InputKind::Ask { id }, text: String::new() });
+        s.input = Some(Input {
+            kind: InputKind::Ask { id },
+            text: String::new(),
+        });
     }
 }
 
 fn input_key(s: &mut State, k: Key, out: &mut Vec<Command>) {
-    let Some(input) = s.input.as_mut() else { return };
+    let Some(input) = s.input.as_mut() else {
+        return;
+    };
     match k {
         Key::Char(c) => input.text.push(c),
         Key::Space => input.text.push(' '),
@@ -441,28 +495,31 @@ fn input_key(s: &mut State, k: Key, out: &mut Vec<Command>) {
         Key::Esc => {
             let was_note = input.kind == InputKind::Note;
             s.input = None;
-            if was_note {
-                if let Some(p) = s.pending.as_mut() {
-                    p.paused = false;
-                    p.due = s.now + UNDO_MS;
-                }
+            if was_note && let Some(p) = s.pending.as_mut() {
+                p.paused = false;
+                p.due = s.now + UNDO_MS;
             }
         }
         Key::Enter => {
-            let Some(Input { kind, text }) = s.input.take() else { return };
+            let Some(Input { kind, text }) = s.input.take() else {
+                return;
+            };
             let text = text.trim().to_string();
             match kind {
                 InputKind::Note => {
-                    if let Some(p) = s.pending.as_mut() {
-                        if !text.is_empty() {
-                            p.note = Some(text);
-                        }
+                    if let Some(p) = s.pending.as_mut()
+                        && !text.is_empty()
+                    {
+                        p.note = Some(text);
                     }
                     send_pending(s, out);
                 }
                 InputKind::Ask { id } => {
                     if !text.is_empty() {
-                        out.push(Command::Ask { id: id.clone(), text });
+                        out.push(Command::Ask {
+                            id: id.clone(),
+                            text,
+                        });
                         s.toast(format!("asked {id}"));
                     }
                 }
@@ -484,7 +541,14 @@ fn sent(s: &mut State, id: String, result: Result<(), String>) {
             s.failed.remove(&id);
         }
         Err(error) => {
-            s.failed.insert(id.clone(), Failed { n: p.n, note: p.note.clone(), error });
+            s.failed.insert(
+                id.clone(),
+                Failed {
+                    n: p.n,
+                    note: p.note.clone(),
+                    error,
+                },
+            );
             s.queue.retain(|d| d.id != id);
             s.queue.insert(0, p.decision);
             s.cur = 0;
@@ -600,7 +664,10 @@ mod tests {
         assert_eq!(s.scroll, 12);
         press(&mut s, Key::CtrlU);
         assert_eq!(s.scroll, 2);
-        assert_eq!(s.cur, 0, "j/g/G scroll on the back, they do not change cards");
+        assert_eq!(
+            s.cur, 0,
+            "j/g/G scroll on the back, they do not change cards"
+        );
     }
 
     #[test]
@@ -645,7 +712,11 @@ mod tests {
         let mut s = loaded(many(3));
         press(&mut s, Key::Char('j'));
         let mut list = many(3);
-        list.insert(0, { let mut d = list[2].clone(); d.id = "D-9".into(); d });
+        list.insert(0, {
+            let mut d = list[2].clone();
+            d.id = "D-9".into();
+            d
+        });
         update(&mut s, Event::Loaded(Ok(list)), T0);
         assert_eq!(s.current().unwrap().id, "D-2");
         assert!(s.anims.contains(&Anim::Arrive("D-9".into())));
@@ -686,7 +757,12 @@ mod tests {
     #[test]
     fn o_opens_the_mr_or_says_there_is_none() {
         let mut s = loaded(fixture());
-        assert_eq!(press(&mut s, Key::Char('o')), [Command::OpenUrl("https://gitlab.com/ecfx/ecfx-backend/-/merge_requests/870".into())]);
+        assert_eq!(
+            press(&mut s, Key::Char('o')),
+            [Command::OpenUrl(
+                "https://gitlab.com/ecfx/ecfx-backend/-/merge_requests/870".into()
+            )]
+        );
         press(&mut s, Key::Char('j'));
         assert!(press(&mut s, Key::Char('o')).is_empty());
         assert_eq!(s.toast.as_ref().unwrap().0, "no MR on D-2");
@@ -732,14 +808,22 @@ mod tests {
         update(&mut s, Event::Tick, T0 + 14 * MIN);
         assert!(s.anims.is_empty());
         update(&mut s, Event::Tick, T0 + 15 * MIN);
-        assert!(s.anims.contains(&Anim::AgeBand { id: "D-1".into(), from: Band::Fresh, to: Band::Warm }));
+        assert!(s.anims.contains(&Anim::AgeBand {
+            id: "D-1".into(),
+            from: Band::Fresh,
+            to: Band::Warm
+        }));
         s.anims.clear();
         update(&mut s, Event::Tick, T0 + 16 * MIN);
         assert!(s.anims.is_empty());
     }
 
     fn answer(id: &str, n: u8, note: Option<&str>) -> Command {
-        Command::Answer { id: id.into(), n, note: note.map(String::from) }
+        Command::Answer {
+            id: id.into(),
+            n,
+            note: note.map(String::from),
+        }
     }
 
     #[test]
@@ -751,7 +835,10 @@ mod tests {
         assert_eq!(s.ghost.as_ref().unwrap().0.id, "D-1");
         assert!(s.anims.contains(&Anim::Throw));
         assert!(update(&mut s, Event::Tick, T0 + UNDO_MS - 1).is_empty());
-        assert_eq!(update(&mut s, Event::Tick, T0 + UNDO_MS), [answer("D-1", 2, None)]);
+        assert_eq!(
+            update(&mut s, Event::Tick, T0 + UNDO_MS),
+            [answer("D-1", 2, None)]
+        );
         assert!(s.pending.is_none());
         assert!(s.sending.contains_key("D-1"));
     }
@@ -831,8 +918,14 @@ mod tests {
             press(&mut s, Key::Char(c));
         }
         press(&mut s, Key::Backspace);
-        assert!(update(&mut s, Event::Tick, T0 + 2 * UNDO_MS).is_empty(), "paused");
-        assert_eq!(press(&mut s, Key::Enter), [answer("D-1", 2, Some("use staging"))]);
+        assert!(
+            update(&mut s, Event::Tick, T0 + 2 * UNDO_MS).is_empty(),
+            "paused"
+        );
+        assert_eq!(
+            press(&mut s, Key::Enter),
+            [answer("D-1", 2, Some("use staging"))]
+        );
         assert!(s.input.is_none());
     }
 
@@ -845,7 +938,10 @@ mod tests {
         update(&mut s, Event::Key(Key::Esc), T0 + 1_000);
         assert!(s.input.is_none());
         assert!(update(&mut s, Event::Tick, T0 + 1_000 + UNDO_MS - 1).is_empty());
-        assert_eq!(update(&mut s, Event::Tick, T0 + 1_000 + UNDO_MS), [answer("D-1", 2, None)]);
+        assert_eq!(
+            update(&mut s, Event::Tick, T0 + 1_000 + UNDO_MS),
+            [answer("D-1", 2, None)]
+        );
     }
 
     #[test]
@@ -871,7 +967,13 @@ mod tests {
         for c in "why".chars() {
             press(&mut s, Key::Char(c));
         }
-        assert_eq!(press(&mut s, Key::Enter), [Command::Ask { id: "D-1".into(), text: "why".into() }]);
+        assert_eq!(
+            press(&mut s, Key::Enter),
+            [Command::Ask {
+                id: "D-1".into(),
+                text: "why".into()
+            }]
+        );
         assert_eq!(s.toast.as_ref().unwrap().0, "asked D-1");
         assert_eq!(s.queue.len(), 2, "asking does not answer");
         press(&mut s, Key::Char('a'));
@@ -881,10 +983,19 @@ mod tests {
 
     #[test]
     fn q_esc_signal_and_interrupt_send_the_pending_answer_then_quit() {
-        for k in [Event::Key(Key::Char('q')), Event::Key(Key::Esc), Event::Signal, Event::Key(Key::Interrupt)] {
+        for k in [
+            Event::Key(Key::Char('q')),
+            Event::Key(Key::Esc),
+            Event::Signal,
+            Event::Key(Key::Interrupt),
+        ] {
             let mut s = loaded(fixture());
             press(&mut s, Key::Char('3'));
-            assert_eq!(update(&mut s, k.clone(), T0), [answer("D-1", 3, None), Command::Quit], "{k:?}");
+            assert_eq!(
+                update(&mut s, k.clone(), T0),
+                [answer("D-1", 3, None), Command::Quit],
+                "{k:?}"
+            );
             assert!(s.quitting);
         }
     }
@@ -894,7 +1005,10 @@ mod tests {
         let mut s = loaded(fixture());
         press(&mut s, Key::Char('2'));
         press(&mut s, Key::Char('n'));
-        assert_eq!(press(&mut s, Key::Interrupt), [answer("D-1", 2, None), Command::Quit]);
+        assert_eq!(
+            press(&mut s, Key::Interrupt),
+            [answer("D-1", 2, None), Command::Quit]
+        );
     }
 
     #[test]
@@ -914,11 +1028,22 @@ mod tests {
         press(&mut s, Key::Char('j'));
         press(&mut s, Key::Char('2'));
         update(&mut s, Event::Tick, T0 + UNDO_MS);
-        update(&mut s, Event::Sent { id: "D-2".into(), result: Err("disk full".into()) }, T0 + UNDO_MS);
+        update(
+            &mut s,
+            Event::Sent {
+                id: "D-2".into(),
+                result: Err("disk full".into()),
+            },
+            T0 + UNDO_MS,
+        );
         assert_eq!(s.current().unwrap().id, "D-2");
         assert_eq!(s.failed["D-2"].error, "disk full");
         update(&mut s, Event::Loaded(Ok(many(3))), T0 + UNDO_MS);
-        assert_eq!(s.current().unwrap().id, "D-2", "a failed card stays in front");
+        assert_eq!(
+            s.current().unwrap().id,
+            "D-2",
+            "a failed card stays in front"
+        );
         press(&mut s, Key::Enter);
         assert_eq!(s.pending.as_ref().unwrap().n, 2);
         assert!(!s.failed.contains_key("D-2"));
@@ -929,14 +1054,28 @@ mod tests {
         let mut s = loaded(fixture());
         press(&mut s, Key::Char('1'));
         update(&mut s, Event::Tick, T0 + UNDO_MS);
-        update(&mut s, Event::Sent { id: "D-1".into(), result: Ok(()) }, T0 + UNDO_MS);
+        update(
+            &mut s,
+            Event::Sent {
+                id: "D-1".into(),
+                result: Ok(()),
+            },
+            T0 + UNDO_MS,
+        );
         assert!(s.sending.is_empty() && s.failed.is_empty());
     }
 
     #[test]
     fn a_failed_ask_shows_as_an_error() {
         let mut s = loaded(fixture());
-        update(&mut s, Event::Sent { id: "D-1".into(), result: Err("no such decision".into()) }, T0);
+        update(
+            &mut s,
+            Event::Sent {
+                id: "D-1".into(),
+                result: Err("no such decision".into()),
+            },
+            T0,
+        );
         assert_eq!(s.error.as_deref(), Some("no such decision"));
     }
 

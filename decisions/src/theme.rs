@@ -31,6 +31,9 @@ mod tests {
 
     #[test]
     fn each_band_has_its_colour() {
-        assert_eq!([Band::Fresh, Band::Warm, Band::Old, Band::Stale].map(band_color), [BLUE, YELLOW, ORANGE, RED]);
+        assert_eq!(
+            [Band::Fresh, Band::Warm, Band::Old, Band::Stale].map(band_color),
+            [BLUE, YELLOW, ORANGE, RED]
+        );
     }
 }

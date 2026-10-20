@@ -30,7 +30,11 @@ fn border() -> CellFilter {
 }
 
 fn idle() -> Effect {
-    fx::repeating(fx::ping_pong(fx::hsl_shift_fg([0.0, 0.0, 12.0], (1400, Interpolation::SineInOut)))).with_filter(border())
+    fx::repeating(fx::ping_pong(fx::hsl_shift_fg(
+        [0.0, 0.0, 12.0],
+        (1400, Interpolation::SineInOut),
+    )))
+    .with_filter(border())
 }
 
 impl Fx {
@@ -41,40 +45,86 @@ impl Fx {
             Anim::Deal => {
                 self.card(fx::coalesce((250, Interpolation::QuadOut)), card);
                 for (i, (id, r)) in areas.edges.iter().enumerate() {
-                    let slide = fx::slide_in(Motion::DownToUp, 3, 0, theme::BG, (220, Interpolation::QuadOut));
-                    self.mgr.add_unique_effect(FxKey::Edge(id.clone()), fx::delay(60 * (i as u32 + 1), slide).with_area(*r));
+                    let slide = fx::slide_in(
+                        Motion::DownToUp,
+                        3,
+                        0,
+                        theme::BG,
+                        (220, Interpolation::QuadOut),
+                    );
+                    self.mgr.add_unique_effect(
+                        FxKey::Edge(id.clone()),
+                        fx::delay(60 * (i as u32 + 1), slide).with_area(*r),
+                    );
                 }
             }
-            Anim::Next => self.card(fx::slide_in(Motion::DownToUp, 4, 0, theme::BG, (180, Interpolation::QuadOut)), card),
-            Anim::Prev => self.card(fx::slide_in(Motion::UpToDown, 4, 0, theme::BG, (180, Interpolation::QuadOut)), card),
+            Anim::Next => self.card(
+                fx::slide_in(
+                    Motion::DownToUp,
+                    4,
+                    0,
+                    theme::BG,
+                    (180, Interpolation::QuadOut),
+                ),
+                card,
+            ),
+            Anim::Prev => self.card(
+                fx::slide_in(
+                    Motion::UpToDown,
+                    4,
+                    0,
+                    theme::BG,
+                    (180, Interpolation::QuadOut),
+                ),
+                card,
+            ),
             Anim::Throw => self.card(
-                fx::sequence(&[fx::dissolve((GHOST_MS as u32, Interpolation::QuadIn)), fx::coalesce((200, Interpolation::QuadOut))]),
+                fx::sequence(&[
+                    fx::dissolve((GHOST_MS as u32, Interpolation::QuadIn)),
+                    fx::coalesce((200, Interpolation::QuadOut)),
+                ]),
                 card,
             ),
             Anim::Leave(_) => self.card(fx::coalesce((200, Interpolation::QuadOut)), card),
             Anim::Arrive(id) => {
                 if let Some(r) = edge(id) {
                     let glow = fx::fade_from_fg(theme::LAVENDER, (600, Interpolation::QuadOut));
-                    self.mgr.add_unique_effect(FxKey::Edge(id.clone()), glow.with_area(r));
+                    self.mgr
+                        .add_unique_effect(FxKey::Edge(id.clone()), glow.with_area(r));
                 }
             }
             Anim::AgeBand { id, from, to } => {
-                let target = if areas.current.as_deref() == Some(id.as_str()) { Some(card) } else { edge(id) };
+                let target = if areas.current.as_deref() == Some(id.as_str()) {
+                    Some(card)
+                } else {
+                    edge(id)
+                };
                 if let Some(r) = target {
-                    let fade = fx::fade_from_fg(theme::band_color(*from), (1000, Interpolation::Linear));
+                    let fade =
+                        fx::fade_from_fg(theme::band_color(*from), (1000, Interpolation::Linear));
                     let effect = if *to == Band::Stale {
-                        fx::sequence(&[fade, fx::ping_pong(fx::hsl_shift_fg([0.0, 0.0, 20.0], (300, Interpolation::SineInOut)))])
+                        fx::sequence(&[
+                            fade,
+                            fx::ping_pong(fx::hsl_shift_fg(
+                                [0.0, 0.0, 20.0],
+                                (300, Interpolation::SineInOut),
+                            )),
+                        ])
                     } else {
                         fade
                     };
-                    self.mgr.add_unique_effect(FxKey::Age(id.clone()), effect.with_filter(border()).with_area(r));
+                    self.mgr.add_unique_effect(
+                        FxKey::Age(id.clone()),
+                        effect.with_filter(border()).with_area(r),
+                    );
                 }
             }
         }
     }
 
     fn card(&mut self, effect: Effect, area: Rect) {
-        self.mgr.add_unique_effect(FxKey::Card, effect.with_area(area));
+        self.mgr
+            .add_unique_effect(FxKey::Card, effect.with_area(area));
     }
 
     pub fn process(&mut self, elapsed: Duration, buf: &mut Buffer, areas: &Areas) {
@@ -82,7 +132,10 @@ impl Fx {
         self.mgr.process_effects(elapsed.into(), buf, area);
         match areas.empty {
             Some(r) => {
-                let _ = self.idle.get_or_insert_with(idle).process(elapsed.into(), buf, r);
+                let _ = self
+                    .idle
+                    .get_or_insert_with(idle)
+                    .process(elapsed.into(), buf, r);
             }
             None => self.idle = None,
         }
@@ -124,7 +177,14 @@ mod tests {
 
     fn symbols(buf: &Buffer) -> String {
         let a = buf.area;
-        (0..a.height).map(|y| (0..a.width).map(|x| buf[(x, y)].symbol()).collect::<String>() + "\n").collect()
+        (0..a.height)
+            .map(|y| {
+                (0..a.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect()
     }
 
     /// Draws `s`, starts `anim`, runs 50 ms frames until it is done; returns the last frame,
@@ -145,8 +205,16 @@ mod tests {
             frames += 1;
         }
         let mut plain = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        plain.draw(|f| { ui::draw(f, s); }).unwrap();
-        (t.backend().buffer().clone(), plain.backend().buffer().clone(), frames)
+        plain
+            .draw(|f| {
+                ui::draw(f, s);
+            })
+            .unwrap();
+        (
+            t.backend().buffer().clone(),
+            plain.backend().buffer().clone(),
+            frames,
+        )
     }
 
     #[test]
@@ -159,8 +227,16 @@ mod tests {
             Anim::Throw,
             Anim::Leave("D-9".into()),
             Anim::Arrive("D-2".into()),
-            Anim::AgeBand { id: "D-1".into(), from: Band::Fresh, to: Band::Warm },
-            Anim::AgeBand { id: "D-2".into(), from: Band::Old, to: Band::Stale },
+            Anim::AgeBand {
+                id: "D-1".into(),
+                from: Band::Fresh,
+                to: Band::Warm,
+            },
+            Anim::AgeBand {
+                id: "D-2".into(),
+                from: Band::Old,
+                to: Band::Stale,
+            },
         ];
         for anim in &anims {
             let (animated, plain, frames) = run(&s, anim);

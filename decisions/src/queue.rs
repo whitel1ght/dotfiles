@@ -104,8 +104,7 @@ impl Decide {
         Err(err
             .lines()
             .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .last()
+            .rfind(|l| !l.is_empty())
             .map(String::from)
             .unwrap_or_else(|| format!("{} exited with {}", self.bin, out.status)))
     }
@@ -123,7 +122,11 @@ mod tests {
     /// A throwaway `decide` stand-in: a shell script with this body.
     fn stub(body: &str) -> PathBuf {
         static N: AtomicUsize = AtomicUsize::new(0);
-        let dir = std::env::temp_dir().join(format!("decisions-test-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+        let dir = std::env::temp_dir().join(format!(
+            "decisions-test-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("decide");
         std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
@@ -136,7 +139,15 @@ mod tests {
         let list = decode(FIXTURE).unwrap();
         assert_eq!(list.len(), 2);
         let d1 = &list[0];
-        assert_eq!((d1.id.as_str(), d1.key.as_str(), d1.mr_short.as_str(), d1.blocks.as_str()), ("D-1", "ECFX-1001", "backend!870", "reply"));
+        assert_eq!(
+            (
+                d1.id.as_str(),
+                d1.key.as_str(),
+                d1.mr_short.as_str(),
+                d1.blocks.as_str()
+            ),
+            ("D-1", "ECFX-1001", "backend!870", "reply")
+        );
         assert_eq!(d1.options.len(), 3);
         assert!(d1.options[0].recommended);
         assert_eq!(d1.recommended, Some(1));
@@ -158,7 +169,8 @@ mod tests {
 
     #[test]
     fn missing_optional_fields_default() {
-        let list = decode(r#"[{"id":"D-7","question":"Q?","asked":"2026-10-20T11:04:08+03:00"}]"#).unwrap();
+        let list = decode(r#"[{"id":"D-7","question":"Q?","asked":"2026-10-20T11:04:08+03:00"}]"#)
+            .unwrap();
         assert!(list[0].options.is_empty());
         assert_eq!(list[0].recommended, None);
         assert_eq!(list[0].key, "");
@@ -166,12 +178,18 @@ mod tests {
 
     #[test]
     fn bad_json_is_an_error() {
-        assert!(decode("not json").unwrap_err().starts_with("bad JSON from decide"));
+        assert!(
+            decode("not json")
+                .unwrap_err()
+                .starts_with("bad JSON from decide")
+        );
     }
 
     #[test]
     fn list_runs_decide_with_json() {
-        let bin = stub(&format!("[ \"$*\" = 'list --json' ] && cat <<'EOF'\n{FIXTURE}\nEOF"));
+        let bin = stub(&format!(
+            "[ \"$*\" = 'list --json' ] && cat <<'EOF'\n{FIXTURE}\nEOF"
+        ));
         let list = Decide::new(bin.to_string_lossy()).list().unwrap();
         assert_eq!(list.len(), 2);
     }
@@ -182,17 +200,27 @@ mod tests {
         let bin = stub(&format!("printf '%s|' \"$@\" > '{}'", log.display()));
         let decide = Decide::new(bin.to_string_lossy());
         decide.answer("D-1", 2, Some("use staging")).unwrap();
-        assert_eq!(std::fs::read_to_string(&log).unwrap(), "answer|D-1|2|use staging|");
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "answer|D-1|2|use staging|"
+        );
         decide.answer("D-1", 3, Some("  ")).unwrap();
         assert_eq!(std::fs::read_to_string(&log).unwrap(), "answer|D-1|3|");
         decide.ask("D-2", "which run?").unwrap();
-        assert_eq!(std::fs::read_to_string(&log).unwrap(), "ask|D-2|which run?|");
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "ask|D-2|which run?|"
+        );
     }
 
     #[test]
     fn a_failing_decide_reports_its_last_stderr_line() {
-        let bin = stub("echo 'usage: decide answer id n' >&2; echo 'decide: no such decision D-9' >&2; exit 2");
-        let err = Decide::new(bin.to_string_lossy()).answer("D-9", 1, None).unwrap_err();
+        let bin = stub(
+            "echo 'usage: decide answer id n' >&2; echo 'decide: no such decision D-9' >&2; exit 2",
+        );
+        let err = Decide::new(bin.to_string_lossy())
+            .answer("D-9", 1, None)
+            .unwrap_err();
         assert_eq!(err, "decide: no such decision D-9");
     }
 
