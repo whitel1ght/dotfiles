@@ -8,6 +8,17 @@
         "clientSecret": "${SLACK_MCP_CLIENT_SECRET}",
         "callbackPort": 19876
       }
+    },
+    "decisions": {
+      "command": "~/.local/bin/decisions",
+      "args": [
+        "mcp"
+      ],
+      "description": "Ask the user through the decisions deck (tmux prefix y) instead of the chat",
+      "timeout": 3600,
+      "env": {
+        "DECISIONS_WAIT": "3000"
+      }
     }
   }
 }
