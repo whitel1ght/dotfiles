@@ -160,6 +160,11 @@ run answer D-900 1 >/dev/null; check "and answered" "0" "$?"
 
 run --nvim >/dev/null 2>&1; check "--nvim is gone" "2" "$?"
 
+probe="$(mktemp)"; printf '#!/bin/sh\nprintf %%s "$DECISIONS_TELEGRAM_TOKEN_CMD"\n' > "$probe"; chmod +x "$probe"
+check "the Telegram bot reads its token through secret" "$(printf %q "$HOME/.local/bin/secret") DECISIONS_TELEGRAM_BOT" "$(DECISIONS_BIN="$probe" "$SCRIPT")"
+check "an exported token command wins" "x" "$(DECISIONS_TELEGRAM_TOKEN_CMD=x DECISIONS_BIN="$probe" "$SCRIPT")"
+rm -f "$probe"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

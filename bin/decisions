@@ -2,7 +2,8 @@
 # decisions / decide: the standalone decisions binary (~/projects/decisions, built by
 # install.sh) with this machine's run-day wiring: the queue lives in the run-day folder,
 # MR labels drop the ecfx- prefix, and every answer reaches the /run-day inbox through
-# bin/run-day-inbox-answer. Same arguments as the binary (`decisions --help`):
+# bin/run-day-inbox-answer; the Telegram bot (`decisions telegram`) reads its token with
+# `secret DECISIONS_TELEGRAM_BOT`. Same arguments as the binary (`decisions --help`):
 #   decisions            the deck (tmux prefix y);  decisions --demo   a made-up queue
 #   decide add|list|answer|ask|tell|reply|withdraw|close|count|show|wait ...
 set -euo pipefail
@@ -13,6 +14,7 @@ STATE="${RUN_DAY_STATE_DIR:-$HOME/.local/state/run-day}"
 export DECISIONS_DIR="${DECISIONS_DIR:-$STATE/decisions}"
 export DECISIONS_MR_STRIP="${DECISIONS_MR_STRIP-ecfx-}"
 export DECISIONS_ON_ANSWER="${DECISIONS_ON_ANSWER-$(printf %q "$HERE/run-day-inbox-answer")}"
+export DECISIONS_TELEGRAM_TOKEN_CMD="${DECISIONS_TELEGRAM_TOKEN_CMD-$(printf %q "$HOME/.local/bin/secret") DECISIONS_TELEGRAM_BOT}"
 
 if [ ! -x "$BIN" ]; then
   echo "$(basename "$0"): the decisions binary is not built ($BIN); run ./install.sh in ~/projects/dotfiles" >&2

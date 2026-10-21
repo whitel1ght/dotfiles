@@ -522,11 +522,45 @@ setup_decisions() {
     fi
     cargo install --locked --quiet --path "$crate" --root "$root" || return 1
     printf '%s\n' "$sum" > "$root/src.sha"
+    DECISIONS_BUILT=1
     log_info "Built the decisions app"
 }
 
 if [ "${DECISIONS_SETUP:-1}" != "0" ]; then
     setup_decisions || log_warn "decisions build failed - decide and the popup keep the last built binary"
+fi
+
+# The decisions Telegram bot runs as a LaunchAgent (launchd/decisions-telegram.plist) through the
+# bin/decisions wrapper, once `decisions telegram pair` has linked the chat; a rebuilt binary
+# restarts it. DECISIONS_TELEGRAM_AGENT=0 skips.
+setup_decisions_telegram() {
+    local label="local.decisions-telegram" agent state
+    agent="$HOME/Library/LaunchAgents/$label.plist"
+    state="${RUN_DAY_STATE_DIR:-$HOME/.local/state/run-day}/decisions/telegram.json"
+    if ! grep -qE '"chat_id": *-?[0-9]' "$state" 2>/dev/null; then
+        log_info "decisions Telegram bot not paired: run decisions telegram pair, then ./install.sh"
+        return 0
+    fi
+    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+    sed -e "s#__LABEL__#$label#g" -e "s#__HOME__#$HOME#g" \
+        "$DOTFILES_DIR/launchd/decisions-telegram.plist" > "$agent.new"
+    if ! cmp -s "$agent.new" "$agent"; then
+        mv "$agent.new" "$agent"
+        launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+        launchctl bootstrap "gui/$(id -u)" "$agent" \
+            && log_info "Loaded the decisions Telegram bot" \
+            || log_warn "Could not load $agent"
+    else
+        rm -f "$agent.new"
+        if [ "${DECISIONS_BUILT:-0}" = 1 ]; then
+            launchctl kickstart -k "gui/$(id -u)/$label" 2>/dev/null \
+                && log_info "Restarted the decisions Telegram bot on the new build" || true
+        fi
+    fi
+}
+
+if [ "${DECISIONS_TELEGRAM_AGENT:-1}" != "0" ]; then
+    setup_decisions_telegram || log_warn "could not set up the decisions Telegram bot"
 fi
 
 # mr-watch finds new review notes on my MRs and posts the replies; driven by /watch-mrs.

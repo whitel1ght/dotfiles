@@ -24,6 +24,7 @@ trap 'rm -rf "$SANDBOX"' EXIT
 run_install() {
     HOME="$SANDBOX" \
     SKILLS_SYNC=0 MACOS_DAEMONS=0 REPY_SETUP=0 DECISIONS_SETUP="${DECISIONS_SETUP:-0}" \
+    DECISIONS_TELEGRAM_AGENT="${DECISIONS_TELEGRAM_AGENT:-0}" \
     ECFX_TOOLING=0 ZSH_SETUP=0 KEYBOARD_SETUP=0 TMUX_SETUP=0 PROXY_SETUP=0 WIKI_SYNC_AGENT=0 \
     CLAUDE_COMPONENTS_DIR=/nonexistent \
         bash "$SCRIPT" 2>&1
@@ -196,6 +197,32 @@ run_decisions >/dev/null
 [ "$(readlink "$SANDBOX/.local/bin/run-day-inbox-answer")" = "$TEST_DIR/bin/run-day-inbox-answer" ] && pass "the run-day inbox hook is linked" || fail "the run-day inbox hook is linked" "$(ls -l "$SANDBOX/.local/bin/run-day-inbox-answer" 2>&1)"
 out="$(PATH="$STUB:$PATH" DECISIONS_SETUP=1 DECISIONS_SRC="$SANDBOX/nowhere" run_install)"
 assert_contains "$out" "clone https://github.com/whitel1ght/decisions" "a missing source says where to get it"
+
+# --- decisions Telegram agent ---------------------------------------------------
+echo "decisions telegram agent"
+cat > "$STUB/launchctl" <<'EOF'
+#!/bin/bash
+echo "$*" >> "$HOME/launchctl.log"
+EOF
+chmod +x "$STUB/launchctl"
+AGENT="$SANDBOX/Library/LaunchAgents/local.decisions-telegram.plist"
+run_tg() { PATH="$STUB:$PATH" DECISIONS_TELEGRAM_AGENT=1 run_install; }
+out="$(run_tg)"
+[ -e "$AGENT" ] && fail "no agent before pairing" "plist written" || pass "no agent before pairing"
+assert_contains "$out" "decisions telegram pair" "says to pair first"
+mkdir -p "$SANDBOX/.local/state/run-day/decisions"
+printf '{\n  "chat_id": 42,\n  "enabled": true\n}\n' > "$SANDBOX/.local/state/run-day/decisions/telegram.json"
+run_tg >/dev/null
+[ -e "$AGENT" ] && pass "installs the agent once paired" || fail "installs the agent once paired" "no plist"
+assert_contains "$(cat "$AGENT" 2>/dev/null)" "<string>$SANDBOX/.local/bin/decisions</string>" "the agent runs the decisions wrapper"
+assert_contains "$(cat "$AGENT" 2>/dev/null)" "<string>run</string>" "with telegram run"
+assert_contains "$(cat "$SANDBOX/launchctl.log" 2>/dev/null)" "bootstrap gui/" "and loads it"
+n=$(grep -c bootstrap "$SANDBOX/launchctl.log" 2>/dev/null)
+run_tg >/dev/null
+[ "$(grep -c bootstrap "$SANDBOX/launchctl.log" 2>/dev/null)" = "$n" ] && pass "an unchanged agent is not reloaded" || fail "an unchanged agent is not reloaded" "$(cat "$SANDBOX/launchctl.log")"
+echo '// changed' >> "$FIXTURE/src/main.rs"
+DECISIONS_SETUP=1 DECISIONS_SRC="$FIXTURE" run_tg >/dev/null
+assert_contains "$(cat "$SANDBOX/launchctl.log" 2>/dev/null)" "kickstart -k gui/" "a rebuilt binary restarts the bot"
 
 echo
 echo "passed: $PASS  failed: $FAIL"
