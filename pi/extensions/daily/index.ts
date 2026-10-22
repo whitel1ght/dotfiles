@@ -131,14 +131,17 @@ let mapCache: { key: string; text: string } | null = null;
 
 /**
  * The system map ($SYSTEM_MAP, else $WIKI_DIR/work/system/map.md, WIKI_DIR defaulting to ~/wiki), cut to 3072 bytes and cached until the
- * file's mtime changes. A missing, empty or unreadable file is no section and never an error.
+ * file's mtime changes. A leading "# …" title is dropped: the section has its own heading. A missing, empty or unreadable file is no section and never an error.
  */
 export function systemMapSection(): string | null {
   const file = process.env.SYSTEM_MAP ?? join(process.env.WIKI_DIR ?? join(homedir(), "wiki"), "work/system/map.md");
   try {
     const key = `${file}:${statSync(file).mtimeMs}`;
     if (mapCache?.key !== key) {
-      const body = new TextDecoder("utf-8").decode(readFileSync(file).subarray(0, MAP_MAX_BYTES)).replace(/�+$/, "");
+      const body = new TextDecoder("utf-8")
+        .decode(readFileSync(file).subarray(0, MAP_MAX_BYTES))
+        .replace(/�+$/, "")
+        .replace(/^# [^\n]*(\n|$)/, "");
       mapCache = { key, text: body.trim() ? `## System map\n${body}` : "" };
     }
     return mapCache.text || null;

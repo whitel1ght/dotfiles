@@ -62,6 +62,8 @@ SYSTEM_MAP="${SYSTEM_MAP:-$WIKI/work/system/map.md}"
 map_text=""
 if [ -f "$SYSTEM_MAP" ]; then
   map="$(head -c 3072 "$SYSTEM_MAP" 2>/dev/null | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null || true)"
+  # The map's own "# …" title would repeat the heading it is wrapped in.
+  case "$map" in "# "*) case "$map" in *$'\n'*) map="${map#*$'\n'}" ;; *) map="" ;; esac ;; esac
   [ -z "${map//[[:space:]]/}" ] || map_text="
 
 ## System map

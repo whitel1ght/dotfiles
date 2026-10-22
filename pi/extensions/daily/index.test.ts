@@ -434,6 +434,18 @@ test("system map: injected under its heading, cached until the mtime changes", (
   delete process.env.SYSTEM_MAP;
 });
 
+test("system map: the map's own # title is dropped under the ## System map heading", () => {
+  const { root, file } = mapSandbox();
+  writeFileSync(file, "# System map\nPages: here\n- run-day: the daily plan\n");
+  utimesSync(file, new Date(Date.now() + 15000), new Date(Date.now() + 15000));
+  assert.equal(systemMapSection(), "## System map\nPages: here\n- run-day: the daily plan\n");
+  writeFileSync(file, "# System map\n");
+  utimesSync(file, new Date(Date.now() + 18000), new Date(Date.now() + 18000));
+  assert.equal(systemMapSection(), null, "a title alone is no map");
+  rmSync(root, { recursive: true, force: true });
+  delete process.env.SYSTEM_MAP;
+});
+
 test("system map: missing, empty or unreadable file injects nothing; over-budget is cut", () => {
   const { root, file } = mapSandbox();
   assert.equal(systemMapSection(), null, "missing");
