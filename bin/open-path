@@ -225,4 +225,4 @@ else
     cmd="$(printf '%q ' $EDITOR_CMD "$file")"
 fi
 
-tmux new-window -t "$session" -c "$(dirname "$file")" -n "$(basename "$file")" "$cmd"
+tmux new-window -t "$session:" -c "$(dirname "$file")" -n "$(basename "$file")" "$cmd"

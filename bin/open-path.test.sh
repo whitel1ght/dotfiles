@@ -46,12 +46,18 @@ done
 case "$1" in
     capture-pane) printf '%s\n' "$STUB_PANE" ;;
     show-option)  printf '%s\n' "nvim" ;;
+    new-window)
+        while [ $# -gt 0 ]; do
+            [ "$1" = -t ] && printf '%s\n' "$2" > "$STUB_TARGET_LOG"
+            shift
+        done ;;
 esac
 STUB
 chmod +x "$STUBS/tmux"
+export STUB_TARGET_LOG="$SANDBOX/new-window-target"
 
-# fzf is never reached under --list; stub it so the run is hermetic.
-printf '#!/bin/bash\nexit 0\n' > "$STUBS/fzf"
+# fzf picks the first candidate (unused under --list).
+printf '#!/bin/bash\nhead -n 1\n' > "$STUBS/fzf"
 chmod +x "$STUBS/fzf"
 
 # Transcripts: one pi, one claude, one decoy under a different slug. The pi
@@ -107,6 +113,16 @@ printf '%s\n' "$out" | grep -qF "$HOME_DIR/empty/notes.md" \
 [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = "1" ] \
     && pass "offers only the pane path" \
     || fail "offers only the pane path" "$out"
+
+echo "open in a new window"
+# A window can share the session's name (window "main" in session "main"); a
+# bare "-t main" then resolves to that window, whose index is taken, and
+# new-window fails. The target must name the session explicitly.
+HOME="$HOME_DIR" PATH="$STUBS:$PATH" bash "$SCRIPT" "$PANE" >/dev/null 2>&1
+target="$(cat "$STUB_TARGET_LOG" 2>/dev/null)"
+[ "$target" = "test:" ] \
+    && pass "targets the session, not a window that shares its name" \
+    || fail "targets the session, not a window that shares its name" "new-window -t '$target'"
 
 echo "missing tools"
 out="$(HOME="$HOME_DIR" PATH="$STUBS:/usr/bin:/bin" bash "$SCRIPT" --list "$PANE" 2>&1)"
