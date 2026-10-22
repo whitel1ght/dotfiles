@@ -16,7 +16,8 @@ problem is the model's judgement. Runtime handling spends no model tokens.
 
 Write rules: the implementer never touches `~/wiki` except `~/wiki/work/system/` and `~/wiki/tools/`
 (only those), which it updates when the fix changes the system and commits with
-`~/.local/bin/wiki-commit --by pi -m "<msg>" -- <paths>`; only this session writes the ledger, in step 5.
+`~/.local/bin/wiki-commit --by pi -m "<msg>" -- <paths>` (if it exits 2 only because there is no wiki,
+carry on); only this session writes the ledger, in step 5.
 Never push. Never merge before the user's explicit approval in step 4. Below, `F` is the argument
 (`F-007`) and `W=~/projects/worktrees/dotfiles/friction-$F`.
 

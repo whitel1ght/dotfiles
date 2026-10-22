@@ -10,7 +10,7 @@ Arguments: $ARGUMENTS
 
 You orchestrate one fix. Follow `/orchestrate`'s rules (`~/.claude/commands/orchestrate.md`) for models, briefs and checking results. The fix ladder is the rule: a failure is handled by a **script** first (retry, health gate, preflight, cache, fallback, background waiter), then **config** (re-auth, env var, setting, dropping a dead step), and only then **prompt** text, when the problem is the model's judgement. Runtime handling spends no model tokens.
 
-Write rules: the implementer never touches `~/wiki` except `~/wiki/work/system/` and `~/wiki/tools/` (only those), which it updates when the fix changes the system and commits with `~/.local/bin/wiki-commit --by claude -m "<msg>" -- <paths>`; only this session writes the ledger, and only in step 5. Never push. Never merge before the user's explicit approval in step 4. `F` is the argument (`F-007`), `W=~/projects/worktrees/dotfiles/friction-$F`.
+Write rules: the implementer never touches `~/wiki` except `~/wiki/work/system/` and `~/wiki/tools/` (only those), which it updates when the fix changes the system and commits with `~/.local/bin/wiki-commit --by claude -m "<msg>" -- <paths>` (if it exits 2 only because there is no wiki, carry on); only this session writes the ledger, and only in step 5. Never push. Never merge before the user's explicit approval in step 4. `F` is the argument (`F-007`), `W=~/projects/worktrees/dotfiles/friction-$F`.
 
 ## 1. Check
 
