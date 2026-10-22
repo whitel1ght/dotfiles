@@ -21,10 +21,14 @@ Global instructions applied across all projects. Keep this short — project-lev
   start. Read a part's page before changing or explaining it. A change to a system
   repo updates its `system/` page (and `tools/` when user-visible) in the same task.
 - Commit those wiki edits with `wiki-commit --by <claude|pi> --session <id> -m … -- <paths>`.
-  Hand edits (commits without `Agent-edit:`) are mine and never reverted. A decision
-  behind a change goes in `~/wiki/work/system/decisions/`, from `~/wiki/work/_templates/decision.md`.
-- dotfiles enforces this in its commit-msg hook (`docs-check`); a commit with no
-  user-visible change carries a `Docs: none` line instead.
+  Lines from commits without an `Agent-edit:` trailer are mine: before rewriting a passage,
+  check `git -C ~/wiki log -L`/`blame` and leave them alone; if one contradicts the code,
+  ask me instead of overwriting it. A decision behind a change goes in
+  `~/wiki/work/system/decisions/`, from `~/wiki/work/_templates/decision.md`.
+- The commit-msg hook (`docs-check`) enforces this in dotfiles, decisions and articles.
+  Opt-outs, one message line: `Docs: none` = no behaviour change at all (typo, formatting,
+  tests only); `Docs: internal` = behaviour changed but not how it is used (the `system/`
+  page is still required, `tools/` is not).
 
 ## Secrets
 

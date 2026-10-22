@@ -1,7 +1,7 @@
 #!/bin/sh
 # Two checks, both opt-out per commit with a line in the message:
 #  - docs-check: a change to something the system pages document needs those
-#    pages updated ("Docs: none" opts out).
+#    pages updated ("Docs: none" or "Docs: internal" opts out, see docs-check).
 #  - pi-parity: a change to a Claude playbook needs its pi twin brought in step
 #    ("Pi: later" opts out). Runs only in a dotfiles checkout.
 here="$(cd "$(dirname "$0")/.." && pwd)"

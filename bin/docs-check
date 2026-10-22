@@ -185,9 +185,10 @@ def commit_msg(msg_file: str) -> int:
         print(f"  new file {path} is covered by no page: add it to a page's covers line", file=sys.stderr)
     for name in brew:
         print(f"  new Brewfile entry {name} is mentioned in no page: say what it is for", file=sys.stderr)
-    print("Edit the page(s), then commit again. If nothing user-visible changed, add a line\n"
-          "'Docs: none' to the commit message. If only the system page needs the update,\n"
-          "add 'Docs: internal'.", file=sys.stderr)
+    print("Edit the page(s), then commit again. Or opt out with one line in the commit message:\n"
+          "  'Docs: none'      no behaviour change at all (typo, formatting, tests only)\n"
+          "  'Docs: internal'  behaviour changed but not how it is used: the system page\n"
+          "                    is still required, the tools page is not", file=sys.stderr)
     return 1
 
 

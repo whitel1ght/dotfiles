@@ -61,6 +61,8 @@ age_page local-ai.md
 printf 'echo 2\n' >> "$REPO/bin/localai"; git -C "$REPO" add bin/localai
 expect 1 "covered change with a stale page is blocked" run commit-msg "$(msg 'feat: localai flag')"
 case "$out" in *"local-ai.md"*) pass "names the page to update" ;; *) fail "names the page to update" "$out" ;; esac
+case "$out" in *"'Docs: none'"*"no behaviour change"*"'Docs: internal'"*"not how it is used"*)
+    pass "explains both opt-outs" ;; *) fail "explains both opt-outs" "$out" ;; esac
 
 expect 0 "'Docs: none' in the message lets it through" run commit-msg "$(msg $'refactor: tidy\n\nDocs: none')"
 
