@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Find what slipped past the commit hooks and print it as JSON for /end-day.
 
-  system-check [--baseline]
+  system-check [--record | --baseline]
 
 Prints {"baseline": bool, "new": [{"check", "id", "detail"}], "known": int}:
-a finding is "new" when the last run did not find it (so one that is fixed and
-comes back is new again); "known" counts the rest. A check that could not run
-is a "<check>:failed…" finding, new on every run, and the findings it had last
-time stay remembered. The checks:
+a finding is "new" when the last recorded run did not find it (so one that is
+fixed and comes back is new again); "known" counts the rest. Without a flag the
+run only looks (a peek: nothing is written, so a run by hand never uses up what
+/end-day should see); --record writes the state (what it found becomes seen,
+the trunk heads move on), and /end-day runs it that way. A check that could not
+run is a "<check>:failed…" finding, new on every run, and the findings it had
+last time stay remembered. The checks:
 
   optout   commits on trunk since the last run marked "Docs: none" (any page)
            or "Docs: internal" (tools pages) that touch a covered path (tests, docs,
@@ -26,8 +29,8 @@ $SYSTEM_PAGES/known.txt acknowledges entries: "stray <name>" or "foreign
 <substring>", one per line, # comments. State (last trunk heads, ids found
 last run) lives in $SYSTEM_CHECK_STATE (default ~/.local/state/system-check/
 state.json); without it, or with --baseline, the run is a baseline: everything
-found is reported once and remembered. On the first run, commits already on
-trunk are not scanned. Without a system pages folder nothing is checked.
+found is reported (and, recorded, remembered). --baseline always writes the
+state. On the first run, commits already on trunk are not scanned. Without a system pages folder nothing is checked.
 
 Env for tests: SYSTEM_REPOS, SYSTEM_PAGES, SYSTEM_DOCS (as docs-check),
 CLAUDE_SETTINGS, SYSTEM_CHECK_DIRS (colon-separated), SYSTEM_CHECK_PLUGINS
@@ -511,9 +514,10 @@ def save_state(state: dict) -> None:
 
 def main() -> int:
     args = sys.argv[1:]
-    if args not in ([], ["--baseline"]):
+    if args not in ([], ["--record"], ["--baseline"]):
         print(__doc__.strip(), file=sys.stderr)
         return 2
+    record = bool(args)
     state = load_state()
     baseline = state is None or args == ["--baseline"]
     if not dc.SYSTEM.is_dir():
@@ -552,7 +556,8 @@ def main() -> int:
     new = [f for i, f in unique.items() if is_failure(i) or i not in seen]
     found_now = {i for i in unique if not is_failure(i)}
     next_last = {**last, **{r: h for r, h in heads.items() if not in_failed(f"optout:{r}:")}}
-    save_state({"last": next_last, "seen": sorted(found_now | {i for i in seen if in_failed(i)})})
+    if record:
+        save_state({"last": next_last, "seen": sorted(found_now | {i for i in seen if in_failed(i)})})
     print(json.dumps({"baseline": baseline, "new": new, "known": len(unique) - len(new)}, indent=1))
     return 0
 

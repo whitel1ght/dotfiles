@@ -140,8 +140,13 @@ export SYSTEM_REPOS="dotfiles=$REPO:decisions=$DEC" SYSTEM_DOCS="$DOCS" SYSTEM_P
     CLAUDE_SETTINGS="$SANDBOX/settings.json" SYSTEM_CHECK_FAKE="$FAKE" SYSTEM_CHECK_PLUGINS="$PLUGINS" \
     SYSTEM_CHECK_PI="$PI" SYSTEM_CHECK_DIRS="$HOME/bin:$HOME/.local/bin:$HOME/.pi/agent/extensions:$HOME/missing"
 
-sc() { # sc <state name> [args...]: sets out and code
-    out="$(SYSTEM_CHECK_STATE="$SANDBOX/state/$1" "$SCRIPT" "${@:2}" 2>"$SANDBOX/err")"; code=$?
+sc() { # sc <state name> [args...]: sets out and code; no args means --record (as /end-day runs it)
+    local st=$1; shift
+    [ $# -gt 0 ] || set -- --record
+    out="$(SYSTEM_CHECK_STATE="$SANDBOX/state/$st" "$SCRIPT" "$@" 2>"$SANDBOX/err")"; code=$?
+}
+peek() { # peek <state name>: a run without flags, as by hand
+    out="$(SYSTEM_CHECK_STATE="$SANDBOX/state/$1" "$SCRIPT" 2>"$SANDBOX/err")"; code=$?
 }
 ids() { jq -c '[.new[].id]' <<<"$out" 2>/dev/null || echo "not JSON: $out $(cat "$SANDBOX/err")"; }
 has() { # has <label> <id>
@@ -251,6 +256,33 @@ sc s2 --baseline
 [ "$code" -eq 0 ] && [ "$(field .baseline)" = "true" ] && pass "--baseline on a fresh state is a baseline" || fail "--baseline on a fresh state is a baseline" "$out"
 sc s2
 [ "$(field '.new | length')" = "0" ] && [ "$(field .baseline)" = "false" ] && pass "the run after --baseline is empty" || fail "the run after --baseline is empty" "$out"
+
+echo "peek (no flags) writes no state"
+peek p1
+[ "$code" -eq 0 ] && [ ! -e "$SANDBOX/state/p1" ] && pass "a peek writes no state file" || fail "a peek writes no state file" "exit $code"
+has "a peek reports a finding" "stray:~/bin/plain-tool"
+peek p1
+has "a second peek reports it again" "stray:~/bin/plain-tool"
+sc p1
+peek p1
+[ "$(field '.new | length')" = "0" ] && [ "$(field .baseline)" = "false" ] && pass "after a --record run a peek reports nothing new" \
+    || fail "after a --record run a peek reports nothing new" "$out"
+printf 'edit\n' >> "$REPO/bin/tool"
+peek p1; peek p1
+has "a new finding stays new across peeks" "dirty:dotfiles:bin/tool"
+sc p1
+has "and is reported by the next --record run" "dirty:dotfiles:bin/tool"
+peek p1
+hasnt "which consumes it" "dirty:dotfiles:bin/tool"
+git -C "$REPO" checkout -q -- bin/tool
+peek_sha=$(commit "$REPO" bin/tool $'chore: peeked\n\nDocs: none')
+peek p1; peek p1
+has "an opt-out commit stays new across peeks" "optout:dotfiles:$peek_sha"
+sc p1
+peek p1
+hasnt "until a --record run moves last past it" "optout:dotfiles:$peek_sha"
+sc p1 --bogus
+[ "$code" -eq 2 ] && pass "an unknown flag exits 2" || fail "an unknown flag exits 2" "exit $code"
 
 echo "known foreign"
 printf 'foreign ORCA_  # trying it out\n' >> "$SYSTEM/known.txt"
