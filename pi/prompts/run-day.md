@@ -246,6 +246,12 @@ When the run state says `owner=external:<KEY>` for that ticket, start no round: 
 a side session. Tell the user the review arrived (MR link per the rule) and that `/pickup` in that
 session can address it, set `needs_you=yes`, and stop there.
 
+When the summary starts with `[approved by you — reply only, never review]` (`changes-since` marks
+it `approved_by_me`: someone else's MR we already approved), never start a review round or a
+re-review on that MR, now or later (D-011). If it asks us something, draft the answer and file it
+as a decision (step 9: `Post this reply on <repo>!<iid>?`, options `Post it` and `No`); otherwise
+do nothing. Stop there.
+
 1. Take the project path and iid from the event's `url`, never from the short `<repo>!<iid>`, which
    has no group:
    `PROJECT_PATH=$(sed -E 's#.*gitlab.com/(.*)/-/merge_requests/([0-9]+).*#\1#' <<<"$URL")`,

@@ -119,6 +119,8 @@ Trigger: a prompt line `[daily-event] review | ...` or `[daily-event] comment | 
 
 If the item's run-state `owner` is `external:<KEY>`, do not spawn a review-round agent for it: its branch is in a side session. Tell the user the review arrived (MR link per the rule) and that `/pickup` in that session can address it, set `needs_you=yes`, and stop here.
 
+If the summary starts with `[approved by you — reply only, never review]` (`changes-since` marks it `approved_by_me`: someone else's MR we already approved), never start a review round or a re-review on that MR, now or later (D-011). If it asks us something, draft the answer and file it as a decision (`Post this reply on <repo>!<iid>?`, options `Post it` and `No`); otherwise do nothing. Stop here.
+
 1. Take the GitLab project path and iid from the event's `url` field (the fifth field of the event line), never from the short `<repo>!<iid>` form, which has no group. For `https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2231` the path is `ecfx/ecfx-dashboard` and the iid is `2231`:
 
 ```bash
