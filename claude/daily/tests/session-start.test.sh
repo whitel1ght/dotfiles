@@ -153,6 +153,29 @@ unset SYSTEM_MAP; export SYSTEM_MAP="$SANDBOX/dir-not-file"; mkdir "$SYSTEM_MAP"
 bash "$HOOK" </dev/null >/dev/null 2>&1; assert_eq "0" "$?" "an unreadable map does not fail the hook"
 unset SYSTEM_MAP
 
+echo "== total cap (9000 characters) =="
+export SYSTEM_MAP="$SANDBOX/big-map.md"
+{ for i in $(seq 1 400); do echo "- part $i: some description of it padding"; done; } > "$SYSTEM_MAP"
+printf '#!/bin/sh\ni=1; while [ $i -le 300 ]; do echo "- direction $i: always follow this standing rule"; i=$((i+1)); done\n' > "$SANDBOX/big-ledger"
+chmod +x "$SANDBOX/big-ledger"; export FRICTION_LEDGER_BIN="$SANDBOX/big-ledger"
+rm -f "$RUN_DAY_STATE_DIR/2026-10-08.md"
+ctx="$(bash "$HOOK" directions </dev/null | jq -r '.hookSpecificOutput.additionalContext')"
+[ "${#ctx}" -le 9000 ] && pass "no run: directions and map within 9000 (${#ctx})" || fail "no run: total cap" "length ${#ctx}"
+assert_contains "$ctx" "- part 70:" "no run: the map is kept whole before the directions"
+assert_contains "$ctx" "(cut)" "no run: the cut is marked"
+assert_contains "$ctx" "- direction 1:" "no run: the head of the directions is kept"
+{ echo '# run-day 2026-10-08'; for i in $(seq 1 400); do echo "- ecfx-$i | class=auto | agent=a$i | needs_you=no"; done; } > "$RUN_DAY_STATE_DIR/2026-10-08.md"
+alone="$(FRICTION_LEDGER_BIN="$SANDBOX/no-such-friction-ledger" SYSTEM_MAP="$SANDBOX/no-map" bash "$HOOK" </dev/null | jq -r '.hookSpecificOutput.additionalContext')"
+ctx="$(bash "$HOOK" </dev/null | jq -r '.hookSpecificOutput.additionalContext')"
+[ "${#ctx}" -le 9000 ] && pass "large run state, map and directions within 9000 (${#ctx})" || fail "run: total cap" "length ${#ctx}"
+case "$ctx" in "$alone"*) pass "the run context is kept whole first" ;; *) fail "the run context is kept whole first" "${ctx:0:200}" ;; esac
+assert_contains "$ctx" "## System map" "the map comes before the directions in priority"
+assert_lacks "$ctx" "- direction 1:" "the directions are cut first"
+assert_contains "$ctx" "(cut)" "the cut is marked"
+rm -f "$RUN_DAY_STATE_DIR/2026-10-08.md"
+export FRICTION_LEDGER_BIN="$SANDBOX/no-such-friction-ledger"
+unset SYSTEM_MAP
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

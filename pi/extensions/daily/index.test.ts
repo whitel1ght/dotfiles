@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import daily, { directionsSection, guardVerdict, newlyNeedsYou, runStateSection, systemMapSection } from "./index.ts";
+import daily, {
+  directionsSection,
+  fitSections,
+  guardVerdict,
+  newlyNeedsYou,
+  runStateSection,
+  systemMapSection,
+} from "./index.ts";
 
 const DAY = "2026-01-01";
 
@@ -459,6 +466,55 @@ test("system map: without SYSTEM_MAP, read from WIKI_DIR/work/system/map.md", ()
   delete process.env.SYSTEM_MAP;
   delete process.env.WIKI_DIR;
   rmSync(root, { recursive: true, force: true });
+});
+
+test("total cap: run state whole, then the map, then the directions, within 9000 characters", () => {
+  const run = "r".repeat(6000);
+  const map = `## System map\n${"m".repeat(3000)}`;
+  const dirs = `## Standing directions\n${"d".repeat(7000)}`;
+  const total = (s: { runState: string | null; directions: string | null; systemMap: string | null }) =>
+    (s.runState ?? "").length + (s.directions ?? "").length + (s.systemMap ?? "").length;
+
+  const all = fitSections(run, dirs, map);
+  assert.equal(all.runState, run, "the run state is never cut");
+  assert.ok(total(all) <= 9000, `total ${total(all)}`);
+  assert.equal(all.directions, null, "the directions go first");
+  assert.match(all.systemMap ?? "", /^## System map\nm+\n\(cut\)$/, "then the map is cut, and marked");
+
+  const noRun = fitSections(null, dirs, map);
+  assert.equal(noRun.systemMap, map, "without a run the map fits whole");
+  assert.match(noRun.directions ?? "", /^## Standing directions\nd+\n\(cut\)$/, "and the directions are cut, marked");
+  assert.ok(total(noRun) <= 9000, `total ${total(noRun)}`);
+
+  const small = fitSections("r", "## Standing directions\nd", map);
+  assert.deepEqual(small, { runState: "r", directions: "## Standing directions\nd", systemMap: map }, "small inputs pass through");
+});
+
+test("total cap: before_agent_start keeps the three sections within 9000 characters", () => {
+  const { root, runState } = sandbox();
+  writeFileSync(runState, RUN_STATE + "- ecfx-9 | class=auto | needs_you=no | padding padding padding\n".repeat(120));
+  const map = join(root, "map.md");
+  writeFileSync(map, "- part: padding padding padding padding\n".repeat(80));
+  process.env.SYSTEM_MAP = map;
+  const ledger = join(root, "ledger");
+  writeFileSync(ledger, '#!/bin/sh\ni=1; while [ $i -le 300 ]; do echo "- direction $i: always follow this rule"; i=$((i+1)); done\n');
+  chmodSync(ledger, 0o755);
+  mkdirSync(join(root, "friction"), { recursive: true });
+  writeFileSync(join(root, "friction", "directions.md"), "x");
+  process.env.FRICTION_WIKI = join(root, "friction");
+  process.env.FRICTION_LEDGER_BIN = ledger;
+  const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
+  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb), registerTool: () => {} } as never);
+  const options = { sections: {} as Record<string, string> };
+  handlers.before_agent_start({ systemPromptOptions: options }, { ui: undefined });
+  const s = options.sections;
+  const total = (s.daily_run_state ?? "").length + (s.standing_directions ?? "").length + (s.system_map ?? "").length;
+  assert.ok(s.daily_run_state && s.system_map, "run state and map are set");
+  assert.ok(total <= 9000, `total ${total}`);
+  delete process.env.SYSTEM_MAP;
+  delete process.env.FRICTION_WIKI;
+  delete process.env.FRICTION_LEDGER_BIN;
+  cleanup(root);
 });
 
 test("system map: before_agent_start sets the section, and never throws without one", () => {

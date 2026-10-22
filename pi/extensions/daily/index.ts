@@ -148,6 +148,28 @@ export function systemMapSection(): string | null {
   }
 }
 
+const TOTAL_MAX = 9000;
+const CUT_MARK = "\n(cut)";
+
+function fit(text: string | null, room: number): string | null {
+  if (!text) return null;
+  const chars = [...text];
+  if (chars.length <= room) return text;
+  return room > CUT_MARK.length ? chars.slice(0, room - CUT_MARK.length).join("") + CUT_MARK : null;
+}
+
+/**
+ * The three injected sections within TOTAL_MAX characters, as Claude's session-start hook
+ * keeps them: the run state is never cut (it is at most MAX_CHARS), the map takes what is
+ * left, then the directions; each cut is marked.
+ */
+export function fitSections(runState: string | null, directions: string | null, systemMap: string | null) {
+  let room = TOTAL_MAX - [...(runState ?? "")].length;
+  const map = fit(systemMap, room);
+  room -= [...(map ?? "")].length;
+  return { runState, directions: fit(directions, room), systemMap: map };
+}
+
 /** Items whose needs_you flipped on since the last request. */
 const announced = new Set<string>();
 
@@ -328,16 +350,12 @@ export default function daily(pi: ExtensionAPI) {
     } catch {
       section = null; // never lose a turn because the day context failed
     }
-    // Omitting the key on a later turn is what removes it: pi diffs sections by name.
-    if (section) event.systemPromptOptions.sections.daily_run_state = section;
-
     let directions: string | null = null;
     try {
       directions = directionsSection();
     } catch {
       directions = null;
     }
-    if (directions) event.systemPromptOptions.sections.standing_directions = directions;
 
     let systemMap: string | null = null;
     try {
@@ -345,7 +363,13 @@ export default function daily(pi: ExtensionAPI) {
     } catch {
       systemMap = null;
     }
-    if (systemMap) event.systemPromptOptions.sections.system_map = systemMap;
+
+    const fitted = fitSections(section, directions, systemMap);
+    // Omitting a key on a later turn is what removes it: pi diffs sections by name.
+    const sections = event.systemPromptOptions.sections;
+    if (fitted.runState) sections.daily_run_state = fitted.runState;
+    if (fitted.directions) sections.standing_directions = fitted.directions;
+    if (fitted.systemMap) sections.system_map = fitted.systemMap;
   });
 
   pi.on("tool_call", (event, _ctx) => {

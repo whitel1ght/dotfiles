@@ -12,6 +12,39 @@ STATE="$STATE_DIR/$TODAY.md"
 DIARY="$WIKI/diary/$TODAY.md"
 MAX_CHARS=6000
 BLOCK_MAX=3000
+# Claude Code drops additionalContext past ~10k characters. The run context (at most MAX_CHARS)
+# always goes in whole; the map takes what is left, then the directions; each cut is marked.
+TOTAL_MAX=9000
+CUT_MARK="
+(cut)"
+
+# Codepoint-safe cut regardless of locale.
+cut_chars() { printf '%s' "$1" | jq -Rrs --argjson n "$2" '.[:$n]'; }
+len() { printf '%s' "$1" | jq -Rrs 'length'; }
+
+# fit <text> <room>: the text if it fits, else its head and the cut mark, else nothing.
+fit() {
+  if [ "$(len "$1")" -le "$2" ]; then
+    printf '%s' "$1"
+  elif [ "$2" -gt "${#CUT_MARK}" ]; then
+    printf '%s%s' "$(cut_chars "$1" $(($2 - ${#CUT_MARK})))" "$CUT_MARK"
+  fi
+}
+
+# emit <run context>: the hook JSON with the run context, then what fits of the directions and
+# the map; nothing at all when all three are empty.
+emit() {
+  local room map_part dir_part c
+  room=$((TOTAL_MAX - $(len "$1")))
+  map_part="$(fit "$map_text" "$room")"
+  room=$((room - $(len "$map_part")))
+  dir_part="$(fit "$dir_text" "$room")"
+  c="$1$dir_part$map_part"
+  [ -n "$1" ] || c="${c#
+}"
+  [ -n "$c" ] || return 0
+  jq -n --arg c "$c" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $c}}'
+}
 
 FRICTION_LEDGER_BIN="${FRICTION_LEDGER_BIN:-$(command -v friction-ledger 2>/dev/null || echo "$HOME/.local/bin/friction-ledger")}"
 dir_text=""
@@ -24,21 +57,19 @@ Rules the user gave in earlier sessions, active until retired. Follow them.
 $directions"
 fi
 
-# The map is cut to 3072 bytes (iconv drops a split trailing character); like the directions it
-# rides after the 6000-character run-day cut, so it never squeezes the run state.
+# The map is cut to 3072 bytes (iconv drops a split trailing character).
 SYSTEM_MAP="${SYSTEM_MAP:-$WIKI/work/system/map.md}"
+map_text=""
 if [ -f "$SYSTEM_MAP" ]; then
   map="$(head -c 3072 "$SYSTEM_MAP" 2>/dev/null | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null || true)"
-  [ -z "${map//[[:space:]]/}" ] || dir_text="$dir_text
+  [ -z "${map//[[:space:]]/}" ] || map_text="
 
 ## System map
 $map"
 fi
 
 if [ "${1:-}" = directions ] || [ ! -f "$STATE" ]; then
-  [ -n "$dir_text" ] || exit 0
-  jq -n --arg c "${dir_text#
-}" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $c}}'
+  emit ""
   exit 0
 fi
 
@@ -57,10 +88,6 @@ block=""
 if [ -f "$DIARY" ]; then
   block="$(awk '/^<!-- start-day:start -->/{f=1;buf="";next} /^<!-- start-day:end -->/{if(f){printf "%s", buf; f=0};next} f{buf=buf $0 "\n"}' "$DIARY")"
 fi
-
-# Codepoint-safe cut regardless of locale.
-cut_chars() { printf '%s' "$1" | jq -Rrs --argjson n "$2" '.[:$n]'; }
-len() { printf '%s' "$1" | jq -Rrs 'length'; }
 
 head_text="A /run-day session is active for $TODAY. Playbook: ${CLAUDE_PLUGIN_ROOT:-the daily plugin}/commands/run-day.md (re-read it before acting on events).
 Write rules: subagents never write ~/wiki, except ~/wiki/work/system/ and ~/wiki/tools/ when they change a system repo (dotfiles, decisions, articles), committed with wiki-commit; only this session writes diary markers, ~/wiki/work/projects/<p>/log entries and decisions; /end-day consolidates state.md.
@@ -87,4 +114,4 @@ fi
 
 ctx="$head_text$block_head$block$state_text"
 
-jq -n --arg c "$(cut_chars "$ctx" "$MAX_CHARS")$dir_text" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $c}}'
+emit "$(cut_chars "$ctx" "$MAX_CHARS")"
