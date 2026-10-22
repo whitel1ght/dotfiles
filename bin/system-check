@@ -10,7 +10,8 @@ is a "<check>:failed…" finding, new on every run, and the findings it had last
 time stay remembered. The checks:
 
   optout   commits on trunk since the last run marked "Docs: none" (any page)
-           or "Docs: internal" (tools pages) that touch a covered path
+           or "Docs: internal" (tools pages) that touch a covered path (tests, docs,
+           READMEs and lock files do not count)
   dirty    covered paths changed or untracked in a system repo's checkout
   stray    entries of ~/bin, ~/.local/bin, ~/.claude/hooks, ~/.pi/agent/extensions
            that are not a file tracked by a system repo
@@ -190,7 +191,7 @@ def optout_commits(repo: str, root: Path, last: str, head: str,
             continue
         files = git_in(root, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha)
         skipped = {page: globs for page, globs in pages.items() if skip == "none" or dc.page_kind(page) == "tools"}
-        hits = [p for p in files if any(dc.covered_by(repo, p, g) for g in skipped.values())]
+        hits = [p for p in files if not dc.exempt(p) and any(dc.covered_by(repo, p, g) for g in skipped.values())]
         if hits:
             hit_pages = sorted(page.name for page, g in skipped.items() if any(dc.covered_by(repo, p, g) for p in hits))
             found.append(finding("optout", f"optout:{repo}:{sha}",

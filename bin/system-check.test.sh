@@ -224,6 +224,7 @@ internal_part=$(commit "$REPO" notes/plan.txt $'feat: plan\n\ndocs: Internal')
 plain=$(commit "$REPO" bin/tool 'feat: tool')
 uncovered=$(commit "$REPO" README.md $'docs: readme\n\nDocs: none')
 dec_none=$(commit "$DEC" src/a.txt $'fix: a\n\nDocs: none')
+test_only=$(commit "$REPO" bin/tool.test.sh $'test: tool\n\nDocs: none')
 sc s1
 has "'Docs: none' commit touching a covered path" "optout:dotfiles:$none_sha"
 has "'Docs: internal' commit touching a tools-covered path" "optout:dotfiles:$internal_tools"
@@ -231,6 +232,7 @@ hasnt "'Docs: internal' commit touching only a system-covered path" "optout:dotf
 hasnt "commit without an opt-out" "optout:dotfiles:$plain"
 hasnt "opt-out commit touching nothing covered" "optout:dotfiles:$uncovered"
 has "opt-out commit in another system repo" "optout:decisions:$dec_none"
+hasnt "opt-out commit touching only a test file under a covered glob" "optout:dotfiles:$test_only"
 sc s1
 [ "$(field '.new | length')" = "0" ] && pass "commits already scanned are not scanned again" || fail "commits already scanned are not scanned again" "$out"
 

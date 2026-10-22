@@ -175,6 +175,12 @@ for f in bin/newtool.test.sh tests/x.sh docs/x.md sub/README.md README.md.bak.lo
 done
 rm -rf "$REPO/tests" "$REPO/docs" "$REPO/sub"
 
+printf '# Tests\n<!-- covers: bin/localai* tests/* -->\n' > "$DOCS/tests-page.md"; age_page tests-page.md
+printf 'echo t\n' >> "$REPO/bin/localai.test.sh"; mkdir -p "$REPO/tests"; printf 'x\n' > "$REPO/tests/a.sh"
+git -C "$REPO" add bin/localai.test.sh tests/a.sh
+expect 0 "a test-only change under a covered glob needs no page" run commit-msg "$(msg 'test: localai')"
+git -C "$REPO" reset -q; git -C "$REPO" checkout -q -- bin/localai.test.sh; rm -rf "$REPO/tests" "$DOCS/tests-page.md"
+
 printf 'brew "git"\n' > "$REPO/Brewfile"; git -C "$REPO" add Brewfile; git -C "$REPO" commit -q -m brewfile
 printf 'brew "koekeishiya/formulae/zoxide"\n' >> "$REPO/Brewfile"; git -C "$REPO" add Brewfile
 expect 1 "new Brewfile entry nobody mentions" run commit-msg "$(msg 'feat: zoxide')"

@@ -18,9 +18,9 @@ README.md and map.md). The system repos are dotfiles, decisions and articles.
                                 the tools page, the system page stays required.
                                 Off trunk, a system page is also satisfied by a
                                 line "- `repo:branch` ..." under its ## Unfinished.
-                                New files must be covered by some page (tests,
-                                docs, READMEs and lock files excepted) and new
-                                Brewfile entries named in some page.
+                                New files must be covered by some page and new
+                                Brewfile entries named in some page. Tests, docs,
+                                READMEs and lock files never need a page.
   docs-check post-merge         after a merge, print the pages whose ## Unfinished
                                 names the merged branch (to be moved into the body).
   docs-check coverage           every bin/ script (tests excluded) is mentioned
@@ -57,6 +57,10 @@ MERGE_SUBJECT = re.compile(r"^(?:merge (\S+?):|commit \(merge\): Merge branch '(
 EXEMPT = ["*.test.*", "tests/**", "*/tests/**", "docs/**", "README.md", "*/README.md", ".gitignore",
           "*.lock", "*.lock.json", "LICENSE"]
 RECENT = 24 * 3600  # a deleted file has no mtime; the page must be this fresh
+
+
+def exempt(path: str) -> bool:
+    return any(fnmatch.fnmatch(path, g) for g in EXEMPT)
 
 
 def git(*args: str) -> list[str]:
@@ -129,7 +133,7 @@ def added_uncovered(staged_added: list[str], repo: str) -> list[str]:
     all_globs = [g for globs in pages().values() for g in globs]
     return [
         p for p in staged_added
-        if not any(fnmatch.fnmatch(p, g) for g in EXEMPT) and not covered_by(repo, p, all_globs)
+        if not exempt(p) and not covered_by(repo, p, all_globs)
     ]
 
 
@@ -157,7 +161,7 @@ def commit_msg(msg_file: str) -> int:
     for page, globs in pages().items():
         if skip == "internal" and page_kind(page) == "tools":
             continue
-        hits = [p for p in staged if covered_by(repo, p, globs)]
+        hits = [p for p in staged if not exempt(p) and covered_by(repo, p, globs)]
         if not hits:
             continue
         if branch and page_kind(page) == "system" and (repo, branch) in unfinished_entries(page):
