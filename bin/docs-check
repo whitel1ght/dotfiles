@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
-"""Keep the system manual (~/wiki/tools) in step with dotfiles.
+"""Keep the system pages in step with the system repos.
 
-Each manual page names the dotfiles paths it documents on one line:
+Each page names the paths it documents on one line:
 
-    <!-- covers: bin/localai bin/webui pi/local-model/* -->
+    <!-- covers: bin/localai bin/webui decisions:src/* -->
 
-(shell-style globs relative to the repo root; * also crosses /).
+(shell-style globs relative to the repo root; * also crosses /; an entry
+without "repo:" means dotfiles). Pages live in two folders: the tools manual
+and the system part pages (SYSTEM_PAGES, default ~/wiki/work/system, minus
+README.md and map.md). The system repos are dotfiles, decisions and articles.
 
   docs-check commit-msg <file>  git commit-msg hook: if staged changes touch a
-                                covered path, the page covering it must have
+                                covered path, each page covering it must have
                                 been edited since; otherwise the commit stops
-                                and names the page. A commit with no
-                                user-visible change says so with a line
-                                "Docs: none" in its message.
+                                and names the page. A message line "Docs: none"
+                                skips every rule; "Docs: internal" skips only
+                                the tools page, the system page stays required.
   docs-check coverage           every bin/ script (tests excluded) is mentioned
                                 somewhere in the manual, and every covers entry
                                 still matches a tracked file.
 
-SYSTEM_DOCS overrides the manual folder (default ~/wiki/tools). A missing
-manual folder never blocks a commit.
+SYSTEM_DOCS overrides the manual folder (default ~/wiki/tools), SYSTEM_REPOS
+the repo roots ("name=path:name=path"). Missing page folders never block a
+commit, and a commit in any other repo is never checked.
 """
 
 import fnmatch
@@ -30,8 +34,15 @@ import time
 from pathlib import Path
 
 DOCS = Path(os.environ.get("SYSTEM_DOCS", "~/wiki/tools")).expanduser()
+SYSTEM = Path(os.environ.get("SYSTEM_PAGES", "~/wiki/work/system")).expanduser()
+DEFAULT_REPOS = "dotfiles=~/projects/dotfiles:decisions=~/projects/decisions:articles=~/projects/articles"
+REPOS = {
+    name: Path(path).expanduser().resolve()
+    for name, path in (e.split("=", 1) for e in os.environ.get("SYSTEM_REPOS", DEFAULT_REPOS).split(":") if "=" in e)
+}
+NOT_PARTS = {"README.md", "map.md"}
 COVERS = re.compile(r"<!--\s*covers:(.*?)-->", re.DOTALL)
-DOCS_NONE = re.compile(r"(?im)^docs:\s*none\s*$")
+OPT_OUT = re.compile(r"(?im)^docs:\s*(none|internal)\s*$")
 RECENT = 24 * 3600  # a deleted file has no mtime; the page must be this fresh
 
 
@@ -40,40 +51,74 @@ def git(*args: str) -> list[str]:
     return [line for line in out.splitlines() if line]
 
 
-def pages() -> dict[Path, list[str]]:
+def repo_name() -> str | None:
+    try:
+        common = git("rev-parse", "--path-format=absolute", "--git-common-dir")[0]
+    except (subprocess.CalledProcessError, IndexError):
+        return None
+    root = Path(common).resolve().parent
+    return next((name for name, path in REPOS.items() if path == root), None)
+
+
+def parse_entry(entry: str) -> tuple[str, str]:
+    repo, sep, glob = entry.partition(":")
+    return (repo, glob) if sep else ("dotfiles", entry)
+
+
+def pages() -> dict[Path, list[tuple[str, str]]]:
+    files = sorted(DOCS.glob("*.md")) + [p for p in sorted(SYSTEM.glob("*.md")) if p.name not in NOT_PARTS]
     found = {}
-    for page in sorted(DOCS.glob("*.md")):
+    for page in files:
         match = COVERS.search(page.read_text(errors="replace"))
-        found[page] = match.group(1).split() if match else []
+        found[page] = [parse_entry(e) for e in match.group(1).split()] if match else []
     return found
 
 
-def covered_by(path: str, globs: list[str]) -> bool:
-    return any(fnmatch.fnmatch(path, g) for g in globs)
+def page_kind(page: Path) -> str:
+    return "system" if page.parent == SYSTEM else "tools"
+
+
+def covered_by(repo: str, path: str, globs: list[tuple[str, str]]) -> bool:
+    return any(r == repo and fnmatch.fnmatch(path, g) for r, g in globs)
+
+
+def covering(repo: str, path: str) -> list[Path]:
+    return [page for page, globs in pages().items() if covered_by(repo, path, globs)]
+
+
+def opt_out(msg: str) -> str:
+    match = OPT_OUT.search(msg)
+    return match.group(1).lower() if match else ""
 
 
 def commit_msg(msg_file: str) -> int:
-    if not DOCS.is_dir():
+    repo = repo_name()
+    if repo is None:
         return 0
-    if DOCS_NONE.search(Path(msg_file).read_text(errors="replace")):
+    skip = opt_out(Path(msg_file).read_text(errors="replace"))
+    if skip == "none":
         return 0
     staged = git("diff", "--cached", "--name-only")
+    top = Path(git("rev-parse", "--show-toplevel")[0])
     now = time.time()
     stale = {}
     for page, globs in pages().items():
-        hits = [p for p in staged if covered_by(p, globs)]
+        if skip == "internal" and page_kind(page) == "tools":
+            continue
+        hits = [p for p in staged if covered_by(repo, p, globs)]
         if not hits:
             continue
-        newest = max(Path(p).stat().st_mtime if Path(p).exists() else now - RECENT for p in hits)
+        newest = max((top / p).stat().st_mtime if (top / p).exists() else now - RECENT for p in hits)
         if page.stat().st_mtime < newest:
             stale[page] = hits
     if not stale:
         return 0
-    print("docs-check: this commit changes what the system manual documents.", file=sys.stderr)
+    print("docs-check: this commit changes what the system documents.", file=sys.stderr)
     for page, hits in stale.items():
-        print(f"  update {page}  (covers {', '.join(hits)})", file=sys.stderr)
+        print(f"  update {page} [{page_kind(page)}]  (covers {', '.join(hits)})", file=sys.stderr)
     print("Edit the page(s), then commit again. If nothing user-visible changed, add a line\n"
-          "'Docs: none' to the commit message.", file=sys.stderr)
+          "'Docs: none' to the commit message. If only the system page needs the update,\n"
+          "add 'Docs: internal'.", file=sys.stderr)
     return 1
 
 
@@ -87,10 +132,15 @@ def coverage() -> int:
         if path.startswith("bin/") and "/" not in path[4:] and not name.endswith((".test.sh", ".bak")):
             if not re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text):
                 problems.append(f"undocumented script: {path}")
+    tracked_by = {"dotfiles": tracked}
     for page, globs in manual.items():
-        for g in globs:
-            if not any(fnmatch.fnmatch(p, g) for p in tracked):
-                problems.append(f"{page.name}: covers entry matches nothing: {g}")
+        for repo, g in globs:
+            if repo not in tracked_by:
+                root = REPOS.get(repo)
+                tracked_by[repo] = git("-C", str(root), "ls-files") if root and root.is_dir() else None
+            if tracked_by[repo] is not None and not any(fnmatch.fnmatch(p, g) for p in tracked_by[repo]):
+                label = g if repo == "dotfiles" else f"{repo}:{g}"
+                problems.append(f"{page.name}: covers entry matches nothing: {label}")
     for line in problems:
         print(line)
     return 1 if problems else 0
