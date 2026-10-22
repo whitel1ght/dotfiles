@@ -4,8 +4,10 @@
   system-check [--baseline]
 
 Prints {"baseline": bool, "new": [{"check", "id", "detail"}], "known": int}:
-only findings whose id was not reported before are "new"; "known" counts the
-rest. The checks:
+a finding is "new" when the last run did not find it (so one that is fixed and
+comes back is new again); "known" counts the rest. A check that could not run
+is a "<check>:failed…" finding, new on every run, and the findings it had last
+time stay remembered. The checks:
 
   optout   commits on trunk since the last run marked "Docs: none" (any page)
            or "Docs: internal" (tools pages) that touch a covered path
@@ -20,8 +22,8 @@ rest. The checks:
            and marketplaces vs the ones install.sh sets up
 
 $SYSTEM_PAGES/known.txt acknowledges entries: "stray <name>" or "foreign
-<substring>", one per line, # comments. State (last trunk heads, ids already
-reported) lives in $SYSTEM_CHECK_STATE (default ~/.local/state/system-check/
+<substring>", one per line, # comments. State (last trunk heads, ids found
+last run) lives in $SYSTEM_CHECK_STATE (default ~/.local/state/system-check/
 state.json); without it, or with --baseline, the run is a baseline: everything
 found is reported once and remembered. On the first run, commits already on
 trunk are not scanned. Without a system pages folder nothing is checked.
@@ -85,7 +87,7 @@ def run(cmd: list[str], cwd: Path | None = None, ok: tuple[int, ...] = (0,), std
         fake = Path(FAKE) / ("_".join(cmd) + ".out")
         if not fake.is_file():
             raise CommandFailed(cmd, f"no fake output {fake.name}")
-        return fake.read_text()
+        return fake.read_text(errors="replace")
     try:
         done = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=300)
     except (OSError, subprocess.TimeoutExpired) as e:
@@ -166,23 +168,34 @@ def check_optout(repos: dict[str, Path], last: dict[str, str], heads: dict[str, 
         root = repos[repo]
         if repo not in last:
             continue
-        try:
-            shas = git_in(root, "rev-list", "--reverse", f"{last[repo]}..{head}")
-        except subprocess.CalledProcessError:
+        known_last = subprocess.run(["git", "-C", str(root), "cat-file", "-e", f"{last[repo]}^{{commit}}"],
+                                    capture_output=True).returncode == 0
+        if not known_last:
             continue
-        for sha in shas:
-            msg = "\n".join(git_in(root, "show", "-s", "--format=%B", sha))
-            skip = dc.opt_out(msg)
-            if not skip:
-                continue
-            files = git_in(root, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha)
-            skipped = {page: globs for page, globs in pages.items() if skip == "none" or dc.page_kind(page) == "tools"}
-            hits = [p for p in files if any(dc.covered_by(repo, p, g) for g in skipped.values())]
-            if hits:
-                hit_pages = sorted(page.name for page, g in skipped.items() if any(dc.covered_by(repo, p, g) for p in hits))
-                found.append(finding("optout", f"optout:{repo}:{sha}",
-                                     f"{repo} {sha[:7]} \"{msg.splitlines()[0] if msg else ''}\" (Docs: {skip}) "
-                                     f"changed {', '.join(hits)}, covered by {', '.join(hit_pages)}"))
+        try:
+            found += optout_commits(repo, root, last[repo], head, pages)
+        except subprocess.CalledProcessError as e:
+            found.append(finding("optout", f"optout:failed:{repo}",
+                                 f"could not scan {repo} {last[repo][:7]}..{head[:7]}: {(e.stderr or '').strip()[:200]}"))
+    return found
+
+
+def optout_commits(repo: str, root: Path, last: str, head: str,
+                   pages: dict[Path, list[tuple[str, str]]]) -> list[Finding]:
+    found = []
+    for sha in git_in(root, "rev-list", "--reverse", f"{last}..{head}"):
+        msg = "\n".join(git_in(root, "show", "-s", "--format=%B", sha))
+        skip = dc.opt_out(msg)
+        if not skip:
+            continue
+        files = git_in(root, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha)
+        skipped = {page: globs for page, globs in pages.items() if skip == "none" or dc.page_kind(page) == "tools"}
+        hits = [p for p in files if any(dc.covered_by(repo, p, g) for g in skipped.values())]
+        if hits:
+            hit_pages = sorted(page.name for page, g in skipped.items() if any(dc.covered_by(repo, p, g) for p in hits))
+            found.append(finding("optout", f"optout:{repo}:{sha}",
+                                 f"{repo} {sha[:7]} \"{msg.splitlines()[0] if msg else ''}\" (Docs: {skip}) "
+                                 f"changed {', '.join(hits)}, covered by {', '.join(hit_pages)}"))
     return found
 
 
@@ -272,9 +285,11 @@ def check_foreign(settings_path: Path, repos: dict[str, Path], known: list[str])
     if not settings_path.is_file():
         return []
     try:
-        settings = json.loads(settings_path.read_text())
+        settings = json.loads(settings_path.read_text(errors="replace"))
     except json.JSONDecodeError as e:
-        return [finding("foreign", "foreign:unreadable", f"{settings_path} is not valid JSON: {e}")]
+        return [finding("foreign", "foreign:failed", f"{short(settings_path)} is not valid JSON: {e}")]
+    if not isinstance(settings, dict):
+        return [finding("foreign", "foreign:failed", f"{short(settings_path)} is not a JSON object")]
     found = []
     for event, command in hook_commands(settings):
         if any(k in command for k in known) or owned_command(command, repos):
@@ -376,12 +391,12 @@ def pi_findings(dotfiles: Path, pi: Path) -> list[Finding]:
     settings_file = dotfiles / "pi" / "settings.json"
     if not settings_file.is_file() or not pi.is_dir():
         return []
-    packages = json.loads(settings_file.read_text()).get("packages") or []
+    packages = json.loads(settings_file.read_text(errors="replace")).get("packages") or []
     wanted = {pi_key(p if isinstance(p, str) else p.get("source", "")) for p in packages}
     installed = set()
     npm = pi / "npm" / "package.json"
     if npm.is_file():
-        installed |= {f"npm:{name}" for name in (json.loads(npm.read_text()).get("dependencies") or {})}
+        installed |= {f"npm:{name}" for name in (json.loads(npm.read_text(errors="replace")).get("dependencies") or {})}
     git_dir = pi / "git"
     if git_dir.is_dir():
         installed |= {"git:" + str(p.relative_to(git_dir)) for p in git_dir.glob("*/*/*") if p.is_dir()}
@@ -407,7 +422,7 @@ def configured_plugins(dotfiles: Path) -> tuple[set[str], set[str]]:
             path = HOME_VAR.sub(str(HOME), path)
             manifest = Path(path).expanduser() / ".claude-plugin" / "marketplace.json"
             if manifest.is_file():
-                data = json.loads(manifest.read_text())
+                data = json.loads(manifest.read_text(errors="replace"))
                 marketplaces.add(data.get("name", ""))
                 plugins |= {f"{p.get('name')}@{data.get('name')}" for p in data.get("plugins") or []}
             else:
@@ -421,13 +436,13 @@ def plugin_findings(dotfiles: Path, plugins_dir: Path) -> list[Finding]:
     found = []
     installed_file = plugins_dir / "installed_plugins.json"
     if installed_file.is_file():
-        for plugin in sorted(json.loads(installed_file.read_text()).get("plugins") or {}):
+        for plugin in sorted(json.loads(installed_file.read_text(errors="replace")).get("plugins") or {}):
             if plugin not in plugins:
                 found.append(finding("install", f"install:plugin-extra:{plugin}",
                                      f"Claude plugin {plugin} is installed but dotfiles does not set it up"))
     known_file = plugins_dir / "known_marketplaces.json"
     if known_file.is_file():
-        known = json.loads(known_file.read_text())
+        known = json.loads(known_file.read_text(errors="replace"))
         for name in sorted(set(known) - marketplaces):
             found.append(finding("install", f"install:marketplace-extra:{name}",
                                  f"Claude marketplace {name} is registered but dotfiles does not set it up"))
@@ -441,25 +456,49 @@ def check_install(dotfiles: Path | None, plugins_dir: Path, pi: Path) -> list[Fi
     if not dotfiles or not dotfiles.is_dir():
         return []
     found = []
-    for part in (lambda: brew_findings(dotfiles), lambda: pi_findings(dotfiles, pi),
-                 lambda: plugin_findings(dotfiles, plugins_dir)):
+    for sub, part in (("brew", lambda: brew_findings(dotfiles)), ("pi", lambda: pi_findings(dotfiles, pi)),
+                      ("plugins", lambda: plugin_findings(dotfiles, plugins_dir))):
         try:
             found += part()
         except CommandFailed as e:
-            found.append(finding("install", f"install:failed:{e.cmd}", f"skipped, a command failed: {e}"))
-        except (OSError, json.JSONDecodeError) as e:
-            found.append(finding("install", f"install:failed:{type(e).__name__}", str(e)))
+            found.append(finding("install", f"install:failed:{sub}:{e.cmd}", f"{sub} skipped, a command failed: {e}"))
+        except (OSError, ValueError, AttributeError, TypeError) as e:
+            found.append(finding("install", f"install:failed:{sub}:{type(e).__name__}", f"{sub} skipped: {e}"))
     return found
+
+
+def is_failure(id_: str) -> bool:
+    return id_.split(":")[1:2] == ["failed"]
+
+
+def scope(id_: str) -> str:
+    """The check (or part of one) an id belongs to: a failure there keeps its old ids seen."""
+    parts = id_.split(":")
+    if is_failure(id_):
+        return ":".join(parts[:1] + parts[2:3])
+    if parts[0] == "optout":
+        return ":".join(parts[:2])
+    if parts[0] == "install":
+        kind = parts[1] if len(parts) > 1 else ""
+        sub = "brew" if kind.startswith("brew") else "pi" if kind.startswith("pi-") else "plugins"
+        return f"install:{sub}"
+    return parts[0]
 
 
 def load_state() -> dict | None:
     if not STATE.is_file():
         return None
     try:
-        state = json.loads(STATE.read_text())
-    except json.JSONDecodeError:
+        state = json.loads(STATE.read_text(errors="replace"))
+    except ValueError:
         return None
-    return state if isinstance(state, dict) else None
+    if not isinstance(state, dict):
+        return None
+    last, seen = state.get("last", {}), state.get("seen", [])
+    if not (isinstance(last, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in last.items())
+            and isinstance(seen, list) and all(isinstance(i, str) for i in seen)):
+        return None
+    return {"last": last, "seen": seen}
 
 
 def save_state(state: dict) -> None:
@@ -500,12 +539,19 @@ def main() -> int:
     ]:
         try:
             findings += check()
-        except (subprocess.CalledProcessError, OSError) as e:
+        except (subprocess.CalledProcessError, OSError, ValueError) as e:
             findings.append(finding(name, f"{name}:failed", f"the {name} check could not run: {e}"))
 
     unique = {f["id"]: f for f in findings}
-    new = [f for i, f in unique.items() if i not in seen]
-    save_state({"last": {**last, **heads}, "seen": sorted(seen | set(unique))})
+    failed = {scope(i) for i in unique if is_failure(i)}
+
+    def in_failed(id_: str) -> bool:
+        return any(scope(id_) == s or scope(id_).startswith(s + ":") for s in failed)
+
+    new = [f for i, f in unique.items() if is_failure(i) or i not in seen]
+    found_now = {i for i in unique if not is_failure(i)}
+    next_last = {**last, **{r: h for r, h in heads.items() if not in_failed(f"optout:{r}:")}}
+    save_state({"last": next_last, "seen": sorted(found_now | {i for i in seen if in_failed(i)})})
     print(json.dumps({"baseline": baseline, "new": new, "known": len(unique) - len(new)}, indent=1))
     return 0
 

@@ -104,7 +104,7 @@ ln -s "$REPO/bin/wt" "$HOME/.local/bin/wt"
 ln -s "$REPO/pi/extensions" "$HOME/.pi/agent/extensions"
 printf '// foreign\n' > "$REPO/pi/extensions/stray-ext.ts"
 
-STOP_CMD='if [ -z "${ORCA_PANE_KEY-}" ]; then exit 0; fi; /bin/sh "${HOME-}/.orca/hook.sh"'
+STOP_CMD='[ -n "$ORCA_TEST_VAR" ] && echo stop'
 STATUS_CMD='/opt/elsewhere/statusline.sh'
 jq -n --arg tool "$REPO/bin/tool" --arg stop "$STOP_CMD" --arg status "$STATUS_CMD" '{
   hooks: {
@@ -262,6 +262,58 @@ SYSTEM_CHECK_FAKE="$SANDBOX/empty-fake" sc s4
 [ "$(field '[.new[] | select(.id | startswith("install:failed:"))] | length > 0')" = "true" ] \
     && pass "a failing command is a finding" || fail "a failing command is a finding" "$(ids)"
 has "the other checks still run" "install:pi-extra:npm:hand-pkg"
+SYSTEM_CHECK_FAKE="$SANDBOX/empty-fake" sc s4
+[ "$(field '[.new[] | select(.id | startswith("install:failed:"))] | length > 0')" = "true" ] \
+    && pass "a check that stays broken is reported on every run" || fail "a check that stays broken is reported on every run" "$(ids)"
+sc s7
+SYSTEM_CHECK_FAKE="$SANDBOX/empty-fake" sc s7
+hasnt "a failed check does not report its old findings" "install:brewfile-missing:"
+sc s7
+hasnt "nor once it works again: its findings were kept" "install:brewfile-missing:"
+
+echo "recurring findings"
+sc s6
+printf 'edit\n' >> "$REPO/bin/tool"
+sc s6
+has "a finding is reported when it appears" "dirty:dotfiles:bin/tool"
+sc s6
+hasnt "not again while it stays" "dirty:dotfiles:bin/tool"
+git -C "$REPO" checkout -q -- bin/tool
+sc s6
+hasnt "nor once it is gone" "dirty:dotfiles:bin/tool"
+printf 'edit\n' >> "$REPO/bin/tool"
+sc s6
+has "again when it comes back" "dirty:dotfiles:bin/tool"
+git -C "$REPO" checkout -q -- bin/tool
+
+echo "optout failure"
+ART="$SANDBOX/articles"
+git -C "$SANDBOX" init -q -b main articles
+for n in a b; do printf '%s\n' "$n" > "$ART/$n"; git -C "$ART" add "$n"; git -C "$ART" commit -q -m "$n"; done
+export SYSTEM_REPOS="dotfiles=$REPO:decisions=$DEC:articles=$ART"
+sc s8
+before="$(jq -r .last.articles "$SANDBOX/state/s8")"
+for n in c d; do printf '%s\n' "$n" > "$ART/$n"; git -C "$ART" add "$n"; git -C "$ART" commit -q -m "$n"; done
+broken="$(git -C "$ART" rev-parse HEAD~1)"
+rm -f "$ART/.git/objects/${broken:0:2}/${broken:2}"
+sc s8
+[ "$code" -eq 0 ] && pass "an unreadable commit range does not crash the run" || fail "an unreadable commit range does not crash the run" "exit $code: $(cat "$SANDBOX/err")"
+has "a failed optout scan is a finding" "optout:failed:articles"
+[ "$(jq -r .last.articles "$SANDBOX/state/s8")" = "$before" ] && pass "a failed optout scan leaves last where it was" \
+    || fail "a failed optout scan leaves last where it was" "$(cat "$SANDBOX/state/s8")"
+sc s8
+has "and is reported again on the next run" "optout:failed:articles"
+export SYSTEM_REPOS="dotfiles=$REPO:decisions=$DEC"
+
+echo "bad input"
+printf '{"last": [], "seen": 5}\n' > "$SANDBOX/state/s9"
+sc s9
+[ "$code" -eq 0 ] && [ "$(field .baseline)" = "true" ] && pass "a malformed state file counts as no state" \
+    || fail "a malformed state file counts as no state" "exit $code: $out $(cat "$SANDBOX/err")"
+printf '{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/opt/x/\xff hook"}]}]}}\n' > "$SANDBOX/bad-settings.json"
+CLAUDE_SETTINGS="$SANDBOX/bad-settings.json" sc s10
+[ "$code" -eq 0 ] && [ "$(field '.new | length > 0')" = "true" ] && pass "settings that are not UTF-8 still give JSON" \
+    || fail "settings that are not UTF-8 still give JSON" "exit $code: $out $(cat "$SANDBOX/err")"
 
 echo "no system pages"
 SYSTEM_PAGES="$SANDBOX/no-system" sc s5
