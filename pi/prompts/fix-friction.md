@@ -14,7 +14,9 @@ handled by a **script** first (retry, health gate, preflight, cache, fallback, b
 **config** (re-auth, env var, setting, dropping a dead step), and only then **prompt** text, when the
 problem is the model's judgement. Runtime handling spends no model tokens.
 
-Write rules: the implementer never touches `~/wiki`; only this session writes the ledger, in step 5.
+Write rules: the implementer never touches `~/wiki` except `~/wiki/work/system/` and `~/wiki/tools/`
+(only those), which it updates when the fix changes the system and commits with
+`~/.local/bin/wiki-commit --by pi -m "<msg>" -- <paths>`; only this session writes the ledger, in step 5.
 Never push. Never merge before the user's explicit approval in step 4. Below, `F` is the argument
 (`F-007`) and `W=~/projects/worktrees/dotfiles/friction-$F`.
 
@@ -46,7 +48,7 @@ the child starts empty:
 - **Suites:** what the change touches: `bin/<x>.test.sh` for a changed script,
   `claude/daily/tests/run-all.sh` for the plugin, `node --test` in a touched pi extension,
   `bin/pi-contract` if pi prompts changed (needs a live model; say if it could not run).
-- **Constraints:** work only in `<W>`, never touch `~/wiki`, never push, Conventional Commits,
+- **Constraints:** work only in `<W>`, touch `~/wiki` only in `work/system/` and `tools/` (commit those with `wiki-commit --by pi`), never push, Conventional Commits,
   commit on the branch.
 - **Report:** rung and justification, files changed, commit sha, how to test by hand, suite results.
 

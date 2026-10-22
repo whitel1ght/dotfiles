@@ -17,6 +17,12 @@ Global instructions applied across all projects. Keep this short — project-lev
   sync or install step, in dotfiles or elsewhere — update the matching page in the
   same task, and the "Changes in progress" table in `index.md` when a planned
   change lands. Each page's `<!-- covers: -->` line says what it documents.
+- `~/wiki/work/system/` explains how each part works; its map is injected at session
+  start. Read a part's page before changing or explaining it. A change to a system
+  repo updates its `system/` page (and `tools/` when user-visible) in the same task.
+- Commit those wiki edits with `wiki-commit --by <claude|pi> --session <id> -m … -- <paths>`.
+  Hand edits (commits without `Agent-edit:`) are mine and never reverted. A decision
+  behind a change goes in `~/wiki/work/system/decisions/`, from `~/wiki/work/_templates/decision.md`.
 - dotfiles enforces this in its commit-msg hook (`docs-check`); a commit with no
   user-visible change carries a `Docs: none` line instead.
 

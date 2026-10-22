@@ -193,6 +193,10 @@ S="$(~/.local/bin/friction-ledger diary-section --date "$DAY" --mine-json "$M")"
 
 `end-day friction` puts it between its own markers at the end of the diary, so a re-run replaces it and the report is never touched. Mention the counts in one line.
 
+## Check the system
+
+Run `~/.local/bin/system-check`; it prints JSON with the findings that are new since its last run. For each `new` item, fix the page it names (`~/wiki/work/system/` or `~/wiki/tools/`), or ask me before moving a stray script into dotfiles or before adding a line to `known.txt`. An id containing `:failed` means a check itself is broken: report it as "check broken: <detail>" and do not edit a page for it. Commit page fixes with `~/.local/bin/wiki-commit --by claude -m "<msg>" -- <paths>`; if it exits 2 only because there is no wiki, carry on. List what changed under a **System** line in the closing message to me, never in the diary report.
+
 ## Index, commit and end the run
 
 This always runs, even when the memory step was skipped: the report and the diary edits still get committed. Set `DAY` again here (new shell):
