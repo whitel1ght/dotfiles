@@ -1,0 +1,60 @@
+#!/bin/bash
+# wiki-commit --by <claude|pi> [--session ID] -m MSG -- PATH...
+# Commit an agent's edits to wiki pages right away with an Agent-edit trailer,
+# so anything committed without it (wiki-sync, by hand) counts as the user's.
+set -uo pipefail
+
+WIKI_DIR="${WIKI_DIR:-$HOME/wiki}"
+
+usage() {
+    echo "usage: wiki-commit --by <claude|pi> [--session ID] -m MSG -- PATH..." >&2
+    exit 2
+}
+
+by="" session="" msg=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --by) [ $# -ge 2 ] || usage; by="$2"; shift 2 ;;
+        --session) [ $# -ge 2 ] || usage; session="$2"; shift 2 ;;
+        -m) [ $# -ge 2 ] || usage; msg="$2"; shift 2 ;;
+        --) shift; break ;;
+        *) usage ;;
+    esac
+done
+case "$by" in claude|pi) ;; *) usage ;; esac
+[ -n "$msg" ] && [ $# -gt 0 ] || usage
+
+# Lexically normalise an absolute path (the file may be deleted).
+normalize() {
+    local part out=() IFS=/
+    for part in $1; do
+        case "$part" in
+            ""|.) ;;
+            ..) [ ${#out[@]} -gt 0 ] && unset 'out[${#out[@]}-1]' ;;
+            *) out+=("$part") ;;
+        esac
+    done
+    echo "/${out[*]}"
+}
+
+root="$(normalize "$WIKI_DIR")"
+rel=()
+for p in "$@"; do
+    case "$p" in /*) abs="$p" ;; *) abs="$root/$p" ;; esac
+    abs="$(normalize "$abs")"
+    case "$abs" in
+        "$root/work/system/"?*|"$root/tools/"?*) rel+=("${abs#"$root"/}") ;;
+        *) echo "wiki-commit: outside work/system and tools: $p" >&2; exit 2 ;;
+    esac
+done
+
+cd "$WIKI_DIR" || { echo "wiki-commit: no wiki at $WIKI_DIR" >&2; exit 2; }
+
+if [ -z "$(git status --porcelain -- "${rel[@]}")" ]; then
+    echo "nothing to commit"
+    exit 0
+fi
+
+git add -A -- "${rel[@]}" || exit 1
+git commit -q --trailer "Agent-edit: $by ${session:-unknown}" -m "$msg" -- "${rel[@]}" || exit 1
+echo "committed: ${rel[*]}"

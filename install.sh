@@ -632,6 +632,11 @@ if [ -f "$DOTFILES_DIR/bin/open-path" ]; then
     create_symlink "$DOTFILES_DIR/bin/open-path" "$HOME/.local/bin/open-path"
 fi
 
+# wiki-commit commits an agent's edits to wiki pages with an Agent-edit trailer.
+if [ -f "$DOTFILES_DIR/bin/wiki-commit" ]; then
+    create_symlink "$DOTFILES_DIR/bin/wiki-commit" "$HOME/.local/bin/wiki-commit"
+fi
+
 # session-picker backs the prefix+j / prefix+a window pickers (tmux/.tmux.conf);
 # a vendored copy of the tmux-claude-picker plugin script that also covers pi,
 # opencode, and codex sessions.
