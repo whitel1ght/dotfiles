@@ -204,8 +204,8 @@ def post_merge() -> int:
     return 0
 
 
-def coverage() -> int:
-    tracked = git("ls-files")
+def coverage_problems(tracked: list[str]) -> list[str]:
+    """Problems `coverage` prints; tracked is the dotfiles checkout's ls-files."""
     manual = pages()
     text = "\n".join(p.read_text(errors="replace") for p in manual)
     problems = []
@@ -223,6 +223,11 @@ def coverage() -> int:
             if tracked_by[repo] is not None and not any(fnmatch.fnmatch(p, g) for p in tracked_by[repo]):
                 label = g if repo == "dotfiles" else f"{repo}:{g}"
                 problems.append(f"{page.name}: covers entry matches nothing: {label}")
+    return problems
+
+
+def coverage() -> int:
+    problems = coverage_problems(git("ls-files"))
     for line in problems:
         print(line)
     return 1 if problems else 0

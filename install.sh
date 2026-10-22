@@ -637,6 +637,11 @@ if [ -f "$DOTFILES_DIR/bin/wiki-commit" ]; then
     create_symlink "$DOTFILES_DIR/bin/wiki-commit" "$HOME/.local/bin/wiki-commit"
 fi
 
+# system-check reports drift in the system memory as JSON; /end-day runs it.
+if [ -f "$DOTFILES_DIR/bin/system-check" ]; then
+    create_symlink "$DOTFILES_DIR/bin/system-check" "$HOME/.local/bin/system-check"
+fi
+
 # session-picker backs the prefix+j / prefix+a window pickers (tmux/.tmux.conf);
 # a vendored copy of the tmux-claude-picker plugin script that also covers pi,
 # opencode, and codex sessions.

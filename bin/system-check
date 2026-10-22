@@ -1,0 +1,514 @@
+#!/usr/bin/env python3
+"""Find what slipped past the commit hooks and print it as JSON for /end-day.
+
+  system-check [--baseline]
+
+Prints {"baseline": bool, "new": [{"check", "id", "detail"}], "known": int}:
+only findings whose id was not reported before are "new"; "known" counts the
+rest. The checks:
+
+  optout   commits on trunk since the last run marked "Docs: none" (any page)
+           or "Docs: internal" (tools pages) that touch a covered path
+  dirty    covered paths changed or untracked in a system repo's checkout
+  stray    entries of ~/bin, ~/.local/bin, ~/.claude/hooks, ~/.pi/agent/extensions
+           that are not a file tracked by a system repo
+  foreign  hook and statusLine commands in ~/.claude/settings.json naming no
+           system repo, directly or through a link into one
+  lint     part pages missing a section, map.md over budget, `docs-check coverage`
+  branch   Unfinished entries whose branch is merged into trunk or gone
+  install  Brewfile vs brew, pi/settings.json vs pi's installs, Claude plugins
+           and marketplaces vs the ones install.sh sets up
+
+$SYSTEM_PAGES/known.txt acknowledges entries: "stray <name>" or "foreign
+<substring>", one per line, # comments. State (last trunk heads, ids already
+reported) lives in $SYSTEM_CHECK_STATE (default ~/.local/state/system-check/
+state.json); without it, or with --baseline, the run is a baseline: everything
+found is reported once and remembered. On the first run, commits already on
+trunk are not scanned. Without a system pages folder nothing is checked.
+
+Env for tests: SYSTEM_REPOS, SYSTEM_PAGES, SYSTEM_DOCS (as docs-check),
+CLAUDE_SETTINGS, SYSTEM_CHECK_DIRS (colon-separated), SYSTEM_CHECK_PLUGINS
+(~/.claude/plugins), SYSTEM_CHECK_PI (~/.pi/agent), SYSTEM_CHECK_FAKE (a folder
+of <command joined by _>.out files standing in for brew).
+"""
+
+import fnmatch
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+_loader = importlib.machinery.SourceFileLoader("docs_check", str(Path(__file__).resolve().parent / "docs-check"))
+_spec = importlib.util.spec_from_loader("docs_check", _loader)
+dc = importlib.util.module_from_spec(_spec)
+_loader.exec_module(dc)
+
+HOME = Path.home()
+STATE = Path(os.environ.get("SYSTEM_CHECK_STATE", "~/.local/state/system-check/state.json")).expanduser()
+SETTINGS = Path(os.environ.get("CLAUDE_SETTINGS", "~/.claude/settings.json")).expanduser()
+DIRS = [Path(d).expanduser() for d in os.environ.get(
+    "SYSTEM_CHECK_DIRS", "~/bin:~/.local/bin:~/.claude/hooks:~/.pi/agent/extensions").split(":") if d]
+PLUGINS = Path(os.environ.get("SYSTEM_CHECK_PLUGINS", "~/.claude/plugins")).expanduser()
+PI = Path(os.environ.get("SYSTEM_CHECK_PI", "~/.pi/agent")).expanduser()
+FAKE = os.environ.get("SYSTEM_CHECK_FAKE")
+MAP_BUDGET = 3072
+SECTIONS = ["## What it does", "## Moving parts", "## State it keeps", "## How it connects", "## Why",
+            "## Lessons and pitfalls", "## Unfinished"]
+BUNDLE_LINE = re.compile(r"^→\s+(.+?)\s+(\S+)\s+needs to be")
+HOME_VAR = re.compile(r"\$\{HOME[^}]*\}|\$HOME\b")
+PATH_TOKEN = re.compile(r"(?:~|/)[^\s'\";|&()<>`]*")
+APP_DIR = re.compile(r"/\.([a-z][\w-]*)/")
+APP_ENV = re.compile(r"\$\{?([A-Z][A-Z0-9]*)_[A-Z]")
+GENERIC_DIRS = {"claude", "local", "config", "cache", "pi"}
+
+Finding = dict
+
+
+def finding(check: str, id_: str, detail: str) -> Finding:
+    return {"check": check, "id": id_, "detail": detail}
+
+
+class CommandFailed(Exception):
+    def __init__(self, cmd: list[str], why: str):
+        super().__init__(f"{' '.join(cmd)}: {why}")
+        self.cmd = " ".join(cmd)
+
+
+def run(cmd: list[str], cwd: Path | None = None, ok: tuple[int, ...] = (0,), stderr: bool = False) -> str:
+    """Output of an outside command (plus stderr if asked); SYSTEM_CHECK_FAKE replaces it."""
+    if FAKE:
+        fake = Path(FAKE) / ("_".join(cmd) + ".out")
+        if not fake.is_file():
+            raise CommandFailed(cmd, f"no fake output {fake.name}")
+        return fake.read_text()
+    try:
+        done = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise CommandFailed(cmd, str(e)) from e
+    if done.returncode not in ok:
+        raise CommandFailed(cmd, f"exit {done.returncode}: {(done.stderr or done.stdout).strip()[:200]}")
+    return done.stdout + (done.stderr if stderr else "")
+
+
+def git_in(root: Path, *args: str) -> list[str]:
+    out = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, check=True).stdout
+    return [line for line in out.splitlines() if line]
+
+
+def short(path: Path) -> str:
+    try:
+        return "~/" + str(path.relative_to(HOME))
+    except ValueError:
+        return str(path)
+
+
+def trunk_head(root: Path) -> str | None:
+    for name in sorted(dc.TRUNK):
+        try:
+            return git_in(root, "rev-parse", "--verify", "-q", f"refs/heads/{name}")[0]
+        except (subprocess.CalledProcessError, IndexError):
+            continue
+    return None
+
+
+def trunk_heads(repos: dict[str, Path]) -> dict[str, str]:
+    heads = {}
+    for name, root in repos.items():
+        head = trunk_head(root) if root.is_dir() else None
+        if head:
+            heads[name] = head
+    return heads
+
+
+def tracked_paths(root: Path) -> set[str]:
+    """Tracked files of a repo and every folder above them."""
+    found = set()
+    for path in git_in(root, "ls-files"):
+        parts = path.split("/")
+        found.update("/".join(parts[:i]) for i in range(1, len(parts) + 1))
+    return found
+
+
+def owning_repo(path: Path, repos: dict[str, Path]) -> tuple[str, str] | None:
+    """(repo, path inside it) when path lies in a system repo's checkout."""
+    for name, root in repos.items():
+        if path == root:
+            return name, ""
+        if root in path.parents:
+            return name, str(path.relative_to(root))
+    return None
+
+
+def load_known(system: Path) -> dict[str, list[str]]:
+    known = {"stray": [], "foreign": []}
+    file = system / "known.txt"
+    if not file.is_file():
+        return known
+    for line in file.read_text(errors="replace").splitlines():
+        line = re.sub(r"\s+#.*$", "", line).strip()
+        if not line or line.startswith("#"):
+            continue
+        kind, _, value = line.partition(" ")
+        if kind in known and value.strip():
+            known[kind].append(value.strip())
+    return known
+
+
+def check_optout(repos: dict[str, Path], last: dict[str, str], heads: dict[str, str],
+                 pages: dict[Path, list[tuple[str, str]]]) -> list[Finding]:
+    found = []
+    for repo, head in heads.items():
+        root = repos[repo]
+        if repo not in last:
+            continue
+        try:
+            shas = git_in(root, "rev-list", "--reverse", f"{last[repo]}..{head}")
+        except subprocess.CalledProcessError:
+            continue
+        for sha in shas:
+            msg = "\n".join(git_in(root, "show", "-s", "--format=%B", sha))
+            skip = dc.opt_out(msg)
+            if not skip:
+                continue
+            files = git_in(root, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha)
+            skipped = {page: globs for page, globs in pages.items() if skip == "none" or dc.page_kind(page) == "tools"}
+            hits = [p for p in files if any(dc.covered_by(repo, p, g) for g in skipped.values())]
+            if hits:
+                hit_pages = sorted(page.name for page, g in skipped.items() if any(dc.covered_by(repo, p, g) for p in hits))
+                found.append(finding("optout", f"optout:{repo}:{sha}",
+                                     f"{repo} {sha[:7]} \"{msg.splitlines()[0] if msg else ''}\" (Docs: {skip}) "
+                                     f"changed {', '.join(hits)}, covered by {', '.join(hit_pages)}"))
+    return found
+
+
+def check_dirty(repos: dict[str, Path], pages: dict[Path, list[tuple[str, str]]]) -> list[Finding]:
+    found = []
+    for repo, root in repos.items():
+        if not root.is_dir():
+            continue
+        for line in git_in(root, "status", "--porcelain", "--untracked-files=all"):
+            path = line[3:].split(" -> ")[-1].strip('"')
+            pages_for = [p.name for p, g in pages.items() if dc.covered_by(repo, path, g)]
+            if pages_for:
+                state = "untracked" if line.startswith("??") else "changed outside a commit"
+                found.append(finding("dirty", f"dirty:{repo}:{path}",
+                                     f"{repo}:{path} is {state} in {root} (covered by {', '.join(pages_for)})"))
+    return found
+
+
+def check_stray(dirs: list[Path], repos: dict[str, Path], known: list[str]) -> list[Finding]:
+    found = []
+    tracked = {}
+    for folder in dirs:
+        if not folder.is_dir():
+            continue
+        for entry in sorted(folder.iterdir()):
+            if entry.name.startswith(".") or any(fnmatch.fnmatch(entry.name, k) for k in known):
+                continue
+            try:
+                target = entry.resolve()
+            except (OSError, RuntimeError):
+                target = entry
+            owner = owning_repo(target, repos)
+            if owner:
+                repo, rel = owner
+                if repo not in tracked:
+                    try:
+                        tracked[repo] = tracked_paths(repos[repo])
+                    except subprocess.CalledProcessError:
+                        tracked[repo] = set()
+                if rel in tracked[repo]:
+                    continue
+                why = f"resolves to {target}, which {repo} does not track"
+            elif entry.is_symlink():
+                why = f"links to {target}, outside the system repos"
+            else:
+                why = "is not a link into a system repo"
+            found.append(finding("stray", f"stray:{short(folder / entry.name)}", f"{short(folder / entry.name)} {why}"))
+    return found
+
+
+def hook_commands(settings: dict) -> list[tuple[str, str]]:
+    found = []
+    for event, groups in (settings.get("hooks") or {}).items():
+        for group in groups or []:
+            for hook in (group or {}).get("hooks") or []:
+                if isinstance(hook, dict) and hook.get("command"):
+                    found.append((event, hook["command"]))
+    status = settings.get("statusLine")
+    if isinstance(status, dict) and status.get("command"):
+        found.append(("statusLine", status["command"]))
+    return found
+
+
+def owned_command(command: str, repos: dict[str, Path]) -> bool:
+    text = HOME_VAR.sub(str(HOME), command)
+    text = re.sub(r"(?<![\w/.~-])~(?=/)", str(HOME), text)
+    if any(str(root) in text for root in repos.values()):
+        return True
+    for token in PATH_TOKEN.findall(text):
+        try:
+            if owning_repo(Path(token).resolve(), repos):
+                return True
+        except (OSError, RuntimeError, ValueError):
+            continue
+    return False
+
+
+def app_hint(command: str) -> str:
+    dirs = [d for d in APP_DIR.findall(command) if d not in GENERIC_DIRS]
+    if dirs:
+        return dirs[0]
+    env = APP_ENV.findall(command)
+    return env[0] if env else ""
+
+
+def check_foreign(settings_path: Path, repos: dict[str, Path], known: list[str]) -> list[Finding]:
+    if not settings_path.is_file():
+        return []
+    try:
+        settings = json.loads(settings_path.read_text())
+    except json.JSONDecodeError as e:
+        return [finding("foreign", "foreign:unreadable", f"{settings_path} is not valid JSON: {e}")]
+    found = []
+    for event, command in hook_commands(settings):
+        if any(k in command for k in known) or owned_command(command, repos):
+            continue
+        app = app_hint(command)
+        one_line = " ".join(command.split())
+        detail = f"{event} command no system repo provides" + (f" (looks like {app})" if app else "") + \
+            f": {one_line[:120]}{'…' if len(one_line) > 120 else ''}"
+        found.append(finding("foreign", f"foreign:{event}:{hashlib.sha1(command.encode()).hexdigest()[:8]}", detail))
+    return found
+
+
+def check_lint(system: Path, pages: dict[Path, list[tuple[str, str]]], dotfiles: Path | None) -> list[Finding]:
+    found = []
+    for page in pages:
+        if dc.page_kind(page) != "system":
+            continue
+        lines = {line.rstrip() for line in page.read_text(errors="replace").splitlines()}
+        for heading in SECTIONS:
+            if heading not in lines:
+                found.append(finding("lint", f"lint:heading:{page.name}:{heading}",
+                                     f"{short(page)} has no \"{heading}\" section"))
+    map_file = system / "map.md"
+    if map_file.is_file() and map_file.stat().st_size > MAP_BUDGET:
+        found.append(finding("lint", "lint:map-budget",
+                             f"{short(map_file)} is {map_file.stat().st_size} bytes, over the {MAP_BUDGET} budget"))
+    if dotfiles and dotfiles.is_dir():
+        for problem in dc.coverage_problems(git_in(dotfiles, "ls-files")):
+            found.append(finding("lint", f"lint:{problem}", problem))
+    return found
+
+
+def branch_state(root: Path, branch: str) -> str:
+    try:
+        git_in(root, "rev-parse", "--verify", "-q", f"refs/heads/{branch}")
+    except subprocess.CalledProcessError:
+        return "gone"
+    head = trunk_head(root)
+    if head is None:
+        return ""
+    merged = subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", f"refs/heads/{branch}", head],
+                            capture_output=True).returncode == 0
+    return "merged" if merged else ""
+
+
+def check_branch(pages: dict[Path, list[tuple[str, str]]], repos: dict[str, Path]) -> list[Finding]:
+    found = []
+    for page in pages:
+        for repo, branch in dc.unfinished_entries(page):
+            root = repos.get(repo)
+            if root is None or not root.is_dir():
+                continue
+            state = branch_state(root, branch)
+            if state:
+                text = "is merged into trunk" if state == "merged" else "no longer exists"
+                found.append(finding("branch", f"branch:{page.name}:{repo}:{branch}",
+                                     f"{short(page)} lists `{repo}:{branch}` under Unfinished, but the branch {text}"))
+    return found
+
+
+def brew_findings(dotfiles: Path) -> list[Finding]:
+    brewfile = dotfiles / "Brewfile"
+    if not brewfile.is_file():
+        return []
+    entries = {"brew": set(), "cask": set()}
+    for line in brewfile.read_text(errors="replace").splitlines():
+        match = dc.BREW_LINE.match(line)
+        if match and match.group(1) in entries:
+            entries[match.group(1)].add(match.group(2).rsplit("/", 1)[-1])
+    found = []
+    bundle = run(["brew", "bundle", "check", "--verbose", "--no-upgrade"], cwd=dotfiles, ok=(0, 1), stderr=True)
+    for line in bundle.splitlines():
+        match = BUNDLE_LINE.match(line.strip())
+        if match:
+            kind = match.group(1).lower().replace(" ", "-")
+            found.append(finding("install", f"install:brewfile-missing:{kind}:{match.group(2)}",
+                                 f"Brewfile {kind} {match.group(2)} is not installed"))
+    for kind, label, cmd in [("brew", "formula", ["brew", "leaves", "--installed-on-request"]),
+                             ("cask", "cask", ["brew", "list", "--cask", "-1"])]:
+        for name in run(cmd).split():
+            if name.rsplit("/", 1)[-1] not in entries[kind]:
+                found.append(finding("install", f"install:brew-extra:{label}:{name}",
+                                     f"{label} {name} is installed but not in the Brewfile"))
+    return found
+
+
+def pi_key(source: str) -> str:
+    kind, _, rest = source.partition(":")
+    if kind == "npm":
+        scope = "@" if rest.startswith("@") else ""
+        return f"npm:{scope}{rest[len(scope):].split('@', 1)[0]}"
+    if kind == "git":
+        rest = re.sub(r"^(https?://|git@)", "", rest).replace(":", "/")
+        return "git:" + re.sub(r"(\.git)?(@[^/]*)?$", "", rest)
+    return source
+
+
+def pi_findings(dotfiles: Path, pi: Path) -> list[Finding]:
+    settings_file = dotfiles / "pi" / "settings.json"
+    if not settings_file.is_file() or not pi.is_dir():
+        return []
+    packages = json.loads(settings_file.read_text()).get("packages") or []
+    wanted = {pi_key(p if isinstance(p, str) else p.get("source", "")) for p in packages}
+    installed = set()
+    npm = pi / "npm" / "package.json"
+    if npm.is_file():
+        installed |= {f"npm:{name}" for name in (json.loads(npm.read_text()).get("dependencies") or {})}
+    git_dir = pi / "git"
+    if git_dir.is_dir():
+        installed |= {"git:" + str(p.relative_to(git_dir)) for p in git_dir.glob("*/*/*") if p.is_dir()}
+    found = [finding("install", f"install:pi-missing:{p}", f"pi package {p} is in pi/settings.json but not installed")
+             for p in sorted(wanted - installed)]
+    found += [finding("install", f"install:pi-extra:{p}", f"pi package {p} is installed but not in pi/settings.json")
+              for p in sorted(installed - wanted)]
+    return found
+
+
+def configured_plugins(dotfiles: Path) -> tuple[set[str], set[str]]:
+    """Marketplace names and plugin ids (name@marketplace) install.sh sets up."""
+    install = dotfiles / "install.sh"
+    marketplaces, plugins = set(), set()
+    if not install.is_file():
+        return marketplaces, plugins
+    for line in install.read_text(errors="replace").splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        match = re.search(r"claude plugin marketplace add\s+\"?([^\"\s]+)", line)
+        if match:
+            path = match.group(1).replace("${DOTFILES_DIR}", str(dotfiles)).replace("$DOTFILES_DIR", str(dotfiles))
+            path = HOME_VAR.sub(str(HOME), path)
+            manifest = Path(path).expanduser() / ".claude-plugin" / "marketplace.json"
+            if manifest.is_file():
+                data = json.loads(manifest.read_text())
+                marketplaces.add(data.get("name", ""))
+                plugins |= {f"{p.get('name')}@{data.get('name')}" for p in data.get("plugins") or []}
+            else:
+                marketplaces.add(path.rstrip("/").rsplit("/", 1)[-1])
+        plugins |= set(re.findall(r"claude plugin install\s+(\S+@\S+)", line))
+    return marketplaces, plugins
+
+
+def plugin_findings(dotfiles: Path, plugins_dir: Path) -> list[Finding]:
+    marketplaces, plugins = configured_plugins(dotfiles)
+    found = []
+    installed_file = plugins_dir / "installed_plugins.json"
+    if installed_file.is_file():
+        for plugin in sorted(json.loads(installed_file.read_text()).get("plugins") or {}):
+            if plugin not in plugins:
+                found.append(finding("install", f"install:plugin-extra:{plugin}",
+                                     f"Claude plugin {plugin} is installed but dotfiles does not set it up"))
+    known_file = plugins_dir / "known_marketplaces.json"
+    if known_file.is_file():
+        known = json.loads(known_file.read_text())
+        for name in sorted(set(known) - marketplaces):
+            found.append(finding("install", f"install:marketplace-extra:{name}",
+                                 f"Claude marketplace {name} is registered but dotfiles does not set it up"))
+        for name in sorted(marketplaces - set(known)):
+            found.append(finding("install", f"install:marketplace-missing:{name}",
+                                 f"Claude marketplace {name} from install.sh is not registered"))
+    return found
+
+
+def check_install(dotfiles: Path | None, plugins_dir: Path, pi: Path) -> list[Finding]:
+    if not dotfiles or not dotfiles.is_dir():
+        return []
+    found = []
+    for part in (lambda: brew_findings(dotfiles), lambda: pi_findings(dotfiles, pi),
+                 lambda: plugin_findings(dotfiles, plugins_dir)):
+        try:
+            found += part()
+        except CommandFailed as e:
+            found.append(finding("install", f"install:failed:{e.cmd}", f"skipped, a command failed: {e}"))
+        except (OSError, json.JSONDecodeError) as e:
+            found.append(finding("install", f"install:failed:{type(e).__name__}", str(e)))
+    return found
+
+
+def load_state() -> dict | None:
+    if not STATE.is_file():
+        return None
+    try:
+        state = json.loads(STATE.read_text())
+    except json.JSONDecodeError:
+        return None
+    return state if isinstance(state, dict) else None
+
+
+def save_state(state: dict) -> None:
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=1) + "\n")
+    tmp.replace(STATE)
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if args not in ([], ["--baseline"]):
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    state = load_state()
+    baseline = state is None or args == ["--baseline"]
+    if not dc.SYSTEM.is_dir():
+        print(json.dumps({"baseline": baseline, "new": [], "known": 0}))
+        return 0
+    state = state or {}
+    last = state.get("last") or {}
+    seen = set() if baseline else set(state.get("seen") or [])
+    repos = dc.REPOS
+    pages = dc.pages()
+    heads = trunk_heads(repos)
+    known = load_known(dc.SYSTEM)
+    dotfiles = repos.get("dotfiles")
+
+    findings = []
+    for name, check in [
+        ("optout", lambda: check_optout(repos, last, heads, pages)),
+        ("dirty", lambda: check_dirty(repos, pages)),
+        ("stray", lambda: check_stray(DIRS, repos, known["stray"])),
+        ("foreign", lambda: check_foreign(SETTINGS, repos, known["foreign"])),
+        ("lint", lambda: check_lint(dc.SYSTEM, pages, dotfiles)),
+        ("branch", lambda: check_branch(pages, repos)),
+        ("install", lambda: check_install(dotfiles, PLUGINS, PI)),
+    ]:
+        try:
+            findings += check()
+        except (subprocess.CalledProcessError, OSError) as e:
+            findings.append(finding(name, f"{name}:failed", f"the {name} check could not run: {e}"))
+
+    unique = {f["id"]: f for f in findings}
+    new = [f for i, f in unique.items() if i not in seen]
+    save_state({"last": {**last, **heads}, "seen": sorted(seen | set(unique))})
+    print(json.dumps({"baseline": baseline, "new": new, "known": len(unique) - len(new)}, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
