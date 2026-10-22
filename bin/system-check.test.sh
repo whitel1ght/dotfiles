@@ -292,6 +292,20 @@ sc s3
 hasnt "a foreign substring in known.txt is not reported" "foreign:Stop:"
 has "other foreign entries still are" "foreign:statusLine:$(sha8 "$STATUS_CMD")"
 
+echo "known install"
+printf 'install plugin-extra:*@official  # deliberate per-repo plugins\ninstall install:brew-extra:cask:handcask\n' >> "$SYSTEM/known.txt"
+sc s11
+hasnt "an install glob in known.txt hides the matching finding" "install:plugin-extra:superpowers@official"
+hasnt "the glob may name the whole id" "install:brew-extra:cask:handcask"
+has "other install findings still are reported" "install:plugin-extra:stale@my-dotfiles"
+has "a glob for plugins does not hide a marketplace" "install:marketplace-extra:official"
+[ "$(field .known)" = "2" ] && pass "acknowledged install findings count as known" || fail "acknowledged install findings count as known" "$out"
+printf 'install *\n' >> "$SYSTEM/known.txt"
+SYSTEM_CHECK_FAKE="$SANDBOX/empty-fake" sc s12
+[ "$(field '[.new[] | select(.id | startswith("install:failed:"))] | length > 0')" = "true" ] \
+    && pass "a broken install check is never acknowledged" || fail "a broken install check is never acknowledged" "$(ids)"
+sed -i '' '/^install /d' "$SYSTEM/known.txt"
+
 echo "failing commands"
 SYSTEM_CHECK_FAKE="$SANDBOX/empty-fake" sc s4
 [ "$code" -eq 0 ] && pass "a failing command does not crash the run" || fail "a failing command does not crash the run" "exit $code: $(cat "$SANDBOX/err")"

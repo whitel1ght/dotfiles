@@ -26,8 +26,10 @@ last time stay remembered. The checks:
   install  Brewfile vs brew, pi/settings.json vs pi's installs, Claude plugins
            and marketplaces vs the ones install.sh sets up
 
-$SYSTEM_PAGES/known.txt acknowledges entries: "stray <name>" or "foreign
-<substring>", one per line, # comments. State (last trunk heads, ids found
+$SYSTEM_PAGES/known.txt acknowledges entries: "stray <name>", "foreign
+<substring>" or "install <glob>" (over the finding id, "install:" optional,
+e.g. "install plugin-extra:*@claude-plugins-official"; such findings count as
+known, a failed install check never does), one per line, # comments. State (last trunk heads, ids found
 last run) lives in $SYSTEM_CHECK_STATE (default ~/.local/state/system-check/
 state.json); without it, or with --baseline, the run is a baseline: everything
 found is reported (and, recorded, remembered). --baseline always writes the
@@ -152,7 +154,7 @@ def owning_repo(path: Path, repos: dict[str, Path]) -> tuple[str, str] | None:
 
 
 def load_known(system: Path) -> dict[str, list[str]]:
-    known = {"stray": [], "foreign": []}
+    known = {"stray": [], "foreign": [], "install": []}
     file = system / "known.txt"
     if not file.is_file():
         return known
@@ -476,6 +478,14 @@ def is_failure(id_: str) -> bool:
     return id_.split(":")[1:2] == ["failed"]
 
 
+def acknowledged_install(id_: str, globs: list[str]) -> bool:
+    """An install finding known.txt names by a glob over its id, with or without "install:"."""
+    if not id_.startswith("install:") or is_failure(id_):
+        return False
+    bare = id_[len("install:"):]
+    return any(fnmatch.fnmatchcase(id_, g) or fnmatch.fnmatchcase(bare, g) for g in globs)
+
+
 def scope(id_: str) -> str:
     """The check (or part of one) an id belongs to: a failure there keeps its old ids seen."""
     parts = id_.split(":")
@@ -554,7 +564,8 @@ def main() -> int:
     def in_failed(id_: str) -> bool:
         return any(scope(id_) == s or scope(id_).startswith(s + ":") for s in failed)
 
-    new = [f for i, f in unique.items() if is_failure(i) or i not in seen]
+    new = [f for i, f in unique.items()
+           if (is_failure(i) or i not in seen) and not acknowledged_install(i, known["install"])]
     found_now = {i for i in unique if not is_failure(i)}
     next_last = {**last, **{r: h for r, h in heads.items() if not in_failed(f"optout:{r}:")}}
     if record:
