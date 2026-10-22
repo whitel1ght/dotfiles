@@ -10,6 +10,9 @@
 #   ticket   Jira key, or null; mr the MR iid, or null; repo the GitLab repo name
 #            (last path segment, e.g. ecfx-dashboard), or null
 #   at       UTC, second precision, e.g. 2026-10-08T07:12:33Z
+#   approved_by_me  true, only on a mention or review to-do for someone else's MR
+#            I already approved; its summary starts "[approved by you — reply
+#            only, never review] ". Review requests on such an MR are dropped.
 # Events are sorted by `at`. Per run there is at most one event per kind per MR,
 # and one per kind per ticket for Jira events.
 #
@@ -35,6 +38,9 @@
 # CHANGES_SINCE_BUDGET seconds (40), inside the 60 s the daily watcher allows. A
 # call that times out twice fails the run with exit 75 and "timed out" on
 # stderr, no service_down line and no cursor move: the caller skips that tick.
+# The one exception is the approvals lookup behind approved_by_me (one call per
+# MR): when it fails or times out, that MR's events go out unmarked, with a note
+# on stderr and a gitlab-approvals friction line, and the run carries on.
 #
 # Needs jira-api (it reads the Jira token from ~/.secrets), glab and jq.
 set -euo pipefail
@@ -139,23 +145,59 @@ feed_jira() {
 
 gitlab_json() { bounded glab api --paginate "$1" | jq -s 'add // []'; }
 
+TODO_DEFS='
+def kind: {assigned: "assigned", review_requested: "assigned", approval_required: "assigned",
+           mentioned: "mention", directly_addressed: "mention", build_failed: "pipeline_failed",
+           review_submitted: "review"}[.] // "mention";
+def mr_ref: (.target.project_id // .project.id // (.project.path_with_namespace | @uri)) | tostring;
+'
+
+# MRs of others among the to-dos that I already approved, as ["<project>:<iid>", ...].
+# A failed lookup is logged and leaves that MR out, so its events stay unmarked.
+approved_by_me() {
+  local approved='[]' ref iid resp rc
+  while IFS=$'\t' read -r ref iid; do
+    rc=0; resp=$(bounded glab api "projects/$ref/merge_requests/$iid/approvals") || rc=$?
+    if [ "$rc" -eq 0 ] && jq -e '.approved_by | type == "array"' <<<"$resp" >/dev/null 2>&1; then
+      if jq -e --arg me "$ME" 'any(.approved_by[]; .user.username == $me)' <<<"$resp" >/dev/null; then
+        approved=$(jq -c --arg k "$ref:$iid" '. + [$k]' <<<"$approved")
+      fi
+    else
+      rm -f "$TIMED_OUT"
+      echo "changes-since: approvals of $ref!$iid unavailable; its to-dos stay unmarked" >&2
+      friction_log --source gitlab-approvals "$([ "$rc" -eq 124 ] && echo timeout || echo tool_error)" "approvals lookup failed for $ref!$iid"
+    fi
+  done < <(jq -r --arg since "$SINCE" --arg me "$ME" "$JQ_DEFS$TODO_DEFS"'
+    [.[] | select(.target_type == "MergeRequest" and (.target.author.username // "") != $me
+           and (.action_name | kind) != "pipeline_failed" and (.created_at | utc) >= $since)
+     | [mr_ref, (.target.iid | tostring)]] | unique[] | @tsv' <<<"$1")
+  printf '%s\n' "$approved"
+}
+
 feed_gitlab_todos() {
-  local todos
+  local todos approved
   todos=$(gitlab_json 'todos?state=pending&per_page=100') || return 1
   jq -e 'type == "array"' <<<"$todos" >/dev/null || return 1
-  jq -c --arg since "$SINCE" --arg jp "$JIRA_PROJECT" "$JQ_DEFS"'
-    def kind: {assigned: "assigned", review_requested: "assigned", approval_required: "assigned",
-               mentioned: "mention", directly_addressed: "mention", build_failed: "pipeline_failed",
-               review_submitted: "review"}[.] // "mention";
+  approved=$(approved_by_me "$todos")
+  # D-011: no review round on an MR I approved, so its review requests go and
+  # anything else on it is marked reply-only.
+  jq -c --arg since "$SINCE" --arg jp "$JIRA_PROJECT" --argjson approved "$approved" "$JQ_DEFS$TODO_DEFS"'
     .[] | (.created_at | utc) as $at | select($at >= $since)
+    | (.action_name | kind) as $kind
+    | (mr_ref + ":" + (.target.iid | tostring)) as $k
+    | (.target_type == "MergeRequest" and any($approved[]; . == $k)) as $approved_mr
+    | select(($approved_mr and $kind == "assigned") | not)
+    | ($approved_mr and ($kind == "mention" or $kind == "review")) as $mark
     | (.project.path_with_namespace // "") as $path
     | (if .target_type == "MergeRequest" then .target.iid else null end) as $iid
     | ([((.target.source_branch // "") + " " + (.target.title // "")) | capture("(?<k>(?i:" + $jp + ")-[0-9]+)").k | ascii_upcase][0]) as $ticket
-    | {kind: (.action_name | kind),
+    | {kind: $kind,
        project: (if ($path | split("/")[0]) == "ecfx" then "ecfx" else null end),
        ticket: $ticket, mr: $iid, repo: (if $path == "" then null else ($path | split("/") | last) end),
-       summary: "@\(.author.username // "?") \(.action_name | gsub("_"; " ")): \(.target.title // .body)",
-       url: (.target_url // .target.web_url), at: $at}' <<<"$todos" >> "$EVENTS"
+       summary: ((if $mark then "[approved by you — reply only, never review] " else "" end)
+         + "@\(.author.username // "?") \(.action_name | gsub("_"; " ")): \(.target.title // .body)"),
+       url: (.target_url // .target.web_url), at: $at}
+    | if $mark then . + {approved_by_me: true} else . end' <<<"$todos" >> "$EVENTS"
 }
 
 feed_gitlab_mrs() {

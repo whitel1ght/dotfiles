@@ -39,7 +39,8 @@ STUB
 chmod +x "$STUBS/jira-api"
 
 # glab api [--paginate] <endpoint>: one fixture per endpoint, named after
-# project id and MR iid; GLAB_FAIL=<substring> makes matching calls fail.
+# project id and MR iid (approvals default to none); GLAB_FAIL=<substring>
+# makes matching calls fail.
 cat > "$STUBS/glab" <<'STUB'
 #!/bin/bash
 echo "$*" >> "${FIX:?}/glab.log"
@@ -52,6 +53,8 @@ case "$*" in
     *"merge_requests?scope=created_by_me"*) cat "$FIX/mrs.json" ;;
     *projects/*/merge_requests/*/notes*)
         id=$(sed -E 's#.*projects/([0-9]+)/merge_requests/([0-9]+)/.*#\1-\2#' <<<"$*"); cat "$FIX/notes-$id.json" ;;
+    *projects/*/merge_requests/*/approvals*)
+        id=$(sed -E 's#.*projects/([^/]+)/merge_requests/([0-9]+)/.*#\1-\2#' <<<"$*"); cat "$FIX/approvals-$id.json" 2>/dev/null || echo '{"approved_by":[]}' ;;
     *projects/*/merge_requests/*/pipelines*)
         id=$(sed -E 's#.*projects/([0-9]+)/merge_requests/([0-9]+)/.*#\1-\2#' <<<"$*"); cat "$FIX/pipelines-$id.json" ;;
     *projects/*/merge_requests/*)
@@ -307,6 +310,40 @@ out=$(run)
 assert_eq "pipeline_failed" "$(jq -r .kind <<<"$out")" "build_failed to-do is a pipeline_failed event"
 assert_eq "ECFX-9190" "$(jq -r .ticket <<<"$out")" "with the ticket from the branch"
 
+echo "changes-since — to-dos on MRs I already approved (D-011)"
+approvals() { printf '{"approved_by":[%s]}\n' "$(printf '{"user":{"username":"%s"}},' "${@:2}" | sed 's/,$//')" > "$FIX/approvals-$1.json"; }
+todo() { # id action mr_author iid project_id created_at
+  printf '{"id":%s,"project":{"id":%s,"path_with_namespace":"ecfx/ecfx-backend"},"author":{"username":"bob"},"action_name":"%s","target_type":"MergeRequest","target":{"iid":%s,"project_id":%s,"title":"T%s","source_branch":"b","author":{"username":"%s"},"web_url":"u%s"},"target_url":"u%s","body":"x","created_at":"%s"}' \
+    "$1" "$5" "$2" "$4" "$5" "$4" "$3" "$4" "$4" "$6"
+}
+reset; cursor 2026-10-08T07:00:00Z
+echo "[$(todo 1 review_requested alice 100 3 2026-10-08T07:10:00Z),$(todo 2 mentioned alice 100 3 2026-10-08T07:20:00Z),$(todo 3 review_submitted carol 101 3 2026-10-08T07:30:00Z),$(todo 4 approval_required dan 102 3 2026-10-08T07:40:00Z),$(todo 5 directly_addressed me 103 3 2026-10-08T07:50:00Z),$(todo 6 mentioned erin 104 3 2026-10-08T07:55:00Z)]" > "$FIX/todos.json"
+approvals 3-100 someone me; approvals 3-101 me; approvals 3-102 someone; approvals 3-104 me
+out=$(run); rc=$?
+assert_eq "0" "$rc" "exit 0"
+assert_eq "" "$(jq -c 'select(.mr == 100 and .kind == "assigned")' <<<"$out")" "a review request on an MR I approved is dropped"
+assert_eq '{"kind":"mention","project":"ecfx","ticket":null,"mr":100,"repo":"ecfx-backend","summary":"[approved by you — reply only, never review] @bob mentioned: T100","url":"u100","at":"2026-10-08T07:20:00Z","approved_by_me":true}' "$(jq -c 'select(.mr == 100)' <<<"$out")" "a mention on it is kept, marked approved_by_me, summary prefixed"
+assert_eq "review true" "$(jq -r 'select(.mr == 101) | "\(.kind) \(.approved_by_me)"' <<<"$out")" "a submitted review on an MR I approved is kept and marked"
+assert_eq "assigned null" "$(jq -r 'select(.mr == 102) | "\(.kind) \(.approved_by_me)"' <<<"$out")" "approval required on an MR only others approved: assigned, unmarked"
+assert_eq "@bob directly addressed: T103" "$(jq -r 'select(.mr == 103) | .summary' <<<"$out")" "my own MR: unmarked"
+assert_eq "1" "$(grep -c 'merge_requests/100/approvals' "$FIX/glab.log")" "one approvals call per MR per run, though two to-dos point at it"
+assert_eq "0" "$(grep -c 'merge_requests/103/approvals' "$FIX/glab.log")" "no approvals call for my own MR"
+assert_eq "1" "$(grep -c '^api user$' "$FIX/glab.log")" "my username comes from one glab api user call"
+[ ! -e "$FIX/friction.log" ] && pass "a healthy lookup logs nothing" || fail "a healthy lookup logs nothing" "$(cat "$FIX/friction.log")"
+
+reset; cursor 2026-10-08T07:00:00Z
+echo "[$(todo 1 review_requested alice 100 3 2026-10-08T07:10:00Z),$(todo 2 mentioned erin 104 3 2026-10-08T07:20:00Z)]" > "$FIX/todos.json"
+approvals 3-104 me
+out=$(GLAB_FAIL='merge_requests/100/approvals' run); rc=$?
+assert_eq "0" "$rc" "an approvals lookup that fails does not fail the run"
+assert_eq "assigned" "$(jq -r 'select(.mr == 100) | .kind' <<<"$out")" "its event is kept"
+assert_eq "null" "$(jq -r 'select(.mr == 100) | .approved_by_me' <<<"$out")" "and left unmarked"
+assert_eq "true" "$(jq -r 'select(.mr == 104) | .approved_by_me' <<<"$out")" "the other MR is still marked"
+assert_eq "--source gitlab-approvals tool_error approvals lookup failed for 3!100" "$(cat "$FIX/friction.log" 2>/dev/null)" "the failure is logged as friction"
+assert_contains "$(errs)" "approvals of 3!100" "and noted on stderr"
+[ ! -e "$STATE/gitlab:down" ] && pass "no GitLab outage marker for one MR" || fail "no GitLab outage marker for one MR" "marker written"
+[ "$(cat "$STATE/default")" != "2026-10-08T07:00:00Z" ] && pass "the cursor moves" || fail "the cursor moves" "unchanged"
+
 echo "changes-since — Jira time zone"
 reset; cursor 2026-10-08T07:00:00Z
 JIRA_TZ=Asia/Tbilisi run >/dev/null
@@ -410,6 +447,13 @@ assert_eq "" "$out" "nothing on stdout"
 assert_eq "2" "$(grep -c todos "$FIX/glab.log")" "the to-dos call was retried once"
 [ ! -e "$FIX/friction.log" ] && pass "no service_down for a glab timeout" || fail "no service_down for a glab timeout" "$(cat "$FIX/friction.log")"
 [ ! -e "$STATE/gitlab:down" ] && pass "no marker for a glab timeout" || fail "no marker for a glab timeout" "marker written"
+
+reset; cursor 2026-10-08T07:00:00Z
+echo "[$(todo 1 review_requested alice 100 3 2026-10-08T07:10:00Z)]" > "$FIX/todos.json"
+out=$(GLAB_SLEEP_ON="approvals" run); rc=$?
+assert_eq "0" "$rc" "an approvals call that hangs is a soft failure too: exit 0"
+assert_eq "assigned" "$(jq -r .kind <<<"$out")" "its event is kept unmarked"
+assert_eq "--source gitlab-approvals timeout approvals lookup failed for 3!100" "$(cat "$FIX/friction.log" 2>/dev/null)" "logged as a timeout"
 
 reset; cursor 2026-10-08T07:00:00Z
 start=$SECONDS
