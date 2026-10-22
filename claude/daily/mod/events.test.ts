@@ -60,6 +60,13 @@ test('formatPrompt flattens newlines and pipes, truncates, and fills gaps with a
   expect(line.split(' | ').length).toBe(5)
 })
 
+test('a long summary keeps the whole reply-only prefix changes-since puts on MRs we approved', async () => {
+  const prefix = '[approved by you — reply only, never review] '
+  const line = formatPrompt({ ...review, kind: 'comment', summary: `${prefix}@bob mentioned: ${'x'.repeat(300)}` })
+  expect(line.split(' | ')[3].startsWith(prefix.trim())).toBe(true)
+  expect(line.includes('… | https://x/2231')).toBe(true)
+})
+
 test('formatNote uses the info tag; formatToast is short and readable', async () => {
   expect(formatNote(review).startsWith('[daily-event:info] review')).toBe(true)
   expect(formatToast(review)).toBe('review ECFX-18169 dashboard!2231: bkeeling requested changes')

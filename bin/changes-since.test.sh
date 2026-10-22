@@ -344,6 +344,12 @@ assert_contains "$(errs)" "approvals of 3!100" "and noted on stderr"
 [ ! -e "$STATE/gitlab:down" ] && pass "no GitLab outage marker for one MR" || fail "no GitLab outage marker for one MR" "marker written"
 [ "$(cat "$STATE/default")" != "2026-10-08T07:00:00Z" ] && pass "the cursor moves" || fail "the cursor moves" "unchanged"
 
+prefix=$(sed -n 's/.*"\(\[approved by you[^"]*\)".*/\1/p' "$SCRIPT" | head -1)
+assert_eq "[approved by you — reply only, never review] " "$prefix" "the script's reply-only prefix (found in its source)"
+for pb in claude/daily/commands/run-day.md pi/prompts/run-day.md; do
+  assert_contains "$(cat "$TEST_DIR/../$pb")" "\`${prefix% }\`" "$pb quotes the same prefix the playbook rule keys on"
+done
+
 echo "changes-since — Jira time zone"
 reset; cursor 2026-10-08T07:00:00Z
 JIRA_TZ=Asia/Tbilisi run >/dev/null
@@ -450,10 +456,21 @@ assert_eq "2" "$(grep -c todos "$FIX/glab.log")" "the to-dos call was retried on
 
 reset; cursor 2026-10-08T07:00:00Z
 echo "[$(todo 1 review_requested alice 100 3 2026-10-08T07:10:00Z)]" > "$FIX/todos.json"
-out=$(GLAB_SLEEP_ON="approvals" run); rc=$?
+out=$(GLAB_SLEEP_ON="approvals" CHANGES_SINCE_APPROVALS_TIMEOUT=1 run); rc=$?
 assert_eq "0" "$rc" "an approvals call that hangs is a soft failure too: exit 0"
 assert_eq "assigned" "$(jq -r .kind <<<"$out")" "its event is kept unmarked"
 assert_eq "--source gitlab-approvals timeout approvals lookup failed for 3!100" "$(cat "$FIX/friction.log" 2>/dev/null)" "logged as a timeout"
+
+reset; cursor 2026-10-08T07:00:00Z
+echo "[$(todo 1 review_requested alice 100 3 2026-10-08T07:10:00Z),$(todo 2 review_requested alice 101 3 2026-10-08T07:20:00Z),$(todo 3 review_requested alice 102 3 2026-10-08T07:30:00Z)]" > "$FIX/todos.json"
+start=$SECONDS
+out=$(GLAB_SLEEP_ON="approvals" CHANGES_SINCE_BUDGET=6 CHANGES_SINCE_APPROVALS_TIMEOUT=1 CHANGES_SINCE_APPROVALS_BUDGET=2 run); rc=$?
+elapsed=$((SECONDS - start))
+assert_eq "0" "$rc" "three hanging approvals lookups do not exhaust the run's budget: exit 0"
+assert_eq "3" "$(printf '%s\n' "$out" | grep -c '"kind":"assigned"')" "all three events print, unmarked"
+[ "$(cat "$STATE/default")" != "2026-10-08T07:00:00Z" ] && pass "and the cursor moves" || fail "and the cursor moves" "unchanged"
+assert_eq "2" "$(grep -c approvals "$FIX/glab.log")" "one attempt each, no retry, until the lookups' own 2 s budget is spent (the third is not called)"
+[ "$elapsed" -le 4 ] && pass "lookups stay within their sub-budget (${elapsed}s)" || fail "lookups stay within their sub-budget" "took ${elapsed}s"
 
 reset; cursor 2026-10-08T07:00:00Z
 start=$SECONDS
