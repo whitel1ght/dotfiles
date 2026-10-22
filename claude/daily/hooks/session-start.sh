@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SessionStart: re-inject today's /run-day context (compact|resume), and the standing directions
-# learned from earlier days (every start; `session-start.sh directions` is the directions only).
-# Silent when there is neither. A missing friction-ledger or directions file injects nothing.
+# learned from earlier days plus the system map (every start; `session-start.sh directions` is
+# those two only). Silent when there is none. A missing friction-ledger, directions file or map
+# injects nothing.
 set -euo pipefail
 
 STATE_DIR="${RUN_DAY_STATE_DIR:-$HOME/.local/state/run-day}"
@@ -21,6 +22,17 @@ if [ -x "$FRICTION_LEDGER_BIN" ]; then
 ## Standing directions
 Rules the user gave in earlier sessions, active until retired. Follow them.
 $directions"
+fi
+
+# The map is cut to 3072 bytes (iconv drops a split trailing character); like the directions it
+# rides after the 6000-character run-day cut, so it never squeezes the run state.
+SYSTEM_MAP="${SYSTEM_MAP:-$WIKI/work/system/map.md}"
+if [ -f "$SYSTEM_MAP" ]; then
+  map="$(head -c 3072 "$SYSTEM_MAP" 2>/dev/null | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null || true)"
+  [ -z "${map//[[:space:]]/}" ] || dir_text="$dir_text
+
+## System map
+$map"
 fi
 
 if [ "${1:-}" = directions ] || [ ! -f "$STATE" ]; then

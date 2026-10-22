@@ -122,6 +122,36 @@ printf '#!/bin/sh\nexit 3\n' >"$SANDBOX/broken"; chmod +x "$SANDBOX/broken"; exp
 bash "$HOOK" </dev/null >/dev/null 2>&1; assert_eq "0" "$?" "a failing script does not fail the hook"
 assert_eq "startup|clear" "$(jq -r '.hooks.SessionStart[] | select(.hooks[0].command | endswith("directions")) | .matcher' "$TEST_DIR/../hooks/hooks.json")" "directions are injected on startup and after /clear"
 
+echo "== system map =="
+export FRICTION_LEDGER_BIN="$SANDBOX/no-such-friction-ledger"
+rm -f "$RUN_DAY_STATE_DIR/2026-10-08.md"
+unset SYSTEM_MAP
+assert_eq "" "$(bash "$HOOK" </dev/null)" "default map path missing, no run: silent"
+export SYSTEM_MAP="$SANDBOX/map.md"
+assert_eq "" "$(bash "$HOOK" </dev/null)" "map file missing, no run: silent"
+: > "$SYSTEM_MAP"
+assert_eq "" "$(bash "$HOOK" </dev/null)" "empty map, no run: silent"
+printf -- '- run-day: the daily plan\n' > "$SYSTEM_MAP"
+out="$(bash "$HOOK" </dev/null)"
+ctx="$(printf '%s' "$out" | jq -r '.hookSpecificOutput.additionalContext')"
+assert_eq "SessionStart" "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.hookEventName')" "map alone: valid hook JSON"
+assert_contains "$ctx" "## System map" "map under its heading"
+assert_contains "$ctx" "- run-day:" "map text present"
+assert_lacks "$ctx" "run-day session is active" "no run context without a run"
+ctx="$(bash "$HOOK" directions </dev/null | jq -r '.hookSpecificOutput.additionalContext')"
+assert_contains "$ctx" "- run-day:" "the directions argument injects the map too"
+printf '# run-day 2026-10-08\n- ecfx-1 | class=auto | needs_you=no\n' > "$RUN_DAY_STATE_DIR/2026-10-08.md"
+ctx="$(bash "$HOOK" </dev/null | jq -r '.hookSpecificOutput.additionalContext')"
+assert_contains "$ctx" "run-day session is active" "with a run: run context"
+assert_contains "$ctx" "- run-day:" "with a run: map too"
+{ for i in $(seq 1 400); do echo "- part $i: some description of it padding"; done; } > "$SYSTEM_MAP"
+ctx="$(bash "$HOOK" directions </dev/null | jq -r '.hookSpecificOutput.additionalContext')"
+bytes="$(printf '%s' "${ctx#*## System map}" | wc -c | tr -d ' ')"
+[ "$bytes" -gt 100 ] && [ "$bytes" -le 3073 ] && pass "over-budget map is cut to 3072 bytes ($bytes)" || fail "map cut" "bytes $bytes"
+unset SYSTEM_MAP; export SYSTEM_MAP="$SANDBOX/dir-not-file"; mkdir "$SYSTEM_MAP"
+bash "$HOOK" </dev/null >/dev/null 2>&1; assert_eq "0" "$?" "an unreadable map does not fail the hook"
+unset SYSTEM_MAP
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

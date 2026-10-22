@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import daily, { directionsSection, guardVerdict, newlyNeedsYou, runStateSection } from "./index.ts";
+import daily, { directionsSection, guardVerdict, newlyNeedsYou, runStateSection, systemMapSection } from "./index.ts";
 
 const DAY = "2026-01-01";
 
@@ -400,4 +400,63 @@ test("run_day_watch: refuses while another live process holds the lock", async (
   const { run } = fakePi();
   assert.match(await run("start"), /other/);
   cleanup(root);
+});
+
+function mapSandbox() {
+  const root = mkdtempSync(join(tmpdir(), "daily-map-"));
+  const file = join(root, "map.md");
+  process.env.SYSTEM_MAP = file;
+  return { root, file };
+}
+
+test("system map: injected under its heading, cached until the mtime changes", () => {
+  const { root, file } = mapSandbox();
+  const t0 = new Date(Date.now() - 60000);
+  writeFileSync(file, "- run-day: the daily plan\n");
+  utimesSync(file, t0, t0);
+  const first = systemMapSection();
+  assert.match(first ?? "", /^## System map\n/);
+  assert.match(first ?? "", /- run-day:/);
+  writeFileSync(file, "- other: changed\n");
+  utimesSync(file, t0, t0);
+  assert.match(systemMapSection() ?? "", /- run-day:/, "cached while the mtime is unchanged");
+  utimesSync(file, new Date(Date.now() + 5000), new Date(Date.now() + 5000));
+  assert.match(systemMapSection() ?? "", /- other: changed/);
+  rmSync(root, { recursive: true, force: true });
+  delete process.env.SYSTEM_MAP;
+});
+
+test("system map: missing, empty or unreadable file injects nothing; over-budget is cut", () => {
+  const { root, file } = mapSandbox();
+  assert.equal(systemMapSection(), null, "missing");
+  writeFileSync(file, "\n");
+  utimesSync(file, new Date(Date.now() + 9000), new Date(Date.now() + 9000));
+  assert.equal(systemMapSection(), null, "empty");
+  writeFileSync(file, Array.from({ length: 400 }, (_, i) => `- part ${i}: é description padding`).join("\n"));
+  utimesSync(file, new Date(Date.now() + 12000), new Date(Date.now() + 12000));
+  const text = systemMapSection() ?? "";
+  const body = text.slice("## System map\n".length);
+  assert.ok(Buffer.byteLength(body) <= 3072 && Buffer.byteLength(body) > 100, `cut to 3072 bytes, got ${Buffer.byteLength(body)}`);
+  assert.ok(!body.includes("\uFFFD"), "no split character");
+  rmSync(file);
+  mkdirSync(file);
+  assert.equal(systemMapSection(), null, "a directory is no map");
+  rmSync(root, { recursive: true, force: true });
+  delete process.env.SYSTEM_MAP;
+});
+
+test("system map: before_agent_start sets the section, and never throws without one", () => {
+  const { root, file } = mapSandbox();
+  const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
+  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb), registerTool: () => {} } as never);
+  writeFileSync(file, "- run-day: the daily plan\n");
+  const options = { sections: {} as Record<string, string> };
+  handlers.before_agent_start({ systemPromptOptions: options }, { ui: undefined });
+  assert.match(options.sections.system_map, /- run-day:/);
+  rmSync(file);
+  const next = { sections: {} as Record<string, string> };
+  assert.doesNotThrow(() => handlers.before_agent_start({ systemPromptOptions: next }, { ui: undefined }));
+  assert.equal(next.sections.system_map, undefined);
+  rmSync(root, { recursive: true, force: true });
+  delete process.env.SYSTEM_MAP;
 });

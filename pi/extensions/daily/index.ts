@@ -126,6 +126,28 @@ export function directionsSection(): string | null {
   return directionsCache.text || null;
 }
 
+const MAP_MAX_BYTES = 3072;
+let mapCache: { key: string; text: string } | null = null;
+
+/**
+ * The system map (~/wiki/work/system/map.md), cut to 3072 bytes and cached until the
+ * file's mtime changes. A missing, empty or unreadable file is no section and never an error.
+ */
+export function systemMapSection(): string | null {
+  const file = process.env.SYSTEM_MAP ?? join(homedir(), "wiki/work/system/map.md");
+  try {
+    const key = `${file}:${statSync(file).mtimeMs}`;
+    if (mapCache?.key !== key) {
+      const body = new TextDecoder("utf-8").decode(readFileSync(file).subarray(0, MAP_MAX_BYTES)).replace(/�+$/, "");
+      mapCache = { key, text: body.trim() ? `## System map\n${body}` : "" };
+    }
+    return mapCache.text || null;
+  } catch {
+    mapCache = null;
+    return null;
+  }
+}
+
 /** Items whose needs_you flipped on since the last request. */
 const announced = new Set<string>();
 
@@ -316,6 +338,14 @@ export default function daily(pi: ExtensionAPI) {
       directions = null;
     }
     if (directions) event.systemPromptOptions.sections.standing_directions = directions;
+
+    let systemMap: string | null = null;
+    try {
+      systemMap = systemMapSection();
+    } catch {
+      systemMap = null;
+    }
+    if (systemMap) event.systemPromptOptions.sections.system_map = systemMap;
   });
 
   pi.on("tool_call", (event, _ctx) => {
