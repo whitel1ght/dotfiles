@@ -12,9 +12,10 @@ the trunk heads move on), and /end-day runs it that way. A check that could not
 run is a "<check>:failed…" finding, new on every run, and the findings it had
 last time stay remembered. The checks:
 
-  optout   commits on trunk since the last run marked "Docs: none" (any page)
-           or "Docs: internal" (tools pages) that touch a covered path (tests, docs,
-           READMEs and lock files do not count)
+  optout   commits on trunk since the last run marked "Docs: none" that touch a
+           path any page covers, or "Docs: internal" that touch a path a system
+           page covers (skipping the tools page is what internal means) (tests,
+           docs, READMEs and lock files do not count)
   dirty    covered paths changed or untracked in a system repo's checkout
   stray    entries of ~/bin, ~/.local/bin, ~/.claude/hooks, ~/.pi/agent/extensions
            that are not a file tracked by a system repo
@@ -193,10 +194,10 @@ def optout_commits(repo: str, root: Path, last: str, head: str,
         if not skip:
             continue
         files = git_in(root, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha)
-        skipped = {page: globs for page, globs in pages.items() if skip == "none" or dc.page_kind(page) == "tools"}
-        hits = [p for p in files if not dc.exempt(p) and any(dc.covered_by(repo, p, g) for g in skipped.values())]
+        watched = {page: globs for page, globs in pages.items() if skip == "none" or dc.page_kind(page) == "system"}
+        hits = [p for p in files if not dc.exempt(p) and any(dc.covered_by(repo, p, g) for g in watched.values())]
         if hits:
-            hit_pages = sorted(page.name for page, g in skipped.items() if any(dc.covered_by(repo, p, g) for p in hits))
+            hit_pages = sorted(page.name for page, g in watched.items() if any(dc.covered_by(repo, p, g) for p in hits))
             found.append(finding("optout", f"optout:{repo}:{sha}",
                                  f"{repo} {sha[:7]} \"{msg.splitlines()[0] if msg else ''}\" (Docs: {skip}) "
                                  f"changed {', '.join(hits)}, covered by {', '.join(hit_pages)}"))

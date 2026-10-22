@@ -17,7 +17,9 @@ README.md and map.md). The system repos are dotfiles, decisions and articles.
                                 skips every rule; "Docs: internal" skips only
                                 the tools page, the system page stays required.
                                 Off trunk, a system page is also satisfied by a
-                                line "- `repo:branch` ..." under its ## Unfinished.
+                                line "- `repo:branch` ..." under its ## Unfinished,
+                                and so is any tools page for the paths that
+                                system page covers.
                                 New files must be covered by some page and new
                                 Brewfile entries named in some page. Tests, docs,
                                 READMEs and lock files never need a page.
@@ -158,13 +160,19 @@ def commit_msg(msg_file: str) -> int:
     branch = current_branch()
     now = time.time()
     stale = {}
-    for page, globs in pages().items():
+    all_pages = pages()
+    on_branch = {page for page in all_pages
+                 if branch and page_kind(page) == "system" and (repo, branch) in unfinished_entries(page)}
+    branch_paths = {p for p in staged if any(covered_by(repo, p, all_pages[page]) for page in on_branch)}
+    for page, globs in all_pages.items():
         if skip == "internal" and page_kind(page) == "tools":
             continue
-        hits = [p for p in staged if not exempt(p) and covered_by(repo, p, globs)]
-        if not hits:
+        if page in on_branch:
             continue
-        if branch and page_kind(page) == "system" and (repo, branch) in unfinished_entries(page):
+        hits = [p for p in staged if not exempt(p) and covered_by(repo, p, globs)]
+        if page_kind(page) == "tools":
+            hits = [p for p in hits if p not in branch_paths]
+        if not hits:
             continue
         newest = max((top / p).stat().st_mtime if (top / p).exists() else now - RECENT for p in hits)
         if page.stat().st_mtime < newest:

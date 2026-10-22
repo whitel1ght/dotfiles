@@ -232,8 +232,10 @@ dec_none=$(commit "$DEC" src/a.txt $'fix: a\n\nDocs: none')
 test_only=$(commit "$REPO" bin/tool.test.sh $'test: tool\n\nDocs: none')
 sc s1
 has "'Docs: none' commit touching a covered path" "optout:dotfiles:$none_sha"
-has "'Docs: internal' commit touching a tools-covered path" "optout:dotfiles:$internal_tools"
-hasnt "'Docs: internal' commit touching only a system-covered path" "optout:dotfiles:$internal_part"
+hasnt "'Docs: internal' commit touching only a tools-covered path" "optout:dotfiles:$internal_tools"
+has "'Docs: internal' commit touching a system-covered path" "optout:dotfiles:$internal_part"
+case "$(jq -r --arg id "optout:dotfiles:$internal_part" '.new[] | select(.id == $id) | .detail' <<<"$out" 2>/dev/null)" in
+    *"covered by "*daily.md*) pass "'Docs: internal' names the system page" ;; *) fail "'Docs: internal' names the system page" "$out" ;; esac
 hasnt "commit without an opt-out" "optout:dotfiles:$plain"
 hasnt "opt-out commit touching nothing covered" "optout:dotfiles:$uncovered"
 has "opt-out commit in another system repo" "optout:decisions:$dec_none"

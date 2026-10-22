@@ -156,6 +156,14 @@ expect 1 "branch: no Unfinished entry" run commit-msg "$(msg 'feat: b')"
 case "$out" in *'- `dotfiles:feat-x`'*"## Unfinished"*) pass "branch: message says what to add" ;; *) fail "branch: message says what to add" "$out" ;; esac
 printf -- '- `dotfiles:feat-x` adds x\n' >> "$SYSTEM/daily.md"; age_sys daily.md
 expect 0 "branch: an Unfinished entry is enough" run commit-msg "$(msg 'feat: b')"
+age_page local-ai.md
+expect 0 "branch: the entry also satisfies the tools page covering the same paths" run commit-msg "$(msg 'feat: b')"
+printf -- '-- b\n' >> "$REPO/nvim/lua/init.lua"; git -C "$REPO" add nvim/lua/init.lua
+expect 1 "branch: a tools-only path in the same commit keeps the mtime rule" run commit-msg "$(msg 'feat: b')"
+case "$out" in *"local-ai.md"*"nvim/lua/init.lua"*) pass "branch: names only the tools-only path" ;; *) fail "branch: names only the tools-only path" "$out" ;; esac
+case "$out" in *"covers bin/localai"*) fail "branch: the system-covered path is not asked for" "$out" ;; *) pass "branch: the system-covered path is not asked for" ;; esac
+git -C "$REPO" reset -q nvim/lua/init.lua; git -C "$REPO" checkout -q -- nvim/lua/init.lua
+touch "$DOCS/local-ai.md"
 printf '# Daily\n<!-- covers: dotfiles:bin/localai -->\n## Unfinished\n- `dotfiles:other` adds y\n' > "$SYSTEM/daily.md"; age_sys daily.md
 expect 1 "branch: an entry for another branch does not count" run commit-msg "$(msg 'feat: b')"
 rm "$SYSTEM/daily.md"
