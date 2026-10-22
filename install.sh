@@ -568,6 +568,11 @@ if [ -f "$DOTFILES_DIR/bin/mr-watch" ]; then
     create_symlink "$DOTFILES_DIR/bin/mr-watch" "$HOME/.local/bin/mr-watch"
 fi
 
+# jira-api is the Jira REST helper the daily system calls; it reads its login with `secret`.
+if [ -f "$DOTFILES_DIR/bin/jira-api" ]; then
+    create_symlink "$DOTFILES_DIR/bin/jira-api" "$HOME/.local/bin/jira-api"
+fi
+
 # jt searches and previews Jira tickets with fzf, on top of jira-cli. jira-cli
 # keeps its own config; the token comes from JIRA_API_TOKEN, which jt (and the
 # jira-cli skill) pass from ~/.secrets, so the config only needs the site, login

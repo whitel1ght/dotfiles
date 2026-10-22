@@ -1,0 +1,14 @@
+#!/usr/bin/env zsh
+# Usage: jira-api <METHOD> <path-under-/rest/api/3> [json-body]
+# e.g.   jira-api GET issue/ECFX-17533
+#        jira-api POST issue/ECFX-17533/transitions '{"transition":{"id":"31"}}'
+set -euo pipefail
+# Credentials: JIRA_USER/JIRA_TOKEN from ~/.secrets/secrets.env, unless the
+# environment already sets JIRA_EMAIL/JIRA_API_TOKEN.
+: "${JIRA_EMAIL:=$(secret JIRA_USER 2>/dev/null)}" "${JIRA_API_TOKEN:=$(secret JIRA_TOKEN 2>/dev/null)}"
+: "${JIRA_EMAIL:?JIRA_USER missing in ~/.secrets/secrets.env}" "${JIRA_API_TOKEN:?JIRA_TOKEN missing in ~/.secrets/secrets.env}"
+(( $# >= 2 )) || { print -u2 "usage: jira-api <METHOD> <api-path> [json-body]"; exit 2; }
+method=$1 api_path=$2 body=${3:-}
+args=(-sS -X "$method" -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H "Accept: application/json")
+[[ -n $body ]] && args+=(-H "Content-Type: application/json" --data "$body")
+curl "${args[@]}" "https://ecfxdev.atlassian.net/rest/api/3/${api_path#/}"
