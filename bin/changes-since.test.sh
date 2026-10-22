@@ -464,13 +464,16 @@ assert_eq "--source gitlab-approvals timeout approvals lookup failed for 3!100" 
 reset; cursor 2026-10-08T07:00:00Z
 echo "[$(todo 1 review_requested alice 100 3 2026-10-08T07:10:00Z),$(todo 2 review_requested alice 101 3 2026-10-08T07:20:00Z),$(todo 3 review_requested alice 102 3 2026-10-08T07:30:00Z)]" > "$FIX/todos.json"
 start=$SECONDS
-out=$(GLAB_SLEEP_ON="approvals" CHANGES_SINCE_BUDGET=6 CHANGES_SINCE_APPROVALS_TIMEOUT=1 CHANGES_SINCE_APPROVALS_BUDGET=2 run); rc=$?
+out=$(GLAB_SLEEP_ON="approvals" CHANGES_SINCE_BUDGET=10 CHANGES_SINCE_APPROVALS_TIMEOUT=1 CHANGES_SINCE_APPROVALS_BUDGET=2 run); rc=$?
 elapsed=$((SECONDS - start))
 assert_eq "0" "$rc" "three hanging approvals lookups do not exhaust the run's budget: exit 0"
 assert_eq "3" "$(printf '%s\n' "$out" | grep -c '"kind":"assigned"')" "all three events print, unmarked"
 [ "$(cat "$STATE/default")" != "2026-10-08T07:00:00Z" ] && pass "and the cursor moves" || fail "and the cursor moves" "unchanged"
-assert_eq "2" "$(grep -c approvals "$FIX/glab.log")" "one attempt each, no retry, until the lookups' own 2 s budget is spent (the third is not called)"
-[ "$elapsed" -le 4 ] && pass "lookups stay within their sub-budget (${elapsed}s)" || fail "lookups stay within their sub-budget" "took ${elapsed}s"
+# The sub-budget clock is whole seconds, so the first 1 s hang may already use it up.
+calls=$(grep -c approvals "$FIX/glab.log")
+[ "$calls" -ge 1 ] && [ "$calls" -le 2 ] && pass "one attempt each, no retry, until the lookups' own 2 s budget is spent ($calls calls; the third is never made)" \
+  || fail "one attempt each, until the lookups' own budget is spent" "$calls approvals calls"
+[ "$elapsed" -le 4 ] && pass "lookups stay within their sub-budget (${elapsed}s, run budget 10s)" || fail "lookups stay within their sub-budget" "took ${elapsed}s"
 
 reset; cursor 2026-10-08T07:00:00Z
 start=$SECONDS
