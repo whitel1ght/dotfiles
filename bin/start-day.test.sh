@@ -34,6 +34,11 @@ case "$*" in
     "api user") echo '{"username":"me"}' ;;
     *todos*) cat "$FIX/todos.json" 2>/dev/null || echo '[]' ;;
     *merge_requests\?scope=created_by_me\&state=opened*) cat "$FIX/mrs.json" ;;
+    *merge_requests/*/approvals)
+        echo "$*" >> "$FIX/approvals.log"
+        [ -n "${APPROVALS_FAIL:-}" ] && exit 1
+        id=$(echo "$*" | sed -E 's#.*projects/([^/]+)/merge_requests/([0-9]+)/approvals.*#\1-\2#')
+        cat "$FIX/approvals-$id.json" 2>/dev/null || echo '{"approved_by":[]}' ;;
     *merge_requests/*/blocks)
         id=$(echo "$*" | sed -E 's#.*merge_requests/([0-9]+)/blocks.*#\1#')
         cat "$FIX/blocks-$id.json" 2>/dev/null || echo '[]' ;;
@@ -213,6 +218,27 @@ assert_contains "$out" "## Jira" "including the final section"
 reset
 echo '{"message":"401 Unauthorized"}' > "$FIX/todos.json"
 assert_eq "(none)" "$(todos "$(run collect --since 2026-09-20T00:00:00Z)")" "an unexpected non-array body is treated as none, not a crash"
+
+echo "start-day — GitLab to-dos on MRs I already approved (D-011)"
+reset
+cat > "$FIX/todos.json" <<'JSON'
+[{"id":1,"project":{"id":3,"path_with_namespace":"ecfx/ecfx-backend"},"author":{"username":"bkeeling"},"action_name":"review_requested","target_type":"MergeRequest","target":{"iid":6610,"project_id":3,"title":"Delete Retrieve request","author":{"username":"bkeeling"},"web_url":"w6610"},"target_url":"w6610","body":"b","created_at":"2026-10-08T06:00:00.000Z"},
+ {"id":2,"project":{"id":3,"path_with_namespace":"ecfx/ecfx-backend"},"author":{"username":"bkeeling"},"action_name":"mentioned","target_type":"MergeRequest","target":{"iid":6610,"project_id":3,"title":"Delete Retrieve request","author":{"username":"bkeeling"},"web_url":"w6610"},"target_url":"w6610#n","body":"b","created_at":"2026-10-08T06:10:00.000Z"},
+ {"id":3,"project":{"id":3,"path_with_namespace":"ecfx/ecfx-backend"},"author":{"username":"carol"},"action_name":"review_requested","target_type":"MergeRequest","target":{"iid":6611,"project_id":3,"title":"Other","author":{"username":"carol"},"web_url":"w6611"},"target_url":"w6611","body":"b","created_at":"2026-10-08T06:20:00.000Z"},
+ {"id":4,"project":{"id":3,"path_with_namespace":"ecfx/ecfx-backend"},"author":{"username":"carol"},"action_name":"mentioned","target_type":"MergeRequest","target":{"iid":6612,"project_id":3,"title":"Mine","author":{"username":"me"},"web_url":"w6612"},"target_url":"w6612","body":"b","created_at":"2026-10-08T06:30:00.000Z"}]
+JSON
+echo '{"approved_by":[{"user":{"username":"bkeeling"}},{"user":{"username":"me"}}]}' > "$FIX/approvals-3-6610.json"
+echo '{"approved_by":[{"user":{"username":"someone"}}]}' > "$FIX/approvals-3-6611.json"
+out=$(todos "$(run collect --since 2026-09-20T00:00:00Z)")
+assert_eq "- [review requested] ecfx/ecfx-backend!6610 Delete Retrieve request (approved by you — no review) — @bkeeling — w6610
+- [mentioned] ecfx/ecfx-backend!6610 Delete Retrieve request (approved by you — no review) — @bkeeling — w6610#n
+- [review requested] ecfx/ecfx-backend!6611 Other — @carol — w6611
+- [mentioned] ecfx/ecfx-backend!6612 Mine — @carol — w6612" "$out" "to-dos on an MR I approved are marked; others and my own MR are not"
+assert_eq "1" "$(grep -c 'merge_requests/6610/approvals' "$FIX/approvals.log")" "one approvals call per MR, though two to-dos point at it"
+assert_eq "0" "$(grep -c 'merge_requests/6612/approvals' "$FIX/approvals.log")" "no approvals call for my own MR"
+out=$(APPROVALS_FAIL=1 run collect --since 2026-09-20T00:00:00Z)
+assert_eq "- [review requested] ecfx/ecfx-backend!6610 Delete Retrieve request — @bkeeling — w6610" "$(todos "$out" | head -1)" "a failed approvals lookup leaves the to-do listed, unmarked"
+assert_contains "$out" "## Jira" "and the digest keeps going"
 
 echo "start-day save — trailing diary refs"
 reset

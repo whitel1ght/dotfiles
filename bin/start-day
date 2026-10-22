@@ -19,7 +19,8 @@
 #                 same ticket in an upstream repo), in merge order
 #   review queue  MRs waiting on me, from mr-review-queue's triage script
 #   gitlab to-dos GitLab's pending to-dos (assigned, mentioned, review requested,
-#                 failed pipelines), one line each, oldest first
+#                 failed pipelines), one line each, oldest first; someone else's
+#                 MR I already approved says "(approved by you — no review)"
 #   jira          tickets newly assigned to me, my tickets others touched, and
 #                 my To-Do backlog
 # Slack and the calendar come through claude.ai connectors, which the command
@@ -315,9 +316,24 @@ collect_gitlab_todos() {
   section "GitLab to-dos (pending)"
   local todos
   todos=$(glab api --paginate 'todos?state=pending&per_page=100' | jq -s 'add // []') || { echo "(GitLab unavailable)"; return; }
-  jq -r 'if type == "array" and length > 0 then
+  # D-011: mark others' MRs I already approved; a failed lookup leaves them unmarked.
+  local me approved='[]' ref iid
+  me="${ME_USERNAME:-$(glab api user 2>/dev/null | jq -r '.username // empty' 2>/dev/null || true)}"
+  if [ -n "$me" ]; then
+    while IFS=$'\t' read -r ref iid; do
+      glab api "projects/$ref/merge_requests/$iid/approvals" 2>/dev/null \
+        | jq -e --arg me "$me" 'any(.approved_by[]?; .user.username == $me)' >/dev/null 2>&1 \
+        && approved=$(jq -c --arg k "$ref:$iid" '. + [$k]' <<<"$approved")
+    done < <(jq -r --arg me "$me" 'if type == "array" then
+        [.[] | select(.target_type == "MergeRequest" and (.target.author.username // "") != $me)
+         | [((.target.project_id // .project.id // (.project.path_with_namespace | @uri)) | tostring), (.target.iid | tostring)]]
+        | unique[] | @tsv else empty end' <<<"$todos")
+  fi
+  jq -r --argjson approved "$approved" 'if type == "array" and length > 0 then
       sort_by(.created_at)[]
-      | "- [\(.action_name | gsub("_"; " "))] \(.project.path_with_namespace // "?")\(if .target_type == "MergeRequest" then "!" else "#" end)\(.target.iid // "?") \(.target.title // .body) — @\(.author.username // "?") — \(.target_url // .target.web_url // "")"
+      | (((.target.project_id // .project.id // (.project.path_with_namespace | @uri)) | tostring) + ":" + (.target.iid | tostring)) as $k
+      | (if .target_type == "MergeRequest" and any($approved[]; . == $k) then " (approved by you — no review)" else "" end) as $mark
+      | "- [\(.action_name | gsub("_"; " "))] \(.project.path_with_namespace // "?")\(if .target_type == "MergeRequest" then "!" else "#" end)\(.target.iid // "?") \(.target.title // .body)\($mark) — @\(.author.username // "?") — \(.target_url // .target.web_url // "")"
     else "(none)" end' <<<"$todos"
 }
 
