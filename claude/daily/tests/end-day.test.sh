@@ -57,4 +57,14 @@ lacks "$F" "ls ~/wiki/*" "no zsh-failing globs"
 has "$F" "**Waiting on you**" "report lists open decisions"
 has "$F" "decide list" "reads them from the queue"
 
+echo "== check the system =="
+P="$TEST_DIR/../../../pi/prompts/end-day.md"
+for f in "$F" "$P"; do
+  side="$(basename "$(dirname "$f")")"
+  has "$f" "~/.local/bin/system-check --record" "$side: records the run so its findings count as seen"
+  has "$f" "An \`install\` finding has no page to fix" "$side: install findings are not page fixes"
+  has "$f" "\`install <glob>\` line in \`known.txt\`" "$side: offers acknowledging with an install glob"
+  has "$f" "ask once" "$side: asks once for all install findings"
+done
+
 finish
