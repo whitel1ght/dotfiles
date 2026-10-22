@@ -31,7 +31,9 @@ the user edits the diary too. `day-plan` opens today's diary in a tmux popup whe
 
 ## Write rules
 
-- Subagents never write `~/wiki`. Only this session writes diary markers, log entries and decisions.
+- Subagents never write `~/wiki`, except `~/wiki/work/system/` and `~/wiki/tools/` when they change one of
+  the system repos (dotfiles, decisions, articles); they commit those with `wiki-commit`. Otherwise only
+  this session writes diary markers, log entries and decisions.
 - Only plan-block lines, the run state, inbox moves, `work/projects/<p>/log/<YYYY>-Q<N>.md` (append) and
   `decisions/NNNN-<slug>.md` (create; on an existing one only `status: superseded`). Never `state.md` mid-day (step 8).
 - Never edit project code yourself.

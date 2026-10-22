@@ -18,7 +18,7 @@ Paths used below (`T` is today's date, `date +%F`):
 
 ## Write rules (never break these)
 
-- Subagents never write to `~/wiki`. This session is the only writer during the day.
+- Subagents never write to `~/wiki`, except `~/wiki/work/system/` and `~/wiki/tools/` when they change one of the system repos (dotfiles, decisions, articles); they commit those with `wiki-commit`. Otherwise this session is the only writer during the day.
 - This session edits only: diary lines inside the plan block, the run-state file, inbox files it moves to `inbox/done/<T>/` or `inbox/bad/`, `~/wiki/work/projects/<p>/log/<YYYY>-Q<N>.md` (append), `~/wiki/work/projects/<p>/decisions/NNNN-<slug>.md` (create; and an old decision's `status` (only to `superseded`), section 4). It never edits project code (`/orchestrate`: that goes to subagents).
 - Never merge, mark an MR ready, transition a Jira ticket, post to Slack or post a comment without the user's yes. Asking means a decision (section 9); a review round (below) is one decision per round.
 - Questions for the user go into the decision queue (section 9): never ask the question in the thread, never wait for the answer. The only question asked in the thread is the triage go-ahead (section 1).

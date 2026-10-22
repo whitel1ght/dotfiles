@@ -142,6 +142,7 @@ test("injects the run state on every request, and stays silent with no run", () 
   assert.match(section, /ecfx-1002 address review/);
   assert.match(section, /## Run state/);
   assert.match(section, /export order settled/);
+  assert.match(section, /subagents never write ~\/wiki, except ~\/wiki\/work\/system\/ and ~\/wiki\/tools\//);
   assert.ok(section && section.length <= 6000);
 
   writeFileSync(join(stateDir, "inbox", `20260101T080000-ECFX-1001-ab12.md`), "---\n---\n");
@@ -443,6 +444,21 @@ test("system map: missing, empty or unreadable file injects nothing; over-budget
   assert.equal(systemMapSection(), null, "a directory is no map");
   rmSync(root, { recursive: true, force: true });
   delete process.env.SYSTEM_MAP;
+});
+
+test("system map: without SYSTEM_MAP, read from WIKI_DIR/work/system/map.md", () => {
+  const root = mkdtempSync(join(tmpdir(), "daily-map-wiki-"));
+  mkdirSync(join(root, "work", "system"), { recursive: true });
+  writeFileSync(join(root, "work", "system", "map.md"), "- from-wiki-dir: the map\n");
+  delete process.env.SYSTEM_MAP;
+  process.env.WIKI_DIR = root;
+  assert.match(systemMapSection() ?? "", /- from-wiki-dir:/);
+  process.env.SYSTEM_MAP = join(root, "override.md");
+  writeFileSync(process.env.SYSTEM_MAP, "- override: wins\n");
+  assert.match(systemMapSection() ?? "", /- override: wins/, "SYSTEM_MAP still wins");
+  delete process.env.SYSTEM_MAP;
+  delete process.env.WIKI_DIR;
+  rmSync(root, { recursive: true, force: true });
 });
 
 test("system map: before_agent_start sets the section, and never throws without one", () => {

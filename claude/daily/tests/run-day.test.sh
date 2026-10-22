@@ -11,6 +11,7 @@ frontmatter_has "$F" argument-hint
 
 echo "== rules from the spec =="
 has "$F" "Subagents never write to \`~/wiki\`" "subagents never write the vault"
+has "$F" "except \`~/wiki/work/system/\` and \`~/wiki/tools/\`" "subagents may write the system and tools pages"
 has "$F" "<!-- start-day:start -->" "reads the start-day block"
 has "$F" "fewer than **3** ticket agents" "cap of 3 agents"
 has "$F" "\`[ ]\` todo, \`[/]\` in progress, \`[x]\` done, \`[!]\` blocked, \`[>]\` deferred to tomorrow" "marker legend"

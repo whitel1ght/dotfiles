@@ -31,6 +31,7 @@ has "$f" "decision: {title, context, decision, consequences} | none" "memory blo
 has "$f" "state_change:" "memory block has state_change"
 has "$f" "**Draft**" "states the Draft MR rule"
 has "$f" "never write to \`~/wiki\`" "forbids vault writes"
+has "$f" "except \`~/wiki/work/system/\` and \`~/wiki/tools/\`" "allows the system and tools pages"
 
 echo "== review-round-brief =="
 f="$T/review-round-brief.md"
@@ -44,6 +45,7 @@ has "$f" "discussion:" "reports the discussion id"
 has "$f" "reply_file:" "reports the reply file"
 has "$f" "memory:" "ends with the memory block"
 has "$f" "never write to \`~/wiki\`" "forbids vault writes"
+has "$f" "except \`~/wiki/work/system/\` and \`~/wiki/tools/\`" "allows the system and tools pages"
 has "$f" "no Slack, no Jira transition" "forbids Slack posts and Jira transitions"
 
 echo
