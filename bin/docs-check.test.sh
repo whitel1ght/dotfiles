@@ -144,6 +144,60 @@ expect 0 "deletion passes once the system page was just edited" run commit-msg "
 git -C "$REPO" reset -q; git -C "$REPO" checkout -q -- bin/localai
 rm -f "${SYSTEM:?}/daily.md" "${SYSTEM:?}/journal.md" "${SYSTEM:?}/map.md"
 
+echo "docs-check branches, added files, Brewfile, post-merge"
+
+printf '# Daily\n<!-- covers: dotfiles:bin/localai -->\n## Unfinished\n' > "$SYSTEM/daily.md"
+touch "$DOCS/local-ai.md"; age_sys daily.md
+git -C "$REPO" checkout -q -b feat-x
+printf 'echo b\n' >> "$REPO/bin/localai"; git -C "$REPO" add bin/localai; touch "$DOCS/local-ai.md"
+expect 1 "branch: no Unfinished entry" run commit-msg "$(msg 'feat: b')"
+case "$out" in *'- `dotfiles:feat-x`'*"## Unfinished"*) pass "branch: message says what to add" ;; *) fail "branch: message says what to add" "$out" ;; esac
+printf -- '- `dotfiles:feat-x` adds x\n' >> "$SYSTEM/daily.md"; age_sys daily.md
+expect 0 "branch: an Unfinished entry is enough" run commit-msg "$(msg 'feat: b')"
+printf '# Daily\n<!-- covers: dotfiles:bin/localai -->\n## Unfinished\n- `dotfiles:other` adds y\n' > "$SYSTEM/daily.md"; age_sys daily.md
+expect 1 "branch: an entry for another branch does not count" run commit-msg "$(msg 'feat: b')"
+rm "$SYSTEM/daily.md"
+age_page local-ai.md
+expect 1 "branch: tools-only coverage keeps today's rule" run commit-msg "$(msg 'feat: b')"
+git -C "$REPO" reset -q; git -C "$REPO" checkout -q -- bin/localai; git -C "$REPO" checkout -q main
+touch "$DOCS/local-ai.md"
+
+printf '#!/bin/sh\n' > "$REPO/bin/newtool"; git -C "$REPO" add bin/newtool
+expect 1 "added file nobody covers" run commit-msg "$(msg 'feat: newtool')"
+case "$out" in *"bin/newtool"*"covers line"*) pass "added file: names it and the covers line" ;; *) fail "added file: names it and the covers line" "$out" ;; esac
+expect 0 "added file: Docs: none skips" run commit-msg "$(msg $'feat: newtool\n\nDocs: none')"
+git -C "$REPO" reset -q; rm "$REPO/bin/newtool"
+for f in bin/newtool.test.sh tests/x.sh docs/x.md sub/README.md README.md.bak.lock Cargo.lock; do
+    mkdir -p "$(dirname "$REPO/$f")"; printf 'x\n' > "$REPO/$f"
+    git -C "$REPO" add "$f"
+    expect 0 "added file: $f is exempt" run commit-msg "$(msg 'chore: add')"
+    git -C "$REPO" reset -q; rm "$REPO/$f"
+done
+rm -rf "$REPO/tests" "$REPO/docs" "$REPO/sub"
+
+printf 'brew "git"\n' > "$REPO/Brewfile"; git -C "$REPO" add Brewfile; git -C "$REPO" commit -q -m brewfile
+printf 'brew "koekeishiya/formulae/zoxide"\n' >> "$REPO/Brewfile"; git -C "$REPO" add Brewfile
+expect 1 "new Brewfile entry nobody mentions" run commit-msg "$(msg 'feat: zoxide')"
+case "$out" in *zoxide*) pass "Brewfile: names the entry" ;; *) fail "Brewfile: names the entry" "$out" ;; esac
+printf 'Jump with `zoxide`.\n' >> "$DOCS/local-ai.md"
+expect 0 "Brewfile entry mentioned in a page" run commit-msg "$(msg 'feat: zoxide')"
+git -C "$REPO" reset -q; git -C "$REPO" checkout -q -- Brewfile
+
+git -C "$REPO" checkout -q -b feature2
+printf 'x\n' >> "$REPO/README.md"; git -C "$REPO" commit -q -am "feature2 work"
+git -C "$REPO" checkout -q main
+printf '# Daily\n<!-- covers: dotfiles:bin/localai -->\n## Unfinished\n- `dotfiles:feature2` adds x\n' > "$SYSTEM/daily.md"
+git -C "$REPO" merge -q --ff-only feature2
+out="$(run post-merge 2>&1)"; got=$?
+[ "$got" -eq 0 ] && [ "$out" = "$SYSTEM/daily.md" ] && pass "post-merge prints the page naming the branch" || fail "post-merge prints the page naming the branch" "exit $got: $out"
+git -C "$REPO" checkout -q -b feature3
+printf 'y\n' >> "$REPO/README.md"; git -C "$REPO" commit -q -am "feature3 work"
+git -C "$REPO" checkout -q main
+git -C "$REPO" merge -q --ff-only feature3
+out="$(run post-merge 2>&1)"; got=$?
+[ "$got" -eq 0 ] && [ -z "$out" ] && pass "post-merge prints nothing when no page names it" || fail "post-merge prints nothing when no page names it" "exit $got: $out"
+rm -f "$SYSTEM/daily.md"
+
 echo "docs-check coverage"
 
 expect 0 "clean when every script is documented" run coverage

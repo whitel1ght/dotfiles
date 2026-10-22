@@ -1,0 +1,7 @@
+#!/bin/sh
+# After a merge, list the system pages whose Unfinished section names the
+# merged branch, so its entry gets moved into the page body.
+here="$(cd "$(dirname "$0")/.." && pwd)"
+pages="$("$here/bin/docs-check" post-merge 2>/dev/null)"
+[ -n "$pages" ] && printf 'docs-check: merged branch is still listed under Unfinished in:\n%s\nMove the entry into the page body.\n' "$pages"
+exit 0

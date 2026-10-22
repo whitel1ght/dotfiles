@@ -16,6 +16,13 @@ README.md and map.md). The system repos are dotfiles, decisions and articles.
                                 and names the page. A message line "Docs: none"
                                 skips every rule; "Docs: internal" skips only
                                 the tools page, the system page stays required.
+                                Off trunk, a system page is also satisfied by a
+                                line "- `repo:branch` ..." under its ## Unfinished.
+                                New files must be covered by some page (tests,
+                                docs, READMEs and lock files excepted) and new
+                                Brewfile entries named in some page.
+  docs-check post-merge         after a merge, print the pages whose ## Unfinished
+                                names the merged branch (to be moved into the body).
   docs-check coverage           every bin/ script (tests excluded) is mentioned
                                 somewhere in the manual, and every covers entry
                                 still matches a tracked file.
@@ -43,6 +50,12 @@ REPOS = {
 NOT_PARTS = {"README.md", "map.md"}
 COVERS = re.compile(r"<!--\s*covers:(.*?)-->", re.DOTALL)
 OPT_OUT = re.compile(r"(?im)^docs:\s*(none|internal)\s*$")
+TRUNK = {"main", "master"}
+BRANCH_ENTRY = re.compile(r"^\s*-\s+`([^`:\s]+):([^`\s]+)`")
+BREW_LINE = re.compile(r'^\s*(brew|cask|tap|mas)\s+"([^"]+)"')
+MERGE_SUBJECT = re.compile(r"^merge (\S+?):")
+EXEMPT = ["*.test.*", "tests/**", "*/tests/**", "docs/**", "README.md", "*/README.md", ".gitignore",
+          "*.lock", "*.lock.json", "LICENSE"]
 RECENT = 24 * 3600  # a deleted file has no mtime; the page must be this fresh
 
 
@@ -91,6 +104,43 @@ def opt_out(msg: str) -> str:
     return match.group(1).lower() if match else ""
 
 
+def current_branch() -> str | None:
+    try:
+        branch = git("symbolic-ref", "--short", "-q", "HEAD")[0]
+    except (subprocess.CalledProcessError, IndexError):
+        return None
+    return None if branch in TRUNK else branch
+
+
+def unfinished_entries(page: Path) -> list[tuple[str, str]]:
+    found = []
+    in_section = False
+    for line in page.read_text(errors="replace").splitlines():
+        if line.startswith("## "):
+            in_section = line.strip() == "## Unfinished"
+        elif in_section:
+            match = BRANCH_ENTRY.match(line)
+            if match:
+                found.append((match.group(1), match.group(2)))
+    return found
+
+
+def added_uncovered(staged_added: list[str], repo: str) -> list[str]:
+    all_globs = [g for globs in pages().values() for g in globs]
+    return [
+        p for p in staged_added
+        if not any(fnmatch.fnmatch(p, g) for g in EXEMPT) and not covered_by(repo, p, all_globs)
+    ]
+
+
+def brewfile_unmentioned() -> list[str]:
+    diff = git("diff", "--cached", "-U0", "--", "Brewfile")
+    names = [m.group(2).rsplit("/", 1)[-1] for line in diff if line.startswith("+")
+             for m in [BREW_LINE.match(line[1:])] if m]
+    text = "\n".join(p.read_text(errors="replace") for p in pages())
+    return [n for n in names if n not in text]
+
+
 def commit_msg(msg_file: str) -> int:
     repo = repo_name()
     if repo is None:
@@ -99,7 +149,9 @@ def commit_msg(msg_file: str) -> int:
     if skip == "none":
         return 0
     staged = git("diff", "--cached", "--name-only")
+    added = git("diff", "--cached", "--name-only", "--diff-filter=A")
     top = Path(git("rev-parse", "--show-toplevel")[0])
+    branch = current_branch()
     now = time.time()
     stale = {}
     for page, globs in pages().items():
@@ -108,18 +160,47 @@ def commit_msg(msg_file: str) -> int:
         hits = [p for p in staged if covered_by(repo, p, globs)]
         if not hits:
             continue
+        if branch and page_kind(page) == "system" and (repo, branch) in unfinished_entries(page):
+            continue
         newest = max((top / p).stat().st_mtime if (top / p).exists() else now - RECENT for p in hits)
         if page.stat().st_mtime < newest:
             stale[page] = hits
-    if not stale:
+    uncovered = added_uncovered(added, repo)
+    brew = brewfile_unmentioned()
+    if not (stale or uncovered or brew):
         return 0
-    print("docs-check: this commit changes what the system documents.", file=sys.stderr)
-    for page, hits in stale.items():
-        print(f"  update {page} [{page_kind(page)}]  (covers {', '.join(hits)})", file=sys.stderr)
+    if stale:
+        print("docs-check: this commit changes what the system documents.", file=sys.stderr)
+        for page, hits in stale.items():
+            print(f"  update {page} [{page_kind(page)}]  (covers {', '.join(hits)})", file=sys.stderr)
+            if branch and page_kind(page) == "system":
+                print(f"    or, for work still on this branch, add - `{repo}:{branch}` <what it changes>"
+                      " under ## Unfinished", file=sys.stderr)
+    for path in uncovered:
+        print(f"  new file {path} is covered by no page: add it to a page's covers line", file=sys.stderr)
+    for name in brew:
+        print(f"  new Brewfile entry {name} is mentioned in no page: say what it is for", file=sys.stderr)
     print("Edit the page(s), then commit again. If nothing user-visible changed, add a line\n"
           "'Docs: none' to the commit message. If only the system page needs the update,\n"
           "add 'Docs: internal'.", file=sys.stderr)
     return 1
+
+
+def post_merge() -> int:
+    repo = repo_name()
+    if repo is None:
+        return 0
+    try:
+        subject = git("reflog", "-1", "--format=%gs")[0]
+    except (subprocess.CalledProcessError, IndexError):
+        return 0
+    match = MERGE_SUBJECT.match(subject)
+    if not match:
+        return 0
+    for page in pages():
+        if (repo, match.group(1)) in unfinished_entries(page):
+            print(page)
+    return 0
 
 
 def coverage() -> int:
@@ -149,6 +230,8 @@ def coverage() -> int:
 def main() -> int:
     if len(sys.argv) >= 3 and sys.argv[1] == "commit-msg":
         return commit_msg(sys.argv[2])
+    if len(sys.argv) == 2 and sys.argv[1] == "post-merge":
+        return post_merge()
     if len(sys.argv) == 2 and sys.argv[1] == "coverage":
         return coverage()
     print(__doc__.strip(), file=sys.stderr)

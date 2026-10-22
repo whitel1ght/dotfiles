@@ -1,9 +1,12 @@
 #!/bin/sh
 # Two checks, both opt-out per commit with a line in the message:
-#  - docs-check: a change to something the system manual (~/wiki/tools)
-#    documents needs that page updated ("Docs: none" opts out).
+#  - docs-check: a change to something the system pages document needs those
+#    pages updated ("Docs: none" opts out).
 #  - pi-parity: a change to a Claude playbook needs its pi twin brought in step
-#    ("Pi: later" opts out).
-root="$(git rev-parse --show-toplevel)"
-"$root/bin/docs-check" commit-msg "$1" || exit 1
-"$root/bin/pi-parity" commit-msg "$1" || exit 1
+#    ("Pi: later" opts out). Runs only in a dotfiles checkout.
+here="$(cd "$(dirname "$0")/.." && pwd)"
+"$here/bin/docs-check" commit-msg "$1" || exit 1
+common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || exit 0
+if [ "$(dirname "$common")" = "$(cd "$HOME/projects/dotfiles" 2>/dev/null && pwd -P)" ]; then
+    "$here/bin/pi-parity" commit-msg "$1" || exit 1
+fi
