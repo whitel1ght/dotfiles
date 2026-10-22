@@ -53,7 +53,7 @@ OPT_OUT = re.compile(r"(?im)^docs:\s*(none|internal)\s*$")
 TRUNK = {"main", "master"}
 BRANCH_ENTRY = re.compile(r"^\s*-\s+`([^`:\s]+):([^`\s]+)`")
 BREW_LINE = re.compile(r'^\s*(brew|cask|tap|mas)\s+"([^"]+)"')
-MERGE_SUBJECT = re.compile(r"^merge (\S+?):")
+MERGE_SUBJECT = re.compile(r"^(?:merge (\S+?):|commit \(merge\): Merge branch '([^']+)')")
 EXEMPT = ["*.test.*", "tests/**", "*/tests/**", "docs/**", "README.md", "*/README.md", ".gitignore",
           "*.lock", "*.lock.json", "LICENSE"]
 RECENT = 24 * 3600  # a deleted file has no mtime; the page must be this fresh
@@ -165,8 +165,9 @@ def commit_msg(msg_file: str) -> int:
         newest = max((top / p).stat().st_mtime if (top / p).exists() else now - RECENT for p in hits)
         if page.stat().st_mtime < newest:
             stale[page] = hits
-    uncovered = added_uncovered(added, repo)
-    brew = brewfile_unmentioned()
+    have_pages = DOCS.is_dir() or SYSTEM.is_dir()
+    uncovered = added_uncovered(added, repo) if have_pages else []
+    brew = brewfile_unmentioned() if have_pages else []
     if not (stale or uncovered or brew):
         return 0
     if stale:
@@ -198,7 +199,7 @@ def post_merge() -> int:
     if not match:
         return 0
     for page in pages():
-        if (repo, match.group(1)) in unfinished_entries(page):
+        if (repo, match.group(1) or match.group(2)) in unfinished_entries(page):
             print(page)
     return 0
 

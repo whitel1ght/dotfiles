@@ -198,6 +198,20 @@ out="$(run post-merge 2>&1)"; got=$?
 [ "$got" -eq 0 ] && [ -z "$out" ] && pass "post-merge prints nothing when no page names it" || fail "post-merge prints nothing when no page names it" "exit $got: $out"
 rm -f "$SYSTEM/daily.md"
 
+git -C "$REPO" checkout -q -b feat-y
+printf 'z\n' >> "$REPO/README.md"; git -C "$REPO" commit -q -am "feat-y work"
+git -C "$REPO" checkout -q main
+printf 'w\n' >> "$REPO/bin/localai.test.sh"; git -C "$REPO" commit -q -am "main work"
+printf '# Daily\n<!-- covers: dotfiles:bin/localai -->\n## Unfinished\n- `dotfiles:feat-y` adds x\n' > "$SYSTEM/daily.md"
+git -C "$REPO" merge -q --no-ff feat-y -m "Merge branch 'feat-y'"
+out="$(run post-merge 2>&1)"; got=$?
+[ "$got" -eq 0 ] && [ "$out" = "$SYSTEM/daily.md" ] && pass "post-merge after a non-fast-forward merge" || fail "post-merge after a non-fast-forward merge" "exit $got: $out"
+rm -f "$SYSTEM/daily.md"
+
+printf '#!/bin/sh\n' > "$REPO/bin/newtool"; printf 'brew "zoxide"\n' >> "$REPO/Brewfile"; git -C "$REPO" add bin/newtool Brewfile
+expect 0 "no wiki: new file and Brewfile entry never block" bash -c "cd '$REPO' && SYSTEM_DOCS='$SANDBOX/nope' SYSTEM_PAGES='$SANDBOX/nope2' '$SCRIPT' commit-msg '$(msg x)'"
+git -C "$REPO" reset -q; rm "$REPO/bin/newtool"; git -C "$REPO" checkout -q -- Brewfile
+
 echo "docs-check coverage"
 
 expect 0 "clean when every script is documented" run coverage
