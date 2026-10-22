@@ -603,6 +603,12 @@ fi
 if [ -f "$DOTFILES_DIR/bin/docs-check" ]; then
     create_symlink "$DOTFILES_DIR/bin/docs-check" "$HOME/.local/bin/docs-check"
     git -C "$DOTFILES_DIR" config core.hooksPath .githooks
+    # decisions and articles run the same hook folder; docs-check finds its repo by path.
+    for repo in decisions articles; do
+        if [ -d "$HOME/projects/$repo/.git" ]; then
+            git -C "$HOME/projects/$repo" config core.hooksPath "$DOTFILES_DIR/.githooks"
+        fi
+    done
 fi
 
 # localai starts/stops the whole local AI stack: LM Studio, its models, Open WebUI.

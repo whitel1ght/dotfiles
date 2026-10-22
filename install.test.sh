@@ -224,6 +224,20 @@ echo '// changed' >> "$FIXTURE/src/main.rs"
 DECISIONS_SETUP=1 DECISIONS_SRC="$FIXTURE" run_tg >/dev/null
 assert_contains "$(cat "$SANDBOX/launchctl.log" 2>/dev/null)" "kickstart -k gui/" "a rebuilt binary restarts the bot"
 
+# --- the sibling system repos get the same commit hook --------------------
+echo "commit hooks for the decisions and articles repos"
+git init -q "$SANDBOX/projects/decisions"
+git init -q "$SANDBOX/projects/articles"
+out="$(run_install)"
+for r in decisions articles; do
+    got="$(git -C "$SANDBOX/projects/$r" config core.hooksPath)"
+    [ "$got" = "$TEST_DIR/.githooks" ] && pass "$r hooksPath is the dotfiles hook folder" \
+        || fail "$r hooksPath is the dotfiles hook folder" "got [$got]"
+done
+rm -rf "$SANDBOX/projects/articles"
+out="$(run_install)"
+[ ! -e "$SANDBOX/projects/articles" ] && pass "a missing repo is skipped, not created" || fail "a missing repo is skipped, not created" "created"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
