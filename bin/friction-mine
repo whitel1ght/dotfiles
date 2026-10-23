@@ -14,8 +14,9 @@
 #   PI_SUB_STATE_DIR    */{meta,exit}.json, events.jsonl          (~/.local/state/pi-sub)
 #   CLAUDE_PROJECTS_DIR */<sid>.jsonl transcripts                 (~/.claude/projects)
 #   PI_SESSIONS_DIR     **/*.jsonl transcripts                    (~/.pi/agent/sessions)
+#   COACH_MINE          the coach detectors, merged in            (bin/coach-mine)
 #
-# Prints {"date", "user_signals", "groups"}. groups: [{sig, source, kind, count, keys,
+# Prints {"date", "user_signals", "groups", "concepts"}. groups: [{sig, source, kind, count, keys,
 # confidence, samples, evidence, known, ledger_status[, regression]}], biggest first.
 # Read-only: no network, no model, nothing written. Corrections are guessed from user
 # prompts that open with "no,", "stop", "don't", "why did you" and the like (5+ words,
@@ -28,6 +29,8 @@
 # user_signals: broad-recall candidate user prompts (direction and frustration markers,
 # or sent right after an interrupt) with the preceding assistant text, at most 40,
 # most-marked first; injected, meta and command-expansion messages are skipped.
+# coach-mine's groups (repeat, restated, secret; they also carry `days`) join the others
+# and its `concepts` pass through; if it fails, one stderr line and they are left out.
 set -euo pipefail
 
 FRICTION_DIR="${FRICTION_DIR:-$HOME/.local/state/friction}"
@@ -36,6 +39,7 @@ DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
 PI_SUB_STATE_DIR="${PI_SUB_STATE_DIR:-$HOME/.local/state/pi-sub}"
 CLAUDE_PROJECTS_DIR="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
 PI_SESSIONS_DIR="${PI_SESSIONS_DIR:-$HOME/.pi/agent/sessions}"
+export CLAUDE_PROJECTS_DIR PI_SESSIONS_DIR
 ledger="${FRICTION_LEDGER:-$HOME/wiki/work/friction/ledger.md}"
 
 die() { echo "friction-mine: $*" >&2; exit 1; }
@@ -54,6 +58,9 @@ done
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -x "$here/friction" ]; then FRICTION="$here/friction"; else FRICTION="$(command -v friction)" || die "friction not found"; fi
+if [ -z "${COACH_MINE:-}" ]; then
+  if [ -x "$here/coach-mine" ]; then COACH_MINE="$here/coach-mine"; else COACH_MINE="$(command -v coach-mine || true)"; fi
+fi
 DEF="$("$FRICTION" jqdef)"
 DEF+='
 def ldate: sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | localtime | strftime("%Y-%m-%d");
@@ -228,12 +235,20 @@ mine() {
 mine "$CLAUDE_PROJECTS_DIR" "$claude_prog" 2
 mine "$PI_SESSIONS_DIR" "$pi_prog" 3
 
+echo '{"groups":[],"concepts":[]}' >"$out/coach.json"
+if [ -n "$COACH_MINE" ] && "$COACH_MINE" --date "$date_" >"$out/coach.raw" 2>/dev/null \
+  && jq -e '(.groups | type) == "array" and (.concepts | type) == "array"' "$out/coach.raw" >/dev/null 2>&1; then
+  mv "$out/coach.raw" "$out/coach.json"
+else
+  echo "friction-mine: coach-mine failed, its groups are left out" >&2
+fi
+
 : >"$out/ledger.tsv"
 [ -f "$ledger" ] && awk -F'|' '/^\| *F-[0-9]+ *\|/ {
   for (i = 2; i <= 8; i++) gsub(/^ +| +$/, "", $i)
   print $2 "\t" $3 "\t" $8 }' "$ledger" >"$out/ledger.tsv"
 
-jq -sc --arg date "$date_" --rawfile ledger "$out/ledger.tsv" "$DEF"'
+jq -sc --arg date "$date_" --rawfile ledger "$out/ledger.tsv" --slurpfile coach "$out/coach.json" "$DEF"'
   ([$ledger | split("\n")[] | select(length > 0) | split("\t") | {key: .[1], value: {id: .[0], status: .[2]}}] | from_entries) as $led
   | [.[] | select(.signal | not) | . + {sig: (.sig // sig(.source; .kind; .msg))}] as $recs
   | ([.[] | select(.signal) | del(.signal)] | map(. + {n: (.markers | length)}) | sort_by([-.n, .ts]) | .[:40] | map(del(.n))) as $signals
@@ -242,15 +257,15 @@ jq -sc --arg date "$date_" --rawfile ledger "$out/ledger.tsv" "$DEF"'
        | rec($f.source; "retry"; "repeated failing command x\(length): \($f.cmd)"; $f.key; ([.[].evidence][:5] | first); $f.confidence)
          + {evidence_all: [.[].evidence]})
      | map(. + {sig: sig(.source; .kind; .msg)})) as $rep
-  | {date: $date, user_signals: $signals, groups: (
-      [$recs[] | del(.file, .cmd)] + [$rep[] | del(.evidence_all)]
-      | group_by(.sig)
-      | map(. as $g | $led[$g[0].sig] as $l | {
-          sig: $g[0].sig, source: $g[0].source, kind: $g[0].kind, count: length,
-          keys: ([$g[].key | select(. != "")] | unique),
-          confidence: (if any($g[]; .confidence == "high") then "high" else "low" end),
-          samples: ([$g[].msg] | unique | .[:3] | map(.[0:200])),
-          evidence: ([$g[].evidence] | .[:5]),
-          known: ($l.id // null), ledger_status: ($l.status // null)}
-          + (if $l.status == "fixed" then {regression: true} else {} end))
-      | sort_by([-.count, .sig]))}' "$out/all.jsonl"
+  | def known($l): {known: ($l.id // null), ledger_status: ($l.status // null)} + (if $l.status == "fixed" then {regression: true} else {} end);
+    {date: $date, user_signals: $signals, groups: (
+      ([$recs[] | del(.file, .cmd)] + [$rep[] | del(.evidence_all)]
+       | group_by(.sig)
+       | map(. as $g | {
+           sig: $g[0].sig, source: $g[0].source, kind: $g[0].kind, count: length,
+           keys: ([$g[].key | select(. != "")] | unique),
+           confidence: (if any($g[]; .confidence == "high") then "high" else "low" end),
+           samples: ([$g[].msg] | unique | .[:3] | map(.[0:200])),
+           evidence: ([$g[].evidence] | .[:5])} + known($led[$g[0].sig])))
+      + [($coach[0].groups // [])[] | . + known($led[.sig])]
+      | sort_by([-.count, .sig])), concepts: ($coach[0].concepts // [])}' "$out/all.jsonl"

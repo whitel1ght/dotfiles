@@ -483,6 +483,11 @@ for f in friction friction-mine; do
     fi
 done
 
+# coach-mine finds repeated prompts, restated rules, secrets in files and concept questions; friction-mine merges it.
+if [ -f "$DOTFILES_DIR/bin/coach-mine" ]; then
+    create_symlink "$DOTFILES_DIR/bin/coach-mine" "$HOME/.local/bin/coach-mine"
+fi
+
 # wait-for waits out a GitLab or Jira outage and then tells the run-day inbox.
 if [ -f "$DOTFILES_DIR/bin/wait-for" ]; then
     create_symlink "$DOTFILES_DIR/bin/wait-for" "$HOME/.local/bin/wait-for"

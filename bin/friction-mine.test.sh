@@ -20,6 +20,7 @@ D=2026-10-15
 FR="$SANDBOX/friction" RD="$SANDBOX/run-day" DY="$SANDBOX/diary" PS="$SANDBOX/pi-sub" CP="$SANDBOX/claude" PI="$SANDBOX/pi" LEDGER="$SANDBOX/ledger.md"
 mkdir -p "$FR" "$RD/done" "$DY" "$PS" "$CP/-proj" "$PI/--proj--"
 
+export ZSH_HISTORY="$SANDBOX/none" COACH_SCAN_DIRS="$SANDBOX/none" FRICTION_WIKI="$SANDBOX/none"
 mine() { FRICTION_DIR="$FR" RUN_DAY_DIR="$RD" DIARY_DIR="$DY" PI_SUB_STATE_DIR="$PS" CLAUDE_PROJECTS_DIR="$CP" PI_SESSIONS_DIR="$PI" "$SCRIPT" --ledger "$LEDGER" "$@" 2>"$SANDBOX/stderr"; }
 grp() { jq -c --arg s "$1" '.groups[] | select(.sig == $s)' <<<"$OUT"; }
 f() { jq -r "$2" <<<"$1"; }
@@ -234,12 +235,31 @@ assert_eq "null|null" "$(f "$(grp 'diary:auth:google calendar not connected')" '
 OUT2=$(FRICTION_DIR="$FR" RUN_DAY_DIR="$RD" DIARY_DIR="$DY" PI_SUB_STATE_DIR="$PS" CLAUDE_PROJECTS_DIR="$CP" PI_SESSIONS_DIR="$PI" "$SCRIPT" --ledger "$SANDBOX/none.md" --date $D); assert_eq "0" "$?" "a missing ledger is fine"
 assert_eq "null" "$(jq -r '.groups[]|select(.sig=="changes-since:auth:outlook not connected")|.known' <<<"$OUT2")" "and nothing is known"
 
+echo "friction-mine — coach-mine"
+STUB="$SANDBOX/coach-stub"
+cat >"$STUB" <<'EOT'
+#!/bin/sh
+echo '{"groups":[{"sig":"user:repeat:post the replies","source":"user","kind":"repeat","count":3,"days":2,"keys":[],"confidence":"high","samples":["post the replies"],"evidence":["/x:1"]},{"sig":"wait-for:service_down:gitlab down <n>h","source":"user","kind":"repeat","count":2,"days":1,"keys":[],"confidence":"low","samples":[],"evidence":[]}],"concepts":[{"harness":"claude","session":"s1","at":"2026-10-15T07:00:00Z","question":"what is x","answer":"x is y"}]}'
+EOT
+chmod +x "$STUB"
+OUT=$(COACH_MINE="$STUB" mine --date $D)
+g=$(grp "user:repeat:post the replies")
+assert_eq "repeat|3|2|null" "$(f "$g" '[.kind,.count,.days,.known]|map(tostring)|join("|")')" "coach-mine groups are merged, days kept"
+assert_eq "F-002|fixed|true" "$(f "$(grp 'wait-for:service_down:gitlab down <n>h' | jq -c 'select(.kind=="repeat")')" '[.known,.ledger_status,.regression]|join("|")')" "coach groups get the ledger lookup too"
+assert_eq "what is x" "$(jq -r '.concepts[0].question' <<<"$OUT")" "concepts pass through at the top level"
+assert_eq "yes" "$(jq -e '[.groups[]|select(.sig=="changes-since:auth:outlook not connected")]|length == 1' <<<"$OUT" >/dev/null && echo yes || echo no)" "friction-mine's own groups are still there"
+printf '#!/bin/sh\nexit 1\n' >"$SANDBOX/coach-fail"; chmod +x "$SANDBOX/coach-fail"
+OUT=$(COACH_MINE="$SANDBOX/coach-fail" mine --date $D); RC=$?
+assert_eq "0" "$RC" "a failing coach-mine does not fail friction-mine"
+assert_eq "yes" "$(jq -e '(.groups|length) > 0 and .concepts == []' <<<"$OUT" >/dev/null && echo yes || echo no)" "its own groups still print, concepts empty"
+assert_eq "1" "$(wc -l <"$SANDBOX/stderr" | tr -d ' ')" "and one stderr line says so"
+
 echo "friction-mine — date filtering"
 OUT=$(mine --date 2026-10-14)
 assert_eq "old:other:yesterday" "$(jq -r '.groups[]|select(.source=="old")|.sig' <<<"$OUT")" "--date 2026-10-14 reads that day's events"
 assert_eq "yes" "$(jq -e '[.groups[].sig|select(startswith("changes-since"))]|length == 0' <<<"$OUT" >/dev/null && echo yes || echo no)" "and none of the 15th's"
 assert_eq "yes" "$(jq -e '[.groups[]|select(.sig|test("old failure"))]|length == 1' <<<"$OUT" >/dev/null && echo yes || echo no)" "Claude entries of the 14th are found on the 14th"
-OUT=$(mine --date 2026-01-01); assert_eq '{"date":"2026-01-01","user_signals":[],"groups":[]}' "$(jq -c . <<<"$OUT")" "a quiet day gives an empty group list"
+OUT=$(mine --date 2026-01-01); assert_eq '{"date":"2026-01-01","user_signals":[],"groups":[],"concepts":[]}' "$(jq -c . <<<"$OUT")" "a quiet day gives an empty group list"
 mine --date nope >/dev/null; assert_eq "1" "$?" "a bad --date is an error"
 
 echo
