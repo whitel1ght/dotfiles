@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # jira-write: move a Jira issue to a status or add a comment, over jira-api.
-# Usage: jira-write [--dry-run] transition KEY "<status name>"
+# Usage: jira-write [--dry-run] transition KEY "<transition or status name>" [--resolution-summary FILE]
 #        jira-write [--dry-run] comment KEY <file>
 # --dry-run resolves everything and prints what would be sent, without sending.
+# A name matches a transition's name or the status it leads to. A Bug moving to Ready for QA
+# or In QA needs a Resolution Summary (exit 4 without one); the option sends it with the move.
 set -euo pipefail
 
 JIRA_API="${JIRA_API:-$HOME/bin/jira-api}"
@@ -10,11 +12,25 @@ DRY=0
 if [ "${1:-}" = "--dry-run" ]; then DRY=1; shift; fi
 
 usage() {
-  echo 'usage: jira-write [--dry-run] transition KEY "<status>" | comment KEY <file>' >&2
+  echo 'usage: jira-write [--dry-run] transition KEY "<status>" [--resolution-summary FILE] | comment KEY <file>' >&2
   exit 2
 }
-[ $# -eq 3 ] || usage
-cmd="$1"; key="$2"; arg="$3"
+SUMMARY=""
+pos=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --resolution-summary) [ $# -ge 2 ] || usage; SUMMARY="$2"; shift 2 ;;
+    *) pos+=("$1"); shift ;;
+  esac
+done
+[ ${#pos[@]} -eq 3 ] || usage
+cmd="${pos[0]}"; key="${pos[1]}"; arg="${pos[2]}"
+[ -z "$SUMMARY" ] || [ "$cmd" = transition ] || usage
+
+# adf_doc FILE prints the file as an ADF document: one paragraph per blank-line block.
+adf_doc() {
+  jq -Rs '{type: "doc", version: 1, content: (split("\n\n") | map(select(test("\\S"))) | map({type: "paragraph", content: [{type: "text", text: sub("\\n+$"; "")}]}))}' "$1"
+}
 
 [[ "$key" =~ ^[A-Za-z][A-Za-z0-9]+-[0-9]+$ ]] || { echo "jira-write: bad issue key: $key" >&2; exit 2; }
 key="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')"
@@ -39,27 +55,66 @@ refused() {
 
 case "$cmd" in
   transition)
-    jira_call GET "issue/$key/transitions"
+    summary_doc=""
+    if [ -n "$SUMMARY" ]; then
+      [ -f "$SUMMARY" ] || { echo "jira-write: no such file: $SUMMARY" >&2; exit 2; }
+      summary_doc="$(adf_doc "$SUMMARY")"
+      [ "$(printf '%s' "$summary_doc" | jq '.content | length')" -gt 0 ] || { echo "jira-write: $SUMMARY has no text" >&2; exit 2; }
+      jira_call GET "issue/$key/transitions?expand=transitions.fields"
+    else
+      jira_call GET "issue/$key/transitions"
+    fi
     resp="$REPLY"
     printf '%s' "$resp" | jq -e '(.transitions | type) == "array"' >/dev/null 2>&1 || refused "$resp"
-    id="$(printf '%s' "$resp" | jq -r --arg n "$arg" \
-      '[.transitions[]? | select((.name | ascii_downcase) == ($n | ascii_downcase))] | first | .id // empty')"
-    if [ -z "$id" ]; then
-      echo "jira-write: no transition named \"$arg\" for $key. Available:" >&2
-      printf '%s' "$resp" | jq -r '.transitions[]? | "  - \(.name)"' >&2
+    chosen="$(printf '%s' "$resp" | jq -c --arg n "$arg" \
+      '[.transitions[]? | select(((.name | ascii_downcase) == ($n | ascii_downcase)) or ((.to.name // "" | ascii_downcase) == ($n | ascii_downcase)))]
+       | (map(select((.name | ascii_downcase) == ($n | ascii_downcase))) + .) | first // empty')"
+    if [ -z "$chosen" ]; then
+      echo "jira-write: no transition or status named \"$arg\" for $key. Available:" >&2
+      printf '%s' "$resp" | jq -r '.transitions[]? | if .to.name then "  - \(.name) -> \(.to.name)" else "  - \(.name)" end' >&2
       exit 3
     fi
+    id="$(printf '%s' "$chosen" | jq -r '.id')"
+    tname="$(printf '%s' "$chosen" | jq -r '.name')"
+    status="$(printf '%s' "$chosen" | jq -r --arg a "$arg" '.to.name // $a')"
+    fields_json=""
+    if [ -n "$SUMMARY" ]; then
+      fid="$(printf '%s' "$chosen" | jq -r '[.fields // {} | to_entries[] | select((.value.name // "" | ascii_downcase) == "resolution summary") | .key] | first // empty')"
+      [ -n "$fid" ] || { echo "jira-write: transition \"$tname\" of $key has no Resolution Summary field" >&2; exit 2; }
+      fields_json="$(jq -nc --arg f "$fid" --argjson d "$summary_doc" '{($f): $d}')"
+    else
+      case "$(printf '%s' "$status" | tr '[:upper:]' '[:lower:]')" in
+        "ready for qa"|"in qa")
+          jira_call GET "issue/$key?fields=issuetype,customfield_10604"
+          printf '%s' "$REPLY" | jq -e 'type == "object"' >/dev/null 2>&1 || refused "$REPLY"
+          itype="$(printf '%s' "$REPLY" | jq -r '.fields.issuetype.name // empty')"
+          has_summary="$(printf '%s' "$REPLY" | jq -r 'if .fields.customfield_10604 == null then "no" else "yes" end')"
+          if [ "$itype" = Bug ] && [ "$has_summary" = no ]; then
+            echo "jira-write: $key is a Bug: Jira needs a Resolution Summary for $status; pass --resolution-summary FILE" >&2
+            exit 4
+          fi
+          ;;
+      esac
+    fi
     if [ "$DRY" = 1 ]; then
-      echo "would move $key to \"$arg\" (transition id $id)"
+      echo "would move $key: transition \"$tname\" (id $id) -> status $status"
+      if [ -n "$SUMMARY" ]; then
+        echo "would set Resolution Summary ($(printf '%s' "$summary_doc" | jq '.content | length') paragraph(s)):"
+        cat "$SUMMARY"
+      fi
       exit 0
     fi
-    jira_call POST "issue/$key/transitions" "$(jq -nc --arg id "$id" '{transition: {id: $id}}')"
+    if [ -n "$fields_json" ]; then
+      jira_call POST "issue/$key/transitions" "$(jq -nc --arg id "$id" --argjson f "$fields_json" '{transition: {id: $id}, fields: $f}')"
+    else
+      jira_call POST "issue/$key/transitions" "$(jq -nc --arg id "$id" '{transition: {id: $id}}')"
+    fi
     [ -z "$REPLY" ] || refused "$REPLY"
     echo "$key -> $arg"
     ;;
   comment)
     [ -f "$arg" ] || { echo "jira-write: no such file: $arg" >&2; exit 2; }
-    body="$(jq -Rs '{body: {type: "doc", version: 1, content: (split("\n\n") | map(select(test("\\S"))) | map({type: "paragraph", content: [{type: "text", text: sub("\\n+$"; "")}]}))}}' "$arg")"
+    body="$(adf_doc "$arg" | jq -c '{body: .}')"
     n="$(printf '%s' "$body" | jq '.body.content | length')"
     [ "$n" -gt 0 ] || { echo "jira-write: $arg has no text" >&2; exit 2; }
     if [ "$DRY" = 1 ]; then

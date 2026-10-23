@@ -16,6 +16,12 @@ Each Bash call is a new shell, so every command below spells out the full script
 2. Show the user the dry-run line and ask for confirmation.
 3. On yes: `${CLAUDE_PLUGIN_ROOT}/skills/jira-write/scripts/jira-write transition ECFX-123 "In QA"`.
 
+A transition can be named by its name or by its target status ("Ready for QA" finds "Code review completed"); both match case-insensitively.
+
+### Bug to Ready for QA or In QA
+
+Jira refuses a Bug there without a Resolution Summary, and `jira-write` exits 4 before sending when it is missing. Always draft the summary in the house style: one or two plain-language sentences for CS and customers, "Fixed <area> to <what now happens>, so <symptom> no longer <happens>. MR !NNNN." No class or method names; add "deployed to dev01" only when verified. Write it to a file (blank line starts a new paragraph), pass it with `--resolution-summary <file>` in both the dry run and the real call, and show the summary with the dry-run line in the same confirmation.
+
 ## Comment
 
 1. Write the comment text to a file in the scratchpad. Plain text; a blank line starts a new paragraph.

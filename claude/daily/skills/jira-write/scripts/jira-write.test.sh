@@ -39,6 +39,17 @@ case "$1 $2" in
   "POST issue/ECFX-10/transitions") echo '{"message":"Forbidden"}' ;;
   "POST issue/ECFX-11/transitions") echo '{}' ;;
   "POST issue/ECFX-12/transitions") echo 'curl: (22) The requested URL returned error: 500' >&2; exit 22 ;;
+  "GET issue/ECFX-2"[0-3]"/transitions"|"GET issue/ECFX-2"[0-3]"/transitions?expand=transitions.fields")
+    echo '{"transitions":[{"id":"9","name":"Code review completed","to":{"name":"Ready for QA"},"fields":{"customfield_10604":{"required":false,"name":"Resolution Summary"}}},{"id":"31","name":"In QA","to":{"name":"In QA"},"fields":{}}]}' ;;
+  "GET issue/ECFX-24/transitions"|"GET issue/ECFX-24/transitions?expand=transitions.fields")
+    echo '{"transitions":[{"id":"9","name":"Code review completed","to":{"name":"Ready for QA"},"fields":{}}]}' ;;
+  "GET issue/ECFX-20?fields=issuetype,customfield_10604"|"GET issue/ECFX-24?fields=issuetype,customfield_10604")
+    echo '{"fields":{"issuetype":{"name":"Bug"},"customfield_10604":null}}' ;;
+  "GET issue/ECFX-21?fields=issuetype,customfield_10604")
+    echo '{"fields":{"issuetype":{"name":"Task"},"customfield_10604":null}}' ;;
+  "GET issue/ECFX-22?fields=issuetype,customfield_10604"|"GET issue/ECFX-23?fields=issuetype,customfield_10604")
+    echo '{"fields":{"issuetype":{"name":"Bug"},"customfield_10604":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"Fixed it."}]}]}}}' ;;
+  "POST issue/ECFX-2"[0-4]"/transitions") ;;
   "POST issue/ECFX-13/comment") echo '<html><body>Login</body></html>' ;;
   "POST issue/ECFX-14/comment") echo 'Unauthorized' ;;
   "POST issue/ECFX-15/comment") echo '{"message":"Forbidden"}' ;;
@@ -71,12 +82,62 @@ assert_eq "1" "$(log_lines)" "nothing is posted for an unknown status"
 reset_log
 out="$("$JW" --dry-run transition ECFX-1 "In QA" 2>&1)"; rc=$?
 assert_eq "0" "$rc" "dry run exits 0"
-assert_contains "$out" 'would move ECFX-1 to "In QA" (transition id 41)' "dry run says what it would do"
-assert_eq "1" "$(log_lines)" "dry run only reads"
+assert_contains "$out" 'would move ECFX-1: transition "In QA" (id 41) -> status In QA' "dry run says what it would do"
+assert_not_contains "$(cat "$STUB_LOG")" "POST" "dry run only reads"
 
 out="$("$JW" transition ECFX-2 "In QA" 2>&1)"; rc=$?
 assert_eq "1" "$rc" "a Jira error body fails the command"
 assert_contains "$out" "Transition is not valid" "and shows Jira's message"
+
+echo "== transition: by target status and Resolution Summary =="
+printf 'Fixed date parsing to keep the day, so notices no longer shift.\n\nMR !1234.\n' > "$SANDBOX/rs.md"
+
+reset_log
+out="$("$JW" --dry-run transition ECFX-21 "Ready for QA" 2>&1)"; rc=$?
+assert_eq "0" "$rc" "a target status name resolves a differently named transition"
+assert_contains "$out" 'transition "Code review completed" (id 9) -> status Ready for QA' "dry run names the transition and the status"
+reset_log
+"$JW" transition ECFX-21 "ready for qa" >/dev/null 2>&1
+assert_contains "$(cat "$STUB_LOG")" 'POST issue/ECFX-21/transitions {"transition":{"id":"9"}}' "posts the id of the transition behind the status"
+out="$("$JW" transition ECFX-21 "Done" 2>&1)"; rc=$?
+assert_eq "3" "$rc" "unknown name and status exits 3"
+assert_contains "$out" "- Code review completed -> Ready for QA" "lists name -> status"
+
+reset_log
+out="$("$JW" transition ECFX-20 "Ready for QA" --resolution-summary "$SANDBOX/rs.md" 2>&1)"; rc=$?
+assert_eq "0" "$rc" "bug with --resolution-summary exits 0"
+assert_contains "$(cat "$STUB_LOG")" "GET issue/ECFX-20/transitions?expand=transitions.fields" "expands the transition fields"
+body="$(sed -n 's/^POST issue\/ECFX-20\/transitions //p' "$STUB_LOG")"
+assert_eq "9" "$(printf '%s' "$body" | jq -r '.transition.id')" "posts transition id 9"
+assert_eq "doc" "$(printf '%s' "$body" | jq -r '.fields.customfield_10604.type')" "summary goes in the field found by name, as ADF"
+assert_eq "2" "$(printf '%s' "$body" | jq '.fields.customfield_10604.content | length')" "one paragraph per blank-line block"
+assert_eq "MR !1234." "$(printf '%s' "$body" | jq -r '.fields.customfield_10604.content[1].content[0].text')" "carries the file's text"
+
+reset_log
+out="$("$JW" --dry-run transition ECFX-20 "Ready for QA" --resolution-summary "$SANDBOX/rs.md" 2>&1)"; rc=$?
+assert_eq "0" "$rc" "dry run with summary exits 0"
+assert_contains "$out" "Fixed date parsing to keep the day" "dry run prints the summary"
+assert_not_contains "$(cat "$STUB_LOG")" "POST" "dry run with summary sends nothing"
+
+"$JW" transition ECFX-20 "Ready for QA" --resolution-summary "$SANDBOX/missing.md" >/dev/null 2>&1; assert_eq "2" "$?" "missing summary file exits 2"
+"$JW" transition ECFX-20 "Ready for QA" --resolution-summary "$SANDBOX/empty.md" >/dev/null 2>&1; assert_eq "2" "$?" "empty summary file exits 2"
+reset_log
+"$JW" transition ECFX-24 "Ready for QA" --resolution-summary "$SANDBOX/rs.md" >/dev/null 2>&1; assert_eq "2" "$?" "transition without a Resolution Summary field exits 2"
+assert_not_contains "$(cat "$STUB_LOG")" "POST" "nothing is posted then"
+
+reset_log
+out="$("$JW" transition ECFX-20 "Ready for QA" 2>&1)"; rc=$?
+assert_eq "4" "$rc" "bug without a summary exits 4"
+assert_contains "$out" "jira-write: ECFX-20 is a Bug: Jira needs a Resolution Summary for Ready for QA; pass --resolution-summary FILE" "says what to pass"
+assert_not_contains "$(cat "$STUB_LOG")" "POST" "no POST is sent"
+out="$("$JW" --dry-run transition ECFX-20 "In QA" 2>&1)"; rc=$?
+assert_eq "4" "$rc" "dry run reports the same for In QA"
+
+reset_log
+"$JW" transition ECFX-21 "Ready for QA" >/dev/null 2>&1; assert_eq "0" "$?" "a Task needs no summary"
+reset_log
+"$JW" transition ECFX-22 "Ready for QA" >/dev/null 2>&1; assert_eq "0" "$?" "a Bug that already has a summary needs no option"
+assert_contains "$(cat "$STUB_LOG")" 'POST issue/ECFX-22/transitions {"transition":{"id":"9"}}' "and posts the plain transition"
 
 echo "== transition: unrecognized responses fail closed =="
 reset_log
