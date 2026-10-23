@@ -50,7 +50,8 @@
 #         tool: signature tool:tool:NAME (--sig is tool:NAME; the name must be non-empty),
 #         status proposed, ## Proposal from F. Calling it again for the same NAME adds the
 #         date's evidence and replaces the proposal while the entry is still open|proposed;
-#         other statuses are left alone. is_safety applied to the proposal and signature sets
+#         any other status (fixed, landed, declined, ...) is kept as is, with the existing
+#         proposal and no regressed flip: only the date's Evidence bullet is added. is_safety applied to the proposal and signature sets
 #         `safety: true`, never back to false. Prints {id, new}.
 # directions  the standing directions in $FRICTION_WIKI/directions.md (D-NNN | rule | scope |
 #         since | source | status). add skips a rule already active (same words, ignoring case
@@ -110,6 +111,11 @@
 # apply creates an entry for a tool_error only with count >= 2 on the day or on a second day
 #         (first sightings are kept in .seen-sigs.tsv).
 #
+# Every command that writes (all but diary-section, directions render and --help) holds the
+# mkdir lock $FRICTION_WIKI/.lock for its whole run, so concurrent writers (the tool-review
+# subagent, coach-fix, a session's end-day) queue up. It waits up to $FRICTION_LOCK_WAIT seconds
+# (default 30), takes over a lock whose pid is dead, and otherwise exits 1 "ledger busy".
+#
 # $FRICTION_WIKI (default ~/wiki/work/friction) holds ledger.md and the F-files. The F-files are
 # the source of truth; ledger.md is regenerated from them. Only the main session at end-day
 # calls this: subagents never write the wiki. The one exception is `add-tool`, which the
@@ -124,6 +130,41 @@ die() { echo "friction-ledger: $*" >&2; exit 1; }
 need() { [ $# -ge 2 ] || die "$1 needs a value"; }
 valid_date() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "--date must be YYYY-MM-DD, got $1"; }
 one_line() { tr '\n\r\t' '   ' <<<"$1" | sed 's/  */ /g; s/^ //; s/ $//'; }
+
+# --- lock ---------------------------------------------------------------------
+# One mkdir lock ($FRICTION_WIKI/.lock, pid file inside) around every mutating subcommand,
+# taken once at the dispatch at the bottom so nested calls never wait on themselves.
+LOCK_DIR="$FRICTION_WIKI/.lock"
+LOCK_HELD=0
+lock_pid() { cat "$LOCK_DIR/pid" 2>/dev/null || true; }
+release_lock() {
+  [ "$LOCK_HELD" = 1 ] && [ "$(lock_pid)" = "$$" ] && rm -rf "$LOCK_DIR"
+  return 0
+}
+cleanup() { rm -rf "${work:-}"; release_lock; }
+trap cleanup EXIT
+acquire_lock() {
+  local waited=0 max="${FRICTION_LOCK_WAIT:-30}" pid
+  mkdir -p "$FRICTION_WIKI"
+  while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    pid="$(lock_pid)"
+    if { [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; } || { [ -z "$pid" ] && [ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +1 2>/dev/null)" ]; }; then
+      # take over a dead holder's lock; the rename lets only one waiter win
+      if mv "$LOCK_DIR" "$LOCK_DIR.stale.$$" 2>/dev/null; then
+        if [ -n "$(cat "$LOCK_DIR.stale.$$/pid" 2>/dev/null)" ] && kill -0 "$(cat "$LOCK_DIR.stale.$$/pid")" 2>/dev/null; then
+          mv "$LOCK_DIR.stale.$$" "$LOCK_DIR" 2>/dev/null || rm -rf "$LOCK_DIR.stale.$$"
+        else
+          rm -rf "$LOCK_DIR.stale.$$"
+        fi
+      fi
+      continue
+    fi
+    [ "$waited" -lt "$max" ] || die "ledger busy (lock held by pid ${pid:-unknown})"
+    sleep 1; waited=$((waited + 1))
+  done
+  echo "$$" >"$LOCK_DIR/pid"
+  LOCK_HELD=1
+}
 
 # --- F-file helpers -----------------------------------------------------------
 
@@ -187,7 +228,7 @@ entry_days() { local w; w="$(fm_get "$1" window_days)"; if [ -n "$w" ]; then ech
 fpath() { printf '%s/%s.md' "$FRICTION_WIKI" "$1"; }
 
 new_file() { # id sig date
-  cat >"$(fpath "$1")" <<EOT
+  cat >"$(fpath "$1").tmp.$$" <<EOT
 ---
 id: $1
 signature: $(jq -Rn --arg v "$2" '$v')
@@ -211,6 +252,7 @@ rung:
 ## History
 - $3: opened
 EOT
+  mv "$(fpath "$1").tmp.$$" "$(fpath "$1")"
 }
 
 rebuild_ledger() {
@@ -274,7 +316,7 @@ cmd_apply() {
   valid_date "$date_"
 
   local mine f id sig num next g kind conf ev
-  work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+  local rc=0; work="$(mktemp -d)"
   mine="$(load_mine "$date_" "$mine_file")"
   : >"$work/map.tsv"; : >"$work/touched.jsonl"
   next=1
@@ -340,7 +382,9 @@ cmd_apply() {
        needs_proposal: [$touched[] | select($st[.id].status == "open" and ($st[.id].proposal | not) and ($st[.id].days >= 2 or .g.kind == "blocked")) | item(.)],
        regressed: [$touched[] | select($st[.id].status == "regressed" and $st[.id].regressed) | item(.)],
        corrections: [$mine.groups[]? | select(.kind == "correction") | {count, samples}],
-       user_signals: (if $done then [] else ($mine.user_signals // []) end)}'
+       user_signals: (if $done then [] else ($mine.user_signals // []) end)}' || rc=$?
+  rm -rf "$work"
+  return "$rc"
 }
 
 # --- set ----------------------------------------------------------------------
@@ -521,6 +565,25 @@ cmd_add_tool() {
   [ -f "$pfile" ] && [ -r "$pfile" ] || die "no such file: $pfile"
   sig="tool:tool:$name"
   local tmp out id f was_new=false status
+  id="$(find_id "$sig")"
+  if [ -n "$id" ]; then
+    f="$(fpath "$id")"; status="$(fm_get "$f" status)"
+    if [ "$status" != open ] && [ "$status" != proposed ]; then
+      # a settled entry keeps its status and proposal; only the date's evidence is added
+      if ! has_date "$f" "$date_"; then
+        local days first last
+        section_edit "$f" Evidence append "- $date_ (1×): monthly tool review: $name"
+        days="$(evidence_dates "$f" | wc -l | tr -d ' ')"
+        first="$(fm_get "$f" first)"; last="$(fm_get "$f" last)"
+        [[ "$date_" < "$first" ]] && fm_set "$f" first "$date_"
+        [[ "$date_" > "$last" ]] && fm_set "$f" last "$date_"
+        fm_set "$f" days "$days"
+        rebuild_ledger
+      fi
+      jq -nc --arg id "$id" '{id: $id, new: false}'
+      return 0
+    fi
+  fi
   tmp="$(mktemp)"
   jq -n --arg sig "$sig" --arg s "monthly tool review: $name" \
     '{groups: [{sig: $sig, source: "tool", kind: "tool", count: 1, confidence: "high", keys: [], samples: [$s], evidence: []}]}' >"$tmp"
@@ -897,16 +960,16 @@ cmd_directions() {
 }
 
 case "${1:-}" in
-  apply) shift; cmd_apply "$@" ;;
-  set) shift; cmd_set "$@" ;;
+  apply) acquire_lock; shift; cmd_apply "$@" ;;
+  set) acquire_lock; shift; cmd_set "$@" ;;
   diary-section) shift; cmd_diary "$@" ;;
-  frustration) shift; cmd_frustration "$@" ;;
-  add-tool) shift; cmd_add_tool "$@" ;;
-  ingest) shift; cmd_ingest "$@" ;;
-  directions) shift; cmd_directions "$@" ;;
-  coach-offer) shift; cmd_coach_offer "$@" ;;
-  coach-answer) shift; cmd_coach_answer "$@" ;;
-  coach-log) shift; cmd_coach_log "$@" ;;
-  -h|--help|"") sed -n '2,96p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
+  frustration) acquire_lock; shift; cmd_frustration "$@" ;;
+  add-tool) acquire_lock; shift; cmd_add_tool "$@" ;;
+  ingest) acquire_lock; shift; cmd_ingest "$@" ;;
+  directions) [ "${2:-}" = render ] || acquire_lock; shift; cmd_directions "$@" ;;
+  coach-offer) acquire_lock; shift; cmd_coach_offer "$@" ;;
+  coach-answer) acquire_lock; shift; cmd_coach_answer "$@" ;;
+  coach-log) acquire_lock; shift; cmd_coach_log "$@" ;;
+  -h|--help|"") awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print } /^set -/ { exit }' "$0"; [ -n "${1:-}" ] ;;
   *) die "unknown command $1" ;;
 esac

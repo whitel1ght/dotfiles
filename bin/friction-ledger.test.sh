@@ -527,6 +527,48 @@ assert_eq "true" "$(fld F-001 safety)" "safety is never reset"
 "$SCRIPT" add-tool --sig tool:x --proposal-file "$SANDBOX/nope.md" --date 2026-10-20 2>/dev/null; assert_eq "1" "$?" "add-tool needs a readable proposal file"
 assert_eq "1" "$(ls "$FRICTION_WIKI"/F-*.md | wc -l | tr -d ' ')" "failed calls write nothing"
 
+# --- add-tool on settled entries --------------------------------------------------
+echo "add-tool — settled entries"
+rm -rf "$FRICTION_WIKI"; mkdir -p "$FRICTION_WIKI"
+"$SCRIPT" add-tool --sig tool:alpha --proposal-file "$SANDBOX/tp.md" --date 2026-10-20 >/dev/null
+"$SCRIPT" add-tool --sig tool:beta --proposal-file "$SANDBOX/tp.md" --date 2026-10-20 >/dev/null
+"$SCRIPT" add-tool --sig tool:gamma --proposal-file "$SANDBOX/tp.md" --date 2026-10-20 >/dev/null
+"$SCRIPT" set F-001 --status fixed --fix abc --date 2026-10-21
+"$SCRIPT" set F-002 --status landed --date 2026-10-21
+"$SCRIPT" set F-003 --status declined --date 2026-10-21
+for n in alpha beta gamma; do "$SCRIPT" add-tool --sig "tool:$n" --proposal-file "$SANDBOX/tp2.md" --date 2026-10-25 >/dev/null; done
+assert_eq "fixed|landed|declined" "$(fld F-001 status)|$(fld F-002 status)|$(fld F-003 status)" "fixed, landed and declined keep their status (no regressed flip)"
+assert_eq "0" "$(grep -c "allow rule" "$FRICTION_WIKI"/F-00[123].md | awk -F: '{s+=$2} END{print s}')" "the existing proposal is kept"
+assert_eq "yes" "$(grep -q '^- 2026-10-25' "$FRICTION_WIKI/F-001.md" && echo yes)" "the date's evidence bullet is added"
+assert_eq "2026-10-25|2" "$(fld F-001 last)|$(fld F-001 days)" "last and days follow the evidence"
+assert_eq "" "$(fld F-001 safety)" "safety is not taken from the ignored proposal"
+
+# --- lock -------------------------------------------------------------------------
+echo "lock"
+rm -rf "$FRICTION_WIKI"; mkdir -p "$FRICTION_WIKI"
+for i in 1 2 3 4 5 6; do
+  jq -n --arg s "x:other:group $i" '{groups: [{sig: $s, kind: "other", count: 1, confidence: "high", samples: ["s"], evidence: []}]}' >"$SANDBOX/lk$i.json"
+  "$SCRIPT" apply --date 2026-10-15 --mine-json "$SANDBOX/lk$i.json" >/dev/null 2>"$SANDBOX/lkerr$i" &
+done
+wait
+assert_eq "6" "$(ls "$FRICTION_WIKI"/F-*.md | wc -l | tr -d ' ')" "six concurrent applies on new groups make six distinct entries"
+assert_eq "6" "$(cat "$FRICTION_WIKI"/F-*.md | grep -c '^signature:')" "none overwrote another"
+[ ! -e "$FRICTION_WIKI/.lock" ] && pass "the lock is released afterwards" || fail "lock released" "still there"
+ls "$FRICTION_WIKI"/.lock.stale.* >/dev/null 2>&1 && fail "no stale leftovers" "found" || pass "no stale leftovers"
+mkdir "$FRICTION_WIKI/.lock"; echo 999999 >"$FRICTION_WIKI/.lock/pid"
+out="$("$SCRIPT" add-tool --sig tool:delta --proposal-file "$SANDBOX/tp.md" --date 2026-10-20 2>&1)"
+assert_eq "0" "$?" "a lock with a dead pid is taken over"
+[ ! -e "$FRICTION_WIKI/.lock" ] && pass "and released" || fail "released after takeover" ""
+sleep 30 & HOLDER=$!
+mkdir "$FRICTION_WIKI/.lock"; echo "$HOLDER" >"$FRICTION_WIKI/.lock/pid"
+out="$(FRICTION_LOCK_WAIT=1 "$SCRIPT" set F-001 --status wontfix --date 2026-10-20 2>&1)"; rc=$?
+assert_eq "1" "$rc" "a live lock times out with exit 1"
+grep -q "ledger busy (lock held by pid $HOLDER)" <<<"$out" && pass "and names the holder" || fail "busy message" "$out"
+assert_eq "$HOLDER" "$(cat "$FRICTION_WIKI/.lock/pid")" "a timed-out run leaves the holder's lock alone"
+"$SCRIPT" diary-section --date 2026-10-15 >/dev/null 2>&1; assert_eq "0" "$?" "read-only diary-section ignores the lock"
+"$SCRIPT" directions render >/dev/null 2>&1; assert_eq "0" "$?" "directions render ignores the lock"
+kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null; rm -rf "$FRICTION_WIKI/.lock"
+
 # --- misc ---------------------------------------------------------------------
 echo "misc"
 "$SCRIPT" apply 2>/dev/null; assert_eq "1" "$?" "apply without --date fails"
