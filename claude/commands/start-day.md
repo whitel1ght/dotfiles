@@ -163,7 +163,7 @@ not the decision queue). Show what it is, the evidence (count, days, two samples
 proposed fix with its rung. Count each in `offered`. If `safety` is true, label it
 **loosens a safety control** and show the exact change as "before → after", taken from the
 entry's proposal. If the proposal does not state a before → after, say
-"the proposal does not state the exact change — answer later or no", do not accept yes for it, and record later.
+"the proposal does not state the exact change — answer later or no", and do not accept yes for it: record a no as no, and turn a yes into later.
 Ask "yes / no / later". Anything else: ask once more, then treat it as later. Record it:
 
 ```bash
@@ -176,8 +176,11 @@ on; never retry with another answer. Otherwise count it in `answered`. After a y
 - not a safety item: `~/.local/bin/coach-fix enqueue F-NNN`
 - a safety item: `~/.local/bin/coach-fix enqueue F-NNN --approved-safety`
 
-Only an explicit yes to the spelled-out change gets the flag. If the enqueue fails, say so in
-one line; the entry stays `landing` and a later morning's results will show it.
+Only an explicit yes to the spelled-out change gets the flag. If the enqueue fails, retry the
+same enqueue once. If it still fails, run
+`~/.local/bin/friction-ledger coach-answer F-NNN later --date "$T"` (a different answer on
+the same day replaces the first) and tell me in one line that the fix could not be queued
+and the suggestion will come back.
 
 **Quiz.** Run `~/.local/bin/cards due --limit 5 --json` (an array of `{slug, front, back,
 tags, new}`; nothing due means no quiz). One card at a time: show the `front` and wait for my
