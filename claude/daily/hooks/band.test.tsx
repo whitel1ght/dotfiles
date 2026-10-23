@@ -6,14 +6,16 @@ const WIKI = '/home/t/wiki/diary/2026-10-08.md'
 const STATE = '/home/t/.local/state/run-day/2026-10-08.md'
 const OWNER = '/home/t/.local/state/run-day/2026-10-08.owner'
 const ME = 'sess-me'
+const T0 = Date.UTC(2026, 9, 8, 6, 0)
+const WARM_REPLY = { isAnswered: true, text: 'warm', usage: { input_tokens: 5, output_tokens: 2, cache_read_input_tokens: 80_000, cache_creation_input_tokens: 40 } }
 
 type Run = { exitCode: number; stdout: string; stderr: string }
 
-type Opts = { day: Run | (() => Run); refuse?: boolean; frictionDenied?: boolean; owner?: string | null; writeFails?: boolean; inbox?: string }
+type Opts = { day: Run | (() => Run); refuse?: boolean; frictionDenied?: boolean; owner?: string | null; writeFails?: boolean; inbox?: string; diary?: string; fork?: () => unknown }
 
 async function start($: any, on: any, opts: Opts) {
-  const clock = mock.clock(on)
-  const files: Record<string, string> = {}
+  const clock = mock.clock(on, { now: T0 })
+  const files: Record<string, string> = { [WIKI]: opts.diary ?? DIARY, [STATE]: RUN_STATE }
   const owner = opts.owner === undefined ? ME : opts.owner
   if (owner !== null) files[OWNER] = `${owner}\n`
   const prompts: string[] = []
@@ -28,9 +30,13 @@ async function start($: any, on: any, opts: Opts) {
     if (opts.inbox !== undefined && isInboxLs(e.argv)) return { value: { exitCode: 0, stdout: opts.inbox, stderr: '' } } as never
     return { value: e.argv[0] === 'date' ? { exitCode: 0, stdout: '2026-10-08\n', stderr: '' } : typeof opts.day === 'function' ? (isChangesSince(e.argv) ? opts.day() : OK) : opts.day } as never
   })
-  on('fs.read', (_$: any, e: any) =>
-    e.path === WIKI ? { value: DIARY } : e.path === STATE ? { value: RUN_STATE } : e.path in files ? { value: files[e.path] } : { deny: 'ENOENT' },
-  )
+  on('fs.read', (_$: any, e: any) => (e.path in files ? { value: files[e.path] } : { deny: 'ENOENT' }))
+  const forks: number[] = []
+  on('model.fork', () => {
+    forks.push(clock.now())
+    return { value: opts.fork ? opts.fork() : WARM_REPLY } as never
+  })
+  on('turn.complete', (_$: any, e: any) => ({ text: e.answer }) as never)
   on('fs.write', (_$: any, e: any) => {
     if (opts.writeFails) return { deny: 'EACCES' }
     files[e.path] = e.text
@@ -63,7 +69,7 @@ async function start($: any, on: any, opts: Opts) {
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
   on('agent.list', () => ({ value: [] }))
   await $.session.start({ cwd: '/home/t', surface: 'terminal', source: 'startup' } as never)
-  return { clock, calls, toasts, logs, registered, statuses, files, prompts }
+  return { clock, calls, toasts, logs, registered, statuses, files, prompts, forks }
 }
 
 const isFriction = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('friction')
@@ -228,4 +234,81 @@ test('a failed owner write toasts, records friction and still runs the command',
   expect(await $.command.run({ command: 'daily:run-day', args: '' })).toEqual({ text: 'ran daily:run-day' })
   expect(s.toasts.some(t => t.startsWith('daily: run-day owner not recorded'))).toBe(true)
   expect(frictionFor(s.calls, 'daily-owner').length).toBe(1)
+})
+
+// The day session stays warm after cache-tax's 6 h window.
+const MIN = 60_000
+const HOUR = 60 * MIN
+const OPEN_DAY = DIARY.replace(/<!-- daily-report:start -->[\s\S]*<!-- daily-report:end -->\n/, '')
+const idleDay = { day: OK, diary: OPEN_DAY }
+const turn = ($: any) => $.turn.complete({ answer: 'ok', reason: 'answer', durationMs: 1000, isAborted: false, turnId: 't' } as never)
+
+test('no keepwarm ping in the first 6 h: cache-tax covers those', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await s.clock.advance(5 * HOUR)
+  await turn($)
+  await s.clock.advance(59 * MIN)
+  expect(s.forks).toEqual([])
+})
+
+test('after 6 h the owning session pings 50 idle minutes after its last turn, then every 50 minutes', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await s.clock.advance(6 * HOUR)
+  await turn($)
+  await s.clock.advance(49 * MIN)
+  expect(s.forks).toEqual([])
+  await s.clock.advance(1 * MIN)
+  expect(s.forks).toEqual([T0 + 6 * HOUR + 50 * MIN])
+  await s.clock.advance(50 * MIN)
+  expect(s.forks.length).toBe(2)
+})
+
+test('a session that does not own the day is never kept warm', async ($, on) => {
+  const s = await start($, on, { ...idleDay, owner: 'sess-other' })
+  await s.clock.advance(6 * HOUR)
+  await turn($)
+  await s.clock.advance(3 * HOUR)
+  expect(s.forks).toEqual([])
+})
+
+test('a cold readback stops keepwarm for the session, with one log line', async ($, on) => {
+  const cold = { ...WARM_REPLY, usage: { ...WARM_REPLY.usage, cache_read_input_tokens: 0, cache_creation_input_tokens: 80_000 } }
+  const s = await start($, on, { ...idleDay, fork: () => cold })
+  await s.clock.advance(6 * HOUR)
+  await turn($)
+  await s.clock.advance(50 * MIN)
+  expect(s.forks.length).toBe(1)
+  expect(s.logs.filter(l => l.startsWith('daily keepwarm stopped: the ping read 0'))).toHaveLength(1)
+  await turn($)
+  await s.clock.advance(2 * HOUR)
+  expect(s.forks.length).toBe(1)
+})
+
+test('an unanswered fork stops keepwarm', async ($, on) => {
+  const s = await start($, on, { ...idleDay, fork: () => ({ isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded' }) })
+  await s.clock.advance(6 * HOUR)
+  await turn($)
+  await s.clock.advance(50 * MIN)
+  expect(s.logs).toContain('daily keepwarm stopped: the API call failed (529)')
+})
+
+test('once the daily report is written keepwarm stops', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await s.clock.advance(6 * HOUR)
+  await turn($)
+  await s.clock.advance(50 * MIN)
+  expect(s.forks.length).toBe(1)
+  s.files[WIKI] = DIARY
+  await s.clock.advance(50 * MIN)
+  expect(s.forks.length).toBe(1)
+  expect(s.logs).toContain("daily keepwarm stopped: today's report is written")
+})
+
+test('after midnight the dated owner file no longer matches and keepwarm goes quiet', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await s.clock.advance(6 * HOUR)
+  await turn($)
+  delete s.files[OWNER]
+  await s.clock.advance(2 * HOUR)
+  expect(s.forks).toEqual([])
 })

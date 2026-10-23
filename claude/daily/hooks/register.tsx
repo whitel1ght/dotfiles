@@ -8,6 +8,7 @@ import { applyEdit, checkTicks, denyMessage, isTodaysDiary } from '../mod/guard.
 import type { EditInput } from '../mod/guard.ts'
 import { claimsDay, claimsDayPrompt, formatOwner, ownerPath, parseOwner, receivesPings } from '../mod/owner.ts'
 import { parseRunState } from '../mod/runstate.ts'
+import { isWarm, nextWarm, pingFailure, REPORT_MARK, WARM_PROMPT } from '../mod/warm.ts'
 import type { InboxState, ViewState } from '../mod/types.ts'
 import { joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts'
 
@@ -71,6 +72,71 @@ async function claimDay($: EngineInterface) {
     const why = `run-day owner not recorded: ${err instanceof Error ? err.message : String(err)}`
     $.ui.toast(`daily: ${why}`)
     friction($, 'tool_error', why, 'daily-owner')
+  }
+}
+
+// Keepwarm for the day session after cache-tax's 6 h window (mod/warm.ts). One timer at a time,
+// re-armed after every main-thread turn and every warm ping; a late timer (sleep) re-checks first.
+const warm = {
+  startedAt: 0,
+  lastRequestAt: null as number | null,
+  timer: null as { cancel: () => void } | null,
+  stopped: null as string | null,
+  wasCold: false,
+  isPinging: false,
+}
+
+function disarmWarm() {
+  warm.timer?.cancel()
+  warm.timer = null
+}
+
+function stopWarm($: EngineInterface, why: string) {
+  disarmWarm()
+  warm.stopped = why
+  $.ui.log(`daily keepwarm stopped: ${why}`)
+}
+
+async function armWarm($: EngineInterface) {
+  disarmWarm()
+  if (warm.stopped !== null || warm.isPinging) return
+  const day = await today($)
+  if (!day) return
+  const isActive = (await readOr($, day.statePath)) !== null
+  const step = nextWarm({
+    isOwner: isActive && (await isOwner($, day)),
+    dayEnded: ((await readOr($, day.diaryPath)) ?? '').includes(REPORT_MARK),
+    startedAt: warm.startedAt,
+    lastRequestAt: warm.lastRequestAt,
+    now: await $.clock.now(),
+  })
+  if (step.do === 'cold' && !warm.wasCold) $.ui.log('daily keepwarm: the cache went cold while idle; warming resumes after the next turn')
+  warm.wasCold = step.do === 'cold'
+  if (step.do === 'stop') stopWarm($, step.why)
+  else if (step.do === 'wait') warm.timer = $.clock.after(step.ms, () => void safeArmWarm($))
+  else if (step.do === 'ping') await pingWarm($)
+}
+
+async function pingWarm($: EngineInterface) {
+  warm.isPinging = true
+  let why: string | null
+  try {
+    why = pingFailure(await $.model.fork({ prompt: WARM_PROMPT }))
+  } catch (err) {
+    why = `the ping failed: ${err instanceof Error ? err.message : String(err)}`
+  } finally {
+    warm.isPinging = false
+  }
+  if (why !== null) return stopWarm($, why)
+  warm.lastRequestAt = await $.clock.now()
+  await armWarm($)
+}
+
+async function safeArmWarm($: EngineInterface) {
+  try {
+    await armWarm($)
+  } catch (err) {
+    stopWarm($, err instanceof Error ? err.message : String(err))
   }
 }
 
@@ -225,6 +291,7 @@ async function watchInbox($: EngineInterface) {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    warm.startedAt = await $.clock.now()
     try {
       await $.command.register({ name: 'day-plan', description: "Open today's plan in nvim in a tmux popup" })
     } catch (err) {
@@ -265,6 +332,34 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     if (e.origin?.kind !== 'plugin' && claimsDayPrompt(e.text)) await claimDay($)
     return next(e)
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const r = await next(e)
+    if (!e.agentId) {
+      warm.lastRequestAt = await $.clock.now()
+      void safeArmWarm($)
+    }
+    return r
+  })
+
+  // cache-tax's pings are forks too: a warm one moves the clock the hand-over at 6 h starts from.
+  on('model.fork', async ($, e, next) => {
+    const r = await next(e)
+    if (r && r.isAnswered && isWarm(r.usage) && !warm.isPinging) {
+      warm.lastRequestAt = await $.clock.now()
+      void safeArmWarm($)
+    }
+    return r
+  })
+
+  on('session.compact', async ($, e, next) => {
+    const r = await next(e)
+    if (!e.agentId) {
+      warm.lastRequestAt = null
+      disarmWarm()
+    }
+    return r
   })
 
   for (const tool of ['Edit', 'Write'] as const) {
