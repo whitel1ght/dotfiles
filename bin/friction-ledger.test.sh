@@ -275,6 +275,143 @@ apply 2026-10-15 "$SANDBOX/i1u.json" >/dev/null
 assert_eq "$before" "$(snap)" "re-run of apply + ingest creates no new entries"
 assert_eq "1" "$(grep -c '^| D-' "$FRICTION_WIKI/directions.md")" "one direction"
 
+# --- coach --------------------------------------------------------------------
+echo "coach"
+export FRICTION_WIKI="$SANDBOX/coach"
+# cg FILE DATE then groups as "sig|kind|count|days"; days may be empty
+cg() {
+  local file="$1" d="$2"; shift 2
+  printf '%s\n' "$@" | jq -Rn --arg d "$d" '{date: $d, groups: [inputs | split("|") | {sig: .[0], source: "x", kind: .[1], count: (.[2] | tonumber), keys: [], confidence: "high",
+    samples: ["sample " + .[0]], evidence: []} + (if .[3] != "" then {days: (.[3] | tonumber)} else {} end)]}' >"$file"
+}
+is_safe() { bash -c 'source <(sed -n "/^is_safety()/,/^}/p" "$1"); is_safety "$2" && echo yes || echo no' _ "$SCRIPT" "$1"; }
+hist() { sed -n '/^## History/,$p' "$FRICTION_WIKI/$1.md" | grep -c '^- 2026'; }
+offered_ids() { jq -r '[.offer[].id] | sort | join(" ")' <<<"$1"; }
+printf 'Do the thing\nsecond line\n' >"$SANDBOX/prop.md"
+
+cg "$SANDBOX/c0.json" 2026-10-01 "t:tool:status probe|tool|1|"
+apply 2026-10-01 "$SANDBOX/c0.json" >/dev/null
+for st in offered declined landing landed failed; do
+  "$SCRIPT" set F-001 --status "$st" --date 2026-10-02 2>/dev/null; assert_eq "$st" "$(fld F-001 status)" "set accepts status $st"
+done
+"$SCRIPT" set F-001 --status bogus 2>/dev/null; assert_eq "1" "$?" "set still rejects an unknown status"
+"$SCRIPT" set F-001 --safety true --queued-by user --date 2026-10-02
+assert_eq "true|user" "$(fld F-001 safety)|$(fld F-001 queued_by)" "set writes safety and queued_by"
+"$SCRIPT" set F-001 --safety false --date 2026-10-02; assert_eq "false" "$(fld F-001 safety)" "set --safety false is explicit"
+"$SCRIPT" set F-001 --safety maybe 2>/dev/null; assert_eq "1" "$?" "bad --safety rejected"
+rm -rf "$FRICTION_WIKI"
+
+# window fields from apply
+cg "$SANDBOX/c1.json" 2026-10-10 "r:repeat:alpha|repeat|4|3" "r:tool:beta|tool|9|9"
+apply 2026-10-10 "$SANDBOX/c1.json" >/dev/null
+assert_eq "4|3" "$(fld F-001 window_count)|$(fld F-001 window_days)" "repeat group with days writes window_count/window_days"
+assert_eq "|" "$(fld F-002 window_count)|$(fld F-002 window_days)" "tool kind gets no window fields"
+cg "$SANDBOX/c1b.json" 2026-10-11 "r:repeat:alpha|repeat|7|5"
+apply 2026-10-11 "$SANDBOX/c1b.json" >/dev/null
+assert_eq "7|5" "$(fld F-001 window_count)|$(fld F-001 window_days)" "window fields are overwritten on the next run"
+assert_eq "2" "$(sed -n '/^## Evidence/,/^## Diagnosis/p' "$FRICTION_WIKI/F-001.md" | grep -c '^- 2026')" "an evidence bullet is still added per date"
+rm -rf "$FRICTION_WIKI"
+
+# offer selection: limit, repeat thresholds, later rule
+cg "$SANDBOX/c2.json" 2026-10-10 "o:tool:a|tool|2|" "o:tool:b|tool|2|" "o:tool:c|tool|2|" "o:tool:d|tool|2|" "o:repeat:low|repeat|2|5" "o:repeat:short|repeat|5|1" "o:repeat:ok|repeat|3|2"
+apply 2026-10-10 "$SANDBOX/c2.json" >/dev/null
+cg "$SANDBOX/c2b.json" 2026-10-12 "o:tool:b|tool|1|"
+apply 2026-10-12 "$SANDBOX/c2b.json" >/dev/null
+for n in 1 2 3 4 5 6 7; do "$SCRIPT" set "F-00$n" --status proposed --proposal-file "$SANDBOX/prop.md" --date 2026-10-12; done
+OUT="$("$SCRIPT" coach-offer --date 2026-10-15)"
+assert_eq "3" "$(jq '.offer | length' <<<"$OUT")" "default limit is 3"
+assert_eq "F-002" "$(jq -r '.offer[0].id' <<<"$OUT")" "newest last comes first"
+assert_eq "[]" "$(jq -c .results <<<"$OUT")" "no results yet"
+assert_eq "offered|2026-10-15" "$(fld F-002 status)|$(fld F-002 offered_on)" "offered entry is marked offered with offered_on"
+assert_eq "Do the thing" "$(jq -r '.offer[0].proposal_summary' <<<"$OUT")" "proposal_summary is the first line"
+assert_eq "3|false|tool" "$(jq -r '.offer[0] | "\(.count)|\(.safety)|\(.kind)"' <<<"$OUT")" "count sums evidence, safety false, kind from the signature"
+assert_eq "2" "$(jq '.offer[0].evidence | length' <<<"$OUT")" "two evidence samples"
+case "$(jq -r '.offer[0].evidence[0]' <<<"$OUT")" in 2026-10-12*) pass "newest evidence first" ;; *) fail "newest evidence first" "$(jq -c '.offer[0].evidence' <<<"$OUT")" ;; esac
+OUT="$("$SCRIPT" coach-offer --date 2026-10-15 --limit 10)"
+assert_eq "F-001 F-003" "$(offered_ids "$OUT")" "the rest are offered; repeat below 3 count or 2 days is not; already offered ones wait"
+assert_eq "proposed proposed" "$(fld F-005 status) $(fld F-006 status)" "gated repeat entries stay proposed"
+assert_eq "[]" "$(jq -c '.offer' <<<"$("$SCRIPT" coach-offer --date 2026-10-17 --limit 10)")" "offered 2 days ago is not re-offered"
+OUT="$("$SCRIPT" coach-offer --date 2026-10-18 --limit 10)"
+assert_eq "F-001 F-002 F-003 F-004 F-007" "$(offered_ids "$OUT")" "offered 3 days ago is offered again"
+
+# answers
+"$SCRIPT" coach-answer F-001 later --date 2026-10-18
+assert_eq "offered|later" "$(fld F-001 status)|$(fld F-001 answer)" "later keeps offered"
+assert_eq "1" "$(grep -c 'answered later' "$FRICTION_WIKI/F-001.md")" "later records one History line"
+"$SCRIPT" coach-answer F-001 later --date 2026-10-18
+assert_eq "1" "$(grep -c 'answered later' "$FRICTION_WIKI/F-001.md")" "same answer twice adds nothing"
+"$SCRIPT" coach-answer F-002 yes --date 2026-10-18
+assert_eq "landing" "$(fld F-002 status)" "yes -> landing"
+before="$(cat "$FRICTION_WIKI/F-002.md")"
+"$SCRIPT" coach-answer F-002 yes --date 2026-10-18
+assert_eq "$before" "$(cat "$FRICTION_WIKI/F-002.md")" "yes twice leaves the file unchanged"
+h0="$(hist F-002)"
+"$SCRIPT" coach-answer F-002 no --date 2026-10-18
+assert_eq "declined|3" "$(fld F-002 status)|$(fld F-002 declined_count)" "no -> declined with declined_count = current count"
+assert_eq "$((h0 + 1))" "$(hist F-002)" "a different answer adds exactly one History line"
+"$SCRIPT" coach-answer F-002 no --date 2026-10-18
+assert_eq "$((h0 + 1))" "$(hist F-002)" "no twice adds nothing"
+"$SCRIPT" coach-answer F-009 yes --date 2026-10-18 2>/dev/null; assert_eq "1" "$?" "answer on a missing entry fails"
+
+# declined doubling (F-002 declined at count 3)
+assert_eq "no" "$(jq -r '[.offer[].id] | index("F-002") | if . == null then "no" else "yes" end' <<<"$("$SCRIPT" coach-offer --date 2026-10-30 --limit 10)")" "declined is not offered at the same count"
+cg "$SANDBOX/c2c.json" 2026-10-31 "o:tool:b|tool|2|"
+apply 2026-10-31 "$SANDBOX/c2c.json" >/dev/null
+assert_eq "no" "$(jq -r '[.offer[].id] | index("F-002") | if . == null then "no" else "yes" end' <<<"$("$SCRIPT" coach-offer --date 2026-10-31 --limit 10)")" "declined at 2x-1 is not offered"
+cg "$SANDBOX/c2d.json" 2026-11-01 "o:tool:b|tool|1|"
+apply 2026-11-01 "$SANDBOX/c2d.json" >/dev/null
+assert_eq "yes" "$(jq -r '[.offer[].id] | index("F-002") | if . == null then "no" else "yes" end' <<<"$("$SCRIPT" coach-offer --date 2026-11-01 --limit 10)")" "declined is offered again at 2x the declined count"
+rm -rf "$FRICTION_WIKI"
+
+# declined doubling uses window_count when present
+cg "$SANDBOX/c3.json" 2026-10-10 "w:restated:x|restated|4|3"
+apply 2026-10-10 "$SANDBOX/c3.json" >/dev/null
+"$SCRIPT" set F-001 --status proposed --proposal-file "$SANDBOX/prop.md" --date 2026-10-10
+"$SCRIPT" coach-offer --date 2026-10-10 >/dev/null
+"$SCRIPT" coach-answer F-001 no --date 2026-10-10
+assert_eq "4" "$(fld F-001 declined_count)" "declined_count is the window count"
+cg "$SANDBOX/c3b.json" 2026-10-20 "w:restated:x|restated|7|3"
+apply 2026-10-20 "$SANDBOX/c3b.json" >/dev/null
+assert_eq "[]" "$("$SCRIPT" coach-offer --date 2026-10-20 | jq -c '[.offer[].id]')" "window count 7 < 8: still declined"
+cg "$SANDBOX/c3c.json" 2026-10-21 "w:restated:x|restated|8|4"
+apply 2026-10-21 "$SANDBOX/c3c.json" >/dev/null
+OUT="$("$SCRIPT" coach-offer --date 2026-10-21)"
+assert_eq "F-001|8|4" "$(jq -r '.offer[0] | "\(.id)|\(.count)|\(.days)"' <<<"$OUT")" "window count 8 = 2x4: offered with window count and days"
+rm -rf "$FRICTION_WIKI"
+
+# results
+cg "$SANDBOX/c4.json" 2026-10-10 "l:tool:one|tool|2|" "l:tool:two|tool|2|" "l:tool:three|tool|2|"
+apply 2026-10-10 "$SANDBOX/c4.json" >/dev/null
+"$SCRIPT" set F-001 --status landed --date 2026-10-11
+"$SCRIPT" set F-002 --status failed --date 2026-10-11
+"$SCRIPT" set F-003 --status landing --date 2026-10-11
+OUT="$("$SCRIPT" coach-offer --date 2026-10-12)"
+assert_eq "F-001 F-002" "$(jq -r '[.results[].id] | sort | join(" ")' <<<"$OUT")" "results are landed and failed entries"
+assert_eq "2026-10-12" "$(fld F-001 result_reported_on)" "result_reported_on is set"
+assert_eq "[]" "$("$SCRIPT" coach-offer --date 2026-10-12 | jq -c .results)" "a second offer on the same date has no results"
+rm -rf "$FRICTION_WIKI"
+
+# ingest safety
+cg "$SANDBOX/c5.json" 2026-10-10 "s:tool:safe|tool|2|" "s:tool:guard|tool|2|"
+apply 2026-10-10 "$SANDBOX/c5.json" >/dev/null
+jq -n '{items: {"F-001": {class: "script", diagnosis: "d", rung: "script", proposal: "Edit bin/start-day to print the date"},
+  "F-002": {class: "script", diagnosis: "d", rung: "config", proposal: "Loosen secrets-guard for this path"}}}' >"$SANDBOX/c5r.json"
+"$SCRIPT" ingest "$SANDBOX/c5r.json" --date 2026-10-10 >/dev/null
+assert_eq "" "$(fld F-001 safety)" "a proposal about bin/start-day leaves safety unset"
+assert_eq "true" "$(fld F-002 safety)" "a proposal naming secrets-guard sets safety: true"
+jq -n '{items: {"F-002": {class: "script", diagnosis: "d2", rung: "script", proposal: "Print the date"}}}' >"$SANDBOX/c5s.json"
+"$SCRIPT" ingest "$SANDBOX/c5s.json" --date 2026-10-11 >/dev/null
+assert_eq "true" "$(fld F-002 safety)" "a later harmless proposal never resets safety"
+jq -n '{frustrations: [{what_went_wrong: "hook blocked me", class: "script", sig_hint: "hook-block", rung: "config", proposal: "Relax the PreToolUse hook"}]}' >"$SANDBOX/c5f.json"
+"$SCRIPT" ingest "$SANDBOX/c5f.json" --date 2026-10-12 >/dev/null
+assert_eq "true" "$(fld F-003 safety)" "a frustration proposal mentioning PreToolUse sets safety"
+for t in "secrets-guard" "docker-guard" "the allow rule" "deny rule" "autoMode" "bypass" ".githooks/pre-commit" "hooks.json" "worktree guard" "mr-description-review" "auto-approve" "automatically approve" "skipDangerous" "permissions"; do
+  assert_eq "yes" "$(is_safe "x $t y")" "is_safety matches $t"
+done
+assert_eq "no" "$(is_safe "edit bin/start-day")" "is_safety ignores bin/start-day"
+rm -rf "$FRICTION_WIKI"
+export FRICTION_WIKI="$SANDBOX/friction"
+
 # --- misc ---------------------------------------------------------------------
 echo "misc"
 "$SCRIPT" apply 2>/dev/null; assert_eq "1" "$?" "apply without --date fails"

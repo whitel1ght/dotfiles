@@ -5,6 +5,9 @@
 #   friction-ledger apply --date D [--mine-json FILE]
 #   friction-ledger set F-NNN [--class C] [--status S] [--rung R] [--fix SHA]
 #                             [--diagnosis TEXT] [--proposal-file FILE] [--date D]
+#                             [--safety true|false] [--queued-by user]
+#   friction-ledger coach-offer --date D [--limit 3]
+#   friction-ledger coach-answer F-NNN yes|no|later --date D
 #   friction-ledger diary-section --date D [--mine-json FILE]
 #   friction-ledger frustration --date D --what TEXT --class C --sig-hint H [--quote Q]
 #                               [--rung R --proposal-file F]
@@ -28,7 +31,9 @@
 #         each item {id, sig, kind, count, days, class, samples, evidence}.
 # set     writes the given front-matter fields and sections; a status change adds a dated
 #         History line. class: env|instruction|script|model|external; status:
-#         open|proposed|fixed|regressed|wontfix; rung: script|config|prompt.
+#         open|proposed|fixed|regressed|wontfix|offered|declined|landing|landed|failed;
+#         rung: script|config|prompt. --safety writes the `safety` field (ingest only ever sets
+#         it true); --queued-by records who queued the entry (`queued_by`).
 # diary-section  prints the `## Friction` markdown for D (nothing when there is no friction):
 #         counts of new / recurring / regressed, a `→ /fix-friction F-NNN` line per proposed or
 #         regressed item seen on D, and one line for possible corrections (unverified).
@@ -53,6 +58,29 @@
 #         `external` one open -> wontfix. A frustration always stores its proposal; the script
 #         sets it proposed from the second day. Marks D as ingested (.ingested/D): apply then
 #         drops user_signals for D and a re-run of ingest skips directions and frustrations.
+#         A group of kind repeat|restated|secret that carries `days` (coach-mine counts over a
+#         14-day window) also writes frontmatter `window_count` and `window_days`, overwritten
+#         on every run.
+# ingest  also sets frontmatter `safety: true` on an item or frustration whose proposal or
+#         signature matches is_safety (secrets-guard, docker-guard, permissions, allow/deny
+#         rules, autoMode, bypass, .githooks, hooks.json, PreToolUse, worktree guard,
+#         mr-description-review, auto-approve, skipDangerous); an existing true is never reset.
+#
+# coach-offer  picks what the usage coach suggests on date D and prints
+#           {results: [item], offer: [item]}; item = {id, kind, sig, count, days, safety,
+#            proposal_summary (first line of ## Proposal, 200 chars), evidence: [2 newest bullets]}.
+#           offer: at most --limit (default 3) entries, newest `last` first, from status
+#            proposed; offered with offered_on at least 3 days before D (answered `later`, or
+#            ignored); declined whose count reached 2x `declined_count`. A `repeat` entry needs
+#            count >= 3 and days >= 2. count/days are window_count/window_days when present,
+#            else the Evidence (N×) sum and frontmatter days. Offered entries become `offered`
+#            with offered_on: D and a cleared `answer`.
+#           results: entries `landed` or `failed` with no result_reported_on; it is set to D, so
+#            a second run on the same date reports nothing.
+# coach-answer  records the user's answer on an offered entry: yes -> landing, no -> declined
+#           (declined_count = current count), later -> offered. Stored as `answer`/`answered_on`.
+#           The same answer again changes nothing; a different one wins and adds one History line.
+#
 # apply creates an entry for a tool_error only with count >= 2 on the day or on a second day
 #         (first sightings are kept in .seen-sigs.tsv).
 #
@@ -80,8 +108,8 @@ fm_set() { # file key value
   local tmp; tmp="$(mktemp "$1.XXXXXX")"
   K="$2" V="$3" awk 'BEGIN { k = ENVIRON["K"]; v = ENVIRON["V"] }
     NR == 1 { print; fm = 1; next }
-    fm && $0 == "---" { fm = 0 }
-    fm && index($0, k ":") == 1 { print (v == "" ? k ":" : k ": " v); next }
+    fm && $0 == "---" { if (!found) print (v == "" ? k ":" : k ": " v); fm = 0 }
+    fm && index($0, k ":") == 1 { print (v == "" ? k ":" : k ": " v); found = 1; next }
     { print }' "$1" >"$tmp" && chmod 644 "$tmp" && mv "$tmp" "$1"
 }
 
@@ -113,6 +141,20 @@ section_edit() { # file name mode text
 
 evidence_dates() { section_get "$1" Evidence | grep -oE '^- [0-9]{4}-[0-9]{2}-[0-9]{2}' | cut -c3- | sort -u || true; }
 has_date() { evidence_dates "$1" | grep -qx "$2"; }
+
+# true when text touches a guard, permission rule or hook the coach must not change unseen
+is_safety() { # text
+  grep -qiE 'secrets-guard|docker-guard|permissions|(allow|deny)[a-z/ ]{0,12} rules?|automode|bypass|\.githooks|hooks\.json|pretooluse|worktree[ -]guard|mr-description-review|auto-approve|automatically approve|skipdangerous' <<<"$1"
+}
+
+sig_of() { fm_get "$1" signature | jq -r .; }
+kind_of() { sig_of "$1" | cut -d: -f2; }
+# the coach's view of an entry: window totals when coach-mine wrote them, else all-time
+entry_count() {
+  local w; w="$(fm_get "$1" window_count)"
+  if [ -n "$w" ]; then echo "$w"; else section_get "$1" Evidence | grep -oE '^- [0-9]{4}-[0-9]{2}-[0-9]{2} \([0-9]+×\)' | sed -E 's/.*\(([0-9]+)×\)/\1/' | awk '{ n += $1 } END { print n + 0 }'; fi
+}
+entry_days() { local w; w="$(fm_get "$1" window_days)"; if [ -n "$w" ]; then echo "$w"; else fm_get "$1" days; fi; }
 
 fpath() { printf '%s/%s.md' "$FRICTION_WIKI" "$1"; }
 
@@ -242,6 +284,10 @@ cmd_apply() {
         section_edit "$f" History append "- $date_: regressed (seen again after fix $(fm_get "$f" fix))"
       fi
     fi
+    if [[ "$kind" =~ ^(repeat|restated|secret)$ ]] && [ "$(jq -r 'has("days")' <<<"$g")" = true ]; then
+      fm_set "$f" window_count "$(jq -r .count <<<"$g")"
+      fm_set "$f" window_days "$(jq -r .days <<<"$g")"
+    fi
     jq -nc --arg id "$id" --argjson g "$g" '{id: $id, g: $g}' >>"$work/touched.jsonl"
   done < <(jq -c '.groups[]?' <<<"$mine")
 
@@ -272,7 +318,7 @@ cmd_apply() {
 # --- set ----------------------------------------------------------------------
 
 cmd_set() {
-  local id="${1:-}" class="" status="" rung="" fix="" diag="" pfile="" date_="" has_fix=0
+  local id="${1:-}" class="" status="" rung="" fix="" diag="" pfile="" date_="" has_fix=0 safety="" queued_by=""
   [[ "$id" =~ ^F-[0-9]+$ ]] || die "set needs an F-NNN id"
   shift
   while [ $# -gt 0 ]; do
@@ -284,6 +330,8 @@ cmd_set() {
       --diagnosis) need "$@"; diag="$2"; shift ;;
       --proposal-file) need "$@"; pfile="$2"; shift ;;
       --date) need "$@"; date_="$2"; shift ;;
+      --safety) need "$@"; safety="$2"; shift ;;
+      --queued-by) need "$@"; queued_by="$2"; shift ;;
       *) die "set: unknown option $1" ;;
     esac
     shift
@@ -293,10 +341,14 @@ cmd_set() {
   local f; f="$(fpath "$id")"
   [ -f "$f" ] || die "no such entry: $id"
   [ -z "$class" ] || [[ "$class" =~ ^(env|instruction|script|model|external)$ ]] || die "bad class: $class"
-  [ -z "$status" ] || [[ "$status" =~ ^(open|proposed|fixed|regressed|wontfix)$ ]] || die "bad status: $status"
+  [ -z "$status" ] || [[ "$status" =~ ^(open|proposed|fixed|regressed|wontfix|offered|declined|landing|landed|failed)$ ]] || die "bad status: $status"
   [ -z "$rung" ] || [[ "$rung" =~ ^(script|config|prompt)$ ]] || die "bad rung: $rung"
   [ -z "$pfile" ] || [ -f "$pfile" ] || die "no such file: $pfile"
+  [ -z "$safety" ] || [[ "$safety" =~ ^(true|false)$ ]] || die "bad --safety: $safety"
+  [ -z "$queued_by" ] || [ "$queued_by" = user ] || die "bad --queued-by: $queued_by"
 
+  [ -z "$safety" ] || fm_set "$f" safety "$safety"
+  [ -z "$queued_by" ] || fm_set "$f" queued_by "$queued_by"
   [ -z "$class" ] || fm_set "$f" class "$class"
   [ -z "$rung" ] || fm_set "$f" rung "$rung"
   [ "$has_fix" = 0 ] || fm_set "$f" fix "$fix"
@@ -486,6 +538,7 @@ cmd_ingest() {
       args+=(--rung "$rung" --proposal-file "$tmp/$id.md")
     fi
     cmd_set "$id" "${args[@]}"
+    if is_safety "$(jq -r --arg i "$id" '(.items[$i].proposal // "")' "$file") $(sig_of "$f")"; then fm_set "$f" safety true; fi
   done
   if ingested "$date_"; then
     skipped=true
@@ -503,11 +556,92 @@ cmd_ingest() {
       out="$(cmd_frustration --date "$date_" --what "$(jq -r .what_went_wrong <<<"$d")" --class "$(jq -r .class <<<"$d")" \
         --sig-hint "$(jq -r .sig_hint <<<"$d")" --rung "$(jq -r .rung <<<"$d")" --proposal-file "$tmp/fr$n.md")"
       frs+="${frs:+,}$out"
+      local ff; ff="$(fpath "$(jq -r .id <<<"$out")")"
+      if is_safety "$(jq -r .proposal <<<"$d") $(sig_of "$ff")"; then fm_set "$ff" safety true; fi
     done < <(jq -c '(.frustrations // [])[]' "$file")
     mkdir -p "$FRICTION_WIKI/.ingested"; : >"$FRICTION_WIKI/.ingested/$date_"
   fi
   jq -nc --argjson items "$(jq '(.items // {}) | length' "$file")" --arg dirs "$ids" --argjson fr "[${frs}]" --argjson skipped "$skipped" \
     '{items: $items, directions: ($dirs | split(" ") | map(select(length > 0))), frustrations: $fr, skipped_signals: $skipped}'
+}
+
+# --- coach --------------------------------------------------------------------
+
+coach_item() { # file -> item JSON, plus the status/last/offered_on/declined_count/reported selection fields
+  local f="$1" summary ev
+  summary="$(section_get "$f" Proposal | awk 'NF { print; exit }' | cut -c1-200)"
+  ev="$(section_get "$f" Evidence | grep '^- ' | tail -2 | sed 's/^- //' | jq -Rn '[inputs] | reverse')"
+  jq -nc --arg id "$(basename "$f" .md)" --arg kind "$(kind_of "$f")" --arg sig "$(sig_of "$f")" --arg count "$(entry_count "$f")" \
+    --arg days "$(entry_days "$f")" --arg safety "$(fm_get "$f" safety)" --arg summary "$summary" --argjson ev "$ev" \
+    --arg status "$(fm_get "$f" status)" --arg last "$(fm_get "$f" last)" --arg offered_on "$(fm_get "$f" offered_on)" \
+    --arg declined_count "$(fm_get "$f" declined_count)" --arg reported "$(fm_get "$f" result_reported_on)" \
+    '{id: $id, kind: $kind, sig: $sig, count: ($count | tonumber), days: ($days | tonumber), safety: ($safety == "true"),
+      proposal_summary: $summary, evidence: $ev, status: $status, last: $last, offered_on: $offered_on,
+      declined_count: ($declined_count | tonumber? // 0), reported: ($reported != "")}'
+}
+
+cmd_coach_offer() {
+  local date_="" limit=3
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      --limit) need "$@"; limit="$2"; shift ;;
+      *) die "coach-offer: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "coach-offer needs --date"
+  valid_date "$date_"
+  [[ "$limit" =~ ^[0-9]+$ ]] || die "bad --limit: $limit"
+
+  local f rows="" out id
+  for f in "$FRICTION_WIKI"/F-*.md; do [ -f "$f" ] && rows+="$(coach_item "$f")"$'\n'; done
+  out="$(printf '%s' "$rows" | jq -sc --arg d "$date_" --argjson limit "$limit" '
+    def secs($x): $x | strptime("%Y-%m-%d") | mktime;
+    def item: del(.status, .last, .offered_on, .declined_count, .reported);
+    { results: [.[] | select((.status == "landed" or .status == "failed") and (.reported | not)) | item],
+      offer: ([.[] | select(
+          (.status == "proposed"
+            or (.status == "offered" and .offered_on != "" and secs($d) - secs(.offered_on) >= 3 * 86400)
+            or (.status == "declined" and .declined_count > 0 and .count >= 2 * .declined_count))
+          and (.kind != "repeat" or (.count >= 3 and .days >= 2)))]
+        | sort_by(.last, .id) | reverse | .[:$limit] | map(item)) }')"
+  for id in $(jq -r '.results[].id' <<<"$out"); do fm_set "$(fpath "$id")" result_reported_on "$date_"; done
+  for id in $(jq -r '.offer[].id' <<<"$out"); do
+    f="$(fpath "$id")"
+    cmd_set "$id" --status offered --date "$date_"
+    fm_set "$f" offered_on "$date_"
+    fm_set "$f" answer ""
+  done
+  echo "$out"
+}
+
+cmd_coach_answer() {
+  local id="${1:-}" ans="${2:-}" date_=""
+  [[ "$id" =~ ^F-[0-9]+$ ]] || die "coach-answer needs an F-NNN id"
+  [[ "$ans" =~ ^(yes|no|later)$ ]] || die "coach-answer needs yes|no|later"
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      *) die "coach-answer: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "coach-answer needs --date"
+  valid_date "$date_"
+  local f target; f="$(fpath "$id")"
+  [ -f "$f" ] || die "no such entry: $id"
+  case "$ans" in yes) target=landing ;; no) target=declined ;; later) target=offered ;; esac
+  [ "$(fm_get "$f" answer)" != "$ans" ] || [ "$(fm_get "$f" status)" != "$target" ] || return 0
+  if [ "$(fm_get "$f" status)" != "$target" ]; then
+    [ "$ans" != no ] || fm_set "$f" declined_count "$(entry_count "$f")"
+    cmd_set "$id" --status "$target" --date "$date_"
+  else
+    section_edit "$f" History append "- $date_: answered $ans"
+  fi
+  fm_set "$f" answer "$ans"
+  fm_set "$f" answered_on "$date_"
 }
 
 # --- directions ---------------------------------------------------------------
@@ -635,6 +769,8 @@ case "${1:-}" in
   frustration) shift; cmd_frustration "$@" ;;
   ingest) shift; cmd_ingest "$@" ;;
   directions) shift; cmd_directions "$@" ;;
-  -h|--help|"") sed -n '2,70p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
+  coach-offer) shift; cmd_coach_offer "$@" ;;
+  coach-answer) shift; cmd_coach_answer "$@" ;;
+  -h|--help|"") sed -n '2,89p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
   *) die "unknown command $1" ;;
 esac
