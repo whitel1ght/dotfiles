@@ -10,6 +10,26 @@ Global instructions applied across all projects. Keep this short — project-lev
 - Don't add explanatory comments for self-evident code.
 - Long-term memory: `~/wiki` — read `~/wiki/AGENTS.md` before searching it.
 
+## Shell
+
+- The shell is zsh on macOS: unquoted variables are not word-split and `=word` expands.
+  Run loops and bash-style scripts with `bash -c '…'`, or use arrays.
+- `/bin/bash` is 3.2. Scripts that need bash 4+ (SDKMAN helpers, backend start scripts)
+  run with `/opt/homebrew/bin/bash`. Prefix `nocorrect` if zsh autocorrect prompts.
+
+## Evidence
+
+- Before saying something does not exist, check every path it could come in by (e.g. the
+  legacy Vue 2 → Segment → Mixpanel path, not only the current one).
+- Label unverified claims as hypotheses. Fact-check an analysis draft before presenting it.
+
+## Tests and tooling
+
+- ecfx-backend tests need Java 25: every backend test command you give includes the setup
+  (`sdk env` in the repo root, or `JAVA_HOME` set to `~/.sdkman/candidates/java/25.*`).
+- Code on a branch is not live: pi and the daily plugin load from `main`. Merge it, or say
+  plainly that it is not live yet.
+
 ## System manual
 
 - `~/wiki/tools/` is the manual for this whole setup (start at `index.md`). When a
@@ -53,6 +73,14 @@ Global instructions applied across all projects. Keep this short — project-lev
   bare `!2202`. Tables and summaries count; subagent briefs and internal logs don't.
 - Known paths: `ecfx/ecfx-backend`, `ecfx/ecfx-dashboard`, `ecfx/ecfx-admin`,
   `ecfx/ecfx-protobufs`, `ecfx/claude-components`. Confirm any other with `glab repo view`.
+
+## GitLab and Jira APIs
+
+- GitLab API writes send `Content-Type: application/json`. Never pipe a request body in
+  through stdin: write it to a file and pass that (`curl --data @file`, `glab api --input
+  file`). `gitlab-api-guard` blocks both mistakes.
+- When an API merge fails, report it and leave the merge to me; no retries with other flags.
+- Never move a Jira ticket backwards (e.g. Done → In QA) without asking.
 
 ## Worktrees
 
