@@ -275,12 +275,14 @@ def repeats_and_restated(prompts, date):
         out.append(group(f"user:repeat:{key}", "repeat", items, "high" if high else "low"))
     dirs = directions()
     for key, items in rules.items():
-        if len(items) < 2 or not any(i["date"] == date for i in items):
+        if not any(i["date"] == date for i in items):
             continue
         hits = []
         for did, rule in dirs:
             if len(rule) >= 20 and (rule in norm_rule(items[0]["text"]) or norm_rule(items[0]["text"]) in rule):
                 hits.append(did)
+        if len(items) < 2 and not hits:
+            continue
         extra = [f"(restates {hits[0]})"] if hits else []
         out.append(group(f"user:restated:{key}", "restated", items, "high", extra))
     return out

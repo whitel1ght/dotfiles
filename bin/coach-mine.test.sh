@@ -43,6 +43,7 @@ pm() { jq -cn --arg ts "$1" --argjson m "$2" '{type:"message", timestamp:$ts, me
   us 2026-10-15T07:13:00.000Z "The daily plugin sent a message: rebuild the whole index please now"
   us 2026-10-14T07:20:00.000Z "new rule: always run the linter before every commit"
   us 2026-10-15T07:20:00.000Z "New rule: always run the linter before every commit!"
+  us 2026-10-15T07:25:00.000Z "new rule: keep every commit message under seventy two characters wide"
   us 2026-10-14T07:21:00.000Z "never ever push to main without asking me first"
   us 2026-10-13T07:21:00.000Z "rebase the branch onto main and push it for review"
   us 2026-09-20T07:22:00.000Z "rebase the branch onto main and push it for review"
@@ -74,6 +75,7 @@ cat >"$FW/directions.md" <<'EOT'
 | id | rule | scope | since | source | status |
 |---|---|---|---|---|---|
 | D-007 | Always run the linter before every commit | global | 2026-09-01 | claude | active |
+| D-008 | keep every commit message under seventy two characters wide | global | 2026-09-02 | claude | active |
 EOT
 
 OUT=$(mine --date $D); RC=$?
@@ -96,6 +98,8 @@ g=$(jq -c '[.groups[]|select(.kind=="restated")|select(.samples[0]|test("linter"
 assert_eq "2|2|high|user" "$(f "$g" '[.count,.days,.confidence,.source]|join("|")')" "a rule restated on two days forms a restated group"
 assert_eq "yes" "$(yn "$g" '.samples|any(test("restates D-007"))')" "and notes the matching standing direction"
 assert_eq "0" "$(jq '[.groups[]|select(.sig|test("push to main"))]|length' <<<"$OUT")" "a rule said once is not a group"
+g=$(jq -c '[.groups[]|select(.kind=="restated")|select(.samples[0]|test("seventy two"))]|.[0]' <<<"$OUT")
+assert_eq "1|high|yes" "$(f "$g" '[.count,.confidence,(.samples|any(test("restates D-008")))|tostring]|join("|")' | sed 's/true/yes/')" "a rule said once on the date that matches a standing direction is a group"
 
 echo "coach-mine — secret"
 g=$(jq -c '[.groups[]|select(.kind=="secret")|select(.evidence[0]|test("leak.md"))]|.[0]' <<<"$OUT")
