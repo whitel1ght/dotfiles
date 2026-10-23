@@ -114,6 +114,25 @@ printf '%s\n' "$out" | grep -qF "$HOME_DIR/empty/notes.md" \
     && pass "offers only the pane path" \
     || fail "offers only the pane path" "$out"
 
+echo "a pasted image in the transcript"
+# A pasted screenshot lands in the transcript as one base64 string, which the
+# token pattern reads as a single path-like token hundreds of KB long; the
+# :line regex in resolve() then backtracks over it for seconds.
+export STUB_CWD="$PROJ"
+: > "$PROJ/gamma.txt"
+blob="$(head -c 240000 /dev/urandom | base64 | tr -d '\n')"
+printf '{"type":"image","source":{"data":"%s"}}\n{"type":"text","text":"wrote %s/gamma.txt"}\n' \
+    "$blob" "$PROJ" > "$HOME_DIR/.claude/projects/$SLUG/session-2.jsonl"
+start=$SECONDS
+out="$(list_paths)"
+took=$((SECONDS - start))
+printf '%s\n' "$out" | grep -qF "$PROJ/gamma.txt" \
+    && pass "still finds the path next to the image" \
+    || fail "still finds the path next to the image" "$out"
+[ "$took" -lt 3 ] \
+    && pass "lists in under 3 s despite a 300 KB token" \
+    || fail "lists in under 3 s despite a 300 KB token" "took ${took}s"
+
 echo "open in a new window"
 # A window can share the session's name (window "main" in session "main"); a
 # bare "-t main" then resolves to that window, whose index is taken, and

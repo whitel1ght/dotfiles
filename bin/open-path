@@ -94,10 +94,14 @@ session="$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null)"
 token_re='[A-Za-z0-9._~/+@:-]{2,}'
 
 # stdin -> tokens, newest first. Reversal happens per source so that each
-# source stays internally newest-first when they are concatenated.
+# source stays internally newest-first when they are concatenated. Tokens over
+# 1024 chars (macOS PATH_MAX) are dropped: a pasted image is one base64 string
+# that matches token_re whole, and resolve()'s :line regex backtracks over a
+# 300 KB token for seconds.
 tokens_newest_first() {
     rg -oN "$token_re" 2>/dev/null \
         | rg -N '[/.]' 2>/dev/null \
+        | awk 'length($0) <= 1024' \
         | awk '{ a[NR] = $0 } END { for (i = NR; i > 0; i--) print a[i] }'
 }
 
