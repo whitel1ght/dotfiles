@@ -1,7 +1,7 @@
 ---
-description: For the /run-day session — hand a tracked ticket over to a Claude session the user drives ("hand off 18384", "I'll take ECFX-18384 myself"); opens it in a tmux window
+description: For the /run-day session — hand a tracked ticket over to a Claude session the user drives ("hand off 18384", "I'll take ECFX-18384 myself"); opens it in a tmux window. Only when the user explicitly asks to work this item themselves; never on your own initiative.
 argument-hint: KEY
-allowed-tools: Bash(diary-links:*), Bash(git -C:*), Bash(mkdir:*), Bash(date:*), Bash(ls:*), Bash(test:*), Bash(tmux display-message:*), Bash(tmux new-window:*), Read, Edit, Write, TaskStop
+allowed-tools: Bash(diary-links:*), Bash(git -C:*), Bash(mkdir:*), Bash(date:*), Bash(ls:*), Bash(test -n:*), Bash(tmux list-windows:*), Bash(tmux select-window:*), Bash(tmux display-message:*), Bash(tmux new-window:*), Read, Edit, Write, TaskStop
 ---
 
 # Hand off a ticket
@@ -9,6 +9,8 @@ allowed-tools: Bash(diary-links:*), Bash(git -C:*), Bash(mkdir:*), Bash(date:*),
 Arguments: $ARGUMENTS
 
 Run this in the main session (the one running `/run-day`). It moves one ticket from a background agent to a Claude session you drive yourself. The write rules of `/run-day` hold: here you edit only the diary plan block, the run-state file and the hand-off note. Never write to `~/wiki` beyond the diary line, and never touch the worktree's files.
+
+Only when the user explicitly asks to work this item themselves; never on your own initiative.
 
 Paths (`T` is `date +%F`): run state `~/.local/state/run-day/$T.md`, note `~/.local/state/run-day/handoff/<KEY>.md`. `<KEY>` is the argument in uppercase (`ECFX-18169`); a bare number (`18169`) is `ECFX-` plus the number, `<key>` the lowercase form used in the run state.
 
@@ -55,8 +57,22 @@ MR: <url or none>
 6. Diary: set the item's line to `[/]` and put `· with you: <KEY>` first in its evidence, keeping any MR evidence after it (for example `- [/] ecfx-18169 fix the 3 majors · with you: ECFX-18169 · draft MR dashboard!2231  [↗][dashboard!2231]`). Edit only that line, keep its trailing refs last, then run `diary-links ~/wiki/diary/$(date +%F).md`.
 7. Open the side session, and tell the user to run `/daily:report-back done` (or `handback`) in it when they stop. Inside tmux (`test -n "$TMUX"` succeeds) open a window in the current session and focus it, with the literal values in the commands (shell variables do not carry between Bash calls):
 
+   `<worktree>` is the absolute path from the run-state line (a leading `~` becomes `$HOME`).
+
 ```bash
 tmux display-message -p -t "$TMUX_PANE" '#{session_name}'
+tmux list-windows -t "<session>:" -F '#{window_name}'
+```
+
+   If a window named `<KEY>` is listed, select it and open nothing else (no second window, no second claude session):
+
+```bash
+tmux select-window -t "<session>:<KEY>"
+```
+
+   Otherwise open and focus a new one:
+
+```bash
 tmux new-window -t "<session>:" -n <KEY> -c "<worktree>" 'claude -n <KEY> "/daily:pickup <KEY>"'
 ```
 

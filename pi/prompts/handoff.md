@@ -1,5 +1,5 @@
 ---
-description: Hand one in-flight item to a side session — write the hand-off note, mark the run state external, tell the user how to pick it up
+description: Hand one in-flight item to a side session — write the hand-off note, mark the run state external, tell the user how to pick it up. Only when the user explicitly asks to work this item themselves; never on your own initiative.
 argument-hint: <KEY>
 ---
 
@@ -9,6 +9,8 @@ Move an item out of this day's session so a side session can finish it, without 
 Run it in the main session (the one running `/run-day`). Writes the hand-off note, the run state and
 the diary — asks nothing. Never write `~/wiki` beyond the item's diary line, and never touch the
 worktree's files.
+
+Only when the user explicitly asks to work this item themselves; never on your own initiative.
 
 `<KEY>` is the argument in uppercase (`ECFX-18169`); a bare number (`18169`) is `ECFX-` plus the number, `<key>` the lowercase form the run state uses.
 
@@ -78,8 +80,22 @@ MR: <url or none>
    they stop. Inside tmux (`test -n "$TMUX"` succeeds) open a window in the current session and
    focus it, with the literal values in the commands:
 
+   `<worktree>` is the absolute path from the run-state line (a leading `~` becomes `$HOME`).
+
 ```bash
 tmux display-message -p -t "$TMUX_PANE" '#{session_name}'
+tmux list-windows -t "<session>:" -F '#{window_name}'
+```
+
+   If a window named `<KEY>` is listed, select it and open nothing else (no second window, no second pi session):
+
+```bash
+tmux select-window -t "<session>:<KEY>"
+```
+
+   Otherwise open and focus a new one:
+
+```bash
 tmux new-window -t "<session>:" -n <KEY> -c "<worktree>" 'pi -n <KEY> "/pickup <KEY>"'
 ```
 

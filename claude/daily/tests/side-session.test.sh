@@ -117,4 +117,20 @@ has "$P/handoff.md" "pi -n <KEY> \"/pickup <KEY>\"" "pi handoff opens pi with /p
 has "$P/pickup.md" 'a bare number, `18384`, is `ECFX-18384`' "pi pickup: bare number rule"
 has "$R" "daily:handoff" "run-day tells the day session to run the handoff itself"
 
+echo "== handoff guard and window reuse =="
+G="Only when the user explicitly asks to work this item themselves; never on your own initiative."
+has "$H" "$G" "claude handoff: explicit-request guard"
+has "$P/handoff.md" "$G" "pi handoff: explicit-request guard"
+for f in "$H" "$P/handoff.md"; do
+  [ "$(grep -cF -- "$G" "$f")" -ge 2 ] && pass "guard in description and body: $f" || fail "guard twice" "$f"
+done
+has "$H" "tmux list-windows -t \"<session>:\" -F '#{window_name}'" "lists windows before opening"
+has "$H" 'tmux select-window -t "<session>:<KEY>"' "selects an existing window"
+has "$H" "Bash(tmux list-windows:*)" "allows list-windows"
+has "$H" "Bash(tmux select-window:*)" "allows select-window"
+has "$H" "Bash(test -n:*)" "narrow test rule"
+has "$H" 'a leading `~` becomes `$HOME`' "worktree is absolute"
+has "$P/handoff.md" 'tmux select-window -t "<session>:<KEY>"' "pi reuses an existing window"
+has "$P/handoff.md" 'a leading `~` becomes `$HOME`' "pi: worktree is absolute"
+
 finish
