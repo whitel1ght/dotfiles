@@ -27,6 +27,8 @@ and the digest renewed.
 - `hook:user/WorktreeCreate` — Claude's own worktree tool only; pi has none, and prompts create worktrees with `wt add`.
 - `hook:user/WorktreeRemove` — as WorktreeCreate; `wt rm` / `/clean-worktrees`.
 - `hook:user/SessionStart` — herdr's pi integration (`pi/extensions/herdr-agent-state.ts`, managed by herdr).
+- `hook:user/PreToolUse` — the Bash guards install.sh merges (`secrets-guard`, `docker-guard`, `gitlab-api-guard`); `pi/extensions/claude-hooks` runs them on pi's `bash` tool.
+- `hook:user/PostToolUse` — `dashboard-check` (eslint on an edited ecfx-dashboard file) is Claude-only: `claude-hooks` runs PreToolUse alone, and pi's `edit`/`write` take other input.
 
 ## claude.ai synced skills
 

@@ -109,6 +109,12 @@ jq -e --arg g "$TEST_DIR/bin/secrets-guard" \
 jq -e --arg g "$TEST_DIR/bin/docker-guard" \
     '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[].command] | index($g) != null' "$settings" >/dev/null \
     && pass "Claude runs docker-guard before Bash" || fail "Claude runs docker-guard before Bash" "$(jq -c .hooks.PreToolUse "$settings" 2>&1)"
+jq -e --arg g "$TEST_DIR/bin/gitlab-api-guard" \
+    '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[].command] | index($g) != null' "$settings" >/dev/null \
+    && pass "Claude runs gitlab-api-guard before Bash" || fail "Claude runs gitlab-api-guard before Bash" "$(jq -c .hooks.PreToolUse "$settings" 2>&1)"
+jq -e --arg c "$TEST_DIR/bin/dashboard-check" \
+    '[.hooks.PostToolUse[]? | select(.matcher == "Edit|Write|MultiEdit") | .hooks[].command] | index($c) != null' "$settings" >/dev/null \
+    && pass "Claude runs dashboard-check after edits" || fail "Claude runs dashboard-check after edits" "$(jq -c .hooks.PostToolUse "$settings" 2>&1)"
 jq -e '.permissions.deny | index("Read(~/.secrets/**)") != null and index("Edit(~/.secrets/**)") != null and index("Read(~/.config/ecfx/jira.env)") != null' "$settings" >/dev/null \
     && pass "Claude file tools are denied ~/.secrets" || fail "Claude file tools are denied ~/.secrets" "$(jq -c .permissions.deny "$settings" 2>&1)"
 
@@ -133,6 +139,9 @@ fi
 # --- a second run must never overwrite real credentials -------------------
 echo "idempotence"
 echo "export NOTES_USER=real-value" >> "$SANDBOX/.zshrc.local"
+jq '.hooks.PreToolUse += [{matcher: "Bash", hooks: [{type: "command", command: "/other/pre-hook"}]}]
+    | .hooks.PostToolUse += [{matcher: "Write", hooks: [{type: "command", command: "/other/post-hook"}]}]' \
+    "$SANDBOX/.claude/settings.json" > "$SANDBOX/s.json" && mv "$SANDBOX/s.json" "$SANDBOX/.claude/settings.json"
 before="$(shasum -a 256 < "$SANDBOX/.zshrc.local")"
 out2="$(run_install)"
 after="$(shasum -a 256 < "$SANDBOX/.zshrc.local")"
@@ -144,6 +153,12 @@ n="$(jq --arg g "$TEST_DIR/bin/secrets-guard" '[.hooks.PreToolUse[]?.hooks[]? | 
 [ "$n" = "1" ] && pass "re-run adds the guard hook once" || fail "re-run adds the guard hook once" "found $n"
 n="$(jq --arg g "$TEST_DIR/bin/docker-guard" '[.hooks.PreToolUse[]?.hooks[]? | select(.command == $g)] | length' "$SANDBOX/.claude/settings.json")"
 [ "$n" = "1" ] && pass "re-run adds the docker hook once" || fail "re-run adds the docker hook once" "found $n"
+n="$(jq --arg g "$TEST_DIR/bin/gitlab-api-guard" '[.hooks.PreToolUse[]?.hooks[]? | select(.command == $g)] | length' "$SANDBOX/.claude/settings.json")"
+[ "$n" = "1" ] && pass "re-run adds the gitlab-api hook once" || fail "re-run adds the gitlab-api hook once" "found $n"
+n="$(jq --arg c "$TEST_DIR/bin/dashboard-check" '[.hooks.PostToolUse[]?.hooks[]? | select(.command == $c)] | length' "$SANDBOX/.claude/settings.json")"
+[ "$n" = "1" ] && pass "re-run adds the dashboard-check hook once" || fail "re-run adds the dashboard-check hook once" "found $n"
+n="$(jq '[.hooks.PreToolUse[]?.hooks[]?, .hooks.PostToolUse[]?.hooks[]? | select(.command | startswith("/other/"))] | length' "$SANDBOX/.claude/settings.json")"
+[ "$n" = "2" ] && pass "re-run keeps other tools' hooks" || fail "re-run keeps other tools' hooks" "found $n"
 n="$(jq '[.permissions.deny[] | select(. == "Read(~/.secrets/**)")] | length' "$SANDBOX/.claude/settings.json")"
 [ "$n" = "1" ] && pass "re-run adds each deny rule once" || fail "re-run adds each deny rule once" "found $n"
 

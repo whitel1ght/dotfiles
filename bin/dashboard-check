@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""PostToolUse hook (Edit|Write|MultiEdit): lint an edited ecfx-dashboard file.
+
+After Claude edits a .ts or .vue file in ~/projects/ecfx-dashboard or one of
+its worktrees (~/projects/worktrees/ecfx-dashboard/<name>), this runs the
+repo's own `eslint --quiet` (errors only, type-aware rules included) on that
+one file. Errors go back to Claude: exit 2 with eslint's report on stderr.
+Clean, other repos and file types, no node_modules, an eslint crash or a run
+past DASHBOARD_CHECK_TIMEOUT seconds (default 30) all exit 0 silently.
+A full `vue-tsc --noEmit` takes ~13 s on this repo, too slow for every edit;
+type errors are left to `npm run type-check` before a commit.
+Claude Code runs this from ~/.claude/settings.json; pi has no PostToolUse.
+"""
+
+import json
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+TOOLS = {"Edit", "Write", "MultiEdit"}
+EXTS = {".ts", ".vue"}
+MAX_LINES = 60
+
+
+def repo_root(path: Path) -> Path | None:
+    projects = Path.home() / "projects"
+    main = projects / "ecfx-dashboard"
+    worktrees = projects / "worktrees" / "ecfx-dashboard"
+    if path.is_relative_to(main):
+        return main
+    if path.is_relative_to(worktrees):
+        parts = path.relative_to(worktrees).parts
+        return worktrees / parts[0] if len(parts) > 1 else None
+    return None
+
+
+def lint(root: Path, rel: str, limit: float) -> tuple[int, str] | None:
+    try:
+        proc = subprocess.Popen(["npx", "--no", "eslint", "--quiet", "--no-color", rel], cwd=root,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, start_new_session=True)
+    except OSError:
+        return None
+    try:
+        out, _ = proc.communicate(timeout=limit)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        proc.communicate()
+        return None
+    return proc.returncode, out
+
+
+def main() -> int:
+    try:
+        event = json.load(sys.stdin)
+        if event.get("tool_name") not in TOOLS:
+            return 0
+        path = Path(os.path.abspath(os.path.expanduser(str(event["tool_input"]["file_path"]))))
+    except Exception:
+        return 0
+    if path.suffix not in EXTS or not path.is_file():
+        return 0
+    root = repo_root(path)
+    if root is None or not (root / "node_modules" / ".bin" / "eslint").exists():
+        return 0
+    try:
+        limit = float(os.environ.get("DASHBOARD_CHECK_TIMEOUT", "30"))
+    except ValueError:
+        limit = 30.0
+    rel = str(path.relative_to(root))
+    result = lint(root, rel, limit)
+    if result is None or result[0] != 1:
+        return 0  # clean (0), crashed or misconfigured (2), or timed out
+    lines = result[1].strip().splitlines()
+    if len(lines) > MAX_LINES:
+        lines = lines[:MAX_LINES] + [f"... {len(lines) - MAX_LINES} more lines"]
+    print(f"eslint errors in {rel} after your edit; fix them:\n" + "\n".join(lines), file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

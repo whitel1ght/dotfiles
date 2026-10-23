@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""PreToolUse hook (Bash): GitLab API writes send JSON from a file.
+
+Two mistakes kept costing retries: a request body piped in through stdin
+(`glab api ... --input -`, `curl --data @-`, fed by a pipe, heredoc or `<`),
+and a `curl` write to gitlab.com/api without `Content-Type: application/json`
+(curl then sends form encoding and GitLab misreads the body). This blocks both.
+
+A curl write is `-X POST|PUT|PATCH` or a `-d`/`--data*` body without `-G`;
+`--json` and `-F`/`--form` set their own content type and pass. Reads, other
+hosts, URLs held in variables, and `glab api` with `-f`/`-F` fields or
+`--input <file>` are never blocked. A command that cannot be parsed passes.
+Exit 2 blocks with the reason on stderr; anything unreadable passes.
+Claude Code runs this from ~/.claude/settings.json, pi through claude-hooks.
+"""
+
+import json
+import os
+import re
+import shlex
+import sys
+
+GITLAB_API = re.compile(r"gitlab\.com/api\b", re.I)
+JSON_TYPE = re.compile(r"^\s*content-type\s*:\s*application/json", re.I)
+ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+HEREDOC = re.compile(r"(?<!<)<<(?!<)(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+PUNCT = "();<>|&\n"
+PREFIXES = {"env", "command", "builtin", "nocorrect", "noglob", "time", "exec", "sudo", "nohup"}
+SHELLS = {"bash", "sh", "zsh"}
+STDIN = {"-", "/dev/stdin"}
+
+DATA_LONG = {"--data", "--data-binary", "--data-ascii", "--data-urlencode", "--data-raw"}
+# curl's short options that take a value; the rest are flags and may be clustered (-sS).
+SHORT_VALUE = set("AbcCdDeEFHKmoPQrtTuUwxXyYz")
+LONG_VALUE = DATA_LONG | {"--json", "--header", "--request", "--form", "--form-string", "--upload-file",
+                          "--url", "--user", "--output", "--config", "--cookie", "--write-out", "--proxy",
+                          "--max-time", "--connect-timeout", "--retry", "--user-agent", "--referer"}
+
+STDIN_WHY = ("GitLab API body from stdin is refused: write the JSON to a file and pass it "
+             "(`glab api ... --input body.json` or `curl ... --data @body.json`).")
+TYPE_WHY = ("GitLab API write without `Content-Type: application/json`: add "
+            "`-H 'Content-Type: application/json'` and send the body from a file (`--data @body.json`).")
+
+
+def strip_heredocs(command: str) -> str:
+    """Drop heredoc bodies: their lines are data, and a stray quote in one breaks shlex."""
+    out, pending = [], []
+    for line in command.split("\n"):
+        if pending:
+            delim, dash = pending[0]
+            if (line.lstrip("\t") if dash else line) == delim:
+                pending.pop(0)
+            continue
+        out.append(line)
+        pending.extend((m.group(3), m.group(1) == "-") for m in HEREDOC.finditer(line))
+    return "\n".join(out)
+
+
+def segments(command: str):
+    lex = shlex.shlex(command.replace("\\\n", " "), posix=True, punctuation_chars=PUNCT)
+    lex.whitespace = " \t\r"
+    lex.whitespace_split = True
+    lex.commenters = ""
+    words = []
+    for tok in lex:
+        if tok and all(c in PUNCT for c in tok):
+            if tok in ("<", "<<<"):
+                words.append(tok)  # stdin redirect: keep it in the segment
+                continue
+            if words:
+                yield words
+            words = []
+        else:
+            words.append(tok)
+    if words:
+        yield words
+
+
+def curl_reason(args: list[str]) -> str | None:
+    opts: list[tuple[str, str | None]] = []
+    urls = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a.startswith("--"):
+            name, eq, val = a.partition("=")
+            if eq:
+                opts.append((name, val))
+            elif name in LONG_VALUE and i + 1 < len(args):
+                opts.append((name, args[i + 1]))
+                i += 1
+            else:
+                opts.append((name, None))
+        elif a.startswith("-") and len(a) > 1:
+            for k, c in enumerate(a[1:], 1):
+                if c in SHORT_VALUE:
+                    val = a[k + 1:]
+                    if not val and i + 1 < len(args):
+                        val = args[i + 1]
+                        i += 1
+                    opts.append(("-" + c, val))
+                    break
+                opts.append(("-" + c, None))
+        else:
+            urls.append(a)
+        i += 1
+    urls += [v for n, v in opts if n == "--url" and v]
+    if not any(GITLAB_API.search(u) for u in urls):
+        return None
+
+    names = {n for n, _ in opts}
+    body_opts = [(n, v) for n, v in opts if n == "-d" or n in DATA_LONG or n == "--json"]
+    for n, v in body_opts:
+        if n == "--data-raw":
+            continue
+        if v is not None and re.search(r"@(?:-|/dev/stdin)$", v):
+            return STDIN_WHY
+    for n, v in opts:
+        if n in ("-T", "--upload-file") and v in STDIN:
+            return STDIN_WHY
+    if body_opts and ("<" in args or "<<<" in args):
+        return STDIN_WHY
+
+    methods = [v.upper() for n, v in opts if n in ("-X", "--request") and v]
+    method = methods[-1] if methods else None
+    if names & {"-G", "--get", "-F", "--form", "--form-string", "--json"}:
+        return None
+    writes = method in ("POST", "PUT", "PATCH") or (method is None and body_opts)
+    if not writes:
+        return None
+    for n, v in opts:
+        if n in ("-H", "--header") and v is not None and (v.startswith("@") or JSON_TYPE.search(v)):
+            return None
+    return TYPE_WHY
+
+
+def glab_reason(args: list[str]) -> str | None:
+    rest = [a for a in args if a not in ("<", "<<<")]
+    if not rest or rest[0] != "api":
+        return None
+    for i, a in enumerate(rest):
+        if a == "--input" and i + 1 < len(rest) and rest[i + 1] in STDIN:
+            return STDIN_WHY
+        if a.startswith("--input=") and a.split("=", 1)[1] in STDIN:
+            return STDIN_WHY
+    return None
+
+
+def reason(command: str, depth: int = 0) -> str | None:
+    if depth > 3:
+        return None
+    for words in segments(strip_heredocs(command)):
+        i = 0
+        while i < len(words) and (words[i] in PREFIXES or ASSIGN.match(words[i])
+                                  or (i and words[i - 1] == "env" and words[i].startswith("-"))):
+            i += 1
+        if i >= len(words):
+            continue
+        cmd, args = os.path.basename(words[i]), words[i + 1:]
+        why = None
+        if cmd == "curl":
+            why = curl_reason(args)
+        elif cmd == "glab":
+            why = glab_reason(args)
+        elif cmd in SHELLS and "-c" in args and args.index("-c") + 1 < len(args):
+            why = reason(args[args.index("-c") + 1], depth + 1)
+        elif cmd == "eval" and args:
+            why = reason(" ".join(args), depth + 1)
+        if why:
+            return why
+    return None
+
+
+def main() -> int:
+    try:
+        event = json.load(sys.stdin)
+        if event.get("tool_name") != "Bash":
+            return 0
+        command = str(event["tool_input"]["command"])
+    except Exception:
+        return 0
+    try:
+        why = reason(command)
+    except Exception:
+        return 0
+    if why:
+        print(why, file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
