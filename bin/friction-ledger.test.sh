@@ -498,6 +498,35 @@ grep -q '^| date | offered | answered | landed | failed | cards |$' "$CL" && pas
 "$SCRIPT" coach-log --date 2026-10-21 --offered 0 --answered 0 --landed 0 --failed 0 2>/dev/null; assert_eq "1" "$?" "a missing count fails"
 assert_eq "2" "$(grep -cE '^\| [0-9]{4}-' "$CL")" "failed calls write nothing"
 
+# --- add-tool -------------------------------------------------------------------
+echo "add-tool"
+rm -rf "$FRICTION_WIKI"; mkdir -p "$FRICTION_WIKI"
+printf 'Try jira-cli view instead of the curl wrapper.\n' >"$SANDBOX/tp.md"
+out="$("$SCRIPT" add-tool --sig tool:jira-api --proposal-file "$SANDBOX/tp.md" --date 2026-10-20)"
+tid="$(jq -r .id <<<"$out")"
+assert_eq "true" "$(jq -r .new <<<"$out")" "add-tool creates a new entry"
+assert_eq "\"tool:tool:jira-api\"" "$(fld "$tid" signature)" "signature is tool:tool:<name> (kind tool)"
+assert_eq "proposed" "$(fld "$tid" status)" "status is proposed at once"
+grep -q "jira-cli view" "$FRICTION_WIKI/$tid.md" && pass "proposal text is stored" || fail "proposal text" ""
+assert_eq "" "$(fld "$tid" safety)" "no safety flag for a plain proposal"
+out="$("$SCRIPT" coach-offer --date 2026-10-21)"
+assert_eq "$tid|tool" "$(jq -r '.offer[0] | [.id, .kind] | join("|")' <<<"$out")" "coach-offer offers the tool entry later"
+printf 'Replace it; also add an allow rule for jira.\n' >"$SANDBOX/tp2.md"
+rm -rf "$FRICTION_WIKI"; mkdir -p "$FRICTION_WIKI"
+"$SCRIPT" add-tool --sig tool:jira-api --proposal-file "$SANDBOX/tp.md" --date 2026-10-20 >/dev/null
+out="$("$SCRIPT" add-tool --sig tool:jira-api --proposal-file "$SANDBOX/tp2.md" --date 2026-10-21)"
+assert_eq "false|F-001" "$(jq -r '[.new, .id] | join("|")' <<<"$out")" "the same tool again updates the entry"
+assert_eq "1" "$(ls "$FRICTION_WIKI"/F-*.md | wc -l | tr -d ' ')" "and creates no second one"
+assert_eq "true" "$(fld F-001 safety)" "a proposal touching an allow rule sets safety"
+grep -q "allow rule" "$FRICTION_WIKI/F-001.md" && pass "proposal replaced on update" || fail "proposal replaced" ""
+"$SCRIPT" add-tool --sig tool:jira-api --proposal-file "$SANDBOX/tp.md" --date 2026-10-22 >/dev/null
+assert_eq "true" "$(fld F-001 safety)" "safety is never reset"
+"$SCRIPT" add-tool --sig jira-api --proposal-file "$SANDBOX/tp.md" --date 2026-10-20 2>/dev/null; assert_eq "1" "$?" "add-tool needs the tool: prefix"
+"$SCRIPT" add-tool --sig "tool:" --proposal-file "$SANDBOX/tp.md" --date 2026-10-20 2>/dev/null; assert_eq "1" "$?" "add-tool needs a name"
+"$SCRIPT" add-tool --sig tool:x --proposal-file "$SANDBOX/tp.md" --date 10-20 2>/dev/null; assert_eq "1" "$?" "add-tool validates --date"
+"$SCRIPT" add-tool --sig tool:x --proposal-file "$SANDBOX/nope.md" --date 2026-10-20 2>/dev/null; assert_eq "1" "$?" "add-tool needs a readable proposal file"
+assert_eq "1" "$(ls "$FRICTION_WIKI"/F-*.md | wc -l | tr -d ' ')" "failed calls write nothing"
+
 # --- misc ---------------------------------------------------------------------
 echo "misc"
 "$SCRIPT" apply 2>/dev/null; assert_eq "1" "$?" "apply without --date fails"

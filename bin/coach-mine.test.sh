@@ -132,6 +132,57 @@ assert_eq "claude|s1" "$(f "$c" '[.harness,.session]|join("|")')" "concept carri
 assert_eq "yes" "$(yn "$c" '.answer|startswith("The retry queue")')" "the answer is the last assistant text of the turn, not the first"
 assert_eq "yes" "$(yn "$OUT" '[.concepts[]|select(.harness=="pi")]|length==1 and all(.[]; .answer|length<=1500)')" "pi concepts are found, answer cut to 1500 chars"
 
+echo "coach-mine — commands"
+CC="$SANDBOX/ccl" CPI="$SANDBOX/cpi" CZH="$SANDBOX/czsh"
+mkdir -p "$CC/-proj" "$CPI/--proj--"
+tu() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$3" --arg id "$2" '{role:"assistant",content:[{type:"text",text:"running"},{type:"tool_use",id:$id,name:"Bash",input:{command:$c}}]}')" assistant; }
+{ tu 2026-10-15T07:00:00.000Z t1 "FOO=bar jira-api GET /rest/api/3/issue/ECFX-1"
+  tu 2026-10-15T07:01:00.000Z t2 "cd /tmp/x && glab mr view 12 --comments"
+  tu 2026-10-15T07:02:00.000Z t3 "sudo /usr/local/bin/jq . file.json"
+  tu 2026-10-15T07:03:00.000Z t4 "API_KEY=$TOK curl -H 'Authorization: Bearer $TOK' https://example.test"
+  tu 2026-10-15T07:04:00.000Z t5 "rg foo | head -3"
+  tu 2026-10-14T07:04:00.000Z t6 "/opt/homebrew/bin/rg bar"
+  tu 2026-10-14T07:05:00.000Z t7 "jira-api GET /x"
+  tu 2026-10-14T07:05:00.000Z t7 "jira-api GET /x"
+  tu 2026-08-01T07:00:00.000Z t8 "oldtool --run"
+  tu 2026-10-16T07:00:00.000Z t9 "futuretool --run"
+  cl 2026-10-15T08:00:00.000Z /w/ECFX-77 '{"role":"assistant","content":[{"type":"tool_use","id":"t10","name":"Read","input":{"file_path":"/x"}}]}' assistant
+  tu 2026-10-15T09:00:00.000Z t11 "sk-$TOK --flag"
+  printf '%s\n' '{"type":"assistant","timestamp":"2026-10-15T07:40:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tx","name":"Bash","input":{"comm'; } >"$CC/-proj/c1.jsonl"
+{ echo '{"type":"session","version":3,"id":"p1","timestamp":"2026-10-14T07:00:00.000Z","cwd":"/w/ECFX-88"}'
+  pm 2026-10-15T09:00:00.000Z '{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"jira-api GET /y"}}]}'
+  pm 2026-10-15T09:01:00.000Z '{"role":"assistant","content":[{"type":"toolCall","id":"c2","name":"bash","arguments":{"command":"rg x src"}}]}'
+  pm 2026-10-15T09:02:00.000Z '{"role":"assistant","content":[{"type":"toolCall","id":"c3","name":"read","arguments":{"path":"/x"}}]}'; } >"$CPI/--proj--/2026-10-14T07-00-00-000Z_p1.jsonl"
+{ printf ': 1792054800:0;rg --files\n: 1792054860:0;jira-api GET /secret/path/here\n: 1792054900:0;git commit -m "a \\\n'
+  printf 'continued line rg\n'
+  printf ': 1789376400:0;ancient --old\n: 1792099800:0;tomorrow --new\nplain old line\n'; } >"$CZH"
+cmine() { CLAUDE_PROJECTS_DIR="$CC" PI_SESSIONS_DIR="$CPI" ZSH_HISTORY="$CZH" "$SCRIPT" --commands "$@" 2>"$SANDBOX/stderr"; }
+OUT=$(cmine --date $D); RC=$?
+assert_eq "0" "$RC" "--commands exits 0"
+assert_eq "2026-09-15|2026-10-15" "$(f "$OUT" '[.since,.until]|join("|")')" "since defaults to date minus 30 days"
+assert_eq "yes" "$(yn "$OUT" '(.commands|type)=="array" and (has("groups")|not)')" "prints {since, until, commands} only"
+nm() { jq -c --arg n "$1" '.commands[]|select(.name==$n)' <<<"$OUT"; }
+assert_eq "4|2|1|1" "$(f "$(nm jira-api)" '[.count,.sources.claude,.sources.pi,.sources.shell]|join("|")')" "jira-api: env prefix stripped, replayed id counted once, sources split"
+assert_eq "4|2|1|1" "$(f "$(nm rg)" '[.count,.sources.claude,.sources.pi,.sources.shell]|join("|")')" "rg: pipes and basename of a full path give one program; shell lines counted"
+assert_eq "1" "$(f "$(nm glab)" .count)" "a cd x && prefix is stripped"
+assert_eq "1" "$(f "$(nm jq)" .count)" "sudo and the path are stripped"
+assert_eq "1" "$(f "$(nm curl)" .count)" "env assignments with a token are stripped"
+assert_eq "1" "$(f "$(nm git)" .count)" "a backslash continuation line is not a command"
+assert_eq "0" "$(jq '[.commands[]|select(.name|test("oldtool|futuretool|ancient|tomorrow|plain"))]|length' <<<"$OUT")" "commands outside [since, until] and plain history lines are skipped"
+assert_eq "yes" "$(yn "$OUT" '[.commands[].count]==([.commands[].count]|sort|reverse)')" "sorted by count desc"
+assert_eq "0" "$(grep -c "$TOK" <<<"$OUT"; true)" "no token in stdout, even as a command name"
+assert_eq "0" "$(grep -c "secret/path\|Authorization\|rest/api\|--comments" <<<"$OUT"; true)" "arguments are never printed"
+assert_eq "yes" "$(yn "$OUT" '[.commands[]|keys|sort]|all(.==["count","name","sources"])')" "each entry is {name, count, sources}"
+OUT=$(cmine --date $D --since 2026-10-15)
+assert_eq "2026-10-15" "$(f "$OUT" .since)" "--since overrides the default"
+assert_eq "yes" "$(yn "$OUT" '([.commands[]|select(.name=="jira-api")][0].count)==3')" "and narrows the count"
+for i in $(seq 1 60); do tu 2026-10-15T10:00:00.000Z "m$i" "prog$i x"; done >"$CC/-proj/c2.jsonl"
+OUT=$(cmine --date $D)
+assert_eq "50" "$(jq '.commands|length' <<<"$OUT")" "only the top 50 are listed"
+cmine --date $D --since nope >/dev/null 2>&1; assert_eq "1" "$?" "a bad --since is an error"
+OUT=$(CLAUDE_PROJECTS_DIR="$SANDBOX/none" PI_SESSIONS_DIR="$SANDBOX/none" ZSH_HISTORY="$SANDBOX/none" "$SCRIPT" --commands --date $D)
+assert_eq "[]" "$(jq -c .commands <<<"$OUT")" "missing inputs give no commands"
+
 echo "coach-mine — robustness"
 OUT=$(CLAUDE_PROJECTS_DIR="$SANDBOX/none" PI_SESSIONS_DIR="$SANDBOX/none" ZSH_HISTORY="$SANDBOX/none" FRICTION_WIKI="$SANDBOX/none" COACH_SCAN_DIRS="$SANDBOX/none" "$SCRIPT" --date $D); RC=$?
 assert_eq "0|{\"groups\":[],\"concepts\":[]}" "$RC|$(jq -c . <<<"$OUT")" "missing inputs give an empty result"

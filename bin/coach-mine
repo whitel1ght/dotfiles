@@ -26,6 +26,14 @@ Inputs, each overridable for tests:
   COACH_SCAN_DIRS      colon list of dirs scanned for secrets, git-listed
                        (~/wiki:~/projects/dotfiles:~/projects/decisions:~/projects/articles)
 Unreadable files and malformed JSONL lines are skipped silently.
+
+  coach-mine --commands [--date D] [--since S]
+
+Prints {"since", "until", "commands": [{name, count, sources: {claude, pi, shell}}]}: the
+programs run in the agents' Bash tool calls (Claude tool_use Bash, pi toolCall bash) and in the
+zsh history (extended-history lines) from S (default D minus 30 days) to D, grouped by the
+first word of the command (leading VAR=x assignments, sudo and `cd x &&` prefixes dropped,
+basename of the program), top 50 by count. Only program names are printed, never arguments.
 """
 import datetime
 import glob
@@ -361,26 +369,154 @@ def secrets():
     return out
 
 
+ENV_ASSIGN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|'[^']*'|\S*)\s+")
+CD_PREFIX = re.compile(r"cd\s+(\"[^\"]*\"|'[^']*'|\S+)\s*(&&|;)\s*")
+SUDO_PREFIX = re.compile(r"sudo\s+(-\S+\s+)*")
+FIRST_WORD = re.compile(r"[^\s|;&<>()]+")
+SHELL_WORDS = {"for", "if", "while", "until", "case", "do", "done", "then", "else", "elif", "fi",
+               "function", "select", "time", "exit", "true", "false"}
+
+
+def program_of(cmd):
+    """The program name a command line runs, or "" when there is none."""
+    s = cmd.strip()
+    for _ in range(20):
+        for rx in (ENV_ASSIGN, CD_PREFIX, SUDO_PREFIX):
+            m = rx.match(s)
+            if m:
+                s = s[m.end():].lstrip()
+                break
+        else:
+            break
+    m = FIRST_WORD.match(s)
+    if not m:
+        return ""
+    name = os.path.basename(m.group(0).rstrip("/"))
+    if not re.fullmatch(r"[A-Za-z0-9_.+@-]+", name) or name in SHELL_WORDS:
+        return ""
+    return redact(name)
+
+
+def agent_commands(since, until):
+    """Yield (source, program) for Bash tool calls of both harnesses in [since, until]."""
+    seen = set()
+    for path, harness in transcripts(since):
+        try:
+            fh = open(path, errors="replace")
+        except OSError:
+            continue
+        with fh:
+            for line in fh:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(e, dict):
+                    continue
+                if harness == "pi":
+                    m = e.get("message") if e.get("type") == "message" else None
+                    want, key = "toolCall", "arguments"
+                    names = ("bash",)
+                else:
+                    m = e.get("message") if e.get("type") == "assistant" and not e.get("isSidechain") else None
+                    want, key = "tool_use", "input"
+                    names = ("Bash",)
+                if not isinstance(m, dict) or not isinstance(m.get("content"), list):
+                    continue
+                d = local_date(e.get("timestamp"))
+                if d is None or not (since <= d <= until):
+                    continue
+                for b in m["content"]:
+                    if not (isinstance(b, dict) and b.get("type") == want and b.get("name") in names):
+                        continue
+                    args = b.get(key)
+                    cmd = args.get("command") if isinstance(args, dict) else None
+                    if not isinstance(cmd, str):
+                        continue
+                    if b.get("id"):
+                        if (harness, b["id"]) in seen:
+                            continue
+                        seen.add((harness, b["id"]))
+                    name = program_of(cmd)
+                    if name:
+                        yield harness, name
+
+
+ZSH_LINE = re.compile(r"^: (\d+):\d+;(.*)$")
+
+
+def shell_commands(since, until):
+    path = os.environ.get("ZSH_HISTORY", os.path.join(HOME, ".zsh_history"))
+    try:
+        fh = open(path, errors="replace")
+    except OSError:
+        return
+    with fh:
+        cont = False
+        for line in fh:
+            line = line.rstrip("\n")
+            m = None if cont else ZSH_LINE.match(line)
+            cont = line.endswith("\\") and (cont or m is not None)
+            if not m:
+                continue
+            try:
+                d = datetime.datetime.fromtimestamp(int(m.group(1))).date()
+            except (ValueError, OverflowError, OSError):
+                continue
+            if since <= d <= until:
+                name = program_of(m.group(2))
+                if name:
+                    yield "shell", name
+
+
+def command_counts(since, until):
+    counts = {}
+    for source, name in list(agent_commands(since, until)) + list(shell_commands(since, until)):
+        c = counts.setdefault(name, {"name": name, "count": 0, "sources": {"claude": 0, "pi": 0, "shell": 0}})
+        c["count"] += 1
+        c["sources"][source] += 1
+    return sorted(counts.values(), key=lambda c: (-c["count"], c["name"]))[:50]
+
+
+def parse_date(flag, v):
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+        die(f"{flag} must be YYYY-MM-DD, got {v}")
+    try:
+        return datetime.date.fromisoformat(v)
+    except ValueError:
+        die(f"{flag} must be YYYY-MM-DD, got {v}")
+
+
 def main(argv):
     date = datetime.date.today()
+    since = None
+    commands = False
     args = list(argv)
     while args:
         a = args.pop(0)
-        if a == "--date" and args:
-            v = args.pop(0)
-            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
-                die(f"--date must be YYYY-MM-DD, got {v}")
-            try:
-                date = datetime.date.fromisoformat(v)
-            except ValueError:
-                die(f"--date must be YYYY-MM-DD, got {v}")
-        elif a == "--date":
-            die("--date needs a value")
+        if a in ("--date", "--since") and args:
+            d = parse_date(a, args.pop(0))
+            if a == "--date":
+                date = d
+            else:
+                since = d
+        elif a in ("--date", "--since"):
+            die(f"{a} needs a value")
+        elif a == "--commands":
+            commands = True
         elif a in ("-h", "--help"):
             print(__doc__.strip())
             return
         else:
             die(f"unknown option {a}")
+    if since is not None and not commands:
+        die("--since only works with --commands")
+    if commands:
+        since = since or date - datetime.timedelta(days=30)
+        json.dump({"since": since.isoformat(), "until": date.isoformat(),
+                   "commands": command_counts(since, date)}, sys.stdout, separators=(",", ":"))
+        print()
+        return
     prompts, today = collect(date)
     groups = repeats_and_restated(prompts, date) + secrets()
     groups.sort(key=lambda g: (-g["count"], g["sig"]))

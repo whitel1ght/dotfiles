@@ -200,7 +200,38 @@ the month when `~/wiki/work/friction/coach-log.md` has no row starting `| YYYY-M
 this month (`rg -c "^\| $(date +%Y-%m)-" ~/wiki/work/friction/coach-log.md` finds none or
 the file is missing). Ask one line: "Monthly tool review: run it now? (yes/no)".
 
-(procedure added in Task 7)
+On no, or no answer, do nothing more: the coach log row written below ends the offer for
+this month, so it is not asked again before next month. On yes, start ONE research subagent in the background (`subagent({ role: "researcher", model: <a capable model from the live <subagent_models> list; web research and judgement, not bounded classification>, cwd: "~/projects/dotfiles", label: "tool-review", max_minutes: 45, task: <the brief below> })`; the `[pi-sub]` wake-up comes later) and do not wait
+for it: carry on with the quiz summary and the coach log below. Its brief (it knows nothing
+else; put the real date in place of `<T>`):
+
+> Review the user's tools, read-only, and write down only what you can support. You never install
+> anything, change any setup file, or edit the dotfiles repo; your only writes are the temp
+> proposal files and the `friction-ledger add-tool` calls below.
+> 1. Usage: run `~/.local/bin/coach-mine --commands --date <T>` (prints the programs the agents
+>    and the shell ran over the last 30 days, with counts, never arguments). Never read
+>    `~/.zsh_history`, the transcripts, or anything under `~/.secrets`.
+> 2. Inventory: `ls ~/projects/dotfiles/bin` (the user's own scripts) and the tools the skills and
+>    playbooks call (`rg -o` over `~/projects/dotfiles/claude` and `pi` for command names).
+> 3. Candidates: the top custom scripts by use, and the most-run commands. For each, search the web
+>    for a maintained alternative (a brew package, an official CLI or MCP server, a built-in
+>    feature of a tool already installed). Check that the alternative is maintained (recent
+>    release) and what switching costs: call sites to rewrite, headless or unattended use,
+>    context cost of always-on tools, accounts and admin rights needed.
+> 4. A verdict per candidate, with the use count, the alternative with its link, what would change,
+>    and the risk: `switch` (clearly better), `try` (worth an experiment), or `keep`. Be honest:
+>    keep is the right verdict when nothing is materially better.
+> 5. For each `switch` or `try`, write the proposal (what to change, why, the use count, the link,
+>    how to undo it) to a temp file and record it:
+>    `~/.local/bin/friction-ledger add-tool --sig tool:<name> --proposal-file <file> --date <T>`
+>    with `<name>` the tool or script name. Never record a `keep`. The coach offers new entries on
+>    later mornings, and a proposal touching a guard, permission rule or hook is labelled as a
+>    safety change there.
+> 6. Reply with a summary of at most 25 lines: one line per candidate (name, use count, verdict,
+>    reason), the `add-tool` ids, and the keep verdicts.
+
+When its summary arrives, show me the verdicts in a few lines; if the session has ended by then,
+the entries it recorded are still offered later. The review never blocks the plan. If a subagent cannot start, say so in one line and go on.
 
 Last, log the counts (this replaces today's row if /start-day runs twice):
 
