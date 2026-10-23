@@ -7,7 +7,8 @@
 #                             [--diagnosis TEXT] [--proposal-file FILE] [--date D]
 #                             [--safety true|false] [--queued-by user] [--reason TEXT]
 #   friction-ledger coach-offer --date D [--limit 3]
-#   friction-ledger coach-answer F-NNN yes|no|later --date D
+#   friction-ledger coach-answer F-NNN yes|no|later|done --date D
+#   friction-ledger safety-check F-NNN
 #   friction-ledger coach-log --date D --offered N --answered N --landed N --failed N --cards N
 #   friction-ledger diary-section --date D [--mine-json FILE]
 #   friction-ledger frustration --date D --what TEXT --class C --sig-hint H [--quote Q]
@@ -80,13 +81,22 @@
 #         failing `cards add` only prints a warning naming the card's front; the date is still marked. An item whose
 #         signature kind is `secret` always gets `safety: true`, whatever its proposal says.
 # ingest  also sets frontmatter `safety: true` on an item or frustration whose proposal or
-#         signature matches is_safety (secrets-guard, docker-guard, permissions, allow/deny
-#         rules, autoMode, bypass, .githooks, hooks.json, PreToolUse, worktree guard,
-#         mr-description-review, auto-approve, skipDangerous); an existing true is never reset.
+#         signature matches is_safety (case-insensitive: any guard, permission, allow/deny
+#         rules or lists, auto mode, allowedTools, defaultMode, WorktreeCreate/Remove, wt hook,
+#         settings.json, docs-check, commit-msg, pre-commit, mr-description, --dangerously,
+#         PreToolUse, hooks.json, .githooks, bypass, skipDangerous, auto-approve); an existing
+#         true is never reset.
+# safety-check  prints true or false for F: stored `safety: true`, a `secret` entry, or
+#         is_safety on its proposal and signature; writes `safety: true` back when it was not
+#         stored (never true -> false). coach-fix asks it at enqueue, run and retry.
 #
 # coach-offer  picks what the usage coach suggests on date D and prints
-#           {results: [item], offer: [item]}; item = {id, kind, sig, count, days, safety,
-#            proposal_summary (first line of ## Proposal, 200 chars), evidence: [2 newest bullets]}.
+#           {results: [item], offer: [item]}; item = {id, kind, sig, count, days, safety, rung,
+#            proposal_summary (first line of ## Proposal, 200 chars), change (the lines of a
+#            `## Change` block, else the lines stating a before → after or ->), proposal (the
+#            full text, 1500 chars), direction ({rule, scope} from `Direction:`/`Scope:` lines,
+#            or null), evidence: [2 newest bullets]}. Before picking, every entry not fixed,
+#            landed or wontfix gets the safety-check backfill, so `safety` is never stale.
 #           offer: at most --limit (default 3) entries, newest `last` first, from status
 #            proposed; offered with offered_on at least 3 days before D (answered `later`, or
 #            ignored); declined whose count reached 2x `declined_count`. A `repeat` entry needs
@@ -98,12 +108,15 @@
 #           results: entries `landed` or `failed` with no result_reported_on, plus those already
 #            reported on D (result_reported_on is set to D), so a second run on D shows the same.
 #            A result item also carries `status` (landed|failed), `fix` (the A..B range, or the
-#            draft MR link) and `reason` (why it failed, or a user step after landing).
+#            draft MR link), `reason` (why it failed, or a user step after landing) and
+#            `retryable` (failed, and the reason does not start with "needs the user").
 # coach-answer  records the user's answer on an offered entry: yes -> landing, no -> declined
-#           (declined_count = current count), later -> offered. Stored as `answer`/`answered_on`.
-#           The same answer again changes nothing (whatever the status); a different one wins and
-#           adds one History line. Accepted only while the entry is offered (with offered_on), or
-#           landing/declined from an answer given on D; otherwise exit 1 and nothing is written.
+#           (declined_count = current count), later -> offered, done -> fixed (only for a
+#           `secret` entry, whose fix is the user's own steps; yes is refused for one). Stored as
+#           `answer`/`answered_on`. The same answer again changes nothing (whatever the status);
+#           a different one wins and adds one History line. Accepted only while the entry is
+#           offered (with offered_on), or landing/declined/fixed from an answer given on D;
+#           otherwise exit 1 and nothing is written.
 # coach-log  writes the day's counts as one row of $FRICTION_WIKI/coach-log.md (a header and a
 #           table sorted by date). A re-run for the same date replaces that row. The date and
 #           every count are validated (counts: non-negative integers); nothing is written on error.
@@ -211,13 +224,20 @@ section_edit() { # file name mode text
 evidence_dates() { section_get "$1" Evidence | grep -oE '^- [0-9]{4}-[0-9]{2}-[0-9]{2}' | cut -c3- | sort -u || true; }
 has_date() { evidence_dates "$1" | grep -qx "$2"; }
 
-# true when text touches a guard, permission rule or hook the coach must not change unseen
+# true when text touches a guard, permission rule, hook or auto mode the coach must not change
+# unseen; case-insensitive, and wide on purpose: when in doubt it counts as safety-loosening
 is_safety() { # text
-  grep -qiE 'secrets-guard|docker-guard|permissions|(allow|deny)[a-z/ ]{0,12} rules?|automode|bypass|\.githooks|hooks\.json|pretooluse|worktree[ -]guard|mr-description-review|auto-approve|automatically approve|skipdangerous' <<<"$1"
+  grep -qiE 'secrets?[ -]guard|docker[ -]guard|worktree[ -]guard|(^|[^a-z0-9_])guards?([^a-z0-9_]|$)|permission|(allow|deny)[a-z/ ]{0,12} rules?|allow ?-?list|deny|auto[- ]?mode|allowedtools|defaultmode|worktree(create|remove)|wt hook|settings\.json|docs-check|commit-msg|pre-commit|pre-push|mr[ -]description|dangerously|pretooluse|hooks?\.json|\.githooks|bypass|skipdangerous|auto-?approv|automatically approve|extension mode' <<<"$1"
 }
 
 sig_of() { fm_get "$1" signature | jq -r .; }
 kind_of() { sig_of "$1" | cut -d: -f2; }
+# safety = stored || secret || is_safety(proposal + signature); writes `safety: true` when it
+# was not stored yet, never true -> false
+backfill_safety() { # file
+  [ "$(fm_get "$1" safety)" != true ] || return 0
+  if [ "$(kind_of "$1")" = secret ] || is_safety "$(section_get "$1" Proposal) $(sig_of "$1")"; then fm_set "$1" safety true; fi
+}
 # the coach's view of an entry: window totals when coach-mine wrote them, else all-time
 entry_count() {
   local w; w="$(fm_get "$1" window_count)"
@@ -719,17 +739,39 @@ cmd_ingest() {
 
 # --- coach --------------------------------------------------------------------
 
+# the proposal's exact change: the lines of a `## Change` block when it has one, else every
+# line that states a before -> after (with → or ->); at most 12 lines of 300 chars, as JSON
+change_of() { # proposal text
+  awk '/^###? *[Cc]hange:? *$/ { inb = 1; next } inb && /^#/ { inb = 0 }
+    inb && NF { b[++nb] = $0 } !inb && (index($0, "→") || index($0, "->")) { l[++nl] = $0 }
+    END { if (nb) { for (i = 1; i <= nb; i++) print b[i] } else { for (i = 1; i <= nl; i++) print l[i] } }' <<<"$1" |
+    sed -E 's/^[[:space:]]*//' | head -12 | cut -c1-300 | jq -Rn '[inputs | select(length > 0)]'
+}
+# a restated entry's standing rule: {rule, scope} from the proposal's `Direction: <rule>` and
+# `Scope: <scope>` lines (scope global when absent), or null
+direction_of() { # proposal text
+  local rule scope
+  rule="$(sed -nE 's/^[-*[:space:]]*Direction:[[:space:]]*//p' <<<"$1" | head -1)"
+  scope="$(sed -nE 's/^[-*[:space:]]*Scope:[[:space:]]*//p' <<<"$1" | head -1)"
+  jq -nc --arg r "$(one_line "$rule")" --arg s "$(one_line "$scope")" \
+    'if $r == "" then null else {rule: $r, scope: (if $s == "" then "global" else $s end)} end'
+}
+
 coach_item() { # file -> item JSON, plus the status/last/offered_on/declined_count/reported selection fields
-  local f="$1" summary ev
-  summary="$(section_get "$f" Proposal | awk 'NF { print; exit }' | cut -c1-200)"
+  local f="$1" summary ev proposal
+  proposal="$(section_get "$f" Proposal)"
+  summary="$(awk 'NF { print; exit }' <<<"$proposal" | cut -c1-200)"
   ev="$(section_get "$f" Evidence | grep '^- ' | tail -2 | sed 's/^- //' | jq -Rn '[inputs] | reverse')"
   jq -nc --arg id "$(basename "$f" .md)" --arg kind "$(kind_of "$f")" --arg sig "$(sig_of "$f")" --arg count "$(entry_count "$f")" \
     --arg days "$(entry_days "$f")" --arg safety "$(fm_get "$f" safety)" --arg summary "$summary" --argjson ev "$ev" \
+    --arg rung "$(fm_get "$f" rung)" --arg proposal "$proposal" --argjson change "$(change_of "$proposal")" \
+    --argjson direction "$(direction_of "$proposal")" \
     --arg status "$(fm_get "$f" status)" --arg last "$(fm_get "$f" last)" --arg offered_on "$(fm_get "$f" offered_on)" \
     --arg declined_count "$(fm_get "$f" declined_count)" --arg reported "$(fm_get "$f" result_reported_on)" \
     --arg fix "$(fm_get "$f" fix)" --arg reason "$(fm_get "$f" reason)" \
-    '{id: $id, kind: $kind, sig: $sig, count: ($count | tonumber), days: ($days | tonumber), safety: ($safety == "true"),
-      proposal_summary: $summary, evidence: $ev, status: $status, last: $last, offered_on: $offered_on,
+    '{id: $id, kind: $kind, sig: $sig, count: ($count | tonumber? // 0), days: ($days | tonumber? // 0), safety: ($safety == "true"),
+      rung: $rung, proposal_summary: $summary, change: $change, proposal: $proposal[0:1500], direction: $direction,
+      evidence: $ev, status: $status, last: $last, offered_on: $offered_on,
       declined_count: ($declined_count | tonumber? // 0), reported: $reported, fix: $fix, reason: $reason}'
 }
 
@@ -748,11 +790,16 @@ cmd_coach_offer() {
   [[ "$limit" =~ ^[0-9]+$ ]] || die "bad --limit: $limit"
 
   local f rows="" out id
-  for f in "$FRICTION_WIKI"/F-*.md; do [ -f "$f" ] && rows+="$(coach_item "$f")"$'\n'; done
+  for f in "$FRICTION_WIKI"/F-*.md; do
+    [ -f "$f" ] || continue
+    case "$(fm_get "$f" status)" in fixed | landed | wontfix) ;; *) backfill_safety "$f" ;; esac
+    rows+="$(coach_item "$f")"$'\n'
+  done
   out="$(printf '%s' "$rows" | jq -sc --arg d "$date_" --argjson limit "$limit" '
     def secs($x): $x | strptime("%Y-%m-%d") | mktime;
     def item: del(.status, .last, .offered_on, .declined_count, .reported, .fix, .reason);
-    def result: del(.last, .offered_on, .declined_count, .reported);
+    def result: del(.last, .offered_on, .declined_count, .reported)
+      | .retryable = (.status == "failed" and (.reason | startswith("needs the user") | not));
     ([.[] | select(.offered_on == $d)]) as $today
     | { results: [.[] | select((.status == "landed" or .status == "failed") and (.reported == "" or .reported == $d)) | result],
       offer: (if ($today | length) > 0 then ($today | sort_by(.last, .id) | reverse | .[:$limit] | map(item)) else [.[] | select(
@@ -777,7 +824,7 @@ cmd_coach_offer() {
 cmd_coach_answer() {
   local id="${1:-}" ans="${2:-}" date_=""
   [[ "$id" =~ ^F-[0-9]+$ ]] || die "coach-answer needs an F-NNN id"
-  [[ "$ans" =~ ^(yes|no|later)$ ]] || die "coach-answer needs yes|no|later"
+  [[ "$ans" =~ ^(yes|no|later|done)$ ]] || die "coach-answer needs yes|no|later|done"
   shift 2
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -790,11 +837,16 @@ cmd_coach_answer() {
   valid_date "$date_"
   local f target; f="$(fpath "$id")"
   [ -f "$f" ] || die "no such entry: $id"
-  case "$ans" in yes) target=landing ;; no) target=declined ;; later) target=offered ;; esac
+  case "$ans" in yes) target=landing ;; no) target=declined ;; later) target=offered ;; done) target=fixed ;; esac
+  if [ "$(kind_of "$f")" = secret ]; then
+    [ "$ans" != yes ] || die "$id is a secret in a file: its steps are the user's; answer done, no or later"
+  else
+    [ "$ans" != done ] || die "done is only for secret entries; $id is $(kind_of "$f")"
+  fi
   local st; st="$(fm_get "$f" status)"
   [ "$(fm_get "$f" answer)" != "$ans" ] || return 0
   if ! { [ "$st" = offered ] && [ -n "$(fm_get "$f" offered_on)" ]; } &&
-     ! { [[ "$st" =~ ^(landing|declined)$ ]] && [ "$(fm_get "$f" answered_on)" = "$date_" ]; }; then
+     ! { [[ "$st" =~ ^(landing|declined|fixed)$ ]] && [ "$(fm_get "$f" answered_on)" = "$date_" ]; }; then
     die "$id is $st, not waiting for an answer"
   fi
   if [ "$(fm_get "$f" status)" != "$target" ]; then
@@ -805,6 +857,16 @@ cmd_coach_answer() {
   fi
   fm_set "$f" answer "$ans"
   fm_set "$f" answered_on "$date_"
+}
+
+cmd_safety_check() {
+  local id="${1:-}" f
+  [[ "$id" =~ ^F-[0-9]+$ ]] || die "safety-check needs an F-NNN id"
+  [ $# -eq 1 ] || die "safety-check takes only the id"
+  f="$(fpath "$id")"
+  [ -f "$f" ] || die "no such entry: $id"
+  backfill_safety "$f"
+  [ "$(fm_get "$f" safety)" = true ] && echo true || echo false
 }
 
 cmd_coach_log() {
@@ -970,6 +1032,7 @@ case "${1:-}" in
   coach-offer) acquire_lock; shift; cmd_coach_offer "$@" ;;
   coach-answer) acquire_lock; shift; cmd_coach_answer "$@" ;;
   coach-log) acquire_lock; shift; cmd_coach_log "$@" ;;
+  safety-check) acquire_lock; shift; cmd_safety_check "$@" ;;
   -h|--help|"") awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print } /^set -/ { exit }' "$0"; [ -n "${1:-}" ] ;;
   *) die "unknown command $1" ;;
 esac

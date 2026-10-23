@@ -284,7 +284,7 @@ cg() {
   printf '%s\n' "$@" | jq -Rn --arg d "$d" '{date: $d, groups: [inputs | split("|") | {sig: .[0], source: "x", kind: .[1], count: (.[2] | tonumber), keys: [], confidence: "high",
     samples: ["sample " + .[0]], evidence: []} + (if .[3] != "" then {days: (.[3] | tonumber)} else {} end)]}' >"$file"
 }
-is_safe() { bash -c 'source <(sed -n "/^is_safety()/,/^}/p" "$1"); is_safety "$2" && echo yes || echo no' _ "$SCRIPT" "$1"; }
+is_safe() { bash -c 'eval "$(sed -n "/^is_safety()/,/^}/p" "$1")"; is_safety "$2" && echo yes || echo no' _ "$SCRIPT" "$1"; }
 hist() { sed -n '/^## History/,$p' "$FRICTION_WIKI/$1.md" | grep -c '^- 2026'; }
 offered_ids() { jq -r '[.offer[].id] | sort | join(" ")' <<<"$1"; }
 printf 'Do the thing\nsecond line\n' >"$SANDBOX/prop.md"
@@ -433,6 +433,87 @@ for t in "secrets-guard" "docker-guard" "the allow rule" "deny rule" "autoMode" 
   assert_eq "yes" "$(is_safe "x $t y")" "is_safety matches $t"
 done
 assert_eq "no" "$(is_safe "edit bin/start-day")" "is_safety ignores bin/start-day"
+for t in "add it to the allowlist" "the allow list" "an allow-list entry" "switch on auto mode" "auto-mode" "AutoMode" \
+  "allowedTools" "defaultMode: acceptEdits" "the WorktreeCreate hook" "WorktreeRemove" "the wt hook" "the docker guard" \
+  "secrets guard" "worktree-guard" "relax the guard" "settings.json allowlist" "disable the docs-check commit hook" \
+  "the commit-msg hook" "the MR-description gate" "claude --dangerously-skip-permissions" "a permission prompt" \
+  "a deny entry" "PreToolUse" "hook.json" "hooks.json" ".githooks/commit-msg" "bypass it" "skipDangerousModePermissionPrompt" \
+  "auto-approve" "autoapprove"; do
+  assert_eq "yes" "$(is_safe "x $t y")" "is_safety matches $t"
+done
+for t in "Print the date" "Create /run-tests" "Try jira-cli view instead of the curl wrapper." "Do the thing" "safeguarding the cache"; do
+  assert_eq "no" "$(is_safe "$t")" "is_safety leaves alone: $t"
+done
+rm -rf "$FRICTION_WIKI"
+
+# safety backfill: coach-offer and safety-check judge every candidate, not only ingested ones
+cg "$SANDBOX/c6.json" 2026-10-10 "b:tool:old|tool|2|" "b:tool:plain|tool|2|" "b:tool:flagged|tool|2|" "b:secret:x|secret|1|" "b:tool:done|tool|2|"
+apply 2026-10-10 "$SANDBOX/c6.json" >/dev/null
+printf 'Change bin/secrets-guard to allow the wiki path\n' >"$SANDBOX/p6a.md"
+printf 'Print the date\n' >"$SANDBOX/p6b.md"
+printf 'Add the docker guard bypass\n' >"$SANDBOX/p6e.md"
+"$SCRIPT" set F-001 --status proposed --proposal-file "$SANDBOX/p6a.md" --date 2026-10-10
+"$SCRIPT" set F-002 --status proposed --proposal-file "$SANDBOX/p6b.md" --date 2026-10-10
+"$SCRIPT" set F-003 --status proposed --proposal-file "$SANDBOX/p6b.md" --safety true --date 2026-10-10
+"$SCRIPT" set F-004 --status proposed --proposal-file "$SANDBOX/p6b.md" --date 2026-10-10
+"$SCRIPT" set F-005 --status fixed --proposal-file "$SANDBOX/p6e.md" --date 2026-10-10
+assert_eq "|||" "$(fld F-001 safety)|$(fld F-002 safety)|$(fld F-004 safety)|$(fld F-005 safety)" "pre-existing entries without a safety field"
+OUT="$("$SCRIPT" coach-offer --date 2026-10-12 --limit 10)"
+assert_eq "true" "$(jq -r '.offer[] | select(.id == "F-001") | .safety' <<<"$OUT")" "coach-offer marks an unflagged secrets-guard proposal as safety"
+assert_eq "true|true" "$(fld F-001 safety)|$(fld F-004 safety)" "and writes safety: true back (a secret entry too)"
+assert_eq "|true" "$(fld F-002 safety)|$(fld F-003 safety)" "a harmless proposal stays unset; a stored true stays true"
+assert_eq "" "$(fld F-005 safety)" "a fixed entry is left alone"
+"$SCRIPT" set F-003 --proposal-file "$SANDBOX/p6b.md" --date 2026-10-12
+assert_eq "true" "$(jq -r '.offer[] | select(.id == "F-003") | .safety' <<<"$("$SCRIPT" coach-offer --date 2026-10-12 --limit 10)")" "never true -> false"
+assert_eq "false" "$("$SCRIPT" safety-check F-002)" "safety-check: a harmless entry is false"
+"$SCRIPT" set F-002 --proposal-file "$SANDBOX/p6e.md" --date 2026-10-12
+assert_eq "true|true" "$("$SCRIPT" safety-check F-002)|$(fld F-002 safety)" "safety-check re-reads the proposal and writes true back"
+"$SCRIPT" safety-check F-099 2>/dev/null; assert_eq "1" "$?" "safety-check of an unknown id fails"
+rm -rf "$FRICTION_WIKI"
+
+# offer items carry rung, the full proposal, the exact change and a restated direction
+cg "$SANDBOX/c7.json" 2026-10-10 "i:tool:arrow|tool|2|" "i:tool:block|tool|2|" "i:restated:rule|restated|3|2" "i:tool:none|tool|2||"
+apply 2026-10-10 "$SANDBOX/c7.json" >/dev/null
+printf 'Allow the wiki path.\nChange: bin/secrets-guard: deny ~/wiki → allow ~/wiki/work\n- settings.json defaultMode: default -> acceptEdits\nWhy: it blocks the sync.\n' >"$SANDBOX/p7a.md"
+printf 'Widen the rule.\n\n## Change\n\n- claude/settings.json allow: [] → [Bash(rg:*)]\n- pi/settings.json: same\n\n## Test\nbin/x.test.sh case → green\n' >"$SANDBOX/p7b.md"
+printf 'Keep it as a standing direction.\nDirection: Run the linter before every commit\nScope: reviews\n' >"$SANDBOX/p7c.md"
+"$SCRIPT" set F-001 --status proposed --rung config --proposal-file "$SANDBOX/p7a.md" --date 2026-10-10
+"$SCRIPT" set F-002 --status proposed --rung config --proposal-file "$SANDBOX/p7b.md" --date 2026-10-10
+"$SCRIPT" set F-003 --status proposed --rung prompt --proposal-file "$SANDBOX/p7c.md" --date 2026-10-10
+"$SCRIPT" set F-004 --status proposed --proposal-file "$SANDBOX/prop.md" --date 2026-10-10
+sed -i.bak 's/^days: .*/days:/' "$FRICTION_WIKI/F-004.md" && rm -f "$FRICTION_WIKI/F-004.md.bak"
+OUT="$("$SCRIPT" coach-offer --date 2026-10-12 --limit 10)"
+it() { jq -c --arg i "$1" ".offer[] | select(.id == \$i) | $2" <<<"$OUT"; }
+assert_eq '"config"' "$(it F-001 .rung)" "an offer item carries its rung"
+assert_eq '["Change: bin/secrets-guard: deny ~/wiki → allow ~/wiki/work","- settings.json defaultMode: default -> acceptEdits"]' "$(it F-001 .change)" "change: the before → after and -> lines"
+assert_eq '["- claude/settings.json allow: [] → [Bash(rg:*)]","- pi/settings.json: same"]' "$(it F-002 .change)" "change: a ## Change block wins over arrows elsewhere"
+assert_eq '[]' "$(it F-004 .change)" "change: empty when the proposal states none"
+assert_eq "$(cat "$SANDBOX/p7a.md")" "$(it F-001 .proposal | jq -r .)" "the full proposal text"
+assert_eq '{"rule":"Run the linter before every commit","scope":"reviews"}' "$(it F-003 .direction)" "a Direction line gives the rule and its scope"
+assert_eq 'null' "$(it F-001 .direction)" "no Direction line: null"
+assert_eq "0" "$(it F-004 .days)" "an entry with empty days still offers (days 0)"
+long="$(printf 'line of the proposal that goes on %.0s\n' $(seq 1 80))"
+printf '%s\n' "$long" >"$SANDBOX/p7d.md"
+"$SCRIPT" set F-004 --proposal-file "$SANDBOX/p7d.md" --date 2026-10-12
+assert_eq "1500" "$("$SCRIPT" coach-offer --date 2026-10-12 --limit 10 | jq '.offer[] | select(.id == "F-004") | .proposal | length')" "the proposal is cut to 1500 chars"
+rm -rf "$FRICTION_WIKI"
+
+# retryable results, and done for secret entries
+cg "$SANDBOX/c8.json" 2026-10-10 "r:tool:a|tool|2|" "r:tool:b|tool|2|" "r:tool:c|tool|2|" "files:secret:glpat:/p/x|secret|1|"
+apply 2026-10-10 "$SANDBOX/c8.json" >/dev/null
+"$SCRIPT" set F-001 --status failed --reason "uncommitted edits in notes.txt" --date 2026-10-11
+"$SCRIPT" set F-002 --status failed --reason "needs the user: rotate it" --date 2026-10-11
+"$SCRIPT" set F-003 --status landed --fix a..b --date 2026-10-11
+OUT="$("$SCRIPT" coach-offer --date 2026-10-12)"
+assert_eq "F-001:true F-002:false F-003:false" "$(jq -r '[.results[] | "\(.id):\(.retryable)"] | sort | join(" ")' <<<"$OUT")" "only a failure that does not need the user is retryable"
+"$SCRIPT" set F-004 --status proposed --proposal-file "$SANDBOX/prop.md" --date 2026-10-12
+"$SCRIPT" coach-offer --date 2026-10-13 >/dev/null
+"$SCRIPT" coach-answer F-004 yes --date 2026-10-13 2>"$SANDBOX/err"; assert_eq "1" "$?" "yes on a secret entry is refused"
+assert_eq "offered" "$(fld F-004 status)" "and changes nothing"
+"$SCRIPT" coach-answer F-004 done --date 2026-10-13; assert_eq "0" "$?" "done on a secret entry is accepted"
+assert_eq "fixed|done|2026-10-13" "$(fld F-004 status)|$(fld F-004 answer)|$(fld F-004 answered_on)" "done -> fixed"
+"$SCRIPT" coach-answer F-004 later --date 2026-10-13; assert_eq "offered" "$(fld F-004 status)" "a different answer the same day still wins"
+"$SCRIPT" coach-answer F-001 done --date 2026-10-13 2>/dev/null; assert_eq "1" "$?" "done is refused for a non-secret entry"
 rm -rf "$FRICTION_WIKI"
 export FRICTION_WIKI="$SANDBOX/friction"
 # ingest cards and secret

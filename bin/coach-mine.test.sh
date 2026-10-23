@@ -183,6 +183,38 @@ cmine --date $D --since nope >/dev/null 2>&1; assert_eq "1" "$?" "a bad --since 
 OUT=$(CLAUDE_PROJECTS_DIR="$SANDBOX/none" PI_SESSIONS_DIR="$SANDBOX/none" ZSH_HISTORY="$SANDBOX/none" "$SCRIPT" --commands --date $D)
 assert_eq "[]" "$(jq -c .commands <<<"$OUT")" "missing inputs give no commands"
 
+echo "coach-mine — Atlassian, Slack and GitLab tokens"
+# synthetic tokens, split so no scanner sees a token in this file
+T_ATL="ATA""TT3xFfGF0TESTONLY0123456789abcdefABCD"
+T_SLK="xo""xb-1234567890-TESTONLYabcdef"
+T_GLS="gl""soat-TESTONLYabcdef012345"
+T_GLR="gl""rt-TESTONLYabcdef0123456"
+SC="$SANDBOX/s_claude" SW="$SANDBOX/s_wiki"
+mkdir -p "$SC/-proj" "$SW"
+{ for t in "$T_ATL" "$T_SLK" "$T_GLS" "$T_GLR"; do
+    us 2026-10-14T07:00:00.000Z "post the nightly status using $t to the team channel"
+    us 2026-10-15T07:00:00.000Z "post the nightly status using $t to the team channel"
+  done
+  us 2026-10-15T08:00:00.000Z "explain how the release token gets passed along here"
+  as 2026-10-15T08:00:20.000Z "$(long "It passes $T_ATL and $T_SLK and $T_GLS and $T_GLR along.")"
+} >"$SC/-proj/t1.jsonl"
+n=0; for t in "$T_ATL" "$T_SLK" "$T_GLS" "$T_GLR"; do n=$((n + 1)); tu 2026-10-15T09:00:00.000Z "k$n" "$t --run"; done >"$SC/-proj/t2.jsonl"
+printf 'a: %s\nb: %s\nc: %s\nd: %s\n' "$T_ATL" "$T_SLK" "$T_GLS" "$T_GLR" >"$SW/tokens.md"
+smine() { CLAUDE_PROJECTS_DIR="$SC" PI_SESSIONS_DIR="$SANDBOX/none" ZSH_HISTORY="$SANDBOX/none" FRICTION_WIKI="$FW" COACH_SCAN_DIRS="$SW" "$SCRIPT" "$@" 2>"$SANDBOX/stderr"; }
+OUT=$(smine --date $D)
+OUTC=$(smine --commands --date $D)
+for t in "$T_ATL" "$T_SLK" "$T_GLS" "$T_GLR"; do
+  assert_eq "0" "$(grep -cF -- "$t" <<<"$OUT$OUTC"; true)" "no ${t:0:5}… token in the prompts, answers or commands output"
+  assert_eq "0" "$(grep -cF -- "$t" "$SANDBOX/stderr"; true)" "nor in stderr"
+done
+for n in atlassian slack gitlab; do
+  assert_eq "yes" "$(yn "$OUT" "[.groups[]|select(.kind==\"repeat\")|.samples[]|select(test(\"<secret:$n>\"))]|length>0")" "a $n token in a prompt is replaced by <secret:$n>"
+  assert_eq "yes" "$(yn "$OUT" "[.concepts[].answer|select(test(\"<secret:$n>\"))]|length==1")" "a $n token in an answer is replaced"
+  assert_eq "yes" "$(yn "$OUTC" "[.commands[].name|select(.==\"<secret:$n>\")]|length==1")" "a $n token as a command name is replaced"
+done
+assert_eq "tokens.md:1 atlassian|tokens.md:2 slack|tokens.md:3 gitlab|tokens.md:4 gitlab" \
+  "$(jq -r '[.groups[]|select(.kind=="secret")|.evidence[]|sub(".*/";"")]|sort_by(.)|join("|")' <<<"$OUT")" "the file scan finds each token by location and pattern only"
+
 echo "coach-mine — robustness"
 OUT=$(CLAUDE_PROJECTS_DIR="$SANDBOX/none" PI_SESSIONS_DIR="$SANDBOX/none" ZSH_HISTORY="$SANDBOX/none" FRICTION_WIKI="$SANDBOX/none" COACH_SCAN_DIRS="$SANDBOX/none" "$SCRIPT" --date $D); RC=$?
 assert_eq "0|{\"groups\":[],\"concepts\":[]}" "$RC|$(jq -c . <<<"$OUT")" "missing inputs give an empty result"

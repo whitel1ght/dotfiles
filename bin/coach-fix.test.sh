@@ -78,9 +78,10 @@ cf() { "$SCRIPT" "$@" 2>"$SANDBOX/stderr"; }
 qget() { jq -r "if .$2 == null then \"\" else .$2 | tostring end" "$Q/$1.json" 2>/dev/null; }
 fld() { grep -m1 "^$2:" "$FRICTION_WIKI/$1.md" | sed "s/^$2: *//"; }
 ncalls() { [ -f "$FAKE_TMUX_DIR/log" ] && wc -l <"$FAKE_TMUX_DIR/log" | tr -d ' ' || echo 0; }
+yes_now() { "$FRICTION_LEDGER" coach-answer "$1" yes --date "$TODAY" >/dev/null; } # the user's yes in /start-day
 close_window() { grep -vx "coach-$1" "$FAKE_TMUX_DIR/windows" >"$SANDBOX/w.tmp" || true; mv "$SANDBOX/w.tmp" "$FAKE_TMUX_DIR/windows"; }
 
-mkentry() { # id signature safety [status]
+mkentry() { # id signature safety [status] [proposal]
   cat >"$FRICTION_WIKI/$1.md" <<EOT
 ---
 id: $1
@@ -93,6 +94,7 @@ days: 2
 fix:
 rung: script
 safety: $3
+offered_on: 2026-10-20
 ---
 
 # $1
@@ -103,7 +105,7 @@ safety: $3
 ## Diagnosis
 
 ## Proposal
-Do the thing.
+${5:-Do the thing.}
 
 ## History
 - 2026-10-01: opened
@@ -186,11 +188,10 @@ assert_eq "no" "$([ -e "$Q/F-003.json" ] && echo yes || echo no)" "no queue file
 assert_eq "offered" "$(fld F-003 status)" "the ledger is untouched on refusal"
 assert_eq "0" "$(ncalls)" "no job started on refusal"
 
-OUT="$(cf enqueue F-004 --approved-safety)"; RC=$?
-assert_eq "0" "$RC" "a secret entry exits 0"
-assert_has "needs the user: follow the proposal's steps" "$OUT" "a secret entry says it needs the user"
-assert_eq "failed" "$(fld F-004 status)" "a secret entry goes failed in the ledger"
-assert_eq "needs the user: follow the proposal's steps" "$(fld F-004 reason)" "the ledger keeps the reason"
+cf enqueue F-004 --approved-safety >/dev/null; RC=$?
+assert_eq "3" "$RC" "a secret entry is refused with exit 3"
+assert_has "secret entries are user steps" "$(cat "$SANDBOX/stderr")" "the refusal says secret entries are user steps"
+assert_eq "offered|no" "$(fld F-004 status)|$([ -e "$Q/F-004.json" ] && echo yes || echo no)" "nothing is written for a secret entry"
 assert_eq "0" "$(ncalls)" "no job for a secret entry"
 
 cf enqueue F-001 >/dev/null; RC=$?
@@ -210,6 +211,7 @@ assert_eq "0" "$RC" "enqueue of a queued entry exits 0"
 assert_eq "1" "$(ncalls)" "enqueue of a queued entry starts nothing"
 assert_has "already" "$OUT" "it says the entry is already queued"
 
+yes_now F-003
 cf enqueue F-003 --approved-safety >/dev/null
 assert_eq "queued" "$(qget F-003 state)" "a second job waits while one runs"
 assert_eq "true" "$(qget F-003 approved_safety)" "the approval is recorded"
@@ -337,7 +339,8 @@ assert_eq "landed" "$(qget F-001 state)" "--force-check skips the window check"
 # --- land: fast-forward and install ------------------------------------------------
 echo "land: fast-forward"
 setup
-cf enqueue F-001 >/dev/null
+yes_now F-001
+cf enqueue F-001 --approved-safety >/dev/null
 OLD="$(git -C "$DOT" rev-parse --short main)"
 branch dotfiles F-001 bin/x $'#!/bin/bash\necho x\n' install.sh "$(cat "$DOT/install.sh")
 if [ -f \"\$DOTFILES_DIR/bin/x\" ]; then
@@ -360,7 +363,8 @@ assert_eq "" "$(git -C "$DOT" branch --list coach-F-001)" "the branch is deleted
 
 echo "land: install.sh changed elsewhere"
 setup
-cf enqueue F-001 >/dev/null
+yes_now F-001
+cf enqueue F-001 --approved-safety >/dev/null
 branch dotfiles F-001 install.sh "$(cat "$DOT/install.sh")
 brew install something
 "
@@ -637,11 +641,141 @@ cf enqueue F-002 >/dev/null
 branch dotfiles F-001 notes.txt "x"
 built dotfiles F-001 >/dev/null
 cf fail F-002 --reason "no" >/dev/null
+yes_now F-003
 cf enqueue F-003 --approved-safety >/dev/null
 close_window F-003
 jq '.state = "queued"' "$Q/F-003.json" >"$SANDBOX/q.tmp" && mv "$SANDBOX/q.tmp" "$Q/F-003.json"
 cf land >/dev/null
 assert_eq "running" "$(qget F-003 state)" "land starts the next queued job"
+
+# --- safety: re-checked at enqueue, run and land; the approval is the user's recorded yes ----
+echo "safety: enqueue re-checks the proposal"
+setup
+mkentry F-006 "claude:repeat:docker builds" false offered "Loosen the docker guard for builds"
+cf enqueue F-006 >/dev/null; RC=$?
+assert_eq "3|no" "$RC|$([ -e "$Q/F-006.json" ] && echo yes || echo no)" "an entry stored safety: false whose proposal loosens a guard is refused"
+assert_eq "true|offered" "$(fld F-006 safety)|$(fld F-006 status)" "the ledger now says safety: true, status untouched"
+mkentry F-007 "claude:repeat:perm" "" offered "Add Bash(rg:*) to the settings.json allowlist"
+cf enqueue F-007 >/dev/null; RC=$?
+assert_eq "3" "$RC" "an entry with no safety field is judged by its proposal"
+
+echo "safety: --approved-safety needs today's recorded yes"
+setup
+cf enqueue F-003 --approved-safety >/dev/null; RC=$?
+assert_eq "3|no" "$RC|$([ -e "$Q/F-003.json" ] && echo yes || echo no)" "no recorded yes: --approved-safety is refused"
+assert_has "yes recorded today" "$(cat "$SANDBOX/stderr")" "the refusal names the missing yes"
+"$FRICTION_LEDGER" coach-answer F-003 yes --date 2026-10-01 >/dev/null
+cf enqueue F-003 --approved-safety >/dev/null; RC=$?
+assert_eq "3" "$RC" "a yes from another day is refused"
+mkentry F-005 "settings:permissions:deny" true offered
+"$FRICTION_LEDGER" coach-answer F-005 no --date "$TODAY" >/dev/null
+cf enqueue F-005 --approved-safety >/dev/null; RC=$?
+assert_eq "1|no" "$RC|$([ -e "$Q/F-005.json" ] && echo yes || echo no)" "a no today is refused (declined)"
+mkentry F-008 "settings:permissions:x" true offered
+yes_now F-008
+cf enqueue F-008 --approved-safety >/dev/null; RC=$?
+assert_eq "0|running|true" "$RC|$(qget F-008 state)|$(qget F-008 approved_safety)" "today's yes: queued with the approval"
+
+echo "safety: run re-checks the proposal"
+setup
+cf enqueue F-001 >/dev/null
+mkentry F-006 "claude:repeat:hooks" false landing "Drop the PreToolUse hook"
+jq -n '{id: "F-006", repo: null, approved_safety: false, queued_at: "2026-01-01T00:00:00Z", state: "queued"}' >"$Q/F-006.json"
+close_window F-001; cf fail F-001 --reason x >/dev/null
+assert_eq "failed|safety entry queued without approval" "$(qget F-006 state)|$(qget F-006 reason)" "run applies the rule, not only the stored flag"
+assert_eq "true" "$(fld F-006 safety)" "and writes safety: true back"
+
+echo "land: a safety path needs an approved safety suggestion"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 bin/secrets-guard "loosened" pi/settings.json "{}" notes.txt "x"
+built dotfiles F-001 >/dev/null
+BEFORE="$(snap dotfiles)"
+cf land >/dev/null
+assert_eq "failed|touches a safety control: bin/secrets-guard, pi/settings.json; needs an approved safety suggestion" "$(qget F-001 state)|$(qget F-001 reason)" "a guard and a settings file are refused without approval"
+assert_eq "failed" "$(fld F-001 status)" "the ledger says failed"
+assert_eq "$BEFORE" "$(snap dotfiles)" "main checkout byte-identical"
+for p in .githooks/commit-msg claude/settings.json pi/extensions/claude-hooks/index.ts claude/daily/hooks/guard.sh \
+  claude/daily/mod/guard.ts pi/extensions/secrets-guard/index.ts bin/docs-check bin/docker-guard install.sh; do
+  setup
+  cf enqueue F-001 >/dev/null
+  if [ "$p" = install.sh ]; then branch dotfiles F-001 install.sh "$(cat "$DOT/install.sh")
+# a comment
+"; else branch dotfiles F-001 "$p" "x"; fi
+  built dotfiles F-001 >/dev/null
+  cf land >/dev/null
+  assert_eq "failed|touches a safety control: $p; needs an approved safety suggestion" "$(qget F-001 state)|$(qget F-001 reason)" "safety path $p"
+done
+setup
+yes_now F-003
+cf enqueue F-003 --approved-safety >/dev/null
+branch dotfiles F-003 bin/secrets-guard "changed as approved"
+built dotfiles F-003 >/dev/null
+cf land >/dev/null
+assert_eq "landed|changed as approved" "$(qget F-003 state)|$(cat "$DOT/bin/secrets-guard")" "an approved safety suggestion lands its guard change"
+
+# --- retry -------------------------------------------------------------------------
+echo "retry: a built branch goes back to built"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 notes.txt $'one\ntwo\nthree\nfour\n'
+built dotfiles F-001 >/dev/null
+printf 'my edit\n' >>"$DOT/notes.txt"
+cf land >/dev/null
+assert_eq "failed" "$(qget F-001 state)" "a land blocked by an edit fails"
+git -C "$DOT" checkout -q notes.txt
+OUT="$(cf retry F-001)"; RC=$?
+assert_eq "0|built|landing" "$RC|$(qget F-001 state)|$(fld F-001 status)" "retry: back to built, ledger landing"
+assert_has "back to built" "$OUT" "it says so"
+assert_eq "" "$(fld F-001 reason)" "the old reason is cleared"
+cf land >/dev/null
+assert_eq "landed|four" "$(qget F-001 state)|$(tail -1 "$DOT/notes.txt")" "and the next land lands it"
+
+echo "retry: no built branch, leftovers removed, queued again"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 notes.txt "half done"
+git -C "$COACH_REPOS_DIR/decisions" branch coach-F-002 main
+git -C "$DOT" branch coach-F-0010 main
+close_window F-001; cf fail F-001 --reason "tests stayed red" >/dev/null
+N0="$(ncalls)"
+OUT="$(cf retry F-001)"; RC=$?
+assert_eq "0" "$RC" "retry exits 0"
+assert_eq "no|" "$([ -d "$WT/dotfiles/coach-F-001" ] && echo yes || echo no)|$(git -C "$DOT" branch --list coach-F-001)" "the leftover worktree and branch are removed"
+assert_eq "coach-F-0010|coach-F-002" "$(git -C "$DOT" branch --list coach-F-0010 | tr -d ' *')|$(git -C "$COACH_REPOS_DIR/decisions" branch --list coach-F-002 | tr -d ' *')" "other coach branches are kept"
+assert_eq "running|landing|$((N0 + 1))" "$(qget F-001 state)|$(fld F-001 status)|$(ncalls)" "queued again and started"
+assert_eq "||" "$(qget F-001 repo)|$(qget F-001 head)|$(qget F-001 reason)" "the old attempt's fields are cleared"
+
+echo "retry: refusals"
+setup
+cf enqueue F-001 >/dev/null
+cf retry F-001 >/dev/null; RC=$?
+assert_eq "1|running" "$RC|$(qget F-001 state)" "a running entry is not retried"
+cf retry F-002 >/dev/null; RC=$?
+assert_eq "1" "$RC" "an entry never queued is not retried"
+close_window F-001; cf fail F-001 --reason "needs the user: rotate it" >/dev/null
+cf retry F-001 >/dev/null; RC=$?
+assert_eq "1|failed" "$RC|$(qget F-001 state)" "a failure that needs the user is not retried"
+jq -n '{id: "F-003", repo: null, approved_safety: false, queued_at: "2026-01-01T00:00:00Z", state: "failed", reason: "x"}' >"$Q/F-003.json"
+cf retry F-003 >/dev/null; RC=$?
+assert_eq "3|failed" "$RC|$(qget F-003 state)" "an unapproved safety entry is not retried"
+
+# --- reconcile -----------------------------------------------------------------------
+echo "run and land reconcile the ledger with the queue"
+setup
+for i in 001 002; do "$FRICTION_LEDGER" set F-$i --status landing >/dev/null; done
+mkdir -p "$Q"
+jq -n '{id: "F-001", state: "landed", fix: "a1..b2", reason: "user step: run ./install.sh", queued_at: "2026-01-01T00:00:00Z"}' >"$Q/F-001.json"
+jq -n '{id: "F-002", state: "failed", reason: "tests failed", queued_at: "2026-01-01T00:00:00Z"}' >"$Q/F-002.json"
+cf run >/dev/null
+assert_eq "landed|a1..b2|user step: run ./install.sh" "$(fld F-001 status)|$(fld F-001 fix)|$(fld F-001 reason)" "a landed queue entry sets the ledger landed with its range and note"
+assert_eq "failed|tests failed" "$(fld F-002 status)|$(fld F-002 reason)" "a failed queue entry sets the ledger failed with its reason"
+"$FRICTION_LEDGER" set F-002 --status landing >/dev/null
+cf land --force-check >/dev/null
+assert_eq "failed" "$(fld F-002 status)" "land reconciles too"
+"$FRICTION_LEDGER" set F-001 --status declined >/dev/null
+cf run >/dev/null
+assert_eq "declined" "$(fld F-001 status)" "a ledger status other than landing is left alone"
 
 echo
 echo "passed: $PASS  failed: $FAIL"
