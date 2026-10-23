@@ -59,7 +59,9 @@
 # directions  the standing directions in $FRICTION_WIKI/directions.md (D-NNN | rule | scope |
 #         since | source | status). add takes the rule as --rule R, or as --rule-file F (its
 #         first line, trimmed; a playbook writes model text there instead of quoting it into a
-#         shell argument; not both). add skips a rule already active (same words, ignoring case
+#         shell argument; not both). The scope must match ^[A-Za-z0-9][A-Za-z0-9:._/-]{0,59}$
+#         (else exit 2, nothing added; ingest rejects such a reply whole, and coach-offer's
+#         `direction` turns such a `Scope:` line into global). add skips a rule already active (same words, ignoring case
 #         and punctuation) or flagged --same-as, and prints the id either way; retire and
 #         promote change the status (retired / promoted: no longer injected); render prints
 #         the active rules as a list of at most 2 KB, oldest global first folded into an
@@ -89,6 +91,7 @@
 #         rules or lists, auto mode, allowedTools / allowed-tools, defaultMode,
 #         WorktreeCreate/Remove, wt hook, settings.json, docs-check, commit-msg, commit hook,
 #         pre-commit, --no-verify, core.hooksPath, mr-description, --dangerously, PreToolUse,
+#         permission mode, bypassPermissions,
 #         hooks.json, plugin.json, .claude-plugin, CLAUDE.md, .githooks, bypass, skipDangerous,
 #         auto-approve, secrets-guard); an existing true is never reset.
 # safety-check  prints true or false for F: stored `safety: true`, a `secret` entry, or
@@ -150,6 +153,8 @@ die() { echo "friction-ledger: $*" >&2; exit 1; }
 need() { [ $# -ge 2 ] || die "$1 needs a value"; }
 valid_date() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "--date must be YYYY-MM-DD, got $1"; }
 one_line() { tr '\n\r\t' '   ' <<<"$1" | sed 's/  */ /g; s/^ //; s/ $//'; }
+# a direction's scope: global, run-day, a repo, a skill or command, a repo:path
+SCOPE_RE='^[A-Za-z0-9][A-Za-z0-9:._/-]{0,59}$'
 
 # --- lock ---------------------------------------------------------------------
 # One mkdir lock ($FRICTION_WIKI/.lock, pid file inside) around every mutating subcommand,
@@ -234,7 +239,7 @@ has_date() { evidence_dates "$1" | grep -qx "$2"; }
 # true when text touches a guard, permission rule, hook or auto mode the coach must not change
 # unseen; case-insensitive, and wide on purpose: when in doubt it counts as safety-loosening
 is_safety() { # text
-  grep -qiE 'secrets?[ -]guard|docker[ -]guard|worktree[ -]guard|(^|[^a-z0-9_])guards?([^a-z0-9_]|$)|permission|(allow|deny)[a-z/ ]{0,12} rules?|allow ?-?list|deny|auto[- ]?mode|allowed[-_ ]?tools|defaultmode|worktree(create|remove)|wt hook|settings\.json|docs[- ]?check|commit-msg|commit[- ]?hook|pre-commit|pre-push|--no-verify|core\.hookspath|mr[ -]description|dangerously|pretooluse|hooks?\.json|plugin\.json|\.claude-plugin|claude\.md|\.githooks|bypass|skipdangerous|auto[- ]?approv|automatically approve|extension mode' <<<"$1"
+  grep -qiE 'secrets?[ -]guard|docker[ -]guard|worktree[ -]guard|(^|[^a-z0-9_])guards?([^a-z0-9_]|$)|permission|(allow|deny)[a-z/ ]{0,12} rules?|allow ?-?list|deny|auto[- ]?mode|allowed[-_ ]?tools|defaultmode|worktree(create|remove)|wt hook|settings\.json|docs[- ]?check|commit-msg|commit[- ]?hook|pre-commit|pre-push|--no-verify|core\.hookspath|mr[ -]description|dangerously|pretooluse|permission ?mode|bypasspermissions|hooks?\.json|plugin\.json|\.claude-plugin|claude\.md|\.githooks|bypass|skipdangerous|auto[- ]?approv|automatically approve|extension mode' <<<"$1"
 }
 
 sig_of() { fm_get "$1" signature | jq -r .; }
@@ -657,6 +662,7 @@ INGEST_ERRORS='
         [to_entries[] | .key as $i | .value | "directions[\($i)]" as $w
           | obj($w; ["rule", "scope", "quote", "same_as", "harness"]; ["rule", "scope"])
             + (if type == "object" then (if has("rule") and (.rule | str | not) then ["\($w): rule must be non-empty text"] else [] end)
+                + (if has("scope") and ((.scope | type) != "string" or (.scope | test("^[A-Za-z0-9][A-Za-z0-9:._/-]{0,59}$") | not)) then ["\($w): bad scope (letters, digits and :._/- only, at most 60)"] else [] end)
                 + (if has("same_as") and ((.same_as | type) != "string" or (.same_as | test("^D-[0-9]+$") | not)) then ["\($w): bad same_as"] else [] end) else [] end)] | add // [] end)
     + ((.frustrations // []) | if type != "array" then ["frustrations: must be an array"] else
         [to_entries[] | .key as $i | .value | "frustrations[\($i)]" as $w
@@ -763,6 +769,8 @@ direction_of() { # proposal text
   local rule scope
   rule="$(sed -nE 's/^[-*[:space:]]*Direction:[[:space:]]*//p' <<<"$1" | head -1)"
   scope="$(sed -nE 's/^[-*[:space:]]*Scope:[[:space:]]*//p' <<<"$1" | head -1)"
+  scope="$(one_line "$scope")"
+  [ -z "$scope" ] || [[ "$scope" =~ $SCOPE_RE ]] || scope=global # it reaches a shell argument in /start-day
   jq -nc --arg r "$(one_line "$rule")" --arg s "$(one_line "$scope")" \
     'if $r == "" then null else {rule: $r, scope: (if $s == "" then "global" else $s end)} end'
 }
@@ -961,6 +969,7 @@ cmd_dir_add() {
   [ -n "$date_" ] || date_="$(date +%F)"
   valid_date "$date_"
   rule="$(cell "$rule")"; scope="$(cell "${scope:-global}")"; [ -n "$scope" ] || scope=global
+  if ! [[ "$scope" =~ $SCOPE_RE ]]; then echo "friction-ledger: directions add: bad --scope (letters, digits and :._/- only, at most 60): $scope" >&2; exit 2; fi
   local id n existing
   if [ -n "$same" ]; then
     [ -n "$(dir_tsv | awk -F'\t' -v i="$same" '$1 == i && $6 == "active"')" ] && { echo "$same"; return; }

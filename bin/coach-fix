@@ -19,7 +19,9 @@
 #          written; /start-day handles those with coach-answer done. An entry already queued,
 #          running or built is a no-op. A declined, wontfix, fixed or landed entry is refused
 #          (exit 1). A `held` or `failed` queue entry is taken up again as retry does (its kept
-#          branch back to `built` when intact, else a fresh job), with this call's approval.
+#          branch back to `built` when intact, else a fresh job), with this call's approval;
+#          --approved-safety on a `held` one also needs `safety: true` in the ledger (else exit 3:
+#          the hold never reached the ledger, so the yes was not given to a labelled safety item).
 #          Otherwise it writes the queue file, sets the ledger to `landing` and calls run.
 # run      first reconciles: a queue entry `landed` or `failed` whose ledger status is still
 #          `landing` gets the ledger set to match (with its fix or reason); land does the same.
@@ -71,14 +73,17 @@
 #            changed after review". If main moved past the branch's base, the branch is rebased
 #            onto main in its worktree (a conflict is aborted and fails it) and the new head
 #            recorded untested. A diff that touches a safety path (bin/*guard*,
-#            pi/extensions/secrets-guard/**, pi/extensions/claude-hooks/**, claude/daily/hooks/**,
+#            pi/extensions/**, claude/daily/hooks/**,
 #            claude/daily/mod/guard.ts, .githooks/**, bin/docs-check, any *settings*.json, any
 #            hooks.json, .claude-plugin/plugin.json or .claude-plugin/marketplace.json,
-#            claude/CLAUDE.md, pi/AGENTS.md, bin/secret, bin/secrets, bin/secrets-*,
-#            pi/extensions/mcp-env/**, bin/coach-fix, bin/friction-ledger, bin/wiki-commit,
+#            claude/CLAUDE.md, pi/AGENTS.md, pi/APPEND_SYSTEM.md, .claude/**, pi/mcp-servers.json,
+#            any .mcp.json, bin/secret, bin/secrets, bin/secrets-*,
+#            bin/coach-fix, bin/friction-ledger, bin/wiki-commit,
 #            bin/pi-parity, the start-day, end-day and fix-friction playbooks of both harnesses,
-#            any .git* file, or install.sh at all), or whose changed lines set core.hooksPath (any
-#            file) or change an allowed-tools line or list (a .md under claude/ or pi/), is held
+#            any .git* file, or install.sh at all), or whose changed lines set core.hooksPath or
+#            add --no-verify (any file), or change an allowed-tools, hooks or permissionMode key or
+#            its list (a .md under claude/, pi/ or .claude/; the key quoted too; in pi/agents/*.md
+#            also tools), is held
 #            "needs the user: touches a safety control: <files>; needs an approved safety
 #            suggestion" unless the queue entry has approved_safety, main untouched.
 #            Whenever the head is not `tested`, the test items run with bash
@@ -102,7 +107,8 @@
 #          Then run. Every failure sets queue and ledger `failed` with the reason in `reason`.
 # held     a safety change the user never approved (at land or run): the queue entry `held`
 #          with reason "needs the user: <why>" (retry refuses it), any built branch and worktree
-#          kept; the ledger entry back to `proposed` with `safety: true`, the same reason, and
+#          kept; the ledger entry (a failed write tried once more after 1 s) back to `proposed`
+#          with `safety: true`, the same reason, and
 #          offered_on/answer/answered_on cleared, so a later morning offers it again as a
 #          labelled safety suggestion. An approved yes there (enqueue --approved-safety) lands
 #          the kept branch if its head is unchanged.
@@ -187,7 +193,9 @@ mark_failed() { # id reason
 mark_held() { # id why
   local r="needs the user: $2"
   qset "$1" '.state = "held" | .reason = $r' --arg r "$r"
-  ledger "$1" --status proposed --safety true --reason "$r"
+  if ! "$FRICTION_LEDGER" set "$1" --status proposed --safety true --reason "$r" >/dev/null; then
+    sleep 1; ledger "$1" --status proposed --safety true --reason "$r" # once more: the ledger may have been busy
+  fi
   echo "$1: held: $r"
 }
 
@@ -305,6 +313,11 @@ cmd_enqueue() {
   fi
   if [ "$approved" = true ] && ! yes_today "$id"; then
     echo "coach-fix: $id: --approved-safety needs the user's yes recorded today (friction-ledger coach-answer $id yes)" >&2
+    exit 3
+  fi
+  if [ "$approved" = true ] && [ -f "$(qfile "$id")" ] && [ "$(qget "$id" state)" = held ] &&
+    [ "$(fm_get "$(entry "$id")" safety)" != true ]; then
+    echo "coach-fix: $id: a held entry is approved only once the ledger shows safety: true (the hold was not recorded; it is offered again as a safety item)" >&2
     exit 3
   fi
   local safety; safety="$(entry_safety "$id")"
@@ -543,11 +556,12 @@ link_new_bins() { # checkout old new: links each added bin/<f> install.sh links;
 # hook and permission merges): a change to one lands only from a safety suggestion the user approved
 safety_path() { # path
   case "$1" in
-    bin/*guard* | pi/extensions/secrets-guard/* | pi/extensions/claude-hooks/* | claude/daily/hooks/* | \
+    bin/*guard* | pi/extensions/* | claude/daily/hooks/* | \
       claude/daily/mod/guard.ts | .githooks/* | bin/docs-check | *settings*.json | install.sh | \
       hooks.json | */hooks.json | .claude-plugin/plugin.json | */.claude-plugin/plugin.json | \
       .claude-plugin/marketplace.json | */.claude-plugin/marketplace.json | claude/CLAUDE.md | pi/AGENTS.md | \
-      bin/secret | bin/secrets | bin/secrets-* | pi/extensions/mcp-env/* | \
+      .claude/* | pi/mcp-servers.json | .mcp.json | */.mcp.json | pi/APPEND_SYSTEM.md | \
+      bin/secret | bin/secrets | bin/secrets-* | \
       bin/coach-fix | bin/friction-ledger | bin/wiki-commit | bin/pi-parity | \
       claude/commands/start-day.md | pi/prompts/start-day.md | claude/daily/commands/fix-friction.md | \
       pi/prompts/fix-friction.md | claude/commands/end-day.md | pi/prompts/end-day.md | .git* | */.git*)
@@ -556,22 +570,28 @@ safety_path() { # path
   return 1
 }
 
-allowed_block() { # checkout rev path: each allowed-tools key with its continuation lines
-  git -C "$1" show "$2:$3" 2>/dev/null | awk '
+key_block() { # checkout rev path key-regex: each matching key line with its continuation lines
+  git -C "$1" show "$2:$3" 2>/dev/null | awk -v k="$4" '
     function ind(s) { match(s, /^[ \t]*/); return RLENGTH }
     on && $0 !~ /^---[ \t]*$/ && (NF == 0 || ind($0) > base || $0 ~ /^[ \t]*-/) { print; next }
     { on = 0 }
-    tolower($0) ~ /^[ \t]*allowed[-_]tools[ \t]*:/ { on = 1; base = ind($0); print }'
+    tolower($0) ~ k { on = 1; base = ind($0); print }'
 }
 
-# a changed line that sets core.hooksPath (any file), or, in a markdown file under claude/ or
-# pi/, a changed allowed-tools line or list
+# a changed line that sets core.hooksPath, or an added line with --no-verify (any file); in a
+# markdown file under claude/, pi/ or .claude/, a changed allowed-tools, hooks or permissionMode
+# key or its list (a quoted key too), and in pi/agents/*.md also the tools key
 sets_safety() { # checkout old new path
-  local re='hookspath' md=0
-  case "$4" in claude/*.md | pi/*.md) md=1; re='hookspath|^[[:space:]]*allowed[-_]tools[[:space:]]*:' ;; esac
+  local keys="" kre
+  case "$4" in claude/*.md | pi/*.md | .claude/*.md) keys='allowed[-_]tools|hooks|permissionmode' ;; esac
+  case "$4" in pi/agents/*.md) keys="$keys|tools" ;; esac
+  kre="^[[:space:]]*[\"']?($keys)[\"']?[[:space:]]*:"
   git -C "$1" diff -U0 --no-color --no-ext-diff --no-renames "$2" "$3" -- ":(literal)$4" |
-    awk -v re="$re" '/^@@/ { h = 1; next } h && /^[-+]/ && tolower(substr($0, 2)) ~ re { f = 1 } END { exit !f }' && return 0
-  [ "$md" = 1 ] && [ "$(allowed_block "$1" "$2" "$4")" != "$(allowed_block "$1" "$3" "$4")" ]
+    awk -v k="$kre" -v md="${keys:+1}" '/^@@/ { h = 1; next } !h { next }
+      /^[-+]/ { l = tolower(substr($0, 2)); if (l ~ /hookspath/ || (md && l ~ k)) f = 1 }
+      /^\+/ && index($0, "--no-verify") { f = 1 }
+      END { exit !f }' && return 0
+  [ -n "$keys" ] && [ "$(key_block "$1" "$2" "$4" "$kre")" != "$(key_block "$1" "$3" "$4" "$kre")" ]
 }
 
 safety_files() { # checkout old new: prints the safety paths the diff touches, comma-separated

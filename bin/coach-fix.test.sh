@@ -718,7 +718,9 @@ for p in .githooks/commit-msg claude/settings.json pi/extensions/claude-hooks/in
   claude/CLAUDE.md pi/AGENTS.md bin/secret bin/secrets bin/secrets-sync pi/extensions/mcp-env/index.ts \
   bin/coach-fix bin/friction-ledger bin/wiki-commit bin/pi-parity \
   claude/commands/start-day.md pi/prompts/start-day.md claude/daily/commands/fix-friction.md pi/prompts/fix-friction.md \
-  claude/commands/end-day.md pi/prompts/end-day.md .gitattributes .gitmodules git/.gitconfig; do
+  claude/commands/end-day.md pi/prompts/end-day.md .gitattributes .gitmodules git/.gitconfig \
+  .claude/commands/x.md .claude/agents/a.md .claude/settings.local.json pi/mcp-servers.json .mcp.json claude/daily/.mcp.json \
+  pi/APPEND_SYSTEM.md pi/extensions/herdr-agent-state.ts pi/extensions/daily/index.ts; do
   setup
   cf enqueue F-001 >/dev/null
   if [ "$p" = install.sh ]; then branch dotfiles F-001 install.sh "$(cat "$DOT/install.sh")
@@ -757,6 +759,31 @@ md_case docs/notes.md "x" $'allowed-tools: Bash(*)\n'
 assert_eq "landed" "$(qget F-001 state)" "an allowed-tools line outside claude/ and pi/ is not a command"
 md_case zsh/git.zsh "alias g=git" $'alias g=git\ngit config core.hooksPath /dev/null\n'
 assert_eq "held|needs the user: touches a safety control: zsh/git.zsh; needs an approved safety suggestion" "$(qget F-001 state)|$(qget F-001 reason)" "a file that sets core.hooksPath is held"
+PLAIN=$'---\ndescription: x\n---\nbody\n'
+md_case claude/commands/h.md "$PLAIN" $'---\ndescription: x\nhooks:\n  PreToolUse: []\n---\nbody\n'
+assert_eq "held" "$(qget F-001 state)" "a command that gains a hooks: key is held"
+md_case pi/prompts/h.md $'---\nhooks:\n  - a\n---\nbody\n' $'---\nhooks:\n  - b\n---\nbody\n'
+assert_eq "held" "$(qget F-001 state)" "a changed hooks list item is held"
+md_case claude/daily/agents/a.md "$PLAIN" $'---\ndescription: x\npermissionMode: bypassPermissions\n---\nbody\n'
+assert_eq "held" "$(qget F-001 state)" "an agent that gains permissionMode is held"
+md_case pi/prompts/p.md $'---\npermissionMode: default\n---\nbody\n' $'---\npermissionMode: acceptEdits\n---\nbody\n'
+assert_eq "held" "$(qget F-001 state)" "a changed permissionMode is held"
+md_case pi/agents/r.md $'---\nname: r\ntools: read, grep\n---\nbody\n' $'---\nname: r\ntools: read, grep, bash\n---\nbody\n'
+assert_eq "held" "$(qget F-001 state)" "a pi agent's widened tools: line is held"
+md_case pi/agents/s.md $'---\nname: s\ntools:\n  - read\n---\nbody\n' $'---\nname: s\ntools:\n  - read\n  - bash\n---\nbody\n'
+assert_eq "held" "$(qget F-001 state)" "a pi agent's tools list gaining an item is held"
+md_case claude/commands/t.md "$PLAIN" $'---\ndescription: x\ntools: anything\n---\nbody\n'
+assert_eq "landed" "$(qget F-001 state)" "a tools: key outside pi/agents is not a tool list"
+md_case claude/commands/q.md "$PLAIN" $'---\ndescription: x\n"allowed-tools": Bash(*)\n---\nbody\n'
+assert_eq "held" "$(qget F-001 state)" "a quoted allowed-tools key is held"
+md_case pi/prompts/q.md "$PLAIN" $'---\ndescription: x\n\'hooks\': {}\n---\nbody\n'
+assert_eq "held" "$(qget F-001 state)" "a quoted hooks key is held"
+md_case claude/commands/q2.md "$PLAIN" $'---\ndescription: x\n"permissionMode": "bypassPermissions"\n---\nbody\n'
+assert_eq "held" "$(qget F-001 state)" "a quoted permissionMode key is held"
+md_case zsh/git.zsh "alias g=git" $'alias g=git\nalias gc="git commit --no-verify"\n'
+assert_eq "held|needs the user: touches a safety control: zsh/git.zsh; needs an approved safety suggestion" "$(qget F-001 state)|$(qget F-001 reason)" "an added --no-verify line is held"
+md_case zsh/git.zsh $'alias g=git\nalias gc="git commit --no-verify"\n' "alias g=git"
+assert_eq "landed" "$(qget F-001 state)" "removing a --no-verify line lands"
 
 echo "land: a held safety change comes back, and an approved yes lands the kept branch"
 setup
@@ -797,6 +824,36 @@ git -C "$WT/dotfiles/coach-F-001" add -A && git -C "$WT/dotfiles/coach-F-001" co
 N0="$(ncalls)"
 cf enqueue F-001 --approved-safety >/dev/null
 assert_eq "running|$((N0 + 1))|" "$(qget F-001 state)|$(ncalls)|$(git -C "$DOT" branch --list coach-F-001)" "a kept branch that moved is removed and a fresh job starts"
+
+echo "held: a lost ledger write never lets the old yes approve it"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 bin/secrets-guard "loosened"
+built dotfiles F-001 >/dev/null
+jq '.state = "held" | .reason = "needs the user: touches a safety control: bin/secrets-guard; needs an approved safety suggestion"' \
+  "$Q/F-001.json" >"$SANDBOX/q.tmp" && mv "$SANDBOX/q.tmp" "$Q/F-001.json"
+"$FRICTION_LEDGER" set F-001 --status offered >/dev/null; yes_now F-001
+assert_eq "landing|false" "$(fld F-001 status)|$(fld F-001 safety)" "the hold never reached the ledger; a yes today"
+cf enqueue F-001 --approved-safety >/dev/null; RC=$?
+assert_eq "3|held" "$RC|$(qget F-001 state)" "enqueue --approved-safety of a held entry needs safety: true in the ledger"
+assert_has "safety: true" "$(cat "$SANDBOX/stderr")" "the refusal says why"
+
+echo "held: mark_held retries a failed ledger write once"
+setup
+cat >"$SANDBOX/flaky-ledger" <<EOF
+#!/bin/bash
+if [ "\$1" = set ] && [[ " \$* " == *" --safety true "* ]] && [ ! -e "$SANDBOX/flaky.once" ]; then
+  touch "$SANDBOX/flaky.once"; echo "friction-ledger: ledger busy" >&2; exit 1
+fi
+exec "$TEST_DIR/friction-ledger" "\$@"
+EOF
+chmod +x "$SANDBOX/flaky-ledger"; rm -f "$SANDBOX/flaky.once"
+yes_now F-001 # answered today, so reconcile leaves a lost hold alone: only the retry can write it
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 bin/secrets-guard "loosened"
+built dotfiles F-001 >/dev/null
+FRICTION_LEDGER="$SANDBOX/flaky-ledger" cf land >/dev/null
+assert_eq "yes|held|proposed|true" "$([ -e "$SANDBOX/flaky.once" ] && echo yes || echo no)|$(qget F-001 state)|$(fld F-001 status)|$(fld F-001 safety)" "the first write failed, the retry wrote the hold"
 setup
 yes_now F-003
 cf enqueue F-003 --approved-safety >/dev/null

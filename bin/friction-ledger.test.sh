@@ -155,6 +155,14 @@ assert_eq "no" "$([ -e "$SANDBOX/pwned" ] && echo yes || echo no)" "nothing in t
 "$SCRIPT" directions add --rule-file "$SANDBOX/nope.txt" 2>/dev/null; assert_eq "1" "$?" "a missing rule file is refused"
 printf '   \n' >"$SANDBOX/blank.txt"
 "$SCRIPT" directions add --rule-file "$SANDBOX/blank.txt" 2>/dev/null; assert_eq "1" "$?" "a blank rule file is refused"
+rows="$(grep -c '^| D-' "$DF")"
+for s in '$(touch '"$SANDBOX/pwned2"')' 'two words' '"x"' '-x' "$(printf 'a%.0s' $(seq 1 61))" 'a;b' 'a`b`'; do
+  "$SCRIPT" directions add --rule "Scope test rule" --scope "$s" --date 2026-10-15 2>/dev/null; rc=$?
+  assert_eq "2|$rows" "$rc|$(grep -c '^| D-' "$DF")" "a bad scope is refused with exit 2, nothing added: ${s:0:30}"
+done
+assert_eq "no" "$([ -e "$SANDBOX/pwned2" ] && echo yes || echo no)" "nothing in a scope is run"
+id="$("$SCRIPT" directions add --rule "Scope test rule" --scope "dotfiles:bin/coach-fix" --date 2026-10-15)"; rc=$?
+assert_eq "0|D-006" "$rc|$id" "a repo:path scope is accepted"
 
 export FRICTION_WIKI="$SANDBOX/cap"; DF="$FRICTION_WIKI/directions.md"
 assert_eq "" "$("$SCRIPT" directions render)" "no file renders nothing"
@@ -265,7 +273,8 @@ for bad in '{"items": {"F-001": {"class": "bogus", "diagnosis": "x"}}}' \
            '{"items": {"F-001": {"class": "env", "diagnosis": "x", "rung": "script"}}}' \
            '{"items": {"F-001": {"class": "env", "diagnosis": "x", "extra": 1}}}' \
            '{"frustrations": [{"what_went_wrong": "w", "class": "env", "sig_hint": "h"}]}' \
-           '{"directions": [{"rule": "r"}]}' 'not json'; do
+           '{"directions": [{"rule": "r"}]}' '{"directions": [{"rule": "r", "scope": "$(id)"}]}' \
+           '{"directions": [{"rule": "r", "scope": "two words"}]}' 'not json'; do
   printf '%s' "$bad" >"$SANDBOX/bad.json"
   "$SCRIPT" ingest "$SANDBOX/bad.json" --date 2026-10-15 2>/dev/null; rc=$?
   [ "$rc" = 1 ] && [ "$before" = "$(snap)" ] && pass "rejected, nothing applied: ${bad:0:60}" || fail "invalid input" "$bad rc=$rc"
@@ -453,7 +462,8 @@ for t in "add it to the allowlist" "the allow list" "an allow-list entry" "switc
 done
 for t in "allowed-tools: Bash(*)" "allowed_tools" "allowed tools" "auto approve" "autoapproval" "git commit --no-verify" \
   "git config core.hooksPath /dev/null" "the commit hook" "commit-hook" "docs check" "docscheck" "plugin.json" \
-  ".claude-plugin/marketplace.json" "add a line to CLAUDE.md" "edit claude/CLAUDE.md" "secret-guard" "secrets-guard"; do
+  ".claude-plugin/marketplace.json" "add a line to CLAUDE.md" "edit claude/CLAUDE.md" "secret-guard" "secrets-guard" \
+  "permissionMode: bypassPermissions" "the permission mode" "bypasspermissions"; do
   assert_eq "yes" "$(is_safe "x $t y")" "is_safety matches $t"
 done
 for t in "Print the date" "Create /run-tests" "Try jira-cli view instead of the curl wrapper." "Do the thing" "safeguarding the cache"; do
@@ -527,6 +537,14 @@ long="$(printf 'line of the proposal that goes on %.0s\n' $(seq 1 80))"
 printf '%s\n' "$long" >"$SANDBOX/p7d.md"
 "$SCRIPT" set F-004 --proposal-file "$SANDBOX/p7d.md" --date 2026-10-12
 assert_eq "1500" "$("$SCRIPT" coach-offer --date 2026-10-12 --limit 10 | jq '.offer[] | select(.id == "F-004") | .proposal | length')" "the proposal is cut to 1500 chars"
+for s in '$(touch /tmp/x)' 'a b' '"; rm -rf ~; "' '`id`'; do
+  printf 'Keep it.\nDirection: Keep the rule\nScope: %s\n' "$s" >"$SANDBOX/p7e.md"
+  "$SCRIPT" set F-003 --proposal-file "$SANDBOX/p7e.md" --date 2026-10-12
+  assert_eq '{"rule":"Keep the rule","scope":"global"}' "$("$SCRIPT" coach-offer --date 2026-10-12 --limit 10 | jq -c '.offer[] | select(.id == "F-003") | .direction')" "an unsafe Scope line becomes global: $s"
+done
+printf 'Keep it.\nDirection: Keep the rule\nScope: dotfiles:claude/commands/review.md\n' >"$SANDBOX/p7e.md"
+"$SCRIPT" set F-003 --proposal-file "$SANDBOX/p7e.md" --date 2026-10-12
+assert_eq '"dotfiles:claude/commands/review.md"' "$("$SCRIPT" coach-offer --date 2026-10-12 --limit 10 | jq -c '.offer[] | select(.id == "F-003") | .direction.scope')" "a path-like scope is kept"
 rm -rf "$FRICTION_WIKI"
 
 # retryable results, and done for secret entries
