@@ -454,6 +454,21 @@ for bad in '{"cards": [{"front": "q"}]}' '{"cards": [{"front": "q", "back": " "}
   "$SCRIPT" ingest "$SANDBOX/bad.json" --date 2026-10-21 2>/dev/null; rc=$?
   [ "$rc" = 1 ] && [ "$before" = "$(snap)" ] && [ "$cb" = "$(ls "$CARDS_DIR" | wc -l | tr -d ' ')" ] && pass "rejected, nothing applied: ${bad:0:60}" || fail "invalid cards" "$bad rc=$rc"
 done
+before="$(snap)"
+CARDS_BIN="$SANDBOX/nocards" "$SCRIPT" ingest "$SANDBOX/k2r.json" --date 2026-10-22 2>"$SANDBOX/err"; rc=$?
+[ "$rc" = 1 ] && [ "$before" = "$(snap)" ] && pass "missing cards binary with cards: refused, nothing applied" || fail "missing cards bin" "rc=$rc"
+grep -q 'not executable' "$SANDBOX/err" && ! grep -q 'friction-ledger: friction-ledger' "$SANDBOX/err" && pass "clear single-prefix message" || fail "message" "$(cat "$SANDBOX/err")"
+printf '#!/bin/bash\ncase "$*" in *"Bad one"*) exit 1 ;; esac\nexec "%s" "$@"\n' "$TEST_DIR/cards" >"$SANDBOX/stubcards"; chmod +x "$SANDBOX/stubcards"
+cg "$SANDBOX/k3.json" 2026-10-23 "claude:repeat:another|repeat|3|2"
+apply 2026-10-23 "$SANDBOX/k3.json" >/dev/null
+jq -n '{items: {"F-003": {class: "model", diagnosis: "d", rung: "prompt", proposal: "Create /x"}},
+  cards: [{front: "Bad one", back: "b"}, {front: "Good one", back: "g"}]}' >"$SANDBOX/k3r.json"
+CARDS_BIN="$SANDBOX/stubcards" "$SCRIPT" ingest "$SANDBOX/k3r.json" --date 2026-10-23 2>"$SANDBOX/err"; rc=$?
+assert_eq "0" "$rc" "one failing cards add does not fail ingest"
+grep -q 'cards add failed for "Bad one"' "$SANDBOX/err" && pass "warning names the card" || fail "warning" "$(cat "$SANDBOX/err")"
+assert_eq "2" "$(ls "$CARDS_DIR" | wc -l | tr -d ' ')" "the other card was added"
+assert_eq "proposed" "$(fld F-003 status)" "items were applied"
+[ -f "$FRICTION_WIKI/.ingested/2026-10-23" ] && pass "date marked ingested" || fail "ingested mark" ""
 rm -rf "$FRICTION_WIKI" "$CARDS_DIR"
 unset CARDS_DIR
 export FRICTION_WIKI="$SANDBOX/friction"
@@ -464,7 +479,6 @@ echo "misc"
 "$SCRIPT" nope 2>/dev/null; assert_eq "1" "$?" "unknown command fails"
 jq -n '{groups: [{sig: "a:other:x | y", kind: "other", count: 1, confidence: "high", samples: ["s"], evidence: []}]}' >"$SANDBOX/d5.json"
 apply 2026-10-15 "$SANDBOX/d5.json" >/dev/null; apply 2026-10-15 "$SANDBOX/d5.json" >/dev/null
-
 assert_eq "1" "$(rg -c 'a:other:x' -l "$FRICTION_WIKI"/F-*.md | wc -l | tr -d ' ')" "a signature containing | maps to one entry, not one per run"
 
 echo

@@ -63,7 +63,9 @@
 #         on every run.
 #         "cards": [{"front": T, "back": T, "tags": [T], "source": T}] (tags, source optional)
 #         are added with `cards add` ($CARDS_BIN, default the `cards` next to this script), once
-#         per date like directions; an invalid card rejects the whole file. An item whose
+#         per date like directions; an invalid card rejects the whole file, and a reply with
+#         cards while $CARDS_BIN is not executable is refused before anything is applied. One
+#         failing `cards add` only prints a warning naming the card's front; the date is still marked. An item whose
 #         signature kind is `secret` always gets `safety: true`, whatever its proposal says.
 # ingest  also sets frontmatter `safety: true` on an item or frustration whose proposal or
 #         signature matches is_safety (secrets-guard, docker-guard, permissions, allow/deny
@@ -98,8 +100,8 @@
 set -euo pipefail
 
 FRICTION_WIKI="${FRICTION_WIKI:-$HOME/wiki/work/friction}"
-CARDS_BIN="${CARDS_BIN:-$(dirname "$0")/cards}"
 HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
+CARDS_BIN="${CARDS_BIN:-$HERE/cards}"
 
 die() { echo "friction-ledger: $*" >&2; exit 1; }
 need() { [ $# -ge 2 ] || die "$1 needs a value"; }
@@ -539,6 +541,10 @@ cmd_ingest() {
     echo "friction-ledger: invalid reply, nothing applied:" >&2; sed 's/^/  /' <<<"$errs" >&2; exit 1
   fi
 
+  if [ "$(jq '(.cards // []) | length' "$file")" -gt 0 ] && [ ! -x "$CARDS_BIN" ]; then
+    die "ingest: the reply has cards but $CARDS_BIN is not executable, nothing applied"
+  fi
+
   local tmp; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
   local f cur class rung out ids="" frs="" skipped=false
   for id in $(jq -r '(.items // {}) | keys[]' "$file"); do
@@ -579,7 +585,7 @@ cmd_ingest() {
     while IFS= read -r c; do
       cargs=(add --front "$(jq -r .front <<<"$c")" --back "$(jq -r .back <<<"$c")" --tags "$(jq -r '(.tags // []) | join(",")' <<<"$c")" --date "$date_")
       [ -z "$(jq -r '.source // empty' <<<"$c")" ] || cargs+=(--source "$(jq -r .source <<<"$c")")
-      "$CARDS_BIN" "${cargs[@]}" >/dev/null || die "ingest: cards add failed"
+      "$CARDS_BIN" "${cargs[@]}" >/dev/null || echo "friction-ledger: cards add failed for \"$(jq -r '.front[:60]' <<<"$c")\"" >&2
     done < <(jq -c '(.cards // [])[]' "$file")
     mkdir -p "$FRICTION_WIKI/.ingested"; : >"$FRICTION_WIKI/.ingested/$date_"
   fi
