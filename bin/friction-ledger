@@ -61,6 +61,10 @@
 #         A group of kind repeat|restated|secret that carries `days` (coach-mine counts over a
 #         14-day window) also writes frontmatter `window_count` and `window_days`, overwritten
 #         on every run.
+#         "cards": [{"front": T, "back": T, "tags": [T], "source": T}] (tags, source optional)
+#         are added with `cards add` ($CARDS_BIN, default the `cards` next to this script), once
+#         per date like directions; an invalid card rejects the whole file. An item whose
+#         signature kind is `secret` always gets `safety: true`, whatever its proposal says.
 # ingest  also sets frontmatter `safety: true` on an item or frustration whose proposal or
 #         signature matches is_safety (secrets-guard, docker-guard, permissions, allow/deny
 #         rules, autoMode, bypass, .githooks, hooks.json, PreToolUse, worktree guard,
@@ -94,6 +98,7 @@
 set -euo pipefail
 
 FRICTION_WIKI="${FRICTION_WIKI:-$HOME/wiki/work/friction}"
+CARDS_BIN="${CARDS_BIN:-$(dirname "$0")/cards}"
 HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
 
 die() { echo "friction-ledger: $*" >&2; exit 1; }
@@ -486,7 +491,7 @@ INGEST_ERRORS='
     + ([to_entries[] | select(.key | IN("diagnosis", "proposal", "what_went_wrong", "sig_hint", "rule") ) | select(.value | str | not) | "\($where): \(.key) must be non-empty text"])
     + (if has("proposal") != has("rung") then ["\($where): rung and proposal go together"] else [] end);
   if type != "object" then ["the reply must be a JSON object"] else
-    obj("reply"; ["items", "directions", "frustrations"]; [])
+    obj("reply"; ["items", "directions", "frustrations", "cards"]; [])
     + ((.items // {}) | if type != "object" then ["items: must be an object keyed by F-NNN"] else
         [to_entries[] | .key as $k | .value | "items.\($k)" as $w
           | (if ($k | test("^F-[0-9]+$") | not) then ["\($w): not an F-NNN id"] else [] end)
@@ -501,6 +506,13 @@ INGEST_ERRORS='
         [to_entries[] | .key as $i | .value | "frustrations[\($i)]" as $w
           | obj($w; ["what_went_wrong", "class", "sig_hint", "rung", "proposal"]; ["what_went_wrong", "class", "sig_hint", "rung", "proposal"])
             + (if type == "object" then common($w) else [] end)] | add // [] end)
+    + ((.cards // []) | if type != "array" then ["cards: must be an array"] else
+        [to_entries[] | .key as $i | .value | "cards[\($i)]" as $w
+          | obj($w; ["front", "back", "tags", "source"]; ["front", "back"])
+            + (if type == "object" then
+                ([("front", "back", "source") as $k | select(has($k) and (.[$k] | str | not)) | "\($w): \($k) must be non-empty text"])
+                + (if has("tags") and ((.tags | type) != "array" or any(.tags[]; type != "string")) then ["\($w): tags must be a list of strings"] else [] end)
+              else [] end)] | add // [] end)
   end | .[]'
 
 cmd_ingest() {
@@ -542,7 +554,7 @@ cmd_ingest() {
       args+=(--rung "$rung" --proposal-file "$tmp/$id.md")
     fi
     cmd_set "$id" "${args[@]}"
-    if is_safety "$(jq -r --arg i "$id" '(.items[$i].proposal // "")' "$file") $(sig_of "$f")"; then fm_set "$f" safety true; fi
+    if [ "$(kind_of "$f")" = secret ] || is_safety "$(jq -r --arg i "$id" '(.items[$i].proposal // "")' "$file") $(sig_of "$f")"; then fm_set "$f" safety true; fi
   done
   if ingested "$date_"; then
     skipped=true
@@ -563,6 +575,12 @@ cmd_ingest() {
       local ff; ff="$(fpath "$(jq -r .id <<<"$out")")"
       if is_safety "$(jq -r .proposal <<<"$d") $(sig_of "$ff")"; then fm_set "$ff" safety true; fi
     done < <(jq -c '(.frustrations // [])[]' "$file")
+    local c cargs
+    while IFS= read -r c; do
+      cargs=(add --front "$(jq -r .front <<<"$c")" --back "$(jq -r .back <<<"$c")" --tags "$(jq -r '(.tags // []) | join(",")' <<<"$c")" --date "$date_")
+      [ -z "$(jq -r '.source // empty' <<<"$c")" ] || cargs+=(--source "$(jq -r .source <<<"$c")")
+      "$CARDS_BIN" "${cargs[@]}" >/dev/null || die "ingest: cards add failed"
+    done < <(jq -c '(.cards // [])[]' "$file")
     mkdir -p "$FRICTION_WIKI/.ingested"; : >"$FRICTION_WIKI/.ingested/$date_"
   fi
   jq -nc --argjson items "$(jq '(.items // {}) | length' "$file")" --arg dirs "$ids" --argjson fr "[${frs}]" --argjson skipped "$skipped" \

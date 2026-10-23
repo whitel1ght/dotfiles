@@ -67,4 +67,16 @@ for f in "$F" "$P"; do
   has "$f" "ask once" "$side: asks once for all install findings"
 done
 
+echo "== coach: concepts, cards, secret =="
+for f in "$F" "$P"; do
+  side="$(basename "$(dirname "$f")")"
+  has "$f" '`concepts`' "$side: brief receives concepts"
+  has "$f" '`cards`' "$side: reply may carry cards"
+  has "$f" "15 concepts" "$side: concept candidates are capped"
+  has "$f" "1500" "$side: answers are cut for the brief"
+  has "$f" '`secret`' "$side: secret items are handled"
+  has "$f" '`restated`' "$side: restated items are handled"
+  has "$f" "never sees or asks for the value" "$side: the model never touches the secret value"
+done
+
 finish

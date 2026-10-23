@@ -427,6 +427,36 @@ done
 assert_eq "no" "$(is_safe "edit bin/start-day")" "is_safety ignores bin/start-day"
 rm -rf "$FRICTION_WIKI"
 export FRICTION_WIKI="$SANDBOX/friction"
+# ingest cards and secret
+echo "ingest — cards and secret"
+rm -rf "$FRICTION_WIKI"
+export CARDS_DIR="$SANDBOX/cards"
+cg "$SANDBOX/k1.json" 2026-10-20 "claude:secret:aws-key|secret|1|" "claude:repeat:run tests|repeat|3|2"
+apply 2026-10-20 "$SANDBOX/k1.json" >/dev/null
+jq -n '{items: {"F-001": {class: "model", diagnosis: "key pasted", rung: "prompt", proposal: "Rotate the key, then use $(secret NAME)"},
+  "F-002": {class: "model", diagnosis: "repeats", rung: "prompt", proposal: "Create /run-tests"}},
+  cards: [{front: "What does a WAL do?", back: "Logs writes first.", tags: ["tech"], source: "claude/s1.jsonl 2026-10-20"},
+          {front: "What does a WAL do?", back: "dup", tags: []}]}' >"$SANDBOX/k1r.json"
+"$SCRIPT" ingest "$SANDBOX/k1r.json" --date 2026-10-20 >/dev/null
+assert_eq "true" "$(fld F-001 safety)" "a secret item ingests with safety: true"
+assert_eq "" "$(fld F-002 safety)" "a repeat item stays unsafe"
+assert_eq "1" "$(ls "$CARDS_DIR" | wc -l | tr -d ' ')" "cards are created, identical fronts deduped"
+grep -q 'Logs writes first' "$CARDS_DIR"/*.md && pass "card body stored" || fail "card body" ""
+"$SCRIPT" ingest "$SANDBOX/k1r.json" --date 2026-10-20 >/dev/null
+jq -n '{cards: [{front: "Another?", back: "yes"}]}' >"$SANDBOX/k2r.json"
+"$SCRIPT" ingest "$SANDBOX/k2r.json" --date 2026-10-20 >/dev/null
+assert_eq "1" "$(ls "$CARDS_DIR" | wc -l | tr -d ' ')" "cards are skipped on a re-run of an ingested date"
+before="$(snap)"; cb="$(ls "$CARDS_DIR" | wc -l | tr -d ' ')"
+for bad in '{"cards": [{"front": "q"}]}' '{"cards": [{"front": "q", "back": " "}]}' '{"cards": [{"front": "q", "back": "b", "tags": "x"}]}' \
+           '{"cards": [{"front": "q", "back": "b", "tags": [1]}]}' '{"cards": [{"front": "q", "back": "b", "extra": 1}]}' '{"cards": {}}' \
+           '{"cards": [{"front": "q9", "back": "b"}, {"front": "q8"}]}'; do
+  printf '%s' "$bad" >"$SANDBOX/bad.json"
+  "$SCRIPT" ingest "$SANDBOX/bad.json" --date 2026-10-21 2>/dev/null; rc=$?
+  [ "$rc" = 1 ] && [ "$before" = "$(snap)" ] && [ "$cb" = "$(ls "$CARDS_DIR" | wc -l | tr -d ' ')" ] && pass "rejected, nothing applied: ${bad:0:60}" || fail "invalid cards" "$bad rc=$rc"
+done
+rm -rf "$FRICTION_WIKI" "$CARDS_DIR"
+unset CARDS_DIR
+export FRICTION_WIKI="$SANDBOX/friction"
 
 # --- misc ---------------------------------------------------------------------
 echo "misc"
@@ -434,6 +464,7 @@ echo "misc"
 "$SCRIPT" nope 2>/dev/null; assert_eq "1" "$?" "unknown command fails"
 jq -n '{groups: [{sig: "a:other:x | y", kind: "other", count: 1, confidence: "high", samples: ["s"], evidence: []}]}' >"$SANDBOX/d5.json"
 apply 2026-10-15 "$SANDBOX/d5.json" >/dev/null; apply 2026-10-15 "$SANDBOX/d5.json" >/dev/null
+
 assert_eq "1" "$(rg -c 'a:other:x' -l "$FRICTION_WIKI"/F-*.md | wc -l | tr -d ' ')" "a signature containing | maps to one entry, not one per run"
 
 echo
