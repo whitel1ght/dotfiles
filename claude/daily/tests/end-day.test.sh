@@ -77,6 +77,13 @@ for f in "$F" "$P"; do
   has "$f" '`secret`' "$side: secret items are handled"
   has "$f" '`restated`' "$side: restated items are handled"
   has "$f" "never sees or asks for the value" "$side: the model never touches the secret value"
+  has "$f" "a secret found in a file (location only)" "$side: secret items are described as found in a file"
+  has "$f" '`Change: <file or key>: <before> → <after>`' "$side: safety-touching proposals state the exact change"
+  has "$f" "a guard, a permission or allow/deny rule, a hook, auto mode or a settings file" "$side: names what counts as safety-touching"
+  has "$f" '`Direction: <the rule as an imperative one-liner>`' "$side: a restated proposal names its direction"
+  has "$f" '`Scope: <global' "$side: and its scope"
+  has "$f" "enforce it in a script, with no \`Direction:\` line" "$side: or is a script fix"
+  lacks "$f" "a credential seen in a prompt or output" "$side: no stale secret description"
 done
 
 echo "== coach: land the day's fixes =="

@@ -16,7 +16,7 @@ When the arguments include `--auto`, skip steps 1–5 and follow **Auto mode** a
 
 ## 1. Check
 
-Read `~/wiki/work/friction/$F.md` (frontmatter, `## Evidence`, `## Diagnosis`, `## Proposal`). Refuse, saying why, and stop, when the file is missing or `status` is not `proposed`, `regressed` or `open`. If `$W` or branch `friction-$F` already exists, say so and ask whether to continue in it or start over.
+Read `~/wiki/work/friction/$F.md` (frontmatter, `## Evidence`, `## Diagnosis`, `## Proposal`). Refuse, saying why, and stop, when the file is missing or `status` is not `proposed`, `regressed`, `open`, `offered` or `failed`. If `$W` or branch `friction-$F` already exists, say so and ask whether to continue in it or start over.
 
 ## 2. Worktree
 
@@ -54,7 +54,7 @@ SHA="$(git -C ~/projects/dotfiles rev-parse --short HEAD)"
 ```
 
 3. Clean up: `git -C ~/projects/dotfiles worktree remove $W && git -C ~/projects/dotfiles branch -d friction-$F`.
-4. Wiki (this session writes): in `~/wiki/work/friction/ledger.md` set the row's `status` to `fixed` and `fix` to `$SHA`; in `$F.md` set frontmatter `status: fixed`, `fix: $SHA`, `rung:` to the rung used, and add a `## History` line `- <date>: fixed in <sha> (<rung>)`. Then `git -C ~/wiki add work/friction && git -C ~/wiki commit -m "wiki: friction $F fixed"`.
+4. Ledger (this session writes, never by hand): `~/.local/bin/friction-ledger set $F --status fixed --fix $SHA --rung <the rung used>` (it holds the ledger lock, adds the dated History line and rebuilds `ledger.md`). Then `git -C ~/wiki add work/friction && git -C ~/wiki commit -m "wiki: friction $F fixed"`.
 5. Tell the user it is in local main and not pushed.
 
 If the user rejects the change, leave the worktree and branch, set nothing in the ledger, and ask what to change.

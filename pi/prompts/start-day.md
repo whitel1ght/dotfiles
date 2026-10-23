@@ -145,43 +145,61 @@ Suggestions from the usage coach, then a short card quiz. This step never blocks
 if a command here fails or returns nothing, print one line (or nothing when there is nothing
 to show) and go on to step 5. Nothing from this step goes into the diary, and the plan
 written in step 3 never mentions the coach. Keep five counts for the log: `offered`,
-`answered`, `landed`, `failed`, `cards`. Set `T` to today's date (`date +%F`).
+`answered`, `landed`, `failed`, `cards`. Every command here takes today's date inline,
+as `--date "$(date +%F)"`.
 
 ```bash
-~/.local/bin/friction-ledger coach-offer --date "$T"
+~/.local/bin/friction-ledger coach-offer --date "$(date +%F)"
 ```
 
-It prints JSON `{results, offer}`; each item has `id`, `kind`, `count`, `days`, `safety`,
-`proposal_summary` and `evidence`. `results` items also carry `status` (`landed` or `failed`),
-`fix` (the `A..B` range, or the draft MR link) and `reason` (why it failed, or a user step after
-it landed).
+It prints JSON `{results, offer}`; each item has `id`, `kind`, `count`, `days`, `safety`, `rung`,
+`proposal_summary`, `change` (the proposal's exact-change lines, empty when it states none),
+`proposal` (its text), `direction` (`{rule, scope}`, or null) and `evidence`.
+`results` items also carry `status` (`landed` or `failed`), `fix` (the `A..B` range, or the
+draft MR link), `reason` (why it failed, or a user step after it landed) and `retryable`.
 
 **Results first.** For each `results` item that landed, say what it was and give the
 `git revert A..B` range or the draft MR link from `fix`, plus the user step in `reason` if there
-is one; for a failed one, say why from `reason`. Count them in `landed` and `failed`.
+is one; for a failed one, say why from `reason`. Count them in `landed` and `failed`. When a
+failed one is `retryable`, ask "retry? (yes/no)": on yes run
+`~/.local/bin/coach-fix retry F-NNN` and say its one line; anything else leaves it failed.
 
 **Then each `offer` item, one question at a time** (the user is here, so ask in the session,
-not the decision queue). Show what it is, the evidence (count, days, two samples), and the
-proposed fix with its rung. Count each in `offered`. If `safety` is true, label it
-**loosens a safety control** and show the exact change as "before → after", taken from the
-entry's proposal. If the proposal does not state a before → after, say
-"the proposal does not state the exact change — answer later or no", and do not accept yes for it: record a no as no, and turn a yes into later.
-Ask "yes / no / later". Anything else: ask once more, then treat it as later. Record it:
+not the decision queue). Count each in `offered`.
+
+- `kind` is `secret`: label it **secret in a file — your steps**. Show where it was found (the
+  evidence: file and line, never a value) and the user steps from `proposal`, then ask
+  "done / later / no" (done once I have carried the steps out). It never becomes a job:
+  no `coach-fix` for it, whatever the answer.
+- Any other kind: show what it is, the evidence (count, days, two samples), and the proposed
+  fix with its `rung`. If `safety` is true, label it **loosens a safety control** and show the
+  exact change, the `change` lines, as "before → after". If `change` is empty, say
+  "the proposal does not state the exact change — answer later or no", and do not accept yes
+  for it: record a no as no, and turn a yes into later. Ask "yes / no / later".
+
+Anything else: ask once more, then treat it as later. Record it:
 
 ```bash
-~/.local/bin/friction-ledger coach-answer F-NNN yes|no|later --date "$T"
+~/.local/bin/friction-ledger coach-answer F-NNN yes|no|later|done --date "$(date +%F)"
 ```
 
-If that exits 1 ("F-NNN is <status>, not waiting for an answer"), say so in one line and move
-on; never retry with another answer. Otherwise count it in `answered`. After a yes:
+If that exits 1 ("F-NNN is <status>, not waiting for an answer", or a yes on a secret entry),
+say so in one line and move on; never retry with another answer. Otherwise count it in
+`answered`. After a yes:
 
+- `kind` `restated` with a `direction`: it becomes a standing direction, not a job. Run
+  `~/.local/bin/friction-ledger directions add --rule "<direction.rule>" --scope "<direction.scope>" --date "$(date +%F)"`
+  (it prints the D-NNN id), then
+  `~/.local/bin/friction-ledger set F-NNN --status fixed --fix D-NNN --date "$(date +%F)"`.
+  A `restated` item without a `direction` enforces the rule in a script: queue it as below.
 - not a safety item: `~/.local/bin/coach-fix enqueue F-NNN`
 - a safety item: `~/.local/bin/coach-fix enqueue F-NNN --approved-safety`
 
-Only an explicit yes to the spelled-out change gets the flag. If the enqueue fails, retry the
-same enqueue once. If it still fails, run
-`~/.local/bin/friction-ledger coach-answer F-NNN later --date "$T"` (a different answer on
-the same day replaces the first) and tell me in one line that the fix could not be queued
+Only an explicit yes to the spelled-out change gets the flag (`coach-fix` also checks that the
+ledger recorded that yes today). If the enqueue fails, retry the same enqueue once. If it still
+fails, run
+`~/.local/bin/friction-ledger coach-answer F-NNN later --date "$(date +%F)"` (a different answer
+on the same day replaces the first) and tell me in one line that the fix could not be queued
 and the suggestion will come back.
 
 **Quiz.** Run `~/.local/bin/cards due --limit 5 --json` (an array of `{slug, front, back,
@@ -236,7 +254,7 @@ the entries it recorded are still offered later. The review never blocks the pla
 Last, log the counts (this replaces today's row if /start-day runs twice):
 
 ```bash
-~/.local/bin/friction-ledger coach-log --date "$T" --offered N --answered N --landed N --failed N --cards N
+~/.local/bin/friction-ledger coach-log --date "$(date +%F)" --offered N --answered N --landed N --failed N --cards N
 ```
 
 ## 5. File it
