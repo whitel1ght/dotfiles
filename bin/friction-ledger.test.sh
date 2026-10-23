@@ -473,6 +473,23 @@ rm -rf "$FRICTION_WIKI" "$CARDS_DIR"
 unset CARDS_DIR
 export FRICTION_WIKI="$SANDBOX/friction"
 
+# --- coach-log ----------------------------------------------------------------
+echo "coach-log"
+rm -rf "$FRICTION_WIKI"
+CL="$FRICTION_WIKI/coach-log.md"
+"$SCRIPT" coach-log --date 2026-10-20 --offered 3 --answered 2 --landed 1 --failed 0 --cards 5; assert_eq "0" "$?" "coach-log writes a row"
+"$SCRIPT" coach-log --date 2026-10-18 --offered 1 --answered 1 --landed 0 --failed 1 --cards 0
+assert_eq "2026-10-18 2026-10-20" "$(grep -E '^\| [0-9]{4}-' "$CL" | awk -F'|' '{gsub(/ /,"",$2); printf "%s ", $2}' | sed 's/ $//')" "rows are sorted by date"
+"$SCRIPT" coach-log --date 2026-10-20 --offered 3 --answered 3 --landed 2 --failed 0 --cards 4
+assert_eq "2" "$(grep -cE '^\| [0-9]{4}-' "$CL")" "a re-run replaces the date's row"
+grep -qE '^\| 2026-10-20 \| 3 \| 3 \| 2 \| 0 \| 4 \|$' "$CL" && pass "the replaced row has the new counts" || fail "row content" "$(cat "$CL")"
+grep -q '^| date | offered | answered | landed | failed | cards |$' "$CL" && pass "table header present" || fail "header" "$(cat "$CL")"
+"$SCRIPT" coach-log --date 2026-10-21 --offered x --answered 0 --landed 0 --failed 0 --cards 0 2>/dev/null; assert_eq "1" "$?" "a non-integer count fails"
+"$SCRIPT" coach-log --date 2026-10-21 --offered -1 --answered 0 --landed 0 --failed 0 --cards 0 2>/dev/null; assert_eq "1" "$?" "a negative count fails"
+"$SCRIPT" coach-log --date 10-21 --offered 0 --answered 0 --landed 0 --failed 0 --cards 0 2>/dev/null; assert_eq "1" "$?" "a bad date fails"
+"$SCRIPT" coach-log --date 2026-10-21 --offered 0 --answered 0 --landed 0 --failed 0 2>/dev/null; assert_eq "1" "$?" "a missing count fails"
+assert_eq "2" "$(grep -cE '^\| [0-9]{4}-' "$CL")" "failed calls write nothing"
+
 # --- misc ---------------------------------------------------------------------
 echo "misc"
 "$SCRIPT" apply 2>/dev/null; assert_eq "1" "$?" "apply without --date fails"

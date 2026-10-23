@@ -4,7 +4,7 @@ argument-hint: "[--since 2026-09-24T15:00:00Z]"
 ---
 
 Build my plan for today. Everything here only reads, except the two housekeeping scripts
-and saving the plan into my diary. Never send, reply to, react to or mark anything in
+saving the plan into my diary, and the coach step's own commands. Never send, reply to, react to or mark anything in
 Slack, GitLab, Jira or the calendar.
 
 ## 1. Housekeeping
@@ -139,7 +139,71 @@ write must come from what you gathered:
 
 Leave out the Meetings line when there are none.
 
-## 4. File it
+## 4. Coach
+
+Suggestions from the usage coach, then a short card quiz. This step never blocks the plan:
+if a command here fails or returns nothing, print one line (or nothing when there is nothing
+to show) and go on to step 5. Nothing from this step goes into the diary, and the plan
+written in step 3 never mentions the coach. Keep five counts for the log: `offered`,
+`answered`, `landed`, `failed`, `cards`. Set `T` to today's date (`date +%F`).
+
+```bash
+~/.local/bin/friction-ledger coach-offer --date "$T"
+```
+
+It prints JSON `{results, offer}`; each item has `id`, `kind`, `count`, `days`, `safety`,
+`proposal_summary` and `evidence`.
+
+**Results first.** For each `results` item that landed, say what it was and give the
+`git revert A..B` range or the draft MR link from the entry; for a failed one, say why. Count
+them in `landed` and `failed`.
+
+**Then each `offer` item, one question at a time** (the user is here, so ask in the session,
+not the decision queue). Show what it is, the evidence (count, days, two samples), and the
+proposed fix with its rung. Count each in `offered`. If `safety` is true, label it
+**loosens a safety control** and show the exact change as "before → after", taken from the
+entry's proposal. If the proposal does not state a before → after, say
+"the proposal does not state the exact change — answer later or no", do not accept yes for it, and record later.
+Ask "yes / no / later". Anything else: ask once more, then treat it as later. Record it:
+
+```bash
+~/.local/bin/friction-ledger coach-answer F-NNN yes|no|later --date "$T"
+```
+
+If that exits 1 ("F-NNN is <status>, not waiting for an answer"), say so in one line and move
+on; never retry with another answer. Otherwise count it in `answered`. After a yes:
+
+- not a safety item: `~/.local/bin/coach-fix enqueue F-NNN`
+- a safety item: `~/.local/bin/coach-fix enqueue F-NNN --approved-safety`
+
+Only an explicit yes to the spelled-out change gets the flag. If the enqueue fails, say so in
+one line; the entry stays `landing` and a later morning's results will show it.
+
+**Quiz.** Run `~/.local/bin/cards due --limit 5 --json` (an array of `{slug, front, back,
+tags, new}`; nothing due means no quiz). One card at a time: show the `front` and wait for my
+answer in my own words. Compare it to the `back`: 3 = complete and right, 2 = right with
+gaps, 1 = partly right, 0 = wrong or "don't know". Give one line of feedback, show the
+`back`, then run `~/.local/bin/cards grade <slug> <0-3>` and count the card in `cards`. If I
+give no answer, or you cannot grade it, do not call `cards grade`; the card stays due.
+`skip` ends the quiz (the remaining cards stay due); `drop` runs
+`~/.local/bin/cards drop <slug>` and moves to the next card.
+
+### Monthly tool review
+
+On the first /start-day of a month, offer it once, after the quiz. It is the first run of
+the month when `~/wiki/work/friction/coach-log.md` has no row starting `| YYYY-MM-` for
+this month (`rg -c "^\| $(date +%Y-%m)-" ~/wiki/work/friction/coach-log.md` finds none or
+the file is missing). Ask one line: "Monthly tool review: run it now? (yes/no)".
+
+(procedure added in Task 7)
+
+Last, log the counts (this replaces today's row if /start-day runs twice):
+
+```bash
+~/.local/bin/friction-ledger coach-log --date "$T" --offered N --answered N --landed N --failed N --cards N
+```
+
+## 5. File it
 
 Print the plan in the chat, then save it:
 
