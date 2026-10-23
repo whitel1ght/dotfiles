@@ -6,7 +6,7 @@
 #   coach-fix built F-NNN --repo R --branch coach-F-NNN --worktree W --test-cmd CMD
 #   coach-fix built F-NNN --mr URL
 #   coach-fix fail F-NNN --reason TEXT
-#   coach-fix land [--force-check]
+#   coach-fix land [--force-check] [--detach]
 #
 # enqueue  after the user's yes in /start-day. A `safety: true` entry without --approved-safety
 #          is refused (exit 3, nothing written). A `secret` entry (signature kind) never gets a
@@ -39,7 +39,11 @@
 # land     a no-op (exit 0, "a day session is running; landing waits") while
 #          $RUN_DAY_STATE/<today>.md exists and the diary $DIARY_DIR/<today>.md has no
 #          `<!-- daily-report:start -->` yet; --force-check skips only that window check, for a
-#          manual run. Each `built` entry, oldest first:
+#          manual run. One land at a time (lock $QUEUE/.land.lock, a dead holder's taken over):
+#          another exits 0 with "a land is already running". --detach (what /end-day uses)
+#          starts the same land in the background, in its own process group under nohup, output
+#          to $COACH_STATE_DIR/logs/land-<date>.log, prints that path and returns at once, so a
+#          caller's tool timeout never cuts a test run short. Each `built` entry, oldest first:
 #          - MR: ledger `landed` with the MR link in `fix`.
 #          - branch: the main checkout must be on main, and the branch head must be the
 #            recorded `head` or the `rebased_head` an earlier land made from it, else "branch
@@ -50,7 +54,9 @@
 #            $COACH_TEST_TIMEOUT seconds (default 600: "tests timed out"); red fails it, green
 #            records `tested`. Uncommitted edits (staged, unstaged, untracked or ignored) in the
 #            main checkout to any file the branch touches fail it: "uncommitted edits in
-#            <files>". Otherwise `git merge --ff-only --no-overwrite-ignore`, and the queue entry
+#            <files>". The branch is re-read right before the merge: still the tested commit, or
+#            "branch changed after review". Otherwise `git merge --ff-only
+#            --no-overwrite-ignore <tested sha>` (never the branch name), and the queue entry
 #            is `landed` at once. A failure leaves the main checkout as it was, and the worktree
 #            and branch for a look.
 #          - after the merge (dotfiles): each bin/<f> the branch adds that install.sh links
@@ -128,12 +134,12 @@ mark_failed() { # id reason
   echo "$1: failed: $2"
 }
 
-lock() { # name; a dead holder's lock is taken over
+lock() { # name [tries, 0.2 s apart; default 150]; a dead holder's lock is taken over
   local d="$QUEUE/.$1.lock" i=0 pid
   while ! mkdir "$d" 2>/dev/null; do
     pid="$(cat "$d/pid" 2>/dev/null || true)"
     if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then rm -rf "$d"; continue; fi
-    i=$((i + 1)); [ "$i" -lt 150 ] || return 1
+    i=$((i + 1)); [ "$i" -lt "${2:-150}" ] || return 1
     sleep 0.2
   done
   echo $$ >"$d/pid"
@@ -427,9 +433,13 @@ land_one() { # id; returns 0 whatever happens to the entry
   while IFS= read -r -d '' rec; do dirty="$dirty${rec:3}"$'\n'; done < <(git -C "$m" status --porcelain=v1 -z --untracked-files=all --ignored --no-renames)
   while IFS= read -r -d '' f; do
     [[ "$dirty" != *$'\n'"$f"$'\n'* ]] || files="${files:+$files, }$f"
-  done < <(git -C "$m" diff --name-only -z --no-renames "$old" "$branch")
+  done < <(git -C "$m" diff --name-only -z --no-renames "$old" "$cur")
   if [ -n "$files" ]; then mark_failed "$id" "uncommitted edits in $files"; return 0; fi
-  if ! git -C "$m" merge --ff-only --no-overwrite-ignore -q "$branch" >>"$log" 2>&1; then
+  # the tests took time: merge only the tested commit, and only if the branch still points at it
+  if [ "$(git -C "$m" rev-parse "refs/heads/$branch")" != "$cur" ] || [ "$cur" != "$(qget "$id" tested)" ]; then
+    mark_failed "$id" "branch changed after review"; return 0
+  fi
+  if ! git -C "$m" merge --ff-only --no-overwrite-ignore -q "$cur" >>"$log" 2>&1; then
     mark_failed "$id" "fast-forward of main failed (log: $log)"; return 0
   fi
   new="$(git -C "$m" rev-parse main)"
@@ -447,14 +457,27 @@ land_one() { # id; returns 0 whatever happens to the entry
 }
 
 cmd_land() {
-  local force=0 id
+  local force=0 detach=0 id log pid
   while [ $# -gt 0 ]; do
-    case "$1" in --force-check) force=1 ;; *) die "land: unknown option $1" ;; esac
+    case "$1" in --force-check) force=1 ;; --detach) detach=1 ;; *) die "land: unknown option $1" ;; esac
     shift
   done
   if [ "$force" = 0 ] && day_running; then echo "a day session is running; landing waits"; return 0; fi
   mkdir -p "$QUEUE"
-  lock land || { echo "another coach-fix land is running"; return 0; }
+  if [ "$detach" = 1 ]; then
+    pid="$(cat "$QUEUE/.land.lock/pid" 2>/dev/null || true)"
+    if [ -d "$QUEUE/.land.lock" ] && { [ -z "$pid" ] || kill -0 "$pid" 2>/dev/null; }; then
+      echo "a land is already running"; return 0
+    fi
+    mkdir -p "$LOGS"; log="$LOGS/land-$(date +%F).log"
+    # own process group and no HUP, so the caller's timeout or exit cannot kill it
+    set -m
+    nohup "$0" land $([ "$force" = 0 ] || echo --force-check) </dev/null >>"$log" 2>&1 &
+    set +m
+    echo "landing in the background; log: $log"
+    return 0
+  fi
+  lock land 1 || { echo "a land is already running"; return 0; }
   for id in $(ids_in built); do land_one "$id"; done
   unlock land
   cmd_run

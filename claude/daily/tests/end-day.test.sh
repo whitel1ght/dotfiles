@@ -83,10 +83,10 @@ echo "== coach: land the day's fixes =="
 for f in "$F" "$P"; do
   side="$(basename "$(dirname "$f")")"
   has "$f" "## Land the coach's fixes" "$side: land step exists"
-  has "$f" "~/.local/bin/coach-fix land" "$side: calls coach-fix land"
+  has "$f" "~/.local/bin/coach-fix land --detach" "$side: lands detached, so no tool timeout cuts it short"
   awk '/^## Index, commit and end the run/{a=NR} /^## Land the coach.s fixes/{b=NR} /^## Offer reviews/{c=NR} END{exit !(a&&b&&c&&a<b&&b<c)}' "$f" && pass "$side: land comes after the report is saved and committed" || fail "$side: land order" "wrong order in $f"
-  has "$f" 'git -C ~/wiki commit -m "wiki: coach landed fixes"' "$side: commits the ledger results"
-  has "$f" "10-minute timeout" "$side: land gets a long timeout"
+  has "$f" "a land is already running" "$side: names the busy line"
+  has "$f" "Do not wait for the land" "$side: does not wait for the background land"
 done
 has "$F" "Bash(~/.local/bin/coach-fix:*)" "claude: allows coach-fix"
 

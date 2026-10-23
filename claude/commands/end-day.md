@@ -220,15 +220,13 @@ Finally end the run: move `~/.local/state/run-day/$DAY.md` into `~/.local/state/
 
 ## Land the coach's fixes
 
-The last step that changes anything, after the report is saved and the day committed. It lands the fixes the coach built in the background today (each one the user said yes to in /start-day), then commits the results it wrote to the ledger. Landing can re-run a fix's test suites, so give this Bash call a 10-minute timeout (`timeout: 600000`), not the 2-minute default:
+The last step that changes anything, after the report is saved and the day committed. It lands the fixes the coach built in the background today (each one the user said yes to in /start-day). Landing can re-run a fix's test suites for minutes, so it runs detached and this call returns at once:
 
 ```bash
-~/.local/bin/coach-fix land
-git -C ~/wiki add -A -- work/friction
-git -C ~/wiki diff --cached --quiet || git -C ~/wiki commit -m "wiki: coach landed fixes"
+~/.local/bin/coach-fix land --detach
 ```
 
-It prints one line per fix (landed with its `git revert` range, or failed with why), or "a day session is running; landing waits", which means leave it: never add `--force-check` here. List those lines under a **Coach** line in the closing message to me, never in the diary report. Tomorrow's /start-day reports the results again.
+It prints one line: "landing in the background; log: <path>", "a land is already running", or "a day session is running; landing waits" (leave it: never add `--force-check` here). Put that line under a **Coach** line in the closing message to me, never in the diary report. Do not wait for the land or read its log: it writes each result to the ledger, `wiki-sync`'s next run commits it, and tomorrow's /start-day reports what landed or why it failed.
 
 ## Offer reviews
 

@@ -121,6 +121,8 @@ mkrepo() { # name
   printf 'echo "ran $(pwd -P)" >>"$SUITE_LOG"\n' >"$r/tests/ok.sh"
   printf 'exit 1\n' >"$r/tests/red.sh"
   printf 'sleep 8 &\necho $! >"$SUITE_LOG.child"\nwait\n' >"$r/tests/slow.sh"
+  printf 'echo sneaky >sneaky.txt\ngit add sneaky.txt && git commit -qm sneaky\n' >"$r/tests/sneak.sh"
+  printf 'sleep 2\necho "ran slow" >>"$SUITE_LOG"\n' >"$r/tests/slow2.sh"
   printf '*.local\n' >"$r/.gitignore"
   cat >"$r/install.sh" <<'EOF'
 #!/bin/bash
@@ -574,6 +576,59 @@ cf land >/dev/null
 assert_eq "failed|uncommitted edits in conf.local" "$(qget F-001 state)|$(qget F-001 reason)" "an ignored local file the branch adds blocks the landing"
 assert_eq "mine" "$(cat "$DOT/conf.local")" "and is not overwritten"
 assert_eq "$BEFORE" "$(snap dotfiles)" "main checkout byte-identical"
+
+echo "land: a commit during the test run"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 notes.txt $'one\ntwo\nthree\nfour\n'
+built dotfiles F-001 "bash tests/sneak.sh" >/dev/null
+on_main dotfiles README.md "readme 2" "docs: readme"
+MAIN_BEFORE="$(git -C "$DOT" rev-parse main)"
+cf land >/dev/null
+assert_eq "failed|branch changed after review" "$(qget F-001 state)|$(qget F-001 reason)" "a commit made while the tests ran is never landed"
+assert_eq "$MAIN_BEFORE" "$(git -C "$DOT" rev-parse main)" "main did not move"
+assert_eq "no|" "$([ -e "$DOT/sneaky.txt" ] && echo yes || echo no)|$(git -C "$DOT" status --porcelain)" "main checkout untouched"
+
+echo "land: --detach"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 notes.txt $'one\ntwo\nthree\nfour\n'
+built dotfiles F-001 "bash tests/slow2.sh" >/dev/null
+on_main dotfiles README.md "readme 2" "docs: readme"
+T0="$(date +%s)"
+OUT="$(cf land --detach)"; RC=$?
+T1="$(date +%s)"
+LOGF="$COACH_STATE_DIR/logs/land-$TODAY.log"
+assert_eq "0|landing in the background; log: $LOGF" "$RC|$OUT" "--detach prints the log path"
+assert_eq "yes|built" "$([ $((T1 - T0)) -lt 2 ] && echo yes || echo no)|$(qget F-001 state)" "--detach returns before the 2 s suite ends"
+for _ in $(seq 1 25); do [ -s "$Q/.land.lock/pid" ] && break; sleep 0.05; done
+OUT2="$(cf land)"
+assert_eq "a land is already running" "$OUT2" "a second land while one runs exits with a line"
+OUT2="$(cf land --detach)"
+assert_eq "a land is already running" "$OUT2" "so does a second --detach"
+for _ in $(seq 1 100); do [ "$(qget F-001 state)" = built ] || break; sleep 0.2; done
+for _ in $(seq 1 25); do [ -d "$Q/.land.lock" ] || break; sleep 0.2; done
+assert_eq "landed" "$(qget F-001 state)" "the background land completes"
+assert_has "F-001: landed" "$(cat "$LOGF")" "its output is in the log"
+assert_eq "no" "$([ -d "$Q/.land.lock" ] && echo yes || echo no)" "and it releases the lock"
+
+echo "land: stale lock"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 notes.txt "x"
+built dotfiles F-001 >/dev/null
+sh -c 'exit 0' & DEAD=$!; wait "$DEAD"
+mkdir -p "$Q/.land.lock" && echo "$DEAD" >"$Q/.land.lock/pid"
+cf land >/dev/null
+assert_eq "landed" "$(qget F-001 state)" "a dead holder's land lock is taken over"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 notes.txt "x"
+built dotfiles F-001 >/dev/null
+mkdir -p "$Q/.land.lock" && echo "$$" >"$Q/.land.lock/pid"
+OUT="$(cf land)"
+assert_eq "a land is already running|built" "$OUT|$(qget F-001 state)" "a live holder's lock is respected"
+rm -rf "$Q/.land.lock"
 
 echo "land: then run"
 setup
