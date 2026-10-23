@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { claimsDay, claimsDayPrompt, formatOwner, ownerPath, parseOwner, receivesPings } from './owner.ts'
+import { claimsDay, claimsDayPrompt, formatOwner, ownerNote, ownerPath, parseOwner, receivesPings } from './owner.ts'
 
 test('ownerPath sits beside the run state', async () => {
   expect(ownerPath('/home/t/.local/state/run-day', '2026-10-08')).toBe('/home/t/.local/state/run-day/2026-10-08.owner')
@@ -40,4 +40,10 @@ test('only the owning session receives pings; no owner means nobody', async () =
   expect(receivesPings('abc-123', 'other')).toBe(false)
   expect(receivesPings('', 'abc-123')).toBe(false)
   expect(receivesPings('', '')).toBe(false)
+})
+
+test('ownerNote: nothing for the owner, a hint when nobody owns the day, a pointer elsewhere otherwise', async () => {
+  expect(ownerNote('abc-123', 'abc-123')).toBe('')
+  expect(ownerNote('', 'abc-123')).toBe('no owner: /daily:run-day')
+  expect(ownerNote('abc-123', 'other')).toBe('day runs elsewhere')
 })

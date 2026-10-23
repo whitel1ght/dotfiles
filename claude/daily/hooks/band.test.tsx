@@ -30,13 +30,20 @@ async function start($: any, on: any, opts: Opts) {
     if (opts.inbox !== undefined && isInboxLs(e.argv)) return { value: { exitCode: 0, stdout: opts.inbox, stderr: '' } } as never
     return { value: e.argv[0] === 'date' ? { exitCode: 0, stdout: '2026-10-08\n', stderr: '' } : typeof opts.day === 'function' ? (isChangesSince(e.argv) ? opts.day() : OK) : opts.day } as never
   })
-  on('fs.read', (_$: any, e: any) => (e.path in files ? { value: files[e.path] } : { deny: 'ENOENT' }))
+  const reads: string[] = []
+  on('fs.read', (_$: any, e: any) => {
+    reads.push(e.path)
+    return e.path in files ? { value: files[e.path] } : { deny: 'ENOENT' }
+  })
   const forks: number[] = []
   on('model.fork', () => {
     forks.push(clock.now())
     return { value: opts.fork ? opts.fork() : WARM_REPLY } as never
   })
   on('turn.complete', (_$: any, e: any) => ({ text: e.answer }) as never)
+  on('turn.step', async function* (_$: any, e: any) {
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: null } as never
+  })
   on('fs.write', (_$: any, e: any) => {
     if (opts.writeFails) return { deny: 'EACCES' }
     files[e.path] = e.text
@@ -69,7 +76,7 @@ async function start($: any, on: any, opts: Opts) {
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
   on('agent.list', () => ({ value: [] }))
   await $.session.start({ cwd: '/home/t', surface: 'terminal', source: 'startup' } as never)
-  return { clock, calls, toasts, logs, registered, statuses, files, prompts, forks }
+  return { clock, calls, toasts, logs, registered, statuses, files, prompts, forks, reads }
 }
 
 const isFriction = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('friction')
@@ -171,13 +178,24 @@ test('the owning session gets the inbox and event prompts', async ($, on) => {
   expect(s.prompts.some(p => p.startsWith('[daily-event] review | backend!6576'))).toBe(true)
 })
 
-test('another session neither lists the inbox, nor runs changes-since, nor gets a prompt', async ($, on) => {
+test('another session counts the inbox for its status line but runs no changes-since and gets no prompt or toast', async ($, on) => {
   const s = await start($, on, { ...pinged, owner: 'sess-other' })
   await s.clock.advance(180_000)
-  expect(s.calls.filter(isInboxLs).length).toBe(0)
+  expect(s.calls.filter(isInboxLs).length).toBeGreaterThan(0)
   expect(s.calls.filter(isChangesSince).length).toBe(0)
   expect(s.prompts).toEqual([])
   expect(s.toasts).toEqual([])
+  expect(s.statuses.at(-1)).toContain('📥 1 · day runs elsewhere')
+})
+
+test('the status line says when the day has no owner, and says nothing extra in the owner', async ($, on) => {
+  const none = await start($, on, { day: OK, owner: null })
+  await none.clock.advance(5_000)
+  expect(none.statuses.at(-1)).toMatch(/^day \d+\/\d+.* · no owner: \/daily:run-day$/)
+  await $.command.run({ command: 'daily:run-day', args: '' })
+  await none.clock.advance(5_000)
+  expect(none.statuses.at(-1)).not.toContain('owner')
+  expect(none.statuses.at(-1)).not.toContain('elsewhere')
 })
 
 test('with no owner recorded no session is pinged', async ($, on) => {
@@ -241,6 +259,13 @@ const MIN = 60_000
 const HOUR = 60 * MIN
 const OPEN_DAY = DIARY.replace(/<!-- daily-report:start -->[\s\S]*<!-- daily-report:end -->\n/, '')
 const idleDay = { day: OK, diary: OPEN_DAY }
+async function step($: any) {
+  const stream = $.turn.step({ turnId: 't', index: 0, model: 'm', messageCount: 1 } as never)
+  for await (const _ of stream) {
+    // drain
+  }
+  return stream.result
+}
 const turn = ($: any) => $.turn.complete({ answer: 'ok', reason: 'answer', durationMs: 1000, isAborted: false, turnId: 't' } as never)
 
 test('no keepwarm ping in the first 6 h: cache-tax covers those', async ($, on) => {
@@ -311,4 +336,48 @@ test('after midnight the dated owner file no longer matches and keepwarm goes qu
   delete s.files[OWNER]
   await s.clock.advance(2 * HOUR)
   expect(s.forks).toEqual([])
+})
+
+test('re-running /daily:run-day restarts a keepwarm that stopped', async ($, on) => {
+  let replies = 0
+  const s = await start($, on, { ...idleDay, fork: () => (replies++ === 0 ? { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded' } : WARM_REPLY) })
+  await s.clock.advance(6 * HOUR)
+  await turn($)
+  await s.clock.advance(50 * MIN)
+  expect(s.logs).toContain('daily keepwarm stopped: the API call failed (529)')
+  await $.command.run({ command: 'daily:run-day', args: 'resume' })
+  await turn($)
+  const resumed = s.clock.now()
+  await s.clock.advance(3 * HOUR)
+  expect(s.forks.slice(1)).toEqual([resumed + 50 * MIN, resumed + 100 * MIN, resumed + 150 * MIN])
+})
+
+test('a main-thread model request in a long turn moves the idle clock', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await s.clock.advance(6 * HOUR)
+  await turn($)
+  await s.clock.advance(45 * MIN)
+  await step($)
+  const stepped = s.clock.now()
+  await s.clock.advance(10 * MIN)
+  expect(s.forks).toEqual([])
+  await s.clock.advance(40 * MIN)
+  expect(s.forks).toEqual([stepped + 50 * MIN])
+})
+
+test('three turns ending together still give one ping', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await s.clock.advance(6 * HOUR)
+  await Promise.all([turn($), turn($), turn($)])
+  await s.clock.settle()
+  await s.clock.advance(50 * MIN)
+  expect(s.forks.length).toBe(1)
+})
+
+test('a session that does not own the day reads no diary for keepwarm after a turn', async ($, on) => {
+  const s = await start($, on, { ...idleDay, owner: 'sess-other' })
+  s.reads.length = 0
+  await turn($)
+  await s.clock.settle()
+  expect(s.reads.filter(p => p === WIKI)).toEqual([])
 })

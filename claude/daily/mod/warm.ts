@@ -1,6 +1,6 @@
 // Keeps the day session's prompt cache warm after cache-tax's `keepwarm always` window (its first
-// 6 h) ends: same ping period, TTL, prompt and warm test as cache-tax, so the two never ping in
-// the same window. Claude only.
+// 6 h) ends: same ping period, TTL, prompt and warm test as cache-tax. The two overlap only while
+// cache-tax's own 3 h auto-warm after a paid cold write runs past the 6 h mark. Claude only.
 
 export const DAY_WARM_AFTER_MS = 6 * 60 * 60 * 1000
 export const PING_AFTER_MS = 50 * 60 * 1000

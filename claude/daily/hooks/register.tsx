@@ -6,7 +6,7 @@ import { classify, formatNote, formatPrompt, formatToast, parseEvents } from '..
 import { EMPTY_INBOX, inboxPrompt, nextInbox, parseListing } from '../mod/inbox.ts'
 import { applyEdit, checkTicks, denyMessage, isTodaysDiary } from '../mod/guard.ts'
 import type { EditInput } from '../mod/guard.ts'
-import { claimsDay, claimsDayPrompt, formatOwner, ownerPath, parseOwner, receivesPings } from '../mod/owner.ts'
+import { claimsDay, claimsDayPrompt, formatOwner, ownerNote, ownerPath, parseOwner, receivesPings } from '../mod/owner.ts'
 import { parseRunState } from '../mod/runstate.ts'
 import { isWarm, nextWarm, pingFailure, REPORT_MARK, WARM_PROMPT } from '../mod/warm.ts'
 import type { InboxState, ViewState } from '../mod/types.ts'
@@ -59,7 +59,7 @@ async function load($: EngineInterface) {
 }
 
 // Inbox and event prompts go only to the session that ran /run-day last (F-057); the others
-// neither list the inbox nor move the changes-since cursor.
+// count the inbox for their status line only and never move the changes-since cursor.
 async function isOwner($: EngineInterface, day: Day): Promise<boolean> {
   return receivesPings(parseOwner(await readOr($, day.ownerPath)), await $.session.id())
 }
@@ -68,6 +68,9 @@ async function claimDay($: EngineInterface) {
   try {
     const day = await today($)
     if (day) await $.fs.write(day.ownerPath, formatOwner(await $.session.id()))
+    // Re-running /daily:run-day restarts a keepwarm that stopped (a failed ping, yesterday's report).
+    warm.stopped = null
+    warm.wasCold = false
   } catch (err) {
     const why = `run-day owner not recorded: ${err instanceof Error ? err.message : String(err)}`
     $.ui.toast(`daily: ${why}`)
@@ -84,6 +87,8 @@ const warm = {
   stopped: null as string | null,
   wasCold: false,
   isPinging: false,
+  hasFollowed: false,
+  gen: 0,
 }
 
 function disarmWarm() {
@@ -97,19 +102,22 @@ function stopWarm($: EngineInterface, why: string) {
   $.ui.log(`daily keepwarm stopped: ${why}`)
 }
 
+// The newest call wins: one started while another awaited supersedes it, so only one timer lives.
 async function armWarm($: EngineInterface) {
+  const gen = ++warm.gen
   disarmWarm()
   if (warm.stopped !== null || warm.isPinging) return
   const day = await today($)
-  if (!day) return
-  const isActive = (await readOr($, day.statePath)) !== null
+  if (!day || (await readOr($, day.statePath)) === null || !(await isOwner($, day))) return
   const step = nextWarm({
-    isOwner: isActive && (await isOwner($, day)),
+    isOwner: true,
     dayEnded: ((await readOr($, day.diaryPath)) ?? '').includes(REPORT_MARK),
     startedAt: warm.startedAt,
     lastRequestAt: warm.lastRequestAt,
     now: await $.clock.now(),
   })
+  if (gen !== warm.gen) return
+  disarmWarm()
   if (step.do === 'cold' && !warm.wasCold) $.ui.log('daily keepwarm: the cache went cold while idle; warming resumes after the next turn')
   warm.wasCold = step.do === 'cold'
   if (step.do === 'stop') stopWarm($, step.why)
@@ -162,7 +170,8 @@ async function refresh($: EngineInterface) {
   }
   const agents = (await $.agent.list()).map(a => ({ id: a.id, description: a.description, status: a.status }))
   const rows = joinRows(ctx.items, ctx.runs, agents)
-  const status = statusLine(rows, (await read($, inbox)).pending)
+  const note = ownerNote(parseOwner(await readOr($, ctx.day.ownerPath)), await $.session.id())
+  const status = statusLine(rows, (await read($, inbox)).pending) + (note ? ` · ${note}` : '')
   $.ui.status(status)
   await update($, view, () => ({ active: true, status, groups: panelGroups(rows) }))
   const fresh = flags.lastNeeds === null ? [] : newlyNeedsYou(flags.lastNeeds, rows)
@@ -265,7 +274,9 @@ async function watchInbox($: EngineInterface) {
   flags.isListing = true
   try {
     const ctx = await load($)
-    if (!ctx || !ctx.active || !(await isOwner($, ctx.day))) return
+    if (!ctx || !ctx.active) return
+    // Every session counts the inbox for its status line; only the owner is told.
+    const owns = await isOwner($, ctx.day)
     const ran = await $.process.run(['/bin/sh', '-c', INBOX_LS], { timeoutMs: 10_000 })
     if (ran.exitCode !== 0) {
       if (!flags.hasInboxFailed) friction($, 'tool_error', `inbox read failed (exit ${ran.exitCode}): ${ran.stderr.split('\n')[0]}`, 'daily-inbox')
@@ -276,7 +287,7 @@ async function watchInbox($: EngineInterface) {
     const before = await read($, inbox)
     const { fresh, state } = nextInbox(parseListing(ran.stdout), before.seen)
     await update($, inbox, () => state)
-    if (fresh.length > 0) {
+    if (owns && fresh.length > 0) {
       $.ui.toast(`inbox: ${fresh.length} new`)
       void $.prompt.submit({ text: inboxPrompt(fresh.length) }).catch(() => $.ui.toast('daily inbox: prompt submit failed'))
     }
@@ -334,6 +345,11 @@ export const register: Register = on => {
     return next(e)
   })
 
+  on('turn.step', async function* ($, e, next) {
+    if (!e.agentId) warm.lastRequestAt = await $.clock.now()
+    yield* next(e)
+  })
+
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
     if (!e.agentId) {
@@ -347,6 +363,8 @@ export const register: Register = on => {
   on('model.fork', async ($, e, next) => {
     const r = await next(e)
     if (r && r.isAnswered && isWarm(r.usage) && !warm.isPinging) {
+      if (!warm.hasFollowed) $.ui.log("daily keepwarm: following another plugin's warm ping")
+      warm.hasFollowed = true
       warm.lastRequestAt = await $.clock.now()
       void safeArmWarm($)
     }

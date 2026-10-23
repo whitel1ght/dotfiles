@@ -25,6 +25,12 @@ export function parseOwner(text: string | null): string {
   return (text ?? '').split('\n').map(line => line.trim()).find(line => line !== '') ?? ''
 }
 
+/** The status-line suffix for a session that does not get the day's pings; '' for the owner. */
+export function ownerNote(owner: string, sessionId: string): string {
+  if (owner === '') return 'no owner: /daily:run-day'
+  return owner === sessionId ? '' : 'day runs elsewhere'
+}
+
 export function receivesPings(owner: string, sessionId: string): boolean {
   return owner !== '' && owner === sessionId
 }
