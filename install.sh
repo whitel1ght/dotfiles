@@ -488,6 +488,11 @@ if [ -f "$DOTFILES_DIR/bin/coach-mine" ]; then
     create_symlink "$DOTFILES_DIR/bin/coach-mine" "$HOME/.local/bin/coach-mine"
 fi
 
+# cards stores and schedules the usage coach's quiz cards in the wiki.
+if [ -f "$DOTFILES_DIR/bin/cards" ]; then
+    create_symlink "$DOTFILES_DIR/bin/cards" "$HOME/.local/bin/cards"
+fi
+
 # wait-for waits out a GitLab or Jira outage and then tells the run-day inbox.
 if [ -f "$DOTFILES_DIR/bin/wait-for" ]; then
     create_symlink "$DOTFILES_DIR/bin/wait-for" "$HOME/.local/bin/wait-for"

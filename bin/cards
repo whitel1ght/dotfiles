@@ -1,0 +1,300 @@
+#!/usr/bin/env python3
+"""Spaced-repetition quiz cards kept as markdown files in the wiki.
+
+  cards add --front T --back T [--tags a,b] [--source S] [--date D]   prints the slug
+  cards due [--date D] [--limit 5] [--json]
+  cards grade SLUG 0-3 [--date D]
+  cards drop SLUG
+
+Card file <slug>.md in $CARDS_DIR (~/wiki/cards): `key: value` frontmatter (due YYYY-MM-DD,
+interval days, ease, reps, lapses, tags [a, b], source, anything else kept as it is) and a body
+"## Question: <front>" / "### Answer: <back>". A card without `reps` is new and due; a card
+with no `due` is due on any date. add with a front that already exists (case and whitespace
+ignored) prints the existing slug and writes nothing.
+due lists due cards, oldest due first, new ones last: `slug<TAB>front`, or --json
+[{slug, front, back, tags, new}]. grade (SM-2 style, rounded to whole days, min 1):
+0 interval 1, lapses+1, ease-0.2 (min 1.3); 1 interval max(1, i*1.2), ease-0.15;
+2 interval i*ease (first rep 1, second 3); 3 interval i*ease*1.3, ease+0.15; due = D + interval.
+--date defaults to today, local time. Exit 0 ok, 2 bad usage or grade, 1 missing card or error.
+Every write is a temp file renamed into place, so an error leaves the card untouched.
+"""
+import argparse
+import datetime
+import json
+import math
+import os
+import re
+import sys
+import tempfile
+
+CARDS_DIR = os.path.expanduser(os.environ.get("CARDS_DIR") or "~/wiki/cards")
+HEAD_RE = re.compile(r"^## Question:[ \t]*(.*)$", re.M)
+ANS_RE = re.compile(r"^### Answer:[ \t]*", re.M)
+
+
+class Fail(Exception):
+    def __init__(self, msg, code=1):
+        super().__init__(msg)
+        self.code = code
+
+
+def parse_date(s):
+    try:
+        return datetime.date.fromisoformat(s)
+    except (TypeError, ValueError):
+        raise Fail(f"invalid date: {s}", 2)
+
+
+def rnd(x):
+    return max(1, math.floor(x + 0.5))
+
+
+def path_for(slug):
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
+        raise Fail(f"no such card: {slug}")
+    return os.path.join(CARDS_DIR, slug + ".md")
+
+
+def write_atomic(path, text):
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".cards-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def split_card(text):
+    """-> (frontmatter lines or None, body)."""
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 3)
+        if end != -1:
+            return text[4:end].split("\n"), text[end + 5:]
+    return None, text
+
+
+def parse_fm(lines):
+    d = {}
+    for ln in lines or []:
+        k, sep, v = ln.partition(":")
+        if sep and k.strip():
+            d[k.strip()] = v.strip()
+    return d
+
+
+def parse_tags(v):
+    v = (v or "").strip()
+    if v.startswith("[") and v.endswith("]"):
+        v = v[1:-1]
+    return [t.strip() for t in v.split(",") if t.strip()]
+
+
+def parse_front_back(body):
+    m = HEAD_RE.search(body)
+    front = m.group(1).strip() if m else ""
+    rest = body[m.end():] if m else body
+    a = ANS_RE.search(rest)
+    back = rest[a.end():].strip() if a else ""
+    return front, back
+
+
+def load(slug):
+    path = path_for(slug)
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError:
+        raise Fail(f"no such card: {slug}")
+    lines, body = split_card(text)
+    fm = parse_fm(lines)
+    front, back = parse_front_back(body)
+    return {"slug": slug, "path": path, "lines": lines or [], "fm": fm, "body": body,
+            "front": front, "back": back, "tags": parse_tags(fm.get("tags")),
+            "text": text, "has_fm": lines is not None}
+
+
+def all_cards():
+    try:
+        names = sorted(n for n in os.listdir(CARDS_DIR) if n.endswith(".md") and not n.startswith("."))
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        try:
+            out.append(load(n[:-3]))
+        except Fail:
+            pass
+    return out
+
+
+def norm_front(s):
+    return " ".join(s.lower().split())
+
+
+def is_new(c):
+    try:
+        return int(c["fm"].get("reps", "0")) == 0
+    except ValueError:
+        return True
+
+
+def due_date(c):
+    try:
+        return datetime.date.fromisoformat(c["fm"].get("due", ""))
+    except ValueError:
+        return None
+
+
+def one_line(s):
+    return " ".join(s.split())
+
+
+def make_slug(front):
+    words = re.findall(r"[a-z0-9]+", front.lower())[:6]
+    base = "-".join(words) or "card"
+    slug, n = base, 2
+    while os.path.exists(os.path.join(CARDS_DIR, slug + ".md")):
+        slug = f"{base}-{n}"
+        n += 1
+    return slug
+
+
+def cmd_add(a):
+    front, back = one_line(a.front), a.back.strip()
+    if not front or not back:
+        raise Fail("--front and --back must not be empty", 2)
+    today = parse_date(a.date).isoformat() if a.date else datetime.date.today().isoformat()
+    want = norm_front(front)
+    for c in all_cards():
+        if norm_front(c["front"]) == want:
+            print(c["slug"])
+            return
+    tags = ", ".join(t.strip() for t in a.tags.split(",") if t.strip())
+    text = (f"---\ndue: {today}\ninterval: 0\nease: 2.50\nreps: 0\nlapses: 0\ntags: [{tags}]\n"
+            f"source: {one_line(a.source)}\n---\n\n## Question: {front}\n\n### Answer: {back}\n")
+    os.makedirs(CARDS_DIR, exist_ok=True)
+    slug = make_slug(front)
+    write_atomic(os.path.join(CARDS_DIR, slug + ".md"), text)
+    print(slug)
+
+
+def cmd_due(a):
+    today = parse_date(a.date) if a.date else datetime.date.today()
+    if a.limit < 0:
+        raise Fail("--limit must not be negative", 2)
+    reviewed, new = [], []
+    for c in all_cards():
+        d = due_date(c)
+        if d is not None and d > today:
+            continue
+        if is_new(c):
+            new.append((c["slug"], c))
+        else:
+            reviewed.append(((d or datetime.date.min).isoformat(), c["slug"], c))
+    reviewed.sort(key=lambda t: t[:2])
+    new.sort(key=lambda t: t[0])
+    picked = [t[-1] for t in reviewed] + [t[1] for t in new]
+    picked = picked[:a.limit]
+    if a.json:
+        print(json.dumps([{"slug": c["slug"], "front": c["front"], "back": c["back"],
+                           "tags": c["tags"], "new": is_new(c)} for c in picked], ensure_ascii=False))
+    else:
+        for c in picked:
+            print(f"{c['slug']}\t{one_line(c['front'])}")
+
+
+def set_fm(lines, updates):
+    lines = list(lines)
+    for k, v in updates.items():
+        for i, ln in enumerate(lines):
+            if ln.partition(":")[0].strip() == k and ":" in ln:
+                lines[i] = f"{k}: {v}"
+                break
+        else:
+            lines.append(f"{k}: {v}")
+    return lines
+
+
+def cmd_grade(a):
+    if not re.fullmatch(r"[0-3]", a.grade):
+        raise Fail(f"invalid grade: {a.grade!r} (0-3)", 2)
+    g = int(a.grade)
+    today = parse_date(a.date) if a.date else datetime.date.today()
+    c = load(a.slug)
+    fm = c["fm"]
+    try:
+        interval = int(float(fm.get("interval", "0")))
+        ease = float(fm.get("ease", "2.5"))
+        reps = int(fm.get("reps", "0"))
+        lapses = int(fm.get("lapses", "0"))
+    except ValueError:
+        raise Fail(f"card {a.slug} has a malformed scheduling field")
+    base = max(interval, 1)
+    if g == 0:
+        interval, lapses, ease = 1, lapses + 1, max(1.3, ease - 0.2)
+    elif g == 1:
+        interval, ease = rnd(base * 1.2), max(1.3, ease - 0.15)
+    elif g == 2:
+        interval = 1 if reps == 0 else 3 if reps == 1 else rnd(base * ease)
+    else:
+        interval, ease = rnd(base * ease * 1.3), ease + 0.15
+    due = today + datetime.timedelta(days=interval)
+    lines = set_fm(c["lines"], {"due": due.isoformat(), "interval": interval,
+                                "ease": f"{ease:.2f}", "reps": reps + 1, "lapses": lapses})
+    write_atomic(c["path"], "---\n" + "\n".join(lines) + "\n---\n" + c["body"] if c["has_fm"]
+                 else "---\n" + "\n".join(lines) + "\n---\n\n" + c["body"].lstrip("\n"))
+
+
+def cmd_drop(a):
+    path = path_for(a.slug)
+    if not os.path.isfile(path):
+        raise Fail(f"no such card: {a.slug}")
+    os.unlink(path)
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print(f"cards: {message}", file=sys.stderr)
+        sys.exit(2)
+
+
+def main():
+    p = Parser(prog="cards")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("add")
+    s.add_argument("--front", required=True)
+    s.add_argument("--back", required=True)
+    s.add_argument("--tags", default="")
+    s.add_argument("--source", default="")
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_add)
+    s = sub.add_parser("due")
+    s.add_argument("--date")
+    s.add_argument("--limit", type=int, default=5)
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_due)
+    s = sub.add_parser("grade")
+    s.add_argument("slug")
+    s.add_argument("grade")
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_grade)
+    s = sub.add_parser("drop")
+    s.add_argument("slug")
+    s.set_defaults(fn=cmd_drop)
+    a = p.parse_args()
+    try:
+        a.fn(a)
+    except Fail as e:
+        print(f"cards: {e}", file=sys.stderr)
+        sys.exit(e.code)
+    except OSError as e:
+        print(f"cards: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
