@@ -25,6 +25,7 @@ mine() { CLAUDE_PROJECTS_DIR="$CP" PI_SESSIONS_DIR="$PI" ZSH_HISTORY="$ZH" FRICT
 f() { jq -r "$2" <<<"$1"; }
 
 # --- fixtures ---------------------------------------------------------------
+TOK="abcdefTEST""TOKEN0123456789"
 cl() { jq -cn --arg ts "$1" --arg cwd "$2" --argjson m "$3" --arg t "$4" '{type:$t, timestamp:$ts, cwd:$cwd, sessionId:"s1", message:$m}'; }
 us() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"user",content:$c}')" user; }
 as() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"assistant",content:[{type:"text",text:$c}]}')" assistant; }
@@ -55,14 +56,21 @@ pm() { jq -cn --arg ts "$1" --argjson m "$2" '{type:"message", timestamp:$ts, me
   as 2026-10-15T07:31:20.000Z "$(long 'Fixed.')"
   us 2026-10-15T07:32:00.000Z "so where are we now with the retry queue work?"
   as 2026-10-15T07:32:20.000Z "$(long 'Status.')"
+  us 2026-10-14T10:00:00.000Z "call the status api with Bearer $TOK for the health page"
+  us 2026-10-15T10:00:00.000Z "call the status api with Bearer $TOK for the health page"
+  us 2026-10-15T10:05:00.000Z "call the status api with Bearer $TOK for the health page"
+  us 2026-10-15T10:05:00.000Z "call the status api with Bearer $TOK for the health page"
+  us 2026-10-15T07:50:00.000Z "explain how the token header gets built here"
+  as 2026-10-15T07:50:20.000Z "$(long "It sends Bearer $TOK in the header.")"
+  us 2026-10-15T11:00:00.000Z "run the nightly export for the reports"
   printf '%s\n' '{"type":"user","timestamp":"2026-10-15T07:40:00.000Z","message":{"role":"user","content":"check the mr queue and post the repl'; } >"$CP/-proj/s1.jsonl"
 
+us 2026-10-15T12:00:00.000Z "run the nightly export for the reports" >"$CP/-proj/s2.jsonl"
 { echo '{"type":"session","version":3,"id":"p1","timestamp":"2026-10-14T07:00:00.000Z","cwd":"/w/ECFX-88"}'
   pm 2026-10-14T09:00:00.000Z '{"role":"user","content":[{"type":"text","text":"check the mr queue and post the replies for ECFX-1011"}]}'
   pm 2026-10-15T09:00:00.000Z '{"role":"user","content":[{"type":"text","text":"what is the difference between a mutex and a semaphore?"}]}'
   pm 2026-10-15T09:00:30.000Z "$(jq -cn --arg c "$(long 'A mutex')" '{role:"assistant",content:[{type:"text",text:$c}]}')"; } >"$PI/--proj--/2026-10-14T07-00-00-000Z_p1.jsonl"
 
-TOK="abcdefTEST""TOKEN0123456789"
 { echo 'ls -la'; echo "curl -H 'Authorization: Bearer $TOK' https://example.test/api"; echo 'echo done'; } >"$ZH"
 printf 'clean line\nToken: Bearer %s\n' "$TOK" >"$WIKI/notes/leak.md"
 printf 'nothing to see\n' >"$WIKI/notes/clean.md"
@@ -93,6 +101,12 @@ assert_eq "2|2|low" "$(f "$g" '[.count,.days,.confidence]|join("|")')" "the 14-d
 OUT14=$(mine --date 2026-10-14)
 assert_eq "0" "$(jq '[.groups[]|select(.sig|test("rebase the branch"))]|length' <<<"$OUT14")" "a repeat with nothing on the mined date is not emitted"
 
+g=$(jq -c '[.groups[]|select(.sig|test("status api"))]|.[0]' <<<"$OUT")
+assert_eq "3|2" "$(f "$g" '[.count,.days]|join("|")')" "a prompt carrying a token still clusters (3 on 2 days) and a replayed entry counts once"
+assert_eq "yes" "$(yn "$g" '.samples[0]|test("<secret:bearer>")')" "the token in a prompt is replaced by a placeholder"
+g=$(jq -c '[.groups[]|select(.sig|test("nightly export"))]|.[0]' <<<"$OUT")
+assert_eq "2|1|low" "$(f "$g" '[.count,.days,.confidence]|join("|")')" "the same prompt in two sessions on one day counts twice"
+
 echo "coach-mine — restated"
 g=$(jq -c '[.groups[]|select(.kind=="restated")|select(.samples[0]|test("linter"))]|.[0]' <<<"$OUT")
 assert_eq "2|2|high|user" "$(f "$g" '[.count,.days,.confidence,.source]|join("|")')" "a rule restated on two days forms a restated group"
@@ -112,7 +126,7 @@ assert_eq "0" "$(grep -c "$TOK" "$SANDBOX/stderr"; true)" "the token is not in s
 assert_eq "0" "$(grep -c "Authorization" <<<"$OUT"; true)" "nor is the line around it"
 
 echo "coach-mine — concepts"
-assert_eq "2" "$(jq '.concepts|length' <<<"$OUT")" "an explain-question and a what-is question give a concept; a fix request and a status ping give none"
+assert_eq "3" "$(jq '.concepts|length' <<<"$OUT")" "explain and what-is questions (one answer quoting a token) give a concept; a fix request and a status ping give none"
 c=$(jq -c '.concepts[]|select(.question|test("retry queue"))' <<<"$OUT")
 assert_eq "claude|s1" "$(f "$c" '[.harness,.session]|join("|")')" "concept carries harness and session"
 assert_eq "yes" "$(yn "$c" '.answer|startswith("The retry queue")')" "the answer is the last assistant text of the turn, not the first"

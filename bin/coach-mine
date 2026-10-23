@@ -113,6 +113,12 @@ def is_ack(t):
     return len(w) < 4 or all(x in ACK_WORDS for x in w)
 
 
+def redact(t):
+    for name, rx in SECRET_PATTERNS:
+        t = rx.sub(f"<secret:{name}>", t)
+    return t
+
+
 def ticket_key(cwd):
     m = re.findall(r"[A-Z]{2,}-[0-9]+", cwd or "")
     return m[-1] if m else ""
@@ -159,7 +165,7 @@ def read_turns(path, harness):
                 continue
             ts = e.get("timestamp")
             d = local_date(ts)
-            yield {"role": role, "text": text_of(content).strip(), "date": d, "at": ts, "line": n,
+            yield {"role": role, "text": redact(text_of(content).strip()), "date": d, "at": ts, "line": n,
                    "cwd": cwd, "path": path}
 
 
@@ -191,8 +197,8 @@ def collect(date):
                 if t["date"] is None or not (since <= t["date"] <= date) or not realprompt(t["text"]):
                     continue
                 p = dict(t, harness=harness, session=session, answer="")
-                # resumed sessions replay the same prompt: one entry per (day, text)
-                k = (t["date"], t["text"])
+                # resumed sessions replay entries with their original timestamp: skip those replays
+                k = (t["at"], t["text"])
                 if k in seen:
                     continue
                 seen.add(k)
