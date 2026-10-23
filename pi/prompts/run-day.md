@@ -47,6 +47,9 @@ the user edits the diary too. `day-plan` opens today's diary in a tmux popup whe
   `ecfx/claude-components`.
 - The GitLab API returns 405 on merge: the user merges in the UI; for a merge item, give the MR
   link.
+- When the user says they want to work a tracked item themselves ("I'll take it", "hand off 18384"),
+  run the `/handoff` template yourself (read `~/.pi/agent/prompts/handoff.md` and follow it with the
+  item's key) instead of asking them to type it.
 - Each `bash` call is a new shell: set the variables a block uses (`T=$(date +%F)`, …) in that same
   call, or write literal values. Nothing set in an earlier call is still there.
 

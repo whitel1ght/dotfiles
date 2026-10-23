@@ -25,6 +25,7 @@ Paths used below (`T` is today's date, `date +%F`):
 - Every MR number in text you show the user is a markdown link with the repo in the link text, e.g. `[dashboard!2202](https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2202)`, never a bare `!2202`. Known paths: `ecfx/ecfx-backend`, `ecfx/ecfx-dashboard`, `ecfx/ecfx-admin`, `ecfx/ecfx-protobufs`, `ecfx/claude-components`.
 - Each Bash call is a new shell: re-set the variables a block uses in that same call, or use literal values. Nothing set in an earlier block is still there.
 - A GitLab API merge returns 405 on these repos: for a merge item, give the user the MR link to merge in the UI.
+- When the user says they want to work a tracked item themselves ("I'll take it", "hand off 18384"), run the handoff yourself with the Skill tool (`daily:handoff`, the item's key as the argument) instead of asking them to type it.
 
 ## 0. Start
 
@@ -64,7 +65,7 @@ notes:
 
    Only lines starting with `- ` are items; `notes:` and the indented lines under it carry `state_change` lines for `/end-day`.
 
-   `owner` is `main` (this session dispatches and checks the item) or `owner=external:<KEY>` (a side session works it after `/handoff`; the item is never dispatched, never gets a review-round agent, and has no agent id). It is optional on read and defaults to `main`; always write it.
+   `owner` is `main` (this session dispatches and checks the item) or `owner=external:<KEY>` (a side session works it after `/daily:handoff`; the item is never dispatched, never gets a review-round agent, and has no agent id). It is optional on read and defaults to `main`; always write it.
 
    `waiting=<service>` (`gitlab` or `jira`) is a ninth field, written only while an item is parked on an outage (section 6); drop it when the item resumes.
 
@@ -117,7 +118,7 @@ LOGF=~/wiki/work/projects/$P/log/$Q.md
 
 Trigger: a prompt line `[daily-event] review | ...` or `[daily-event] comment | ...` for an MR attached to a today item (the watcher only sends those; event line format: `[daily-event] <kind> | <repo>!<iid> | <TICKET> | <summary> | <url>`).
 
-If the item's run-state `owner` is `external:<KEY>`, do not spawn a review-round agent for it: its branch is in a side session. Tell the user the review arrived (MR link per the rule) and that `/pickup` in that session can address it, set `needs_you=yes`, and stop here.
+If the item's run-state `owner` is `external:<KEY>`, do not spawn a review-round agent for it: its branch is in a side session. Tell the user the review arrived (MR link per the rule) and that `/daily:pickup` in that session can address it, set `needs_you=yes`, and stop here.
 
 If the summary starts with `[approved by you — reply only, never review]` (`changes-since` marks it `approved_by_me`: someone else's MR we already approved), never start a review round or a re-review on that MR, now or later (D-011). If it asks us something, draft the answer and file it as a decision (`Post this reply on <repo>!<iid>?`, options `Post it` and `No`); otherwise do nothing. Stop here.
 
@@ -156,7 +157,7 @@ glab api --method POST "projects/<urlencoded path>/merge_requests/<iid>/discussi
 
 ## 7. Inbox (hand-offs, report-backs, off-plan work)
 
-Other Claude sessions and the terminal leave messages in `~/.local/state/run-day/inbox/` (`day-note`, `/report-back`). Process them when the prompt line `inbox: <N> new` arrives, when you start or resume, before handling any other event (section 6), and on every `/loop` tick when the mod is not active.
+Other Claude sessions and the terminal leave messages in `~/.local/state/run-day/inbox/` (`day-note`, `/daily:report-back`). Process them when the prompt line `inbox: <N> new` arrives, when you start or resume, before handling any other event (section 6), and on every `/loop` tick when the mod is not active.
 
 ```bash
 INBOX=~/.local/state/run-day/inbox

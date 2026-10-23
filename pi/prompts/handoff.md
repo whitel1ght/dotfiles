@@ -10,14 +10,14 @@ Run it in the main session (the one running `/run-day`). Writes the hand-off not
 the diary — asks nothing. Never write `~/wiki` beyond the item's diary line, and never touch the
 worktree's files.
 
-`<KEY>` is the argument in uppercase (`ECFX-18169`), `<key>` the lowercase form the run state uses.
+`<KEY>` is the argument in uppercase (`ECFX-18169`); a bare number (`18169`) is `ECFX-` plus the number, `<key>` the lowercase form the run state uses.
 
 Stop when any of these hold, and say which:
 
 - no run-state file `~/.local/state/run-day/$(date +%F).md`, or no `- <key> | ...` line in it:
   say `/handoff needs an item tracked by /run-day`
-- the line already has `owner=external:<KEY>` (already handed off): print the pickup command of
-  step 6 again and change nothing
+- the line already has `owner=external:<KEY>` (already handed off): do step 6 again and change
+  nothing
 - `worktree=-` (nothing was dispatched; there is no work to hand over)
 
 1. Collect progress from the worktree on that line, not from the agent, and do not wait for the
@@ -74,9 +74,17 @@ MR: <url or none>
    Edit only that line and keep its trailing refs last, then
    `~/.local/bin/diary-links ~/wiki/diary/$(date +%F).md`.
 
-6. Print the pickup command for the user, and tell them to run `/report-back done` (or `handback`)
-   in that session when they stop:
+6. Open the side session, and tell the user to run `/report-back done` (or `handback`) in it when
+   they stop. Inside tmux (`test -n "$TMUX"` succeeds) open a window in the current session and
+   focus it, with the literal values in the commands:
+
+```bash
+tmux display-message -p -t "$TMUX_PANE" '#{session_name}'
+tmux new-window -t "<session>:" -n <KEY> -c "<worktree>" 'pi -n <KEY> "/pickup <KEY>"'
+```
+
+   Outside tmux, print the command instead, for the user to run in a new terminal:
 
 ```
-cd <worktree> && pi -n <KEY> "/pickup"
+cd <worktree> && pi -n <KEY> "/pickup <KEY>"
 ```

@@ -336,7 +336,7 @@ write_marketplace() {
     entries="$( { [ -d "$VENDOR_ROOT/personal" ] && jq -n \
             '{name:"personal", description:"Personal skills from dotfiles.", source:"./personal"}'
         [ -f "$VENDOR_ROOT/daily/.claude-plugin/plugin.json" ] && jq -n \
-            '{name:"daily", description:"Daily workflow: /run-day, /review, /ask-wiki, jira-write and the plan panel.", source:"./daily"}'
+            '{name:"daily", description:"Daily workflow: /run-day, /daily:review, /daily:ask-wiki, jira-write and the plan panel.", source:"./daily"}'
         while IFS= read -r name; do
             [ -n "$name" ] || continue
             jq -n --arg n "$name" \

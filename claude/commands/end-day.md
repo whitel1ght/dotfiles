@@ -234,8 +234,8 @@ Do not run these; ask whether to:
 
 ```bash
 d=$(date +%-d); w=$(date +%u)
-[ "$w" = 5 ] && echo "offer: /review week"
-if { [ "$d" -eq 1 ] && [ "$w" -le 5 ]; } || { [ "$w" -eq 1 ] && [ "$d" -le 3 ]; }; then echo "offer: /review month"; fi
+[ "$w" = 5 ] && echo "offer: /daily:review week"
+if { [ "$d" -eq 1 ] && [ "$w" -le 5 ]; } || { [ "$w" -eq 1 ] && [ "$d" -le 3 ]; }; then echo "offer: /daily:review month"; fi
 ```
 
-Friday offers `/review week`; the first workday of a month offers `/review month`. Print nothing if neither line appears. End with the diary path, the projects consolidated, and the commit, then print the Standup paragraph once more (the `**Standup**` line and the paragraph, nothing else) as the very last thing, so I can copy it.
+Friday offers `/daily:review week`; the first workday of a month offers `/daily:review month`. Print nothing if neither line appears. End with the diary path, the projects consolidated, and the commit, then print the Standup paragraph once more (the `**Standup**` line and the paragraph, nothing else) as the very last thing, so I can copy it.

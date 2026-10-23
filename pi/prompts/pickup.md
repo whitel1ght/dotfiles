@@ -14,7 +14,7 @@ session owns the records.
 - Autonomy ends at a pushed branch and a Draft MR. Merging, marking ready, transitioning Jira,
   posting to Slack or replying on an MR all need the user.
 
-1. Resolve the key: `$ARGUMENTS` in uppercase if given, else
+1. Resolve the key: `$ARGUMENTS` in uppercase if given (a bare number, `18384`, is `ECFX-18384`), else
 
 ```bash
 git branch --show-current | rg -io '[a-z]+-[0-9]+' | head -1 | tr 'a-z' 'A-Z'
