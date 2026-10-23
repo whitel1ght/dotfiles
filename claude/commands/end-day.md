@@ -220,7 +220,7 @@ Finally end the run: move `~/.local/state/run-day/$DAY.md` into `~/.local/state/
 
 ## Land the coach's fixes
 
-The last step that changes anything, after the report is saved and the day committed. It lands the fixes the coach built in the background today (each one the user said yes to in /start-day), then commits the results it wrote to the ledger:
+The last step that changes anything, after the report is saved and the day committed. It lands the fixes the coach built in the background today (each one the user said yes to in /start-day), then commits the results it wrote to the ledger. Landing can re-run a fix's test suites, so give this Bash call a 10-minute timeout (`timeout: 600000`), not the 2-minute default:
 
 ```bash
 ~/.local/bin/coach-fix land

@@ -263,7 +263,8 @@ when there is no such file.
 
 The last step that changes anything, after the report is saved and the day committed. It lands the
 fixes the coach built in the background today (each one the user said yes to in /start-day), then
-commits the results it wrote to the ledger:
+commits the results it wrote to the ledger. Landing can re-run a fix's test suites, so give this
+bash call a 10-minute timeout (`timeout: 600` seconds), not a short default:
 
 ```bash
 ~/.local/bin/coach-fix land

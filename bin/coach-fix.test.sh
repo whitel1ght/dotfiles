@@ -28,7 +28,8 @@ export COACH_STATE_DIR="$SANDBOX/state/coach"
 export COACH_REPOS_DIR="$SANDBOX/projects"
 export RUN_DAY_STATE="$SANDBOX/state/run-day"
 export DIARY_DIR="$SANDBOX/diary"
-export COACH_HARNESS="$SANDBOX/harness"
+export COACH_HARNESS="$SANDBOX/hbin/claude"
+export SUITE_LOG="$SANDBOX/suite.log"
 export FAKE_TMUX_DIR="$SANDBOX/tmux"
 export COACH_STALE_GRACE=0
 export PATH="$SANDBOX/fakebin:$PATH"
@@ -62,14 +63,16 @@ esac
 EOF
 chmod +x "$SANDBOX/fakebin/tmux"
 
-# stub harness: logs its argument; with $SANDBOX/job.sh it runs that as the job
+# stub harness (as claude and as pi): logs its argument; with $SANDBOX/job.sh it runs that as the job
+mkdir -p "$SANDBOX/hbin"
 cat >"$COACH_HARNESS" <<EOF
 #!/bin/bash
 printf '%s\n' "\$*" >>"$SANDBOX/harness.log"
-f="\$(sed -E 's#^/fix-friction (F-[0-9]+) --auto\$#\\1#' <<<"\$1")"
+f="\$(sed -E 's#^/(daily:)?fix-friction (F-[0-9]+) --auto\$#\\2#' <<<"\$1")"
 [ ! -f "$SANDBOX/job.sh" ] || bash "$SANDBOX/job.sh" "\$f"
 EOF
 chmod +x "$COACH_HARNESS"
+cp "$COACH_HARNESS" "$SANDBOX/hbin/pi"
 
 cf() { "$SCRIPT" "$@" 2>"$SANDBOX/stderr"; }
 qget() { jq -r "if .$2 == null then \"\" else .$2 | tostring end" "$Q/$1.json" 2>/dev/null; }
@@ -114,6 +117,11 @@ mkrepo() { # name
   printf 'readme\n' >"$r/README.md"
   printf 'one\ntwo\nthree\n' >"$r/notes.txt"
   printf '#!/bin/bash\necho old\n' >"$r/bin/old"
+  mkdir -p "$r/tests"
+  printf 'echo "ran $(pwd -P)" >>"$SUITE_LOG"\n' >"$r/tests/ok.sh"
+  printf 'exit 1\n' >"$r/tests/red.sh"
+  printf 'sleep 8 &\necho $! >"$SUITE_LOG.child"\nwait\n' >"$r/tests/slow.sh"
+  printf '*.local\n' >"$r/.gitignore"
   cat >"$r/install.sh" <<'EOF'
 #!/bin/bash
 create_symlink() { ln -s "$1" "$2"; }
@@ -128,7 +136,7 @@ EOF
 
 setup() {
   rm -rf "$FRICTION_WIKI" "$SANDBOX/state" "$COACH_REPOS_DIR" "$WT" "$DIARY_DIR" "$FAKE_TMUX_DIR" "$HOME" \
-    "$SANDBOX/job.sh" "$SANDBOX/harness.log"
+    "$SANDBOX/job.sh" "$SANDBOX/harness.log" "$SUITE_LOG"
   mkdir -p "$FRICTION_WIKI" "$COACH_REPOS_DIR" "$WT" "$DIARY_DIR" "$FAKE_TMUX_DIR" "$HOME/.local/bin" "$RUN_DAY_STATE"
   mkentry F-001 "claude:tool_error:jq missing" false offered
   mkentry F-002 "claude:repeat:run the tests" false offered
@@ -149,7 +157,7 @@ branch() {
   git -C "$w" add -A && git -C "$w" commit -qm "fix: $f"
 }
 built() { # repo F [test-cmd]
-  cf built "$2" --repo "$1" --branch "coach-$2" --worktree "$WT/$1/coach-$2" --test-cmd "${3:-true}"
+  cf built "$2" --repo "$1" --branch "coach-$2" --worktree "$WT/$1/coach-$2" --test-cmd "${3:-bash tests/ok.sh}"
 }
 on_main() { # repo file content message: a commit straight on main
   printf '%s' "$3" >"$COACH_REPOS_DIR/$1/$2"; git -C "$COACH_REPOS_DIR/$1" add -A && git -C "$COACH_REPOS_DIR/$1" commit -qm "$4"
@@ -192,7 +200,7 @@ assert_eq "null" "$(jq -c .repo "$Q/F-001.json")" "repo is null until built"
 assert_eq "1" "$(ncalls)" "one tmux window started"
 LOG="$(cat "$FAKE_TMUX_DIR/log")"
 assert_has "new-window -d -n coach-F-001 -c $COACH_REPOS_DIR" "$LOG" "detached window coach-F-001 in the projects dir"
-assert_eq "$COACH_HARNESS '/fix-friction F-001 --auto'" "$(cat "$FAKE_TMUX_DIR/cmds")" "the window runs the harness with the auto prompt"
+assert_eq "$COACH_HARNESS '/daily:fix-friction F-001 --auto'" "$(cat "$FAKE_TMUX_DIR/cmds")" "claude gets the namespaced plugin command"
 for a in $STALE_ARGS; do assert_lacks " $a" "$(cat "$FAKE_TMUX_DIR/cmds")" "no permission flag $a"; done
 
 OUT="$(cf enqueue F-001)"; RC=$?
@@ -212,7 +220,9 @@ branch dotfiles F-001 notes.txt $'one\ntwo\nthree\nfour\n'
 built dotfiles F-001 >/dev/null; RC=$?
 assert_eq "0" "$RC" "built exits 0"
 assert_eq "built" "$(qget F-001 state)" "built marks the queue entry"
-assert_eq "coach-F-001|$WT/dotfiles/coach-F-001|dotfiles|true" "$(qget F-001 branch)|$(qget F-001 worktree)|$(qget F-001 repo)|$(qget F-001 test_cmd)" "built records branch, worktree, repo, test command"
+assert_eq "coach-F-001|$WT/dotfiles/coach-F-001|dotfiles|bash tests/ok.sh" "$(qget F-001 branch)|$(qget F-001 worktree)|$(qget F-001 repo)|$(qget F-001 test_cmd)" "built records branch, worktree, repo, test command"
+H="$(git -C "$DOT" rev-parse coach-F-001)"
+assert_eq "$H|$H" "$(qget F-001 head)|$(qget F-001 tested)" "built records the reviewed head as tested"
 assert_eq "landing" "$(fld F-001 status)" "built leaves the ledger at landing"
 assert_eq "running" "$(qget F-003 state)" "built starts the next queued job"
 assert_eq "2" "$(ncalls)" "two windows in all"
@@ -287,10 +297,10 @@ cat >"$SANDBOX/job.sh" <<EOF
 f="\$1"; r="$DOT"; w="$WT/dotfiles/coach-\$f"
 git -C "\$r" branch "coach-\$f" main && git -C "\$r" worktree add -q "\$w" "coach-\$f"
 echo "\$f" >"\$w/\$f.txt"; git -C "\$w" add -A && git -C "\$w" commit -qm "fix: \$f"
-"$SCRIPT" built "\$f" --repo dotfiles --branch "coach-\$f" --worktree "\$w" --test-cmd "test -f \$f.txt"
+"$SCRIPT" built "\$f" --repo dotfiles --branch "coach-\$f" --worktree "\$w" --test-cmd "bash tests/ok.sh"
 EOF
 cf enqueue F-001 >/dev/null
-assert_eq "/fix-friction F-001 --auto" "$(cat "$SANDBOX/harness.log")" "the harness gets the auto prompt"
+assert_eq "/daily:fix-friction F-001 --auto" "$(cat "$SANDBOX/harness.log")" "the harness gets the auto prompt"
 assert_eq "built" "$(qget F-001 state)" "the stub job built the branch"
 cf land --force-check >/dev/null
 assert_eq "landed" "$(qget F-001 state)" "the stub job's branch lands"
@@ -361,12 +371,12 @@ echo "land: main moved"
 setup
 cf enqueue F-001 >/dev/null
 branch dotfiles F-001 notes.txt $'one\ntwo\nthree\nfour\n'
-built dotfiles F-001 "touch $SANDBOX/suite-ran" >/dev/null
+built dotfiles F-001 >/dev/null
 on_main dotfiles README.md "readme 2" "docs: readme"
 OLD="$(git -C "$DOT" rev-parse --short main)"
 cf land >/dev/null
 assert_eq "landed" "$(qget F-001 state)" "a moved main: the branch is rebased and lands"
-assert_eq "yes" "$([ -f "$SANDBOX/suite-ran" ] && echo yes || echo no)" "the recorded suite ran after the rebase"
+assert_eq "ran $WT/dotfiles/coach-F-001" "$(cat "$SUITE_LOG" 2>/dev/null)" "the recorded suite ran once, in the worktree, after the rebase"
 assert_eq "readme 2|four" "$(cat "$DOT/README.md")|$(tail -1 "$DOT/notes.txt")" "main has both changes"
 assert_has "$OLD.." "$(fld F-001 fix)" "the range starts at the moved main"
 
@@ -391,7 +401,7 @@ echo "land: red tests after rebase"
 setup
 cf enqueue F-001 >/dev/null
 branch dotfiles F-001 notes.txt $'one\ntwo\nthree\nfour\n'
-built dotfiles F-001 "false" >/dev/null
+built dotfiles F-001 "bash tests/red.sh" >/dev/null
 on_main dotfiles README.md "readme 2" "docs: readme"
 BEFORE="$(snap dotfiles)"
 cf land >/dev/null
@@ -462,6 +472,108 @@ cf land >/dev/null
 assert_eq "landed|$URL" "$(fld F-002 status)|$(fld F-002 fix)" "an MR entry lands as its link"
 assert_eq "landed" "$(qget F-002 state)" "the queue entry is landed"
 assert_eq "$BEFORE" "$(snap dotfiles)" "no repo is touched for an MR"
+
+echo "run: harness prompt"
+setup
+COACH_HARNESS="$SANDBOX/hbin/pi" cf enqueue F-001 >/dev/null
+assert_eq "$SANDBOX/hbin/pi '/fix-friction F-001 --auto'" "$(cat "$FAKE_TMUX_DIR/cmds")" "pi gets the bare prompt command"
+setup
+COACH_PROMPT_CMD=/my:fix cf enqueue F-001 >/dev/null
+assert_eq "$COACH_HARNESS '/my:fix F-001 --auto'" "$(cat "$FAKE_TMUX_DIR/cmds")" "COACH_PROMPT_CMD overrides it"
+setup
+COACH_PROMPT_CMD="/x'; rm -rf ~; '" cf enqueue F-001 >/dev/null
+assert_eq "failed|0" "$(qget F-001 state)|$(ncalls)" "a COACH_PROMPT_CMD that is not a plain command is never run"
+
+echo "run: stalled job"
+setup
+cf enqueue F-001 >/dev/null
+cf enqueue F-002 >/dev/null
+jq '.started_epoch = 1000' "$Q/F-001.json" >"$SANDBOX/q.tmp" && mv "$SANDBOX/q.tmp" "$Q/F-001.json"
+cf run >/dev/null
+assert_eq "failed|job stalled in tmux window coach-F-001 (waiting on a prompt?)" "$(qget F-001 state)|$(qget F-001 reason)" "a job running past COACH_JOB_MAX fails as stalled"
+assert_eq "failed" "$(fld F-001 status)" "the ledger says so"
+assert_eq "yes" "$(grep -qx coach-F-001 "$FAKE_TMUX_DIR/windows" && echo yes || echo no)" "its window is left open"
+assert_eq "running" "$(qget F-002 state)" "the next job starts"
+
+echo "enqueue: the queue file cannot be written"
+setup
+mkdir -p "$Q" && chmod 555 "$Q"
+cf enqueue F-001 >/dev/null; RC=$?
+chmod 755 "$Q"
+assert_eq "1|offered" "$RC|$(fld F-001 status)" "an unwritable queue exits non-zero before the ledger goes landing"
+setup
+mkdir -p "$SANDBOX/badjq"
+printf '#!/bin/bash\n[ "$1" != -n ] || [ "$4" != F-001 ] || exit 5\nexec %q "$@"\n' "$(command -v jq)" >"$SANDBOX/badjq/jq"
+chmod +x "$SANDBOX/badjq/jq"
+PATH="$SANDBOX/badjq:$PATH" cf enqueue F-001 >/dev/null; RC=$?
+assert_eq "1|offered|no" "$RC|$(fld F-001 status)|$([ -e "$Q/F-001.json" ] && echo yes || echo no)" "a failed queue-file write exits non-zero before the ledger goes landing"
+
+echo "built: test command"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 notes.txt "x"
+printf 'x\n' >"$WT/dotfiles/coach-F-001/tests/untracked.sh"
+for c in "true" "bash tests/ok.sh; rm -rf x" "bash tests/ok.sh | cat" 'bash $(echo tests/ok.sh)' "bash tests/untracked.sh" \
+  "bash ../dotfiles/tests/ok.sh" "bash /bin/ls" "bash tests/ok.sh &&  bash tests/ok.sh" "bash tests/ok.sh && rm -rf x" "bash  tests/ok.sh"; do
+  cf built F-001 --repo dotfiles --branch coach-F-001 --worktree "$WT/dotfiles/coach-F-001" --test-cmd "$c" >/dev/null; RC=$?
+  assert_eq "2|running" "$RC|$(qget F-001 state)" "refused test command: $c"
+done
+built dotfiles F-001 "bash tests/ok.sh && bash tests/ok.sh" >/dev/null; RC=$?
+assert_eq "0|built" "$RC|$(qget F-001 state)" "bash items joined by && are accepted"
+
+echo "land: only the reviewed head"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 notes.txt "x"
+built dotfiles F-001 >/dev/null
+printf 'later\n' >"$WT/dotfiles/coach-F-001/later.txt"
+git -C "$WT/dotfiles/coach-F-001" add -A && git -C "$WT/dotfiles/coach-F-001" commit -qm "unreviewed"
+BEFORE="$(snap dotfiles)"
+cf land >/dev/null
+assert_eq "failed|branch changed after review" "$(qget F-001 state)|$(qget F-001 reason)" "a commit after built is never landed"
+assert_eq "$BEFORE" "$(snap dotfiles)" "main checkout byte-identical"
+
+echo "land: an interrupted re-test runs again"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 notes.txt $'one\ntwo\nthree\nfour\n'
+built dotfiles F-001 >/dev/null
+on_main dotfiles README.md "readme 2" "docs: readme"
+git -C "$WT/dotfiles/coach-F-001" rebase -q main
+R="$(git -C "$DOT" rev-parse coach-F-001)"
+jq --arg r "$R" '.rebased_head = $r | .tested = null' "$Q/F-001.json" >"$SANDBOX/q.tmp" && mv "$SANDBOX/q.tmp" "$Q/F-001.json"
+cf land >/dev/null
+assert_eq "landed" "$(qget F-001 state)" "the rebased head from an earlier land is accepted"
+assert_eq "ran $WT/dotfiles/coach-F-001" "$(cat "$SUITE_LOG" 2>/dev/null)" "and its tests run before it lands"
+
+echo "land: test timeout"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 notes.txt $'one\ntwo\nthree\nfour\n'
+built dotfiles F-001 "bash tests/slow.sh" >/dev/null
+on_main dotfiles README.md "readme 2" "docs: readme"
+BEFORE="$(snap dotfiles)"
+T0="$(date +%s)"
+COACH_TEST_TIMEOUT=1 cf land >/dev/null
+T1="$(date +%s)"
+assert_has "tests timed out" "$(qget F-001 reason)" "a suite over COACH_TEST_TIMEOUT fails"
+assert_eq "yes" "$([ $((T1 - T0)) -lt 7 ] && echo yes || echo no)" "land does not wait for it"
+assert_eq "no" "$(kill -0 "$(cat "$SUITE_LOG.child")" 2>/dev/null && echo yes || echo no)" "the suite's children are killed too"
+assert_eq "$BEFORE" "$(snap dotfiles)" "main checkout byte-identical"
+
+echo "land: an ignored file in the way"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 notes.txt "x"
+printf 'branch\n' >"$WT/dotfiles/coach-F-001/conf.local"
+git -C "$WT/dotfiles/coach-F-001" add -f conf.local && git -C "$WT/dotfiles/coach-F-001" commit -qm "conf"
+built dotfiles F-001 >/dev/null
+printf 'mine\n' >"$DOT/conf.local"
+BEFORE="$(snap dotfiles)"
+cf land >/dev/null
+assert_eq "failed|uncommitted edits in conf.local" "$(qget F-001 state)|$(qget F-001 reason)" "an ignored local file the branch adds blocks the landing"
+assert_eq "mine" "$(cat "$DOT/conf.local")" "and is not overwritten"
+assert_eq "$BEFORE" "$(snap dotfiles)" "main checkout byte-identical"
 
 echo "land: then run"
 setup

@@ -28,6 +28,12 @@ for f in "$C" "$P"; do
   has "$f" "no reviewers" "$side: requests no reviewers"
   has "$f" "mr-description" "$side: writes the description with mr-description"
   lacks "$f" "dangerously" "$side: no permission bypass"
+  has "$f" '``- `<repo>:coach-$F` <what changes>``' "$side: docs go in as an Unfinished line until it lands"
+  has "$f" "only \`bash <path>\` items joined by \` && \`" "$side: the test command form coach-fix accepts"
+  has "$f" "Commit nothing on the branch after \`built\`" "$side: the reviewed head is final"
+  has "$f" 'cd "$W" && glab mr create --draft --source-branch coach-$F' "$side: MR from the worktree with its source branch"
+  lacks "$f" '--title "Draft:' "$side: no double Draft prefix"
 done
+has "$C" "/daily:fix-friction F-NNN --auto" "commands: names the namespaced command the job runs"
 
 finish

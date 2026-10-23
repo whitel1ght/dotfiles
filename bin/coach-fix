@@ -16,10 +16,14 @@
 #          ledger to `landing` and calls run.
 # run      one job at a time. A `running` entry whose tmux window `coach-F-NNN` is gone (and
 #          that started over $COACH_STALE_GRACE seconds ago, default 30) fails "job ended without
-#          a result". With nothing running it takes the oldest `queued` entry, re-reads the
+#          a result"; one whose window is still open after $COACH_JOB_MAX seconds (default 6 h)
+#          fails "job stalled in tmux window coach-F-NNN (waiting on a prompt?)", the window
+#          left open. With nothing running it takes the oldest `queued` entry, re-reads the
 #          ledger (safety without approval, or a secret entry, fails it), marks it `running` and
 #          opens a detached window: tmux new-window -d -n coach-F-NNN -c $COACH_REPOS_DIR
-#          "$COACH_HARNESS '/fix-friction F-NNN --auto'". The harness (default `claude`) runs
+#          "$COACH_HARNESS '<cmd> F-NNN --auto'", <cmd> `/daily:fix-friction` (Claude Code knows
+#          a plugin command only namespaced) or `/fix-friction` when the harness is `pi`;
+#          $COACH_PROMPT_CMD overrides it. The harness (default `claude`) runs
 #          interactively under the user's own permission settings; a COACH_HARNESS carrying a
 #          permission flag (-p, --print, --dangerously-*, --permission-mode) is never started.
 #          No tmux server: the entry fails "needs tmux". Returns at once.
@@ -27,20 +31,28 @@
 #          articles (main checkout $COACH_REPOS_DIR/<repo>), the branch coach-F-NNN, checked out
 #          in W, a worktree of that checkout, with commits over main; anything else fails the
 #          entry ("repo not allowed: <name>", ...). claude-components only as --mr URL (a draft
-#          MR in ecfx/claude-components; recorded, never merged). The ledger stays `landing`.
-#          Then run.
+#          MR in ecfx/claude-components; recorded, never merged). --test-cmd must be
+#          `bash <path>` items joined by ` && `, each path relative and tracked in W; anything
+#          else is refused (exit 2, the entry stays running so the job can fix it). The branch
+#          head is recorded as `head` (and `tested`). The ledger stays `landing`. Then run.
 # fail     the job gives up: queue and ledger `failed` with the reason. Then run.
 # land     a no-op (exit 0, "a day session is running; landing waits") while
 #          $RUN_DAY_STATE/<today>.md exists and the diary $DIARY_DIR/<today>.md has no
 #          `<!-- daily-report:start -->` yet; --force-check skips only that window check, for a
 #          manual run. Each `built` entry, oldest first:
 #          - MR: ledger `landed` with the MR link in `fix`.
-#          - branch: the main checkout must be on main. If main moved past the branch's base,
-#            the branch is rebased onto main in its worktree and the recorded --test-cmd re-run
-#            there; a conflict (the rebase is aborted) or red tests fail it. Uncommitted edits
-#            (staged, unstaged or untracked) in the main checkout to any file the branch touches
-#            fail it: "uncommitted edits in <files>". Otherwise `git merge --ff-only`. A failure
-#            leaves the main checkout as it was, and the worktree and branch for a look.
+#          - branch: the main checkout must be on main, and the branch head must be the
+#            recorded `head` or the `rebased_head` an earlier land made from it, else "branch
+#            changed after review". If main moved past the branch's base, the branch is rebased
+#            onto main in its worktree (a conflict is aborted and fails it) and the new head
+#            recorded untested. Whenever the head is not `tested`, the test items run with bash
+#            in the worktree, no stdin, in their own process group, killed after
+#            $COACH_TEST_TIMEOUT seconds (default 600: "tests timed out"); red fails it, green
+#            records `tested`. Uncommitted edits (staged, unstaged, untracked or ignored) in the
+#            main checkout to any file the branch touches fail it: "uncommitted edits in
+#            <files>". Otherwise `git merge --ff-only --no-overwrite-ignore`, and the queue entry
+#            is `landed` at once. A failure leaves the main checkout as it was, and the worktree
+#            and branch for a look.
 #          - after the merge (dotfiles): each bin/<f> the branch adds that install.sh links
 #            (a `create_symlink "$DOTFILES_DIR/bin/<f>" "$HOME/.local/bin/<f>"` line) gets
 #            `ln -sfn <checkout>/bin/<f> ~/.local/bin/<f>`. Any other change to install.sh (a
@@ -52,7 +64,8 @@
 #
 # Queue: $COACH_STATE_DIR/queue/F-NNN.json (default ~/.local/state/coach) {id, repo,
 # approved_safety, queued_at, state: queued|running|built|landed|failed, branch, worktree,
-# test_cmd, mr, fix, reason, started_at, started_epoch, updated_at}. The ledger is written only
+# test_cmd, mr, head, rebased_head, tested, fix, reason, started_at, started_epoch, updated_at}.
+# The ledger is written only
 # through friction-ledger set ($FRICTION_LEDGER, entries in $FRICTION_WIKI).
 set -euo pipefail
 
@@ -63,6 +76,8 @@ COACH_STATE_DIR="${COACH_STATE_DIR:-$HOME/.local/state/coach}"
 COACH_HARNESS="${COACH_HARNESS:-claude}"
 COACH_REPOS_DIR="${COACH_REPOS_DIR:-$HOME/projects}"
 COACH_STALE_GRACE="${COACH_STALE_GRACE:-30}"
+COACH_JOB_MAX="${COACH_JOB_MAX:-21600}"
+COACH_TEST_TIMEOUT="${COACH_TEST_TIMEOUT:-600}"
 RUN_DAY_STATE="${RUN_DAY_STATE:-$HOME/.local/state/run-day}"
 DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
 QUEUE="$COACH_STATE_DIR/queue"
@@ -138,13 +153,23 @@ harness_flag() { # prints the permission flag COACH_HARNESS carries, if any
   done
 }
 
+# Claude Code resolves the daily plugin's command only namespaced; pi's prompt is bare
+prompt_cmd() {
+  if [ -n "${COACH_PROMPT_CMD:-}" ]; then echo "$COACH_PROMPT_CMD"; return; fi
+  local h="${COACH_HARNESS%% *}"
+  case "${h##*/}" in pi) echo /fix-friction ;; *) echo /daily:fix-friction ;; esac
+}
+
 cmd_run() {
   mkdir -p "$QUEUE"
   lock run || { echo "another coach-fix run is busy; it starts the next job"; return 0; }
-  local wins id start="" flag t; wins="$(windows)"; t="$(date +%s)"
+  local wins id start="" flag t age; wins="$(windows)"; t="$(date +%s)"
   for id in $(ids_in running); do
-    [ $((t - $(qget "$id" started_epoch | sed 's/^$/0/'))) -ge "$COACH_STALE_GRACE" ] || continue
-    grep -qxF "coach-$id" <<<"$wins" || mark_failed "$id" "job ended without a result"
+    age=$((t - $(qget "$id" started_epoch | sed 's/^$/0/')))
+    [ "$age" -ge "$COACH_STALE_GRACE" ] || continue
+    if ! grep -qxF "coach-$id" <<<"$wins"; then mark_failed "$id" "job ended without a result"
+    elif [ "$age" -ge "$COACH_JOB_MAX" ]; then mark_failed "$id" "job stalled in tmux window coach-$id (waiting on a prompt?)"
+    fi
   done
   id="$(ids_in running | head -1)"
   if [ -n "$id" ]; then unlock run; echo "$id is running; the next job waits"; return 0; fi
@@ -155,6 +180,7 @@ cmd_run() {
     if [ "$(entry_kind "$id")" = secret ]; then mark_failed "$id" "needs the user: follow the proposal's steps"; continue; fi
     flag="$(harness_flag)"
     if [ -n "$flag" ]; then mark_failed "$id" "COACH_HARNESS carries the permission flag $flag; the job never starts with one"; continue; fi
+    if ! [[ "$(prompt_cmd)" =~ ^/[A-Za-z0-9:_-]+$ ]]; then mark_failed "$id" "bad COACH_PROMPT_CMD: $(prompt_cmd)"; continue; fi
     if ! tmux_up; then mark_failed "$id" "needs tmux"; continue; fi
     qset "$id" '.state = "running" | .started_at = $now | .started_epoch = ($e | tonumber)' --arg e "$(date +%s)"
     start="$id"; break
@@ -162,7 +188,7 @@ cmd_run() {
   unlock run
   [ -n "$start" ] || return 0
   local dir="$COACH_REPOS_DIR"; [ -d "$dir" ] || dir="$HOME"
-  if tmux new-window -d -n "coach-$start" -c "$dir" "$COACH_HARNESS '/fix-friction $start --auto'"; then
+  if tmux new-window -d -n "coach-$start" -c "$dir" "$COACH_HARNESS '$(prompt_cmd) $start --auto'"; then
     echo "$start: started in tmux window coach-$start"
   else
     mark_failed "$start" "could not open the tmux window"
@@ -195,10 +221,13 @@ cmd_enqueue() {
     echo "coach-fix: $id loosens a safety control; queue it only after the user's explicit yes, with --approved-safety" >&2
     exit 3
   fi
-  local f tmp; f="$(qfile "$id")"; tmp="$(mktemp "$f.XXXXXX")"
-  jq -n --arg id "$id" --argjson a "$approved" --arg t "$(now)" \
+  local f tmp; f="$(qfile "$id")"; tmp="$(mktemp "$f.XXXXXX")" || die "could not write the queue in $QUEUE"
+  if ! jq -n --arg id "$id" --argjson a "$approved" --arg t "$(now)" \
     '{id: $id, repo: null, approved_safety: $a, queued_at: $t, state: "queued", branch: null, worktree: null,
-      test_cmd: null, mr: null, fix: null, reason: null, updated_at: $t}' >"$tmp" && mv "$tmp" "$f"
+      test_cmd: null, mr: null, head: null, tested: null, fix: null, reason: null, updated_at: $t}' >"$tmp" ||
+    ! mv "$tmp" "$f"; then
+    rm -f "$tmp"; die "could not write $f; nothing queued"
+  fi
   if ! "$FRICTION_LEDGER" set "$id" --status landing >/dev/null; then
     rm -f "$f"; die "could not set $id to landing in the ledger; nothing queued"
   fi
@@ -216,6 +245,53 @@ check_branch() { # id repo branch worktree: prints why it cannot land, nothing w
   [ -n "$common" ] && [ "$(cd "$common" && pwd -P)" = "$(cd "$m/.git" && pwd -P)" ] || { echo "$w is not a worktree of $m"; return; }
   [ "$(git -C "$w" symbolic-ref -q --short HEAD || true)" = "$b" ] || { echo "$w is not on $b"; return; }
   [ "$(git -C "$m" rev-list --count "main..$b" 2>/dev/null || echo 0)" -gt 0 ] || { echo "no commits on $b over main"; return; }
+}
+
+test_items() { # cmd: one path per line, from "bash <path> && bash <path> ..."
+  local rest="$1" item
+  while :; do
+    item="${rest%% && *}"
+    echo "${item#bash }"
+    [ "$item" != "$rest" ] || return 0
+    rest="${rest#* && }"
+  done
+}
+
+check_test_cmd() { # worktree cmd: prints why the test command is refused, nothing when it is fine
+  local path n=0 items
+  items="$(test_items "$2")"
+  while IFS= read -r path; do
+    n=$((n + 1))
+    if ! [[ "$path" =~ ^[A-Za-z0-9._][A-Za-z0-9._/-]*$ ]] || [[ "/$path/" == */../* ]]; then
+      echo "the test command must be 'bash <repo path>' items joined by ' && ', got: $2"; return
+    fi
+    git -C "$1" ls-files --error-unmatch -- "$path" >/dev/null 2>&1 || { echo "not a tracked file in $1: $path"; return; }
+  done <<<"$items"
+  [ "$(printf 'bash %s && ' $items)" = "$2 && " ] || echo "the test command must be 'bash <repo path>' items joined by ' && ', got: $2"
+}
+
+run_tests() { # worktree cmd: runs each item with bash in the worktree, no stdin
+  local path
+  cd "$1" || exit 1
+  while IFS= read -r path; do bash "$path" </dev/null || exit 1; done <<<"$(test_items "$2")"
+}
+
+# runs "$@" in its own process group; kills the whole group after secs (exit 124)
+with_timeout() { # secs log cmd...
+  local secs="$1" log="$2" pid i=0; shift 2
+  set -m
+  "$@" </dev/null >>"$log" 2>&1 &
+  pid=$!
+  set +m
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$i" -ge $((secs * 5)) ]; then
+      kill -TERM -- "-$pid" 2>/dev/null || true; sleep 1; kill -KILL -- "-$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 0.2; i=$((i + 1))
+  done
+  wait "$pid"
 }
 
 cmd_built() {
@@ -245,8 +321,11 @@ cmd_built() {
     if [[ "$LAND_REPOS" != *" $repo "* ]]; then mark_failed "$id" "repo not allowed: $repo"; cmd_run; exit 1; fi
     why="$(check_branch "$id" "$repo" "$branch" "$wt")"
     if [ -n "$why" ]; then mark_failed "$id" "$why"; cmd_run; exit 1; fi
-    qset "$id" '.state = "built" | .repo = $r | .branch = $b | .worktree = $w | .test_cmd = $c' \
-      --arg r "$repo" --arg b "$branch" --arg w "$(cd "$wt" && pwd -P)" --arg c "$test_cmd"
+    why="$(check_test_cmd "$wt" "$test_cmd")"
+    if [ -n "$why" ]; then echo "coach-fix: $why" >&2; exit 2; fi
+    local head; head="$(git -C "$COACH_REPOS_DIR/$repo" rev-parse "refs/heads/$branch")"
+    qset "$id" '.state = "built" | .repo = $r | .branch = $b | .worktree = $w | .test_cmd = $c | .head = $h | .tested = $h' \
+      --arg r "$repo" --arg b "$branch" --arg w "$(cd "$wt" && pwd -P)" --arg c "$test_cmd" --arg h "$head"
   fi
   echo "$id built; it lands after the day"
   cmd_run
@@ -320,27 +399,42 @@ land_one() { # id; returns 0 whatever happens to the entry
   if [ "$(git -C "$m" symbolic-ref -q --short HEAD || true)" != main ]; then mark_failed "$id" "main checkout not on main"; return 0; fi
   if [ -n "$(git -C "$wt" status --porcelain --untracked-files=no)" ]; then mark_failed "$id" "uncommitted edits in the worktree $wt"; return 0; fi
   mkdir -p "$LOGS"; log="$LOGS/$id.land.log"; : >"$log"
+  # only the head the job built and its reviewer approved, or the rebase of it made here, lands
+  local head rebased tested cur rc=0
+  head="$(qget "$id" head)"; rebased="$(qget "$id" rebased_head)"; tested="$(qget "$id" tested)"
+  cur="$(git -C "$m" rev-parse "refs/heads/$branch")"
+  if [ -z "$head" ] || { [ "$cur" != "$head" ] && [ "$cur" != "$rebased" ]; }; then
+    mark_failed "$id" "branch changed after review"; return 0
+  fi
+  why="$(check_test_cmd "$wt" "$test_cmd")"
+  if [ -n "$why" ]; then mark_failed "$id" "$why"; return 0; fi
   old="$(git -C "$m" rev-parse main)"
   if [ "$(git -C "$m" merge-base main "$branch" || true)" != "$old" ]; then
     if ! git -C "$wt" rebase main >>"$log" 2>&1; then
       git -C "$wt" rebase --abort >>"$log" 2>&1 || true
       mark_failed "$id" "rebase onto main hit a conflict (log: $log)"; return 0
     fi
-    if ! (cd "$wt" && bash -c "$test_cmd") >>"$log" 2>&1; then
-      mark_failed "$id" "tests failed after the rebase onto main: $test_cmd (log: $log)"; return 0
-    fi
+    cur="$(git -C "$m" rev-parse "refs/heads/$branch")"; tested=""
+    qset "$id" '.rebased_head = $c | .tested = null' --arg c "$cur"
+  fi
+  if [ "$cur" != "$tested" ]; then
+    with_timeout "$COACH_TEST_TIMEOUT" "$log" run_tests "$wt" "$test_cmd" || rc=$?
+    if [ "$rc" = 124 ]; then mark_failed "$id" "tests timed out after ${COACH_TEST_TIMEOUT}s: $test_cmd (log: $log)"; return 0; fi
+    if [ "$rc" != 0 ]; then mark_failed "$id" "tests failed on the rebased branch: $test_cmd (log: $log)"; return 0; fi
+    qset "$id" '.tested = $c' --arg c "$cur"
   fi
   local dirty=$'\n'
-  while IFS= read -r -d '' rec; do dirty="$dirty${rec:3}"$'\n'; done < <(git -C "$m" status --porcelain=v1 -z --untracked-files=all --no-renames)
+  while IFS= read -r -d '' rec; do dirty="$dirty${rec:3}"$'\n'; done < <(git -C "$m" status --porcelain=v1 -z --untracked-files=all --ignored --no-renames)
   while IFS= read -r -d '' f; do
     [[ "$dirty" != *$'\n'"$f"$'\n'* ]] || files="${files:+$files, }$f"
   done < <(git -C "$m" diff --name-only -z --no-renames "$old" "$branch")
   if [ -n "$files" ]; then mark_failed "$id" "uncommitted edits in $files"; return 0; fi
-  if ! git -C "$m" merge --ff-only -q "$branch" >>"$log" 2>&1; then
+  if ! git -C "$m" merge --ff-only --no-overwrite-ignore -q "$branch" >>"$log" 2>&1; then
     mark_failed "$id" "fast-forward of main failed (log: $log)"; return 0
   fi
   new="$(git -C "$m" rev-parse main)"
   range="$(git -C "$m" rev-parse --short "$old")..$(git -C "$m" rev-parse --short "$new")"
+  qset "$id" '.state = "landed" | .fix = $f' --arg f "$range"
   if [ "$repo" = dotfiles ]; then
     notes="$(link_new_bins "$m" "$old" "$new"; install_note "$m" "$old" "$new")"
   fi
@@ -348,7 +442,7 @@ land_one() { # id; returns 0 whatever happens to the entry
   git -C "$m" branch -q -d "$branch" >>"$log" 2>&1 || notes="$notes"$'\n'"could not delete the branch $branch"
   notes="$(sed '/^$/d' <<<"$notes" | sort -u | paste -sd ';' - | sed 's/;/; /g')"
   ledger "$id" --status landed --fix "$range" --reason "$notes"
-  qset "$id" '.state = "landed" | .fix = $f | .reason = (if $n == "" then null else $n end)' --arg f "$range" --arg n "$notes"
+  qset "$id" '.reason = (if $n == "" then null else $n end)' --arg n "$notes"
   echo "$id: landed $range${notes:+ ($notes)}"
 }
 

@@ -86,7 +86,7 @@ what to change.
 
 ## Auto mode (`--auto`)
 
-`coach-fix` starts this in a tmux window `coach-$F` after the user said yes to the coach's suggestion
+`coach-fix` starts this (as `/fix-friction F-NNN --auto`) in a tmux window `coach-$F` after the user said yes to the coach's suggestion
 in /start-day. It runs unattended: it never asks the user anything (nobody is watching), never
 merges, and never pushes (the claude-components branch below is the one exception). It ends with
 exactly one of these, and only this session calls them:
@@ -120,7 +120,13 @@ reports the result. Do not write the ledger yourself. `F` is the first argument.
 3. **Implement** as in step 3 above, with `cwd: "<W>"` (a `worker` subagent on a capable coding
    model, the same brief: lowest rung, a test that fails before the fix, the covering suites,
    commits on the branch). Add to the brief: change nothing the proposal does not ask for, and never
-   loosen a guard, hook or permission rule it does not name. Check the result yourself as in step 3.
+   loosen a guard, hook or permission rule it does not name. One change to the wiki rule: the fix
+   has not landed yet, so do not rewrite any `work/system/` or `tools/` page; add one line under
+   `## Unfinished` of each system page that covers the changed files,
+   ``- `<repo>:coach-$F` <what changes>`` (docs-check accepts that on a branch), committed with
+   `wiki-commit --by pi`. Once the branch has landed and is deleted, `system-check` reports the
+   entry and /end-day's "Check the system" folds it into the page. Check the result yourself as in
+   step 3.
 4. **Review.** One fresh reviewer on a different model tier from the implementer:
    `subagent({ role: "reviewer", model, task, cwd: "<W>", label: "$F-review" })`, with `model` an
    exact `provider/id` from the live list that is not the implementer's and is at least as strong,
@@ -128,25 +134,29 @@ reports the result. Do not write the ledger yourself. `F` is the first argument.
    `approved` or numbered findings. Findings go to a worker (the brief plus the findings), then the
    suites again, then the same review. At most two fix rounds; not approved after the second, or
    suites still red → `coach-fix fail $F --reason "<the open findings or the failing suite>"`.
-5. **Built.** Green and approved: `--test-cmd` is the covering suites as one shell command run from
-   `$W`, with no live model or network (for example
-   `bin/coach-fix.test.sh && bin/friction-ledger.test.sh`); landing re-runs it if main moved. Then:
+5. **Built.** Green and approved, commit everything, then build `--test-cmd` from the covering
+   suites: only `bash <path>` items joined by ` && `, each path a test file tracked in `$W`,
+   relative to it, needing no live model or network (for example
+   `bash bin/coach-fix.test.sh && bash bin/friction-ledger.test.sh`). Anything else is refused
+   (exit 2): correct it and call `built` again. Landing re-runs it, with a time limit, if main
+   moved. Commit nothing on the branch after `built`: landing refuses a branch that changed after
+   review. Then:
 
    ```bash
    ~/.local/bin/coach-fix built $F --repo <repo> --branch coach-$F --worktree $W --test-cmd "<cmd>"
    ```
 
-   If it exits non-zero it has already marked the entry failed: say its message and stop.
+   If it exits 1 it has already marked the entry failed: say its message and stop.
 
 **claude-components** (the team's repo; nothing from the fix is copied into dotfiles):
 `wt add claude-components coach-$F` (it branches from origin's default),
 `W=~/projects/worktrees/claude-components/coach-$F`; steps 3 and 4 there with that repo's tests.
 Then write the description with the `mr-description` skill, push the branch
 (`git -C $W push -u origin coach-$F`, the only push in this mode) and open a draft MR assigned to
-the user, with no reviewers:
+the user, with no reviewers, from the worktree (`--draft` adds the "Draft:" prefix itself):
 
 ```bash
-glab mr create --draft --assignee "$(glab api user | jq -r .username)" --title "Draft: <subject>" --description "$(cat <description file>)" --yes
+cd "$W" && glab mr create --draft --source-branch coach-$F --assignee "$(glab api user | jq -r .username)" --title "<subject>" --description "$(cat <description file>)" --yes
 ```
 
 Never undraft it, merge it or request reviewers. Then `~/.local/bin/coach-fix built $F --mr <the MR url>`.
