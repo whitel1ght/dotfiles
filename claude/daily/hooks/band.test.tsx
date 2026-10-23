@@ -4,11 +4,19 @@ import { DIARY, RUN_STATE } from '../mod/fixtures.ts'
 
 const WIKI = '/home/t/wiki/diary/2026-10-08.md'
 const STATE = '/home/t/.local/state/run-day/2026-10-08.md'
+const OWNER = '/home/t/.local/state/run-day/2026-10-08.owner'
+const ME = 'sess-me'
 
 type Run = { exitCode: number; stdout: string; stderr: string }
 
-async function start($: any, on: any, opts: { day: Run | (() => Run); refuse?: boolean; frictionDenied?: boolean }) {
+type Opts = { day: Run | (() => Run); refuse?: boolean; frictionDenied?: boolean; owner?: string | null; writeFails?: boolean; inbox?: string }
+
+async function start($: any, on: any, opts: Opts) {
   const clock = mock.clock(on)
+  const files: Record<string, string> = {}
+  const owner = opts.owner === undefined ? ME : opts.owner
+  if (owner !== null) files[OWNER] = `${owner}\n`
+  const prompts: string[] = []
   const calls: string[][] = []
   const toasts: string[] = []
   const logs: string[] = []
@@ -17,9 +25,23 @@ async function start($: any, on: any, opts: { day: Run | (() => Run); refuse?: b
   on('process.run', (_$: any, e: any) => {
     calls.push(e.argv)
     if (opts.frictionDenied && isFriction(e.argv)) return { deny: 'friction exploded' }
+    if (opts.inbox !== undefined && isInboxLs(e.argv)) return { value: { exitCode: 0, stdout: opts.inbox, stderr: '' } } as never
     return { value: e.argv[0] === 'date' ? { exitCode: 0, stdout: '2026-10-08\n', stderr: '' } : typeof opts.day === 'function' ? (isChangesSince(e.argv) ? opts.day() : OK) : opts.day } as never
   })
-  on('fs.read', (_$: any, e: any) => (e.path === WIKI ? { value: DIARY } : e.path === STATE ? { value: RUN_STATE } : { deny: 'ENOENT' }))
+  on('fs.read', (_$: any, e: any) =>
+    e.path === WIKI ? { value: DIARY } : e.path === STATE ? { value: RUN_STATE } : e.path in files ? { value: files[e.path] } : { deny: 'ENOENT' },
+  )
+  on('fs.write', (_$: any, e: any) => {
+    if (opts.writeFails) return { deny: 'EACCES' }
+    files[e.path] = e.text
+    return { value: undefined } as never
+  })
+  on('session.id', () => ({ value: ME }))
+  on('command.run', (_$: any, e: any) => ({ text: `ran ${e.command}` }))
+  on('prompt.submit', (_$: any, e: any) => {
+    prompts.push(e.text)
+    return { text: e.text }
+  })
   on('command.register', (_$: any, e: any) => {
     if (opts.refuse) return { deny: `"/${e.name}" refused: it is a built-in` }
     registered.push(e.name)
@@ -41,7 +63,7 @@ async function start($: any, on: any, opts: { day: Run | (() => Run); refuse?: b
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
   on('agent.list', () => ({ value: [] }))
   await $.session.start({ cwd: '/home/t', surface: 'terminal', source: 'startup' } as never)
-  return { clock, calls, toasts, logs, registered, statuses }
+  return { clock, calls, toasts, logs, registered, statuses, files, prompts }
 }
 
 const isFriction = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('friction')
@@ -49,6 +71,9 @@ const frictionFor = (calls: string[][], source: string) => calls.filter(a => isF
 const OK: Run = { exitCode: 0, stdout: '', stderr: '' }
 const isChangesSince = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('changes-since')
 const TIMED_OUT: Run = { exitCode: 75, stdout: '', stderr: 'changes-since: timed out waiting for Jira or GitLab\n' }
+const isInboxLs = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('run-day/inbox')
+const INBOX_MSG = '20261008T154200-ECFX-18169-ab12.md'
+const EVENT = JSON.stringify({ kind: 'review', repo: 'ecfx/ecfx-backend', mr: 6576, ticket: 'ECFX-9190', summary: 'please fix', url: 'u' })
 const isDayPlan = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('day-plan')
 
 test('/day-plan runs day-plan without blocking and reports it opened', async ($, on) => {
@@ -128,4 +153,79 @@ test('a failing inbox listing records one tool_error friction event, however oft
   const events = frictionFor(s.calls, 'daily-inbox')
   expect(events.length).toBe(1)
   expect(events[0].slice(8)).toEqual(['tool_error', 'inbox read failed (exit 1): ls: denied'])
+})
+
+// F-057: inbox and event prompts reach only the session that ran /run-day last.
+const pinged = { day: () => ({ exitCode: 0, stdout: `${EVENT}\n`, stderr: '' }), inbox: `${INBOX_MSG}\n` }
+
+test('the owning session gets the inbox and event prompts', async ($, on) => {
+  const s = await start($, on, pinged)
+  await s.clock.advance(180_000)
+  expect(s.prompts).toContain('inbox: 1 new')
+  expect(s.prompts.some(p => p.startsWith('[daily-event] review | backend!6576'))).toBe(true)
+})
+
+test('another session neither lists the inbox, nor runs changes-since, nor gets a prompt', async ($, on) => {
+  const s = await start($, on, { ...pinged, owner: 'sess-other' })
+  await s.clock.advance(180_000)
+  expect(s.calls.filter(isInboxLs).length).toBe(0)
+  expect(s.calls.filter(isChangesSince).length).toBe(0)
+  expect(s.prompts).toEqual([])
+  expect(s.toasts).toEqual([])
+})
+
+test('with no owner recorded no session is pinged', async ($, on) => {
+  const s = await start($, on, { ...pinged, owner: null })
+  await s.clock.advance(180_000)
+  expect(s.calls.filter(isChangesSince).length).toBe(0)
+  expect(s.prompts).toEqual([])
+})
+
+test('the status line still shows in a session that does not own the day', async ($, on) => {
+  const s = await start($, on, { day: OK, owner: 'sess-other' })
+  await s.clock.advance(5_000)
+  expect(s.statuses.some(t => typeof t === 'string' && t.startsWith('day '))).toBe(true)
+})
+
+test('/daily:run-day records this session as the owner and pings start', async ($, on) => {
+  const s = await start($, on, { ...pinged, owner: 'sess-other' })
+  await $.command.run({ command: 'daily:run-day', args: 'resume' })
+  expect(s.files[OWNER]).toBe(`${ME}\n`)
+  await s.clock.advance(30_000)
+  expect(s.prompts).toContain('inbox: 1 new')
+})
+
+test('/run-day under its bare name records the owner too', async ($, on) => {
+  const s = await start($, on, { day: OK, owner: null })
+  await $.command.run({ command: 'run-day', args: '' })
+  expect(s.files[OWNER]).toBe(`${ME}\n`)
+})
+
+test('a dry run leaves the owner alone', async ($, on) => {
+  const s = await start($, on, { day: OK, owner: 'sess-other' })
+  await $.command.run({ command: 'daily:run-day', args: '--dry' })
+  expect(s.files[OWNER]).toBe('sess-other\n')
+})
+
+test('a typed /daily:run-day prompt records the owner', async ($, on) => {
+  const s = await start($, on, { day: OK, owner: null })
+  await $.prompt.submit({ text: '/daily:run-day' })
+  expect(s.files[OWNER]).toBe(`${ME}\n`)
+})
+
+test('when another session takes the day over, this one stops being pinged', async ($, on) => {
+  const s = await start($, on, pinged)
+  await s.clock.advance(30_000)
+  expect(s.prompts).toEqual(['inbox: 1 new'])
+  s.files[OWNER] = 'sess-other\n'
+  await s.clock.advance(180_000)
+  expect(s.prompts).toEqual(['inbox: 1 new'])
+  expect(s.calls.filter(isChangesSince).length).toBe(0)
+})
+
+test('a failed owner write toasts, records friction and still runs the command', async ($, on) => {
+  const s = await start($, on, { day: OK, owner: null, writeFails: true })
+  expect(await $.command.run({ command: 'daily:run-day', args: '' })).toEqual({ text: 'ran daily:run-day' })
+  expect(s.toasts.some(t => t.startsWith('daily: run-day owner not recorded'))).toBe(true)
+  expect(frictionFor(s.calls, 'daily-owner').length).toBe(1)
 })

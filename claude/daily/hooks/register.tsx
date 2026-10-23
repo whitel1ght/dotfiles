@@ -6,6 +6,7 @@ import { classify, formatNote, formatPrompt, formatToast, parseEvents } from '..
 import { EMPTY_INBOX, inboxPrompt, nextInbox, parseListing } from '../mod/inbox.ts'
 import { applyEdit, checkTicks, denyMessage, isTodaysDiary } from '../mod/guard.ts'
 import type { EditInput } from '../mod/guard.ts'
+import { claimsDay, claimsDayPrompt, formatOwner, ownerPath, parseOwner, receivesPings } from '../mod/owner.ts'
 import { parseRunState } from '../mod/runstate.ts'
 import type { InboxState, ViewState } from '../mod/types.ts'
 import { joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts'
@@ -22,7 +23,7 @@ const EMPTY: ViewState = { active: false, status: '', groups: [] }
 const view = atom({ plugin: 'daily', key: 'view' } as const, EMPTY)
 const inbox = atom({ plugin: 'daily', key: 'inbox' } as const, EMPTY_INBOX as InboxState)
 
-type Day = { home: string; today: string; diaryPath: string; statePath: string }
+type Day = { home: string; today: string; diaryPath: string; statePath: string; ownerPath: string }
 
 async function today($: EngineInterface): Promise<Day | null> {
   const home = await $.env.get('HOME')
@@ -30,11 +31,13 @@ async function today($: EngineInterface): Promise<Day | null> {
   const ran = await $.process.run(['date', '+%F'])
   if (ran.exitCode !== 0) return null
   const day = ran.stdout.trim()
+  const stateDir = `${home}/.local/state/run-day`
   return {
     home,
     today: day,
     diaryPath: `${home}/wiki/diary/${day}.md`,
-    statePath: `${home}/.local/state/run-day/${day}.md`,
+    statePath: `${stateDir}/${day}.md`,
+    ownerPath: ownerPath(stateDir, day),
   }
 }
 
@@ -52,6 +55,23 @@ async function load($: EngineInterface) {
   if (state === null) return { day, active: false as const }
   const diary = (await readOr($, day.diaryPath)) ?? ''
   return { day, active: true as const, items: parseItems(diary), runs: parseRunState(state) }
+}
+
+// Inbox and event prompts go only to the session that ran /run-day last (F-057); the others
+// neither list the inbox nor move the changes-since cursor.
+async function isOwner($: EngineInterface, day: Day): Promise<boolean> {
+  return receivesPings(parseOwner(await readOr($, day.ownerPath)), await $.session.id())
+}
+
+async function claimDay($: EngineInterface) {
+  try {
+    const day = await today($)
+    if (day) await $.fs.write(day.ownerPath, formatOwner(await $.session.id()))
+  } catch (err) {
+    const why = `run-day owner not recorded: ${err instanceof Error ? err.message : String(err)}`
+    $.ui.toast(`daily: ${why}`)
+    friction($, 'tool_error', why, 'daily-owner')
+  }
 }
 
 const flags = { lastNeeds: null as Set<string> | null, isWatching: false, timeouts: 0, hasWatchFailed: false, hasRefreshFailed: false, isListing: false, hasInboxFailed: false }
@@ -109,7 +129,7 @@ async function watch($: EngineInterface) {
   flags.isWatching = true
   try {
     const ctx = await load($)
-    if (!ctx || !ctx.active) return
+    if (!ctx || !ctx.active || !(await isOwner($, ctx.day))) return
     const ran = await $.process.run(
       ['/bin/sh', '-c', 'exec "$(command -v changes-since || echo "$HOME/.local/bin/changes-since")" --cursor run-day'],
       { timeoutMs: 60_000 },
@@ -179,7 +199,7 @@ async function watchInbox($: EngineInterface) {
   flags.isListing = true
   try {
     const ctx = await load($)
-    if (!ctx || !ctx.active) return
+    if (!ctx || !ctx.active || !(await isOwner($, ctx.day))) return
     const ran = await $.process.run(['/bin/sh', '-c', INBOX_LS], { timeoutMs: 10_000 })
     if (ran.exitCode !== 0) {
       if (!flags.hasInboxFailed) friction($, 'tool_error', `inbox read failed (exit ${ran.exitCode}): ${ran.stderr.split('\n')[0]}`, 'daily-inbox')
@@ -232,6 +252,19 @@ export const register: Register = on => {
   }).catch($ => {
     $.ui.toast('day-plan failed')
     return { text: 'day-plan failed.' }
+  })
+
+  for (const command of ['run-day', 'daily:run-day'] as const) {
+    on('command.run', { command }, async ($, e, next) => {
+      if (claimsDay(e.command, e.args)) await claimDay($)
+      return next(e)
+    })
+  }
+
+  // Backup for a build where a plugin's markdown command does not raise command.run.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.origin?.kind !== 'plugin' && claimsDayPrompt(e.text)) await claimDay($)
+    return next(e)
   })
 
   for (const tool of ['Edit', 'Write'] as const) {
