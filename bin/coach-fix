@@ -11,21 +11,28 @@
 #
 # enqueue  after the user's yes in /start-day. Safety is `friction-ledger safety-check` (the
 #          stored flag, or the ledger's rule re-applied to the proposal and written back; a
-#          failing check counts as safety). A safety entry without --approved-safety is refused
+#          failing check counts as safety; a busy ledger exits 1 "the ledger is busy", nothing
+#          written). A safety entry without --approved-safety is refused
 #          (exit 3, nothing written), and so is --approved-safety unless the ledger shows
 #          `answer: yes` with `answered_on` today (coach-answer writes both). A `secret` entry
 #          (signature kind) is refused too: exit 3 "secret entries are user steps", nothing
 #          written; /start-day handles those with coach-answer done. An entry already queued,
 #          running or built is a no-op. A declined, wontfix, fixed or landed entry is refused
-#          (exit 1). Otherwise it writes the queue file, sets the ledger to `landing` and calls run.
+#          (exit 1). A `held` or `failed` queue entry is taken up again as retry does (its kept
+#          branch back to `built` when intact, else a fresh job), with this call's approval.
+#          Otherwise it writes the queue file, sets the ledger to `landing` and calls run.
 # run      first reconciles: a queue entry `landed` or `failed` whose ledger status is still
 #          `landing` gets the ledger set to match (with its fix or reason); land does the same.
+#          A `held` entry whose ledger says `landing` from an answer given before today gets the
+#          hold written again (a yes given today is left for its enqueue).
 #          One job at a time. A `running` entry whose tmux window `coach-F-NNN` is gone (and
 #          that started over $COACH_STALE_GRACE seconds ago, default 30) fails "job ended without
 #          a result"; one whose window is still open after $COACH_JOB_MAX seconds (default 6 h)
 #          fails "job stalled in tmux window coach-F-NNN (waiting on a prompt?)", the window
 #          left open. With nothing running it takes the oldest `queued` entry, re-checks the
-#          ledger (safety-check true without approval, or a secret entry, fails it), marks it `running` and
+#          ledger (a secret entry fails "needs the user: ..."; safety-check true without
+#          approval holds it, see "held" below; safety-check exit 75, the ledger busy, leaves it
+#          `queued` for the next run, with one line), marks it `running` and
 #          opens a detached window: tmux new-window -d -n coach-F-NNN -c $COACH_REPOS_DIR
 #          "$COACH_HARNESS '<cmd> F-NNN --auto'", <cmd> `/daily:fix-friction` (Claude Code knows
 #          a plugin command only namespaced) or `/fix-friction` when the harness is `pi`;
@@ -43,7 +50,8 @@
 #          head is recorded as `head` (and `tested`). The ledger stays `landing`. Then run.
 # fail     the job gives up: queue and ledger `failed` with the reason. Then run.
 # retry    a `failed` queue entry whose reason does not start with "needs the user" (else exit
-#          1; a secret, or a safety entry queued without approval, exit 3). When its built branch
+#          1, as is a `held` one; a secret, or a safety entry queued without approval, exit 3;
+#          a busy ledger exits 1 and changes nothing). When its built branch
 #          is still there (coach-F-NNN in an allowed repo at the recorded head or rebased head,
 #          its worktree present) it goes back to `built` and lands with the next land. Otherwise
 #          every leftover coach-F-NNN worktree and branch in dotfiles, decisions and articles is
@@ -64,8 +72,14 @@
 #            onto main in its worktree (a conflict is aborted and fails it) and the new head
 #            recorded untested. A diff that touches a safety path (bin/*guard*,
 #            pi/extensions/secrets-guard/**, pi/extensions/claude-hooks/**, claude/daily/hooks/**,
-#            claude/daily/mod/guard.ts, .githooks/**, bin/docs-check, any *settings*.json, or
-#            install.sh at all) fails "touches a safety control: <files>; needs an approved safety
+#            claude/daily/mod/guard.ts, .githooks/**, bin/docs-check, any *settings*.json, any
+#            hooks.json, .claude-plugin/plugin.json or .claude-plugin/marketplace.json,
+#            claude/CLAUDE.md, pi/AGENTS.md, bin/secret, bin/secrets, bin/secrets-*,
+#            pi/extensions/mcp-env/**, bin/coach-fix, bin/friction-ledger, bin/wiki-commit,
+#            bin/pi-parity, the start-day, end-day and fix-friction playbooks of both harnesses,
+#            any .git* file, or install.sh at all), or whose changed lines set core.hooksPath (any
+#            file) or change an allowed-tools line or list (a .md under claude/ or pi/), is held
+#            "needs the user: touches a safety control: <files>; needs an approved safety
 #            suggestion" unless the queue entry has approved_safety, main untouched.
 #            Whenever the head is not `tested`, the test items run with bash
 #            in the worktree, no stdin, in their own process group, killed after
@@ -86,9 +100,15 @@
 #          - the worktree is removed, the branch deleted, the ledger set `landed` with
 #            `fix: <old>..<new>` (the `git revert` range) and the note, if any, in `reason`.
 #          Then run. Every failure sets queue and ledger `failed` with the reason in `reason`.
+# held     a safety change the user never approved (at land or run): the queue entry `held`
+#          with reason "needs the user: <why>" (retry refuses it), any built branch and worktree
+#          kept; the ledger entry back to `proposed` with `safety: true`, the same reason, and
+#          offered_on/answer/answered_on cleared, so a later morning offers it again as a
+#          labelled safety suggestion. An approved yes there (enqueue --approved-safety) lands
+#          the kept branch if its head is unchanged.
 #
 # Queue: $COACH_STATE_DIR/queue/F-NNN.json (default ~/.local/state/coach) {id, repo,
-# approved_safety, queued_at, state: queued|running|built|landed|failed, branch, worktree,
+# approved_safety, queued_at, state: queued|running|built|held|landed|failed, branch, worktree,
 # test_cmd, mr, head, rebased_head, tested, fix, reason, started_at, started_epoch, updated_at}.
 # The ledger is written only
 # through friction-ledger set ($FRICTION_LEDGER, entries in $FRICTION_WIKI).
@@ -126,8 +146,13 @@ fm_get() { # file key
 }
 entry() { printf '%s/%s.md' "$FRICTION_WIKI" "$1"; }
 entry_kind() { fm_get "$(entry "$1")" signature | jq -r . 2>/dev/null | cut -d: -f2; }
-# stored safety, or the ledger's own rule re-applied to the proposal (and written back); fails closed
-entry_safety() { "$FRICTION_LEDGER" safety-check "$1" 2>/dev/null || echo true; }
+# stored safety, or the ledger's own rule re-applied to the proposal (and written back):
+# true|false, or busy when the ledger lock is held (exit 75); any other failure counts as true
+entry_safety() {
+  local out rc=0
+  out="$("$FRICTION_LEDGER" safety-check "$1" 2>/dev/null)" || rc=$?
+  if [ "$rc" = 75 ]; then echo busy; elif [ "$rc" = 0 ] && [ "$out" = false ]; then echo false; else echo true; fi
+}
 ledger() { "$FRICTION_LEDGER" set "$@" >/dev/null || warn "could not write the ledger: set $*"; }
 # the user's yes, as coach-answer recorded it, given today
 yes_today() { [ "$(fm_get "$(entry "$1")" answer)" = yes ] && [ "$(fm_get "$(entry "$1")" answered_on)" = "$(date +%F)" ]; }
@@ -154,6 +179,16 @@ mark_failed() { # id reason
   qset "$1" '.state = "failed" | .reason = $r' --arg r "$2"
   ledger "$1" --status failed --reason "$2"
   echo "$1: failed: $2"
+}
+
+# a safety change the user never approved goes back to the user: the ledger entry to proposed
+# with safety: true (offered afresh, labelled, on a later morning), the queue entry held with
+# any built branch kept; an approved yes (enqueue --approved-safety) lands that branch
+mark_held() { # id why
+  local r="needs the user: $2"
+  qset "$1" '.state = "held" | .reason = $r' --arg r "$r"
+  ledger "$1" --status proposed --safety true --reason "$r"
+  echo "$1: held: $r"
 }
 
 lock() { # name [tries, 0.2 s apart; default 150]; a dead holder's lock is taken over
@@ -199,13 +234,21 @@ reconcile() {
     else ledger "$id" --status failed --reason "$(qget "$id" reason)"; fi
     echo "$id: ledger set to $st, as in the queue"
   done
+  # a held entry whose ledger still says landing from an earlier day's answer: the hold's
+  # ledger write was lost (a yes given today is the user's new answer, left alone)
+  for id in $(entries | jq -r '.[] | select(.state == "held") | .id'); do
+    [ -f "$(entry "$id")" ] && [ "$(fm_get "$(entry "$id")" status)" = landing ] &&
+      [ "$(fm_get "$(entry "$id")" answered_on)" != "$(date +%F)" ] || continue
+    ledger "$id" --status proposed --safety true --reason "$(qget "$id" reason)"
+    echo "$id: ledger set to proposed, as the held queue entry needs"
+  done
 }
 
 cmd_run() {
   mkdir -p "$QUEUE"
   lock run || { echo "another coach-fix run is busy; it starts the next job"; return 0; }
   reconcile
-  local wins id start="" flag t age; wins="$(windows)"; t="$(date +%s)"
+  local wins id start="" flag t age safety; wins="$(windows)"; t="$(date +%s)"
   for id in $(ids_in running); do
     age=$((t - $(qget "$id" started_epoch | sed 's/^$/0/')))
     [ "$age" -ge "$COACH_STALE_GRACE" ] || continue
@@ -216,10 +259,12 @@ cmd_run() {
   id="$(ids_in running | head -1)"
   if [ -n "$id" ]; then unlock run; echo "$id is running; the next job waits"; return 0; fi
   for id in $(ids_in queued); do
-    if [ "$(entry_safety "$id")" = true ] && [ "$(qget "$id" approved_safety)" != true ]; then
-      mark_failed "$id" "safety entry queued without approval"; continue
-    fi
     if [ "$(entry_kind "$id")" = secret ]; then mark_failed "$id" "needs the user: follow the proposal's steps"; continue; fi
+    safety="$(entry_safety "$id")"
+    if [ "$safety" = busy ]; then echo "$id: the ledger is busy; it stays queued for the next run"; break; fi
+    if [ "$safety" = true ] && [ "$(qget "$id" approved_safety)" != true ]; then
+      mark_held "$id" "safety entry queued without approval"; continue
+    fi
     flag="$(harness_flag)"
     if [ -n "$flag" ]; then mark_failed "$id" "COACH_HARNESS carries the permission flag $flag; the job never starts with one"; continue; fi
     if ! [[ "$(prompt_cmd)" =~ ^/[A-Za-z0-9:_-]+$ ]]; then mark_failed "$id" "bad COACH_PROMPT_CMD: $(prompt_cmd)"; continue; fi
@@ -262,9 +307,18 @@ cmd_enqueue() {
     echo "coach-fix: $id: --approved-safety needs the user's yes recorded today (friction-ledger coach-answer $id yes)" >&2
     exit 3
   fi
-  if [ "$(entry_safety "$id")" = true ] && [ "$approved" != true ]; then
+  local safety; safety="$(entry_safety "$id")"
+  [ "$safety" != busy ] || die "the ledger is busy; $id is not queued, try again"
+  if [ "$safety" = true ] && [ "$approved" != true ]; then
     echo "coach-fix: $id loosens a safety control; queue it only after the user's explicit yes, with --approved-safety" >&2
     exit 3
+  fi
+  if [ -f "$(qfile "$id")" ]; then
+    case "$(qget "$id" state)" in held | failed)
+      # an earlier attempt: its built branch lands when still intact, else a fresh job
+      qset "$id" '.approved_safety = $a' --argjson a "$approved"
+      requeue "$id"; return 0 ;;
+    esac
   fi
   local f tmp; f="$(qfile "$id")"; tmp="$(mktemp "$f.XXXXXX")" || die "could not write the queue in $QUEUE"
   if ! jq -n --arg id "$id" --argjson a "$approved" --arg t "$(now)" \
@@ -405,7 +459,7 @@ remove_leftovers() { # id: the coach-F-NNN worktrees and branches an earlier job
 }
 
 cmd_retry() {
-  local id="${1:-}" st reason repo branch wt head rebased cur; valid_id "$id"; shift
+  local id="${1:-}" st reason safety; valid_id "$id"; shift
   [ $# -eq 0 ] || die "retry takes only the id"
   [ -f "$(qfile "$id")" ] || die "$id is not in the queue"
   st="$(qget "$id" state)"
@@ -413,9 +467,18 @@ cmd_retry() {
   reason="$(qget "$id" reason)"
   case "$reason" in "needs the user"*) die "$id needs the user, not a retry: $reason" ;; esac
   if [ "$(entry_kind "$id")" = secret ]; then echo "coach-fix: $id: secret entries are user steps; they are never queued" >&2; exit 3; fi
-  if [ "$(entry_safety "$id")" = true ] && [ "$(qget "$id" approved_safety)" != true ]; then
+  safety="$(entry_safety "$id")"
+  [ "$safety" != busy ] || die "the ledger is busy; $id is not retried, try again"
+  if [ "$safety" = true ] && [ "$(qget "$id" approved_safety)" != true ]; then
     echo "coach-fix: $id loosens a safety control and was never approved; it is not retried" >&2; exit 3
   fi
+  requeue "$id"
+}
+
+# back to built when the earlier attempt's branch is intact (coach-F-NNN at the recorded or
+# rebased head, its worktree present), else leftovers removed and queued for a fresh job
+requeue() { # id
+  local id="$1" repo branch wt head rebased cur
   repo="$(qget "$id" repo)"; branch="$(qget "$id" branch)"; wt="$(qget "$id" worktree)"
   head="$(qget "$id" head)"; rebased="$(qget "$id" rebased_head)"
   cur=""
@@ -475,16 +538,46 @@ link_new_bins() { # checkout old new: links each added bin/<f> install.sh links;
   done < <(git -C "$m" diff --name-only --diff-filter=A "$2" "$3" -- bin/)
 }
 
-# the guards, hooks, permission settings and install.sh (it holds the hook and permission
-# merges): a change to one lands only from a safety suggestion the user approved
+# the guards, hooks, plugin manifests, permission settings, instructions, secret tools, the
+# coach's own gates and the playbooks that drive them, git config, and install.sh (it holds the
+# hook and permission merges): a change to one lands only from a safety suggestion the user approved
+safety_path() { # path
+  case "$1" in
+    bin/*guard* | pi/extensions/secrets-guard/* | pi/extensions/claude-hooks/* | claude/daily/hooks/* | \
+      claude/daily/mod/guard.ts | .githooks/* | bin/docs-check | *settings*.json | install.sh | \
+      hooks.json | */hooks.json | .claude-plugin/plugin.json | */.claude-plugin/plugin.json | \
+      .claude-plugin/marketplace.json | */.claude-plugin/marketplace.json | claude/CLAUDE.md | pi/AGENTS.md | \
+      bin/secret | bin/secrets | bin/secrets-* | pi/extensions/mcp-env/* | \
+      bin/coach-fix | bin/friction-ledger | bin/wiki-commit | bin/pi-parity | \
+      claude/commands/start-day.md | pi/prompts/start-day.md | claude/daily/commands/fix-friction.md | \
+      pi/prompts/fix-friction.md | claude/commands/end-day.md | pi/prompts/end-day.md | .git* | */.git*)
+      return 0 ;;
+  esac
+  return 1
+}
+
+allowed_block() { # checkout rev path: each allowed-tools key with its continuation lines
+  git -C "$1" show "$2:$3" 2>/dev/null | awk '
+    function ind(s) { match(s, /^[ \t]*/); return RLENGTH }
+    on && $0 !~ /^---[ \t]*$/ && (NF == 0 || ind($0) > base || $0 ~ /^[ \t]*-/) { print; next }
+    { on = 0 }
+    tolower($0) ~ /^[ \t]*allowed[-_]tools[ \t]*:/ { on = 1; base = ind($0); print }'
+}
+
+# a changed line that sets core.hooksPath (any file), or, in a markdown file under claude/ or
+# pi/, a changed allowed-tools line or list
+sets_safety() { # checkout old new path
+  local re='hookspath' md=0
+  case "$4" in claude/*.md | pi/*.md) md=1; re='hookspath|^[[:space:]]*allowed[-_]tools[[:space:]]*:' ;; esac
+  git -C "$1" diff -U0 --no-color --no-ext-diff --no-renames "$2" "$3" -- ":(literal)$4" |
+    awk -v re="$re" '/^@@/ { h = 1; next } h && /^[-+]/ && tolower(substr($0, 2)) ~ re { f = 1 } END { exit !f }' && return 0
+  [ "$md" = 1 ] && [ "$(allowed_block "$1" "$2" "$4")" != "$(allowed_block "$1" "$3" "$4")" ]
+}
+
 safety_files() { # checkout old new: prints the safety paths the diff touches, comma-separated
   local f out=""
   while IFS= read -r -d '' f; do
-    case "$f" in
-      bin/*guard* | pi/extensions/secrets-guard/* | pi/extensions/claude-hooks/* | claude/daily/hooks/* | \
-        claude/daily/mod/guard.ts | .githooks/* | bin/docs-check | pi/settings.json | *settings*.json | install.sh)
-        out="${out:+$out, }$f" ;;
-    esac
+    if safety_path "$f" || sets_safety "$1" "$2" "$3" "$f"; then out="${out:+$out, }$f"; fi
   done < <(git -C "$1" diff --name-only -z --no-renames "$2" "$3")
   printf '%s' "$out"
 }
@@ -526,7 +619,7 @@ land_one() { # id; returns 0 whatever happens to the entry
   fi
   if [ "$(qget "$id" approved_safety)" != true ]; then
     why="$(safety_files "$m" "$old" "$cur")"
-    if [ -n "$why" ]; then mark_failed "$id" "touches a safety control: $why; needs an approved safety suggestion"; return 0; fi
+    if [ -n "$why" ]; then mark_held "$id" "touches a safety control: $why; needs an approved safety suggestion"; return 0; fi
   fi
   if [ "$cur" != "$tested" ]; then
     with_timeout "$COACH_TEST_TIMEOUT" "$log" run_tests "$wt" "$test_cmd" || rc=$?

@@ -15,7 +15,7 @@
 #                               [--rung R --proposal-file F]
 #   friction-ledger add-tool --sig tool:NAME --proposal-file F --date D
 #   friction-ledger ingest FILE --date D
-#   friction-ledger directions add --rule R [--scope S] [--quote Q] [--harness H] [--date D] [--same-as D-NNN]
+#   friction-ledger directions add --rule R|--rule-file F [--scope S] [--quote Q] [--harness H] [--date D] [--same-as D-NNN]
 #   friction-ledger directions retire D-NNN [--reason R]
 #   friction-ledger directions promote D-NNN --fix SHA
 #   friction-ledger directions render [--scope S]
@@ -39,7 +39,9 @@
 #         it true); --queued-by records who queued the entry (`queued_by`). --reason writes
 #         `reason` on one line (why a coach fix failed, or a user step after it landed; "" clears
 #         it). A change to `landing` clears `reason` and `result_reported_on`, so the result of
-#         the new attempt is reported.
+#         the new attempt is reported. A change to `proposed` clears `offered_on`, `answer` and
+#         `answered_on`: the entry waits to be offered afresh (coach-fix holds an unapproved
+#         safety change this way), and an earlier yes never counts for it.
 # diary-section  prints the `## Friction` markdown for D (nothing when there is no friction):
 #         counts of new / recurring / regressed, a `→ /fix-friction F-NNN` line per proposed or
 #         regressed item seen on D, and one line for possible corrections (unverified).
@@ -55,7 +57,9 @@
 #         proposal and no regressed flip: only the date's Evidence bullet is added. is_safety applied to the proposal and signature sets
 #         `safety: true`, never back to false. Prints {id, new}.
 # directions  the standing directions in $FRICTION_WIKI/directions.md (D-NNN | rule | scope |
-#         since | source | status). add skips a rule already active (same words, ignoring case
+#         since | source | status). add takes the rule as --rule R, or as --rule-file F (its
+#         first line, trimmed; a playbook writes model text there instead of quoting it into a
+#         shell argument; not both). add skips a rule already active (same words, ignoring case
 #         and punctuation) or flagged --same-as, and prints the id either way; retire and
 #         promote change the status (retired / promoted: no longer injected); render prints
 #         the active rules as a list of at most 2 KB, oldest global first folded into an
@@ -82,13 +86,15 @@
 #         signature kind is `secret` always gets `safety: true`, whatever its proposal says.
 # ingest  also sets frontmatter `safety: true` on an item or frustration whose proposal or
 #         signature matches is_safety (case-insensitive: any guard, permission, allow/deny
-#         rules or lists, auto mode, allowedTools, defaultMode, WorktreeCreate/Remove, wt hook,
-#         settings.json, docs-check, commit-msg, pre-commit, mr-description, --dangerously,
-#         PreToolUse, hooks.json, .githooks, bypass, skipDangerous, auto-approve); an existing
-#         true is never reset.
+#         rules or lists, auto mode, allowedTools / allowed-tools, defaultMode,
+#         WorktreeCreate/Remove, wt hook, settings.json, docs-check, commit-msg, commit hook,
+#         pre-commit, --no-verify, core.hooksPath, mr-description, --dangerously, PreToolUse,
+#         hooks.json, plugin.json, .claude-plugin, CLAUDE.md, .githooks, bypass, skipDangerous,
+#         auto-approve, secrets-guard); an existing true is never reset.
 # safety-check  prints true or false for F: stored `safety: true`, a `secret` entry, or
 #         is_safety on its proposal and signature; writes `safety: true` back when it was not
-#         stored (never true -> false). coach-fix asks it at enqueue, run and retry.
+#         stored (never true -> false). coach-fix asks it at enqueue, run and retry. A busy
+#         ledger exits 75 (not 1), so coach-fix can tell busy from a failed check.
 #
 # coach-offer  picks what the usage coach suggests on date D and prints
 #           {results: [item], offer: [item]}; item = {id, kind, sig, count, days, safety, rung,
@@ -127,7 +133,8 @@
 # Every command that writes (all but diary-section, directions render and --help) holds the
 # mkdir lock $FRICTION_WIKI/.lock for its whole run, so concurrent writers (the tool-review
 # subagent, coach-fix, a session's end-day) queue up. It waits up to $FRICTION_LOCK_WAIT seconds
-# (default 30), takes over a lock whose pid is dead, and otherwise exits 1 "ledger busy".
+# (default 30), takes over a lock whose pid is dead, and otherwise exits 1 "ledger busy"
+# (safety-check exits 75).
 #
 # $FRICTION_WIKI (default ~/wiki/work/friction) holds ledger.md and the F-files. The F-files are
 # the source of truth; ledger.md is regenerated from them. Only the main session at end-day
@@ -157,7 +164,7 @@ release_lock() {
 cleanup() { rm -rf "${work:-}"; release_lock; }
 trap cleanup EXIT
 acquire_lock() {
-  local waited=0 max="${FRICTION_LOCK_WAIT:-30}" pid
+  local waited=0 max="${FRICTION_LOCK_WAIT:-30}" pid busy_rc="${1:-1}"
   mkdir -p "$FRICTION_WIKI"
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
     pid="$(lock_pid)"
@@ -172,7 +179,7 @@ acquire_lock() {
       fi
       continue
     fi
-    [ "$waited" -lt "$max" ] || die "ledger busy (lock held by pid ${pid:-unknown})"
+    if [ "$waited" -ge "$max" ]; then echo "friction-ledger: ledger busy (lock held by pid ${pid:-unknown})" >&2; exit "$busy_rc"; fi
     sleep 1; waited=$((waited + 1))
   done
   echo "$$" >"$LOCK_DIR/pid"
@@ -227,7 +234,7 @@ has_date() { evidence_dates "$1" | grep -qx "$2"; }
 # true when text touches a guard, permission rule, hook or auto mode the coach must not change
 # unseen; case-insensitive, and wide on purpose: when in doubt it counts as safety-loosening
 is_safety() { # text
-  grep -qiE 'secrets?[ -]guard|docker[ -]guard|worktree[ -]guard|(^|[^a-z0-9_])guards?([^a-z0-9_]|$)|permission|(allow|deny)[a-z/ ]{0,12} rules?|allow ?-?list|deny|auto[- ]?mode|allowedtools|defaultmode|worktree(create|remove)|wt hook|settings\.json|docs-check|commit-msg|pre-commit|pre-push|mr[ -]description|dangerously|pretooluse|hooks?\.json|\.githooks|bypass|skipdangerous|auto-?approv|automatically approve|extension mode' <<<"$1"
+  grep -qiE 'secrets?[ -]guard|docker[ -]guard|worktree[ -]guard|(^|[^a-z0-9_])guards?([^a-z0-9_]|$)|permission|(allow|deny)[a-z/ ]{0,12} rules?|allow ?-?list|deny|auto[- ]?mode|allowed[-_ ]?tools|defaultmode|worktree(create|remove)|wt hook|settings\.json|docs[- ]?check|commit-msg|commit[- ]?hook|pre-commit|pre-push|--no-verify|core\.hookspath|mr[ -]description|dangerously|pretooluse|hooks?\.json|plugin\.json|\.claude-plugin|claude\.md|\.githooks|bypass|skipdangerous|auto[- ]?approv|automatically approve|extension mode' <<<"$1"
 }
 
 sig_of() { fm_get "$1" signature | jq -r .; }
@@ -453,8 +460,11 @@ cmd_set() {
     if [ "$old" != "$status" ]; then
       fm_set "$f" status "$status"
       section_edit "$f" History append "- $date_: $old → $status${fix:+ (fix $fix)}"
+      local k
       if [ "$status" = landing ]; then
-        local k; for k in reason result_reported_on; do [ -z "$(fm_get "$f" "$k")" ] || fm_set "$f" "$k" ""; done
+        for k in reason result_reported_on; do [ -z "$(fm_get "$f" "$k")" ] || fm_set "$f" "$k" ""; done
+      elif [ "$status" = proposed ]; then
+        for k in offered_on answer answered_on; do [ -z "$(fm_get "$f" "$k")" ] || fm_set "$f" "$k" ""; done
       fi
     fi
   fi
@@ -928,10 +938,11 @@ dir_set_status() { # id status suffix
 }
 
 cmd_dir_add() {
-  local rule="" scope=global quote="" harness="" date_="" same=""
+  local rule="" scope=global quote="" harness="" date_="" same="" has_rule=0 rule_file=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --rule) need "$@"; rule="$2"; shift ;;
+      --rule) need "$@"; rule="$2"; has_rule=1; shift ;;
+      --rule-file) need "$@"; rule_file="$2"; shift ;;
       --scope) need "$@"; scope="$2"; shift ;;
       --quote) need "$@"; quote="$2"; shift ;;
       --harness) need "$@"; harness="$2"; shift ;;
@@ -941,7 +952,12 @@ cmd_dir_add() {
     esac
     shift
   done
-  [ -n "$(cell "$rule")" ] || die "directions add needs --rule"
+  if [ -n "$rule_file" ]; then
+    [ "$has_rule" = 0 ] || die "directions add takes --rule or --rule-file, not both"
+    [ -f "$rule_file" ] && [ -r "$rule_file" ] || die "no such file: $rule_file"
+    IFS= read -r rule <"$rule_file" || true
+  fi
+  [ -n "$(cell "$rule")" ] || die "directions add needs --rule or --rule-file"
   [ -n "$date_" ] || date_="$(date +%F)"
   valid_date "$date_"
   rule="$(cell "$rule")"; scope="$(cell "${scope:-global}")"; [ -n "$scope" ] || scope=global
@@ -1032,7 +1048,7 @@ case "${1:-}" in
   coach-offer) acquire_lock; shift; cmd_coach_offer "$@" ;;
   coach-answer) acquire_lock; shift; cmd_coach_answer "$@" ;;
   coach-log) acquire_lock; shift; cmd_coach_log "$@" ;;
-  safety-check) acquire_lock; shift; cmd_safety_check "$@" ;;
+  safety-check) acquire_lock 75; shift; cmd_safety_check "$@" ;;
   -h|--help|"") awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print } /^set -/ { exit }' "$0"; [ -n "${1:-}" ] ;;
   *) die "unknown command $1" ;;
 esac

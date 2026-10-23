@@ -11,6 +11,7 @@ FAIL=0
 pass() { PASS=$((PASS + 1)); echo "  ok   - $1"; }
 fail() { FAIL=$((FAIL + 1)); echo "  FAIL - $1"; echo "         $2"; }
 assert_eq() { [ "$1" = "$2" ] && pass "$3" || fail "$3" "expected [$1] got [$2]"; }
+assert_has() { case "$2" in *"$1"*) pass "$3" ;; *) fail "$3" "[$1] not in [$2]" ;; esac; }
 
 SANDBOX="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "${SANDBOX:?}"' EXIT
@@ -145,6 +146,15 @@ assert_eq "D-004" "$("$SCRIPT" directions add --rule "Reviews cite the commit sh
 "$SCRIPT" directions retire D-099 2>/dev/null; assert_eq "1" "$?" "retire of an unknown id fails"
 "$SCRIPT" directions promote D-004 2>/dev/null; assert_eq "1" "$?" "promote needs --fix"
 "$SCRIPT" directions add --date 2026-10-15 2>/dev/null; assert_eq "1" "$?" "add needs a rule"
+printf '%s\n' "  Never run \$(touch $SANDBOX/pwned) or \`id\`; say \"it\" \\ 	 " "second line ignored" >"$SANDBOX/rule.txt"
+id="$("$SCRIPT" directions add --rule-file "$SANDBOX/rule.txt" --scope reviews --date 2026-10-15)"
+assert_eq "D-005" "$id" "--rule-file adds the rule"
+assert_eq "Never run \$(touch $SANDBOX/pwned) or \`id\`; say \"it\" \\" "$(awk -F' \\| ' '/^\| D-005 /{ print $2 }' "$DF")" "the file's first line, trimmed, kept verbatim"
+assert_eq "no" "$([ -e "$SANDBOX/pwned" ] && echo yes || echo no)" "nothing in the rule is run"
+"$SCRIPT" directions add --rule x --rule-file "$SANDBOX/rule.txt" 2>/dev/null; assert_eq "1" "$?" "--rule and --rule-file together are refused"
+"$SCRIPT" directions add --rule-file "$SANDBOX/nope.txt" 2>/dev/null; assert_eq "1" "$?" "a missing rule file is refused"
+printf '   \n' >"$SANDBOX/blank.txt"
+"$SCRIPT" directions add --rule-file "$SANDBOX/blank.txt" 2>/dev/null; assert_eq "1" "$?" "a blank rule file is refused"
 
 export FRICTION_WIKI="$SANDBOX/cap"; DF="$FRICTION_WIKI/directions.md"
 assert_eq "" "$("$SCRIPT" directions render)" "no file renders nothing"
@@ -441,6 +451,11 @@ for t in "add it to the allowlist" "the allow list" "an allow-list entry" "switc
   "auto-approve" "autoapprove"; do
   assert_eq "yes" "$(is_safe "x $t y")" "is_safety matches $t"
 done
+for t in "allowed-tools: Bash(*)" "allowed_tools" "allowed tools" "auto approve" "autoapproval" "git commit --no-verify" \
+  "git config core.hooksPath /dev/null" "the commit hook" "commit-hook" "docs check" "docscheck" "plugin.json" \
+  ".claude-plugin/marketplace.json" "add a line to CLAUDE.md" "edit claude/CLAUDE.md" "secret-guard" "secrets-guard"; do
+  assert_eq "yes" "$(is_safe "x $t y")" "is_safety matches $t"
+done
 for t in "Print the date" "Create /run-tests" "Try jira-cli view instead of the curl wrapper." "Do the thing" "safeguarding the cache"; do
   assert_eq "no" "$(is_safe "$t")" "is_safety leaves alone: $t"
 done
@@ -469,6 +484,22 @@ assert_eq "false" "$("$SCRIPT" safety-check F-002)" "safety-check: a harmless en
 "$SCRIPT" set F-002 --proposal-file "$SANDBOX/p6e.md" --date 2026-10-12
 assert_eq "true|true" "$("$SCRIPT" safety-check F-002)|$(fld F-002 safety)" "safety-check re-reads the proposal and writes true back"
 "$SCRIPT" safety-check F-099 2>/dev/null; assert_eq "1" "$?" "safety-check of an unknown id fails"
+sleep 30 & HOLDER=$!
+mkdir "$FRICTION_WIKI/.lock"; echo "$HOLDER" >"$FRICTION_WIKI/.lock/pid"
+out="$(FRICTION_LOCK_WAIT=1 "$SCRIPT" safety-check F-002 2>&1)"; rc=$?
+assert_eq "75" "$rc" "safety-check exits 75 while the ledger is busy"
+assert_has "ledger busy" "$out" "and says so"
+FRICTION_LOCK_WAIT=1 "$SCRIPT" set F-002 --reason x --date 2026-10-12 2>/dev/null; assert_eq "1" "$?" "other writers still exit 1 when busy"
+kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null; rm -rf "$FRICTION_WIKI/.lock"
+# a held safety change goes back to proposed: it waits to be offered afresh, its old answer gone
+"$SCRIPT" coach-offer --date 2026-10-12 --limit 10 >/dev/null
+"$SCRIPT" coach-answer F-002 yes --date 2026-10-12
+assert_eq "landing|2026-10-12|yes|2026-10-12" "$(fld F-002 status)|$(fld F-002 offered_on)|$(fld F-002 answer)|$(fld F-002 answered_on)" "an answered entry before the hold"
+"$SCRIPT" set F-002 --status proposed --safety true --reason "needs the user: touches a safety control: bin/x" --date 2026-10-12
+assert_eq "proposed|true||||needs the user: touches a safety control: bin/x" \
+  "$(fld F-002 status)|$(fld F-002 safety)|$(fld F-002 offered_on)|$(fld F-002 answer)|$(fld F-002 answered_on)|$(fld F-002 reason)" \
+  "a change to proposed clears offered_on, answer and answered_on"
+assert_eq "true" "$("$SCRIPT" coach-offer --date 2026-10-13 --limit 10 | jq -r '.offer[] | select(.id == "F-002") | .safety')" "and it is offered again, as a safety item"
 rm -rf "$FRICTION_WIKI"
 
 # offer items carry rung, the full proposal, the exact change and a restated direction

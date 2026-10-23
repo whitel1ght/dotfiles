@@ -187,8 +187,10 @@ If that exits 1 ("F-NNN is <status>, not waiting for an answer", or a yes on a s
 say so in one line and move on; never retry with another answer. Otherwise count it in
 `answered`. After a yes:
 
-- `kind` `restated` with a `direction`: it becomes a standing direction, not a job. Run
-  `~/.local/bin/friction-ledger directions add --rule "<direction.rule>" --scope "<direction.scope>" --date "$(date +%F)"`
+- `kind` `restated` with a `direction`: it becomes a standing direction, not a job. First
+  write `direction.rule` as one line to a new file under `/tmp` with the file-write tool (never
+  put the rule text into a shell command), then run
+  `~/.local/bin/friction-ledger directions add --rule-file <that file> --scope "<direction.scope>" --date "$(date +%F)"`
   (it prints the D-NNN id), then
   `~/.local/bin/friction-ledger set F-NNN --status fixed --fix D-NNN --date "$(date +%F)"`.
   A `restated` item without a `direction` enforces the rule in a script: queue it as below.

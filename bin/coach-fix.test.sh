@@ -278,8 +278,8 @@ setup
 cf enqueue F-001 >/dev/null
 jq -n '{id: "F-003", repo: null, approved_safety: false, queued_at: "2026-01-01T00:00:00Z", state: "queued"}' >"$Q/F-003.json"
 close_window F-001; cf fail F-001 --reason x >/dev/null
-assert_eq "failed|safety entry queued without approval" "$(qget F-003 state)|$(qget F-003 reason)" "run re-checks the ledger's safety flag"
-assert_eq "failed" "$(fld F-003 status)" "the ledger marks it failed"
+assert_eq "held|needs the user: safety entry queued without approval" "$(qget F-003 state)|$(qget F-003 reason)" "run re-checks the ledger's safety flag"
+assert_eq "proposed|true|needs the user: safety entry queued without approval" "$(fld F-003 status)|$(fld F-003 safety)|$(fld F-003 reason)" "the ledger puts it back to proposed, a safety item for the user"
 assert_eq "1" "$(ncalls)" "no job for it"
 
 setup
@@ -682,8 +682,25 @@ cf enqueue F-001 >/dev/null
 mkentry F-006 "claude:repeat:hooks" false landing "Drop the PreToolUse hook"
 jq -n '{id: "F-006", repo: null, approved_safety: false, queued_at: "2026-01-01T00:00:00Z", state: "queued"}' >"$Q/F-006.json"
 close_window F-001; cf fail F-001 --reason x >/dev/null
-assert_eq "failed|safety entry queued without approval" "$(qget F-006 state)|$(qget F-006 reason)" "run applies the rule, not only the stored flag"
-assert_eq "true" "$(fld F-006 safety)" "and writes safety: true back"
+assert_eq "held|needs the user: safety entry queued without approval" "$(qget F-006 state)|$(qget F-006 reason)" "run applies the rule, not only the stored flag"
+assert_eq "true|proposed" "$(fld F-006 safety)|$(fld F-006 status)" "and writes safety: true back"
+
+echo "safety: a busy ledger leaves the job queued"
+setup
+mkdir -p "$Q"
+jq -n '{id: "F-001", repo: null, approved_safety: false, queued_at: "2026-01-01T00:00:00Z", state: "queued"}' >"$Q/F-001.json"
+sleep 30 & HOLDER=$!
+mkdir "$FRICTION_WIKI/.lock"; echo "$HOLDER" >"$FRICTION_WIKI/.lock/pid"
+OUT="$(FRICTION_LOCK_WAIT=1 cf run)"; RC=$?
+assert_eq "0|queued|0" "$RC|$(qget F-001 state)|$(ncalls)" "run leaves a harmless job queued while the ledger is busy"
+assert_eq "1" "$(grep -c . <<<"$OUT")" "and prints one line"
+assert_has "busy" "$OUT" "that says the ledger is busy"
+assert_eq "offered|" "$(fld F-001 status)|$(fld F-001 reason)" "the ledger is untouched"
+FRICTION_LOCK_WAIT=1 cf enqueue F-002 >/dev/null; RC=$?
+assert_eq "1|no|offered" "$RC|$([ -e "$Q/F-002.json" ] && echo yes || echo no)|$(fld F-002 status)" "enqueue with a busy ledger queues nothing"
+kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null; rm -rf "$FRICTION_WIKI/.lock"
+cf run >/dev/null
+assert_eq "running|1" "$(qget F-001 state)|$(ncalls)" "the next run starts it"
 
 echo "land: a safety path needs an approved safety suggestion"
 setup
@@ -692,20 +709,94 @@ branch dotfiles F-001 bin/secrets-guard "loosened" pi/settings.json "{}" notes.t
 built dotfiles F-001 >/dev/null
 BEFORE="$(snap dotfiles)"
 cf land >/dev/null
-assert_eq "failed|touches a safety control: bin/secrets-guard, pi/settings.json; needs an approved safety suggestion" "$(qget F-001 state)|$(qget F-001 reason)" "a guard and a settings file are refused without approval"
-assert_eq "failed" "$(fld F-001 status)" "the ledger says failed"
+assert_eq "held|needs the user: touches a safety control: bin/secrets-guard, pi/settings.json; needs an approved safety suggestion" "$(qget F-001 state)|$(qget F-001 reason)" "a guard and a settings file are refused without approval"
+assert_eq "proposed|true" "$(fld F-001 status)|$(fld F-001 safety)" "the ledger puts it back to proposed as a safety item"
 assert_eq "$BEFORE" "$(snap dotfiles)" "main checkout byte-identical"
 for p in .githooks/commit-msg claude/settings.json pi/extensions/claude-hooks/index.ts claude/daily/hooks/guard.sh \
-  claude/daily/mod/guard.ts pi/extensions/secrets-guard/index.ts bin/docs-check bin/docker-guard install.sh; do
+  claude/daily/mod/guard.ts pi/extensions/secrets-guard/index.ts bin/docs-check bin/docker-guard install.sh \
+  claude/vendor/x/hooks/hooks.json hooks.json claude/daily/.claude-plugin/plugin.json claude/.claude-plugin/marketplace.json \
+  claude/CLAUDE.md pi/AGENTS.md bin/secret bin/secrets bin/secrets-sync pi/extensions/mcp-env/index.ts \
+  bin/coach-fix bin/friction-ledger bin/wiki-commit bin/pi-parity \
+  claude/commands/start-day.md pi/prompts/start-day.md claude/daily/commands/fix-friction.md pi/prompts/fix-friction.md \
+  claude/commands/end-day.md pi/prompts/end-day.md .gitattributes .gitmodules git/.gitconfig; do
   setup
   cf enqueue F-001 >/dev/null
   if [ "$p" = install.sh ]; then branch dotfiles F-001 install.sh "$(cat "$DOT/install.sh")
 # a comment
 "; else branch dotfiles F-001 "$p" "x"; fi
   built dotfiles F-001 >/dev/null
+  BEFORE="$(snap dotfiles)"
   cf land >/dev/null
-  assert_eq "failed|touches a safety control: $p; needs an approved safety suggestion" "$(qget F-001 state)|$(qget F-001 reason)" "safety path $p"
+  assert_eq "held|needs the user: touches a safety control: $p; needs an approved safety suggestion" "$(qget F-001 state)|$(qget F-001 reason)" "safety path $p"
+  [ "$BEFORE" = "$(snap dotfiles)" ] || fail "main untouched for $p" "main changed"
 done
+
+echo "land: allowed-tools and hooksPath changes need an approved safety suggestion"
+# setup, then a commit on main adding FILE with CONTENT, then the branch rewriting it
+md_case() { # file main-content branch-content
+  setup
+  mkdir -p "$(dirname "$DOT/$1")"; printf '%s' "$2" >"$DOT/$1"
+  git -C "$DOT" add -A && git -C "$DOT" commit -qm "add $1"
+  cf enqueue F-001 >/dev/null
+  branch dotfiles F-001 "$1" "$3"
+  built dotfiles F-001 >/dev/null
+  cf land >/dev/null
+}
+FM=$'---\ndescription: x\nallowed-tools: Bash(git:*)\n---\nbody\n'
+md_case claude/commands/foo.md $'---\ndescription: x\n---\nbody\n' "$FM"
+assert_eq "held|needs the user: touches a safety control: claude/commands/foo.md; needs an approved safety suggestion" "$(qget F-001 state)|$(qget F-001 reason)" "a command that gains allowed-tools is held"
+md_case pi/prompts/foo.md "$FM" "${FM/Bash(git:*)/Bash(*)}"
+assert_eq "held" "$(qget F-001 state)" "a widened allowed-tools line in pi/ is held"
+md_case claude/daily/skills/s/SKILL.md "$FM" $'---\ndescription: x\n---\nbody\n'
+assert_eq "held" "$(qget F-001 state)" "a removed allowed-tools line is held"
+md_case claude/commands/list.md $'---\nallowed-tools:\n  - Bash(git:*)\n---\nbody\n' $'---\nallowed-tools:\n  - Bash(*)\n---\nbody\n'
+assert_eq "held" "$(qget F-001 state)" "a changed allowed-tools list item is held"
+md_case claude/commands/foo.md "$FM" "${FM/body/new body}"
+assert_eq "landed" "$(qget F-001 state)" "a body edit in a command with allowed-tools lands"
+md_case docs/notes.md "x" $'allowed-tools: Bash(*)\n'
+assert_eq "landed" "$(qget F-001 state)" "an allowed-tools line outside claude/ and pi/ is not a command"
+md_case zsh/git.zsh "alias g=git" $'alias g=git\ngit config core.hooksPath /dev/null\n'
+assert_eq "held|needs the user: touches a safety control: zsh/git.zsh; needs an approved safety suggestion" "$(qget F-001 state)|$(qget F-001 reason)" "a file that sets core.hooksPath is held"
+
+echo "land: a held safety change comes back, and an approved yes lands the kept branch"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 bin/secrets-guard "loosened"
+built dotfiles F-001 >/dev/null
+H="$(git -C "$DOT" rev-parse coach-F-001)"
+BEFORE="$(snap dotfiles)"
+cf land >/dev/null
+assert_eq "held|$H" "$(qget F-001 state)|$(git -C "$DOT" rev-parse coach-F-001)" "held, branch kept"
+assert_eq "yes" "$([ -d "$WT/dotfiles/coach-F-001" ] && echo yes || echo no)" "its worktree kept"
+assert_eq "proposed|true|||" "$(fld F-001 status)|$(fld F-001 safety)|$(fld F-001 offered_on)|$(fld F-001 answer)|$(fld F-001 answered_on)" "the ledger: proposed, safety, offer and answer cleared"
+assert_has "needs the user: touches a safety control" "$(fld F-001 reason)" "the ledger reason needs the user"
+assert_eq "$BEFORE" "$(snap dotfiles)" "main checkout byte-identical"
+cf retry F-001 >/dev/null; RC=$?
+assert_eq "1|held" "$RC|$(qget F-001 state)" "a held entry is not retried by hand"
+cf enqueue F-001 --approved-safety >/dev/null; RC=$?
+assert_eq "3|held" "$RC|$(qget F-001 state)" "the old yes does not approve it"
+OFFER="$("$FRICTION_LEDGER" coach-offer --date "$TODAY" --limit 10)"
+assert_eq "true" "$(jq -r '.offer[] | select(.id == "F-001") | .safety' <<<"$OFFER")" "it is offered again as a safety item"
+yes_now F-001
+cf enqueue F-001 >/dev/null; RC=$?
+assert_eq "3|held" "$RC|$(qget F-001 state)" "a yes without --approved-safety is refused"
+N0="$(ncalls)"
+cf enqueue F-001 --approved-safety >/dev/null; RC=$?
+assert_eq "0|built|true|landing|$N0" "$RC|$(qget F-001 state)|$(qget F-001 approved_safety)|$(fld F-001 status)|$(ncalls)" "the approved yes takes the kept branch back to built, no new job"
+cf land >/dev/null
+assert_eq "landed|loosened" "$(qget F-001 state)|$(cat "$DOT/bin/secrets-guard")" "and the next land lands it"
+
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 bin/secrets-guard "loosened"
+built dotfiles F-001 >/dev/null
+cf land >/dev/null
+printf 'more\n' >"$WT/dotfiles/coach-F-001/more.txt"
+git -C "$WT/dotfiles/coach-F-001" add -A && git -C "$WT/dotfiles/coach-F-001" commit -qm "after the hold"
+"$FRICTION_LEDGER" coach-offer --date "$TODAY" --limit 10 >/dev/null; yes_now F-001
+N0="$(ncalls)"
+cf enqueue F-001 --approved-safety >/dev/null
+assert_eq "running|$((N0 + 1))|" "$(qget F-001 state)|$(ncalls)|$(git -C "$DOT" branch --list coach-F-001)" "a kept branch that moved is removed and a fresh job starts"
 setup
 yes_now F-003
 cf enqueue F-003 --approved-safety >/dev/null
@@ -776,6 +867,16 @@ assert_eq "failed" "$(fld F-002 status)" "land reconciles too"
 "$FRICTION_LEDGER" set F-001 --status declined >/dev/null
 cf run >/dev/null
 assert_eq "declined" "$(fld F-001 status)" "a ledger status other than landing is left alone"
+setup
+mkdir -p "$Q"
+for i in 001 002; do
+  jq -n --arg i "F-$i" '{id: $i, state: "held", reason: "needs the user: touches a safety control: bin/x", queued_at: "2026-01-01T00:00:00Z"}' >"$Q/F-$i.json"
+done
+"$FRICTION_LEDGER" coach-answer F-001 yes --date 2026-10-01 >/dev/null
+yes_now F-002
+cf run >/dev/null
+assert_eq "proposed|true|needs the user: touches a safety control: bin/x" "$(fld F-001 status)|$(fld F-001 safety)|$(fld F-001 reason)" "a held entry whose hold never reached the ledger is put back to proposed"
+assert_eq "landing" "$(fld F-002 status)" "a held entry answered yes today is left for its enqueue"
 
 echo
 echo "passed: $PASS  failed: $FAIL"
