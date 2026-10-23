@@ -1,8 +1,8 @@
 {
   "ask-wiki": "0094852f19747c9f9af5c8a76f5bf1f05b733899",
   "clean-worktrees": "a4c063763c27ecc08cfc8aa04b4de7cad7851b47",
-  "end-day": "034ae0d242ea86b553522bd5bb32b7dc0f755669",
-  "fix-friction": "9fcd11026b27eb7287fe27118fd32ff1a5a51f13",
+  "end-day": "2f6a233e082678cbad4585f51e58797857ceb5a7",
+  "fix-friction": "e89014300e7bcae3b99b2e069e3b627552e5f272",
   "handoff": "f591c369454fef62766730b2d287de5a962a4d78",
   "orchestrate": "ba9967ba11ec036c867afe0b1631e52b7194cae9",
   "pickup": "cac3ae22ca1f87afbca6ea6ddd869dac6e0d4035",
@@ -10,7 +10,7 @@
   "review": "8caa3e666ff27bac39fff996474cf71a7e3256d2",
   "review-local": "d5197a9514828b175f53c188c87a09a43e6dcb61",
   "run-day": "0db3cc09bd028fd6752ac3a3bae49a4fa48547a4",
-  "start-day": "986519b401a07c62e59c37c05c6120714a61b68a",
+  "start-day": "69473721fc389ce27e12a193a8304f0be29634a4",
   "sync-tickets": "88bd42ddfca91417ee8884d28d00a223e0f425d7",
   "watch-mrs": "0ae0b2934a2d6ac1dd21d9b19bf6431daaf3d819"
 }

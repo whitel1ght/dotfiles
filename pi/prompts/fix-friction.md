@@ -1,6 +1,6 @@
 ---
-description: Turn a proposed friction-ledger entry into a tested fix on a branch, stop for your test, and fast-forward it into local main on your approval
-argument-hint: <F-NNN>
+description: Turn a proposed friction-ledger entry into a tested fix on a branch, stop for your test, and fast-forward it into local main on your approval (or, with --auto, build it unattended for coach-fix to land)
+argument-hint: <F-NNN> [--auto]
 ---
 
 # /fix-friction <F-NNN>
@@ -20,6 +20,8 @@ Write rules: the implementer never touches `~/wiki` except `~/wiki/work/system/`
 carry on); only this session writes the ledger, in step 5.
 Never push. Never merge before the user's explicit approval in step 4. Below, `F` is the argument
 (`F-007`) and `W=~/projects/worktrees/dotfiles/friction-$F`.
+
+When the arguments include `--auto`, skip steps 1–5 and follow **Auto mode** at the end instead.
 
 ## 1. Check
 
@@ -81,3 +83,73 @@ SHA="$(git -C ~/projects/dotfiles rev-parse --short HEAD)"
 
 If the user rejects the change, leave the worktree and branch, set nothing in the ledger, and ask
 what to change.
+
+## Auto mode (`--auto`)
+
+`coach-fix` starts this in a tmux window `coach-$F` after the user said yes to the coach's suggestion
+in /start-day. It runs unattended: it never asks the user anything (nobody is watching), never
+merges, and never pushes (the claude-components branch below is the one exception). It ends with
+exactly one of these, and only this session calls them:
+
+- built: `~/.local/bin/coach-fix built $F --repo <repo> --branch coach-$F --worktree $W --test-cmd "<cmd>"`,
+  or `~/.local/bin/coach-fix built $F --mr <url>` for claude-components;
+- anything else: `~/.local/bin/coach-fix fail $F --reason "<one line: why>"`.
+
+`coach-fix land` merges a built branch after the day and writes the ledger; the next /start-day
+reports the result. Do not write the ledger yourself. `F` is the first argument.
+
+1. **Check.** Read `~/wiki/work/friction/$F.md` and `~/.local/state/coach/queue/$F.json`. Go on only
+   when the entry's `status` is `landing` and the queue `state` is `running`; otherwise say so and
+   stop without calling `coach-fix`. Then pick the repo from the proposal:
+   - `dotfiles`, `decisions` or `articles` (main checkout `~/projects/<repo>`): steps 2–5.
+   - `claude-components`: the draft MR path below.
+   - anything that needs the user: a `secret` entry (signature `…:secret:…`; its fix is user
+     steps), rotating or revoking a secret, an ECFX repo, a change in an outside account (GitHub,
+     GitLab or Atlassian settings, the Chrome extension's own settings UI), a `brew` or package
+     install, or any other repo. Do not start it:
+     `~/.local/bin/coach-fix fail $F --reason "needs the user: <the exact steps, in order>"`, then stop.
+2. **Worktree.** Read the system page for the part being changed (`~/wiki/work/system/`). Branch
+   from local main, not origin's default, with `wt add <repo> coach-$F`:
+
+   ```bash
+   git -C ~/projects/<repo> branch coach-$F main && wt add <repo> coach-$F
+   ```
+
+   `W=~/projects/worktrees/<repo>/coach-$F`. If the branch or `$W` already exists, fail with
+   "coach-$F already exists" instead of reusing it.
+3. **Implement** as in step 3 above, with `cwd: "<W>"` (a `worker` subagent on a capable coding
+   model, the same brief: lowest rung, a test that fails before the fix, the covering suites,
+   commits on the branch). Add to the brief: change nothing the proposal does not ask for, and never
+   loosen a guard, hook or permission rule it does not name. Check the result yourself as in step 3.
+4. **Review.** One fresh reviewer on a different model tier from the implementer:
+   `subagent({ role: "reviewer", model, task, cwd: "<W>", label: "$F-review" })`, with `model` an
+   exact `provider/id` from the live list that is not the implementer's and is at least as strong,
+   given the F-file, `git -C $W log --oneline main..` and `git -C $W diff main...`. It answers
+   `approved` or numbered findings. Findings go to a worker (the brief plus the findings), then the
+   suites again, then the same review. At most two fix rounds; not approved after the second, or
+   suites still red → `coach-fix fail $F --reason "<the open findings or the failing suite>"`.
+5. **Built.** Green and approved: `--test-cmd` is the covering suites as one shell command run from
+   `$W`, with no live model or network (for example
+   `bin/coach-fix.test.sh && bin/friction-ledger.test.sh`); landing re-runs it if main moved. Then:
+
+   ```bash
+   ~/.local/bin/coach-fix built $F --repo <repo> --branch coach-$F --worktree $W --test-cmd "<cmd>"
+   ```
+
+   If it exits non-zero it has already marked the entry failed: say its message and stop.
+
+**claude-components** (the team's repo; nothing from the fix is copied into dotfiles):
+`wt add claude-components coach-$F` (it branches from origin's default),
+`W=~/projects/worktrees/claude-components/coach-$F`; steps 3 and 4 there with that repo's tests.
+Then write the description with the `mr-description` skill, push the branch
+(`git -C $W push -u origin coach-$F`, the only push in this mode) and open a draft MR assigned to
+the user, with no reviewers:
+
+```bash
+glab mr create --draft --assignee "$(glab api user | jq -r .username)" --title "Draft: <subject>" --description "$(cat <description file>)" --yes
+```
+
+Never undraft it, merge it or request reviewers. Then `~/.local/bin/coach-fix built $F --mr <the MR url>`.
+
+Whatever blocks you (a missing tool, an unclear proposal, a failed command), fail with the reason
+rather than wait for an answer.

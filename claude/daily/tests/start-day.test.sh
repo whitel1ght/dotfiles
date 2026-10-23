@@ -37,6 +37,7 @@ for f in "$C" "$P"; do
   has "$f" "### Monthly tool review" "$side: monthly review subsection"
   has "$f" "Monthly tool review: run it now? (yes/no)" "$side: monthly offer line"
   has "$f" "never blocks the plan" "$side: coach never blocks the plan"
+  has "$f" '`results` items also carry `status`' "$side: results name their status, fix and reason fields"
 done
 
 finish

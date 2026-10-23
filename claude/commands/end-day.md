@@ -2,7 +2,7 @@
 description: Standup report of the day's work across commits, MRs, Jira and all Claude sessions, filed in the diary, then folded into the project memory in ~/wiki
 argument-hint: [yesterday | YYYY-MM-DD]
 model: sonnet
-allowed-tools: Bash(~/.local/bin/sync-tickets:*), Bash(~/.local/bin/end-day:*), Bash(~/.local/bin/diary-links:*), Bash(~/.local/bin/friction-mine:*), Bash(~/.local/bin/friction-ledger:*), Agent, Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Bash(fd:*), Bash(grep:*), Bash(glab api:*), Bash(jq:*), Bash(printf:*), Bash(cat:*), Bash(wc:*), Bash([:*), Bash(test:*), Bash(git -C * diff:*), Bash(wt add:*), Read, Edit, Write
+allowed-tools: Bash(~/.local/bin/sync-tickets:*), Bash(~/.local/bin/end-day:*), Bash(~/.local/bin/diary-links:*), Bash(~/.local/bin/friction-mine:*), Bash(~/.local/bin/friction-ledger:*), Bash(~/.local/bin/coach-fix:*), Agent, Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Bash(fd:*), Bash(grep:*), Bash(glab api:*), Bash(jq:*), Bash(printf:*), Bash(cat:*), Bash(wc:*), Bash([:*), Bash(test:*), Bash(git -C * diff:*), Bash(wt add:*), Read, Edit, Write
 disable-model-invocation: true
 ---
 
@@ -217,6 +217,18 @@ else changed) to the VPS; if it fails, show its one-line error and point at `wik
 Never touch `*.pdf` or `*.kdbx`.
 
 Finally end the run: move `~/.local/state/run-day/$DAY.md` into `~/.local/state/run-day/done/` (create the directory). That switches off the SessionStart hook, the plan panel and the watcher. Skip this when there is no such file.
+
+## Land the coach's fixes
+
+The last step that changes anything, after the report is saved and the day committed. It lands the fixes the coach built in the background today (each one the user said yes to in /start-day), then commits the results it wrote to the ledger:
+
+```bash
+~/.local/bin/coach-fix land
+git -C ~/wiki add -A -- work/friction
+git -C ~/wiki diff --cached --quiet || git -C ~/wiki commit -m "wiki: coach landed fixes"
+```
+
+It prints one line per fix (landed with its `git revert` range, or failed with why), or "a day session is running; landing waits", which means leave it: never add `--force-check` here. List those lines under a **Coach** line in the closing message to me, never in the diary report. Tomorrow's /start-day reports the results again.
 
 ## Offer reviews
 

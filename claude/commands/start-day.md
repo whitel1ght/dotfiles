@@ -152,11 +152,13 @@ written in step 3 never mentions the coach. Keep five counts for the log: `offer
 ```
 
 It prints JSON `{results, offer}`; each item has `id`, `kind`, `count`, `days`, `safety`,
-`proposal_summary` and `evidence`.
+`proposal_summary` and `evidence`. `results` items also carry `status` (`landed` or `failed`),
+`fix` (the `A..B` range, or the draft MR link) and `reason` (why it failed, or a user step after
+it landed).
 
 **Results first.** For each `results` item that landed, say what it was and give the
-`git revert A..B` range or the draft MR link from the entry; for a failed one, say why. Count
-them in `landed` and `failed`.
+`git revert A..B` range or the draft MR link from `fix`, plus the user step in `reason` if there
+is one; for a failed one, say why from `reason`. Count them in `landed` and `failed`.
 
 **Then each `offer` item, one question at a time** (the user is here, so ask in the session,
 not the decision queue). Show what it is, the evidence (count, days, two samples), and the

@@ -493,6 +493,11 @@ if [ -f "$DOTFILES_DIR/bin/cards" ]; then
     create_symlink "$DOTFILES_DIR/bin/cards" "$HOME/.local/bin/cards"
 fi
 
+# coach-fix queues the coach's approved fixes, builds each in a tmux job and lands them after /end-day.
+if [ -f "$DOTFILES_DIR/bin/coach-fix" ]; then
+    create_symlink "$DOTFILES_DIR/bin/coach-fix" "$HOME/.local/bin/coach-fix"
+fi
+
 # wait-for waits out a GitLab or Jira outage and then tells the run-day inbox.
 if [ -f "$DOTFILES_DIR/bin/wait-for" ]; then
     create_symlink "$DOTFILES_DIR/bin/wait-for" "$HOME/.local/bin/wait-for"

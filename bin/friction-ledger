@@ -5,7 +5,7 @@
 #   friction-ledger apply --date D [--mine-json FILE]
 #   friction-ledger set F-NNN [--class C] [--status S] [--rung R] [--fix SHA]
 #                             [--diagnosis TEXT] [--proposal-file FILE] [--date D]
-#                             [--safety true|false] [--queued-by user]
+#                             [--safety true|false] [--queued-by user] [--reason TEXT]
 #   friction-ledger coach-offer --date D [--limit 3]
 #   friction-ledger coach-answer F-NNN yes|no|later --date D
 #   friction-ledger coach-log --date D --offered N --answered N --landed N --failed N --cards N
@@ -34,7 +34,10 @@
 #         History line. class: env|instruction|script|model|external; status:
 #         open|proposed|fixed|regressed|wontfix|offered|declined|landing|landed|failed;
 #         rung: script|config|prompt. --safety writes the `safety` field (ingest only ever sets
-#         it true); --queued-by records who queued the entry (`queued_by`).
+#         it true); --queued-by records who queued the entry (`queued_by`). --reason writes
+#         `reason` on one line (why a coach fix failed, or a user step after it landed; "" clears
+#         it). A change to `landing` clears `reason` and `result_reported_on`, so the result of
+#         the new attempt is reported.
 # diary-section  prints the `## Friction` markdown for D (nothing when there is no friction):
 #         counts of new / recurring / regressed, a `→ /fix-friction F-NNN` line per proposed or
 #         regressed item seen on D, and one line for possible corrections (unverified).
@@ -86,6 +89,8 @@
 #            and nothing new is picked, so a second harness sees the same list.
 #           results: entries `landed` or `failed` with no result_reported_on, plus those already
 #            reported on D (result_reported_on is set to D), so a second run on D shows the same.
+#            A result item also carries `status` (landed|failed), `fix` (the A..B range, or the
+#            draft MR link) and `reason` (why it failed, or a user step after landing).
 # coach-answer  records the user's answer on an offered entry: yes -> landing, no -> declined
 #           (declined_count = current count), later -> offered. Stored as `answer`/`answered_on`.
 #           The same answer again changes nothing (whatever the status); a different one wins and
@@ -334,6 +339,7 @@ cmd_apply() {
 
 cmd_set() {
   local id="${1:-}" class="" status="" rung="" fix="" diag="" pfile="" date_="" has_fix=0 safety="" queued_by=""
+  local reason="" has_reason=0
   [[ "$id" =~ ^F-[0-9]+$ ]] || die "set needs an F-NNN id"
   shift
   while [ $# -gt 0 ]; do
@@ -347,6 +353,7 @@ cmd_set() {
       --date) need "$@"; date_="$2"; shift ;;
       --safety) need "$@"; safety="$2"; shift ;;
       --queued-by) need "$@"; queued_by="$2"; shift ;;
+      --reason) need "$@"; reason="$2"; has_reason=1; shift ;;
       *) die "set: unknown option $1" ;;
     esac
     shift
@@ -374,8 +381,12 @@ cmd_set() {
     if [ "$old" != "$status" ]; then
       fm_set "$f" status "$status"
       section_edit "$f" History append "- $date_: $old → $status${fix:+ (fix $fix)}"
+      if [ "$status" = landing ]; then
+        local k; for k in reason result_reported_on; do [ -z "$(fm_get "$f" "$k")" ] || fm_set "$f" "$k" ""; done
+      fi
     fi
   fi
+  [ "$has_reason" = 0 ] || fm_set "$f" reason "$(one_line "$reason")"
   rebuild_ledger
 }
 
@@ -607,9 +618,10 @@ coach_item() { # file -> item JSON, plus the status/last/offered_on/declined_cou
     --arg days "$(entry_days "$f")" --arg safety "$(fm_get "$f" safety)" --arg summary "$summary" --argjson ev "$ev" \
     --arg status "$(fm_get "$f" status)" --arg last "$(fm_get "$f" last)" --arg offered_on "$(fm_get "$f" offered_on)" \
     --arg declined_count "$(fm_get "$f" declined_count)" --arg reported "$(fm_get "$f" result_reported_on)" \
+    --arg fix "$(fm_get "$f" fix)" --arg reason "$(fm_get "$f" reason)" \
     '{id: $id, kind: $kind, sig: $sig, count: ($count | tonumber), days: ($days | tonumber), safety: ($safety == "true"),
       proposal_summary: $summary, evidence: $ev, status: $status, last: $last, offered_on: $offered_on,
-      declined_count: ($declined_count | tonumber? // 0), reported: $reported}'
+      declined_count: ($declined_count | tonumber? // 0), reported: $reported, fix: $fix, reason: $reason}'
 }
 
 cmd_coach_offer() {
@@ -630,9 +642,10 @@ cmd_coach_offer() {
   for f in "$FRICTION_WIKI"/F-*.md; do [ -f "$f" ] && rows+="$(coach_item "$f")"$'\n'; done
   out="$(printf '%s' "$rows" | jq -sc --arg d "$date_" --argjson limit "$limit" '
     def secs($x): $x | strptime("%Y-%m-%d") | mktime;
-    def item: del(.status, .last, .offered_on, .declined_count, .reported);
+    def item: del(.status, .last, .offered_on, .declined_count, .reported, .fix, .reason);
+    def result: del(.last, .offered_on, .declined_count, .reported);
     ([.[] | select(.offered_on == $d)]) as $today
-    | { results: [.[] | select((.status == "landed" or .status == "failed") and (.reported == "" or .reported == $d)) | item],
+    | { results: [.[] | select((.status == "landed" or .status == "failed") and (.reported == "" or .reported == $d)) | result],
       offer: (if ($today | length) > 0 then ($today | sort_by(.last, .id) | reverse | .[:$limit] | map(item)) else [.[] | select(
           (.status == "proposed"
             or (.status == "offered" and .offered_on != "" and secs($d) - secs(.offered_on) >= 3 * 86400)

@@ -397,14 +397,22 @@ rm -rf "$FRICTION_WIKI"
 # results
 cg "$SANDBOX/c4.json" 2026-10-10 "l:tool:one|tool|2|" "l:tool:two|tool|2|" "l:tool:three|tool|2|"
 apply 2026-10-10 "$SANDBOX/c4.json" >/dev/null
-"$SCRIPT" set F-001 --status landed --date 2026-10-11
-"$SCRIPT" set F-002 --status failed --date 2026-10-11
+"$SCRIPT" set F-001 --status landed --fix abc1234..def5678 --reason "user step: run ./install.sh" --date 2026-10-11
+"$SCRIPT" set F-002 --status failed --reason $'rebase onto main\nconflicts' --date 2026-10-11
 "$SCRIPT" set F-003 --status landing --date 2026-10-11
 OUT="$("$SCRIPT" coach-offer --date 2026-10-12)"
 assert_eq "F-001 F-002" "$(jq -r '[.results[].id] | sort | join(" ")' <<<"$OUT")" "results are landed and failed entries"
+assert_eq "landed|abc1234..def5678|user step: run ./install.sh" "$(jq -r '.results[] | select(.id == "F-001") | "\(.status)|\(.fix)|\(.reason)"' <<<"$OUT")" "a landed result carries status, range and note"
+assert_eq "failed|rebase onto main conflicts" "$(jq -r '.results[] | select(.id == "F-002") | "\(.status)|\(.reason)"' <<<"$OUT")" "a failed result carries its reason on one line"
 assert_eq "2026-10-12" "$(fld F-001 result_reported_on)" "result_reported_on is set"
 assert_eq "$(jq -r '[.results[].id] | sort | join(" ")' <<<"$OUT")" "$(jq -r '[.results[].id] | sort | join(" ")' <<<"$("$SCRIPT" coach-offer --date 2026-10-12)")" "a second offer on the same date shows the same results"
 assert_eq "[]" "$("$SCRIPT" coach-offer --date 2026-10-13 | jq -c .results)" "the next day has no results"
+"$SCRIPT" set F-002 --status landing --date 2026-10-13
+assert_eq "|" "$(fld F-002 reason)|$(fld F-002 result_reported_on)" "a new landing attempt clears the old reason and report date"
+"$SCRIPT" set F-002 --status failed --reason "again" --date 2026-10-14
+assert_eq "F-002|again" "$("$SCRIPT" coach-offer --date 2026-10-14 | jq -r '.results[] | "\(.id)|\(.reason)"')" "so its next result is reported"
+"$SCRIPT" set F-001 --reason "" --date 2026-10-14
+assert_eq "" "$(fld F-001 reason)" "--reason \"\" clears the reason"
 rm -rf "$FRICTION_WIKI"
 
 # ingest safety
