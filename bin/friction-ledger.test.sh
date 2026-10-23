@@ -327,12 +327,16 @@ assert_eq "Do the thing" "$(jq -r '.offer[0].proposal_summary' <<<"$OUT")" "prop
 assert_eq "3|false|tool" "$(jq -r '.offer[0] | "\(.count)|\(.safety)|\(.kind)"' <<<"$OUT")" "count sums evidence, safety false, kind from the signature"
 assert_eq "2" "$(jq '.offer[0].evidence | length' <<<"$OUT")" "two evidence samples"
 case "$(jq -r '.offer[0].evidence[0]' <<<"$OUT")" in 2026-10-12*) pass "newest evidence first" ;; *) fail "newest evidence first" "$(jq -c '.offer[0].evidence' <<<"$OUT")" ;; esac
+snap1="$(snap)"; first_ids="$(offered_ids "$OUT")"
 OUT="$("$SCRIPT" coach-offer --date 2026-10-15 --limit 10)"
-assert_eq "F-001 F-003" "$(offered_ids "$OUT")" "the rest are offered; repeat below 3 count or 2 days is not; already offered ones wait"
+assert_eq "$first_ids" "$(offered_ids "$OUT")" "a second offer on the same date returns the same ids"
+assert_eq "$snap1" "$(snap)" "a second offer on the same date writes nothing"
+OUT="$("$SCRIPT" coach-offer --date 2026-10-16 --limit 10)"
+assert_eq "F-001 F-003" "$(offered_ids "$OUT")" "next day: the rest are offered; repeat below 3 count or 2 days is not; already offered ones wait"
 assert_eq "proposed proposed" "$(fld F-005 status) $(fld F-006 status)" "gated repeat entries stay proposed"
-assert_eq "[]" "$(jq -c '.offer' <<<"$("$SCRIPT" coach-offer --date 2026-10-17 --limit 10)")" "offered 2 days ago is not re-offered"
+assert_eq "[]" "$(jq -c '.offer' <<<"$("$SCRIPT" coach-offer --date 2026-10-17 --limit 10)")" "offered 1-2 days ago is not re-offered"
 OUT="$("$SCRIPT" coach-offer --date 2026-10-18 --limit 10)"
-assert_eq "F-001 F-002 F-003 F-004 F-007" "$(offered_ids "$OUT")" "offered 3 days ago is offered again"
+assert_eq "F-002 F-004 F-007" "$(offered_ids "$OUT")" "offered 3 days ago is offered again"
 
 # answers
 "$SCRIPT" coach-answer F-001 later --date 2026-10-18
@@ -352,6 +356,17 @@ assert_eq "$((h0 + 1))" "$(hist F-002)" "a different answer adds exactly one His
 "$SCRIPT" coach-answer F-002 no --date 2026-10-18
 assert_eq "$((h0 + 1))" "$(hist F-002)" "no twice adds nothing"
 "$SCRIPT" coach-answer F-009 yes --date 2026-10-18 2>/dev/null; assert_eq "1" "$?" "answer on a missing entry fails"
+"$SCRIPT" coach-answer F-005 yes --date 2026-10-18 2>"$SANDBOX/err"; assert_eq "1" "$?" "answering a never-offered entry exits 1"
+assert_eq "proposed|" "$(fld F-005 status)|$(fld F-005 answer)" "a never-offered entry is unchanged"
+grep -q 'F-005 is proposed, not waiting for an answer' "$SANDBOX/err" && pass "refusal names the status" || fail "refusal message" "$(cat "$SANDBOX/err")"
+"$SCRIPT" coach-answer F-004 yes --date 2026-10-18
+"$SCRIPT" set F-004 --status failed --date 2026-10-19
+h4="$(hist F-004)"; b4="$(cat "$FRICTION_WIKI/F-004.md")"
+"$SCRIPT" coach-answer F-004 yes --date 2026-10-20; assert_eq "0" "$?" "a stale identical answer is a no-op"
+assert_eq "failed|$h4" "$(fld F-004 status)|$(hist F-004)" "failed stays failed, no History line"
+assert_eq "$b4" "$(cat "$FRICTION_WIKI/F-004.md")" "stale answer writes nothing"
+"$SCRIPT" coach-answer F-004 no --date 2026-10-20 2>/dev/null; assert_eq "1" "$?" "a different answer on a failed entry is refused"
+assert_eq "failed" "$(fld F-004 status)" "refused answer leaves the status"
 
 # declined doubling (F-002 declined at count 3)
 assert_eq "no" "$(jq -r '[.offer[].id] | index("F-002") | if . == null then "no" else "yes" end' <<<"$("$SCRIPT" coach-offer --date 2026-10-30 --limit 10)")" "declined is not offered at the same count"
@@ -388,7 +403,8 @@ apply 2026-10-10 "$SANDBOX/c4.json" >/dev/null
 OUT="$("$SCRIPT" coach-offer --date 2026-10-12)"
 assert_eq "F-001 F-002" "$(jq -r '[.results[].id] | sort | join(" ")' <<<"$OUT")" "results are landed and failed entries"
 assert_eq "2026-10-12" "$(fld F-001 result_reported_on)" "result_reported_on is set"
-assert_eq "[]" "$("$SCRIPT" coach-offer --date 2026-10-12 | jq -c .results)" "a second offer on the same date has no results"
+assert_eq "$(jq -r '[.results[].id] | sort | join(" ")' <<<"$OUT")" "$(jq -r '[.results[].id] | sort | join(" ")' <<<"$("$SCRIPT" coach-offer --date 2026-10-12)")" "a second offer on the same date shows the same results"
+assert_eq "[]" "$("$SCRIPT" coach-offer --date 2026-10-13 | jq -c .results)" "the next day has no results"
 rm -rf "$FRICTION_WIKI"
 
 # ingest safety

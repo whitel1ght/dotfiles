@@ -74,12 +74,16 @@
 #            ignored); declined whose count reached 2x `declined_count`. A `repeat` entry needs
 #            count >= 3 and days >= 2. count/days are window_count/window_days when present,
 #            else the Evidence (N×) sum and frontmatter days. Offered entries become `offered`
-#            with offered_on: D and a cleared `answer`.
-#           results: entries `landed` or `failed` with no result_reported_on; it is set to D, so
-#            a second run on the same date reports nothing.
+#            with offered_on: D and a cleared `answer`. Idempotent per date: once any entry has
+#            offered_on == D, offer is exactly those entries (newest last first, up to --limit)
+#            and nothing new is picked, so a second harness sees the same list.
+#           results: entries `landed` or `failed` with no result_reported_on, plus those already
+#            reported on D (result_reported_on is set to D), so a second run on D shows the same.
 # coach-answer  records the user's answer on an offered entry: yes -> landing, no -> declined
 #           (declined_count = current count), later -> offered. Stored as `answer`/`answered_on`.
-#           The same answer again changes nothing; a different one wins and adds one History line.
+#           The same answer again changes nothing (whatever the status); a different one wins and
+#           adds one History line. Accepted only while the entry is offered (with offered_on), or
+#           landing/declined from an answer given on D; otherwise exit 1 and nothing is written.
 #
 # apply creates an entry for a tool_error only with count >= 2 on the day or on a second day
 #         (first sightings are kept in .seen-sigs.tsv).
@@ -577,7 +581,7 @@ coach_item() { # file -> item JSON, plus the status/last/offered_on/declined_cou
     --arg declined_count "$(fm_get "$f" declined_count)" --arg reported "$(fm_get "$f" result_reported_on)" \
     '{id: $id, kind: $kind, sig: $sig, count: ($count | tonumber), days: ($days | tonumber), safety: ($safety == "true"),
       proposal_summary: $summary, evidence: $ev, status: $status, last: $last, offered_on: $offered_on,
-      declined_count: ($declined_count | tonumber? // 0), reported: ($reported != "")}'
+      declined_count: ($declined_count | tonumber? // 0), reported: $reported}'
 }
 
 cmd_coach_offer() {
@@ -599,16 +603,20 @@ cmd_coach_offer() {
   out="$(printf '%s' "$rows" | jq -sc --arg d "$date_" --argjson limit "$limit" '
     def secs($x): $x | strptime("%Y-%m-%d") | mktime;
     def item: del(.status, .last, .offered_on, .declined_count, .reported);
-    { results: [.[] | select((.status == "landed" or .status == "failed") and (.reported | not)) | item],
-      offer: ([.[] | select(
+    ([.[] | select(.offered_on == $d)]) as $today
+    | { results: [.[] | select((.status == "landed" or .status == "failed") and (.reported == "" or .reported == $d)) | item],
+      offer: (if ($today | length) > 0 then ($today | sort_by(.last, .id) | reverse | .[:$limit] | map(item)) else [.[] | select(
           (.status == "proposed"
             or (.status == "offered" and .offered_on != "" and secs($d) - secs(.offered_on) >= 3 * 86400)
             or (.status == "declined" and .declined_count > 0 and .count >= 2 * .declined_count))
           and (.kind != "repeat" or (.count >= 3 and .days >= 2)))]
-        | sort_by(.last, .id) | reverse | .[:$limit] | map(item)) }')"
-  for id in $(jq -r '.results[].id' <<<"$out"); do fm_set "$(fpath "$id")" result_reported_on "$date_"; done
+        | sort_by(.last, .id) | reverse | .[:$limit] | map(item) end) }')"
+  for id in $(jq -r '.results[].id' <<<"$out"); do
+    [ "$(fm_get "$(fpath "$id")" result_reported_on)" = "$date_" ] || fm_set "$(fpath "$id")" result_reported_on "$date_"
+  done
   for id in $(jq -r '.offer[].id' <<<"$out"); do
     f="$(fpath "$id")"
+    [ "$(fm_get "$f" offered_on)" != "$date_" ] || continue
     cmd_set "$id" --status offered --date "$date_"
     fm_set "$f" offered_on "$date_"
     fm_set "$f" answer ""
@@ -633,7 +641,12 @@ cmd_coach_answer() {
   local f target; f="$(fpath "$id")"
   [ -f "$f" ] || die "no such entry: $id"
   case "$ans" in yes) target=landing ;; no) target=declined ;; later) target=offered ;; esac
-  [ "$(fm_get "$f" answer)" != "$ans" ] || [ "$(fm_get "$f" status)" != "$target" ] || return 0
+  local st; st="$(fm_get "$f" status)"
+  [ "$(fm_get "$f" answer)" != "$ans" ] || return 0
+  if ! { [ "$st" = offered ] && [ -n "$(fm_get "$f" offered_on)" ]; } &&
+     ! { [[ "$st" =~ ^(landing|declined)$ ]] && [ "$(fm_get "$f" answered_on)" = "$date_" ]; }; then
+    die "$id is $st, not waiting for an answer"
+  fi
   if [ "$(fm_get "$f" status)" != "$target" ]; then
     [ "$ans" != no ] || fm_set "$f" declined_count "$(entry_count "$f")"
     cmd_set "$id" --status "$target" --date "$date_"
@@ -771,6 +784,6 @@ case "${1:-}" in
   directions) shift; cmd_directions "$@" ;;
   coach-offer) shift; cmd_coach_offer "$@" ;;
   coach-answer) shift; cmd_coach_answer "$@" ;;
-  -h|--help|"") sed -n '2,89p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
+  -h|--help|"") sed -n '2,93p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
   *) die "unknown command $1" ;;
 esac
