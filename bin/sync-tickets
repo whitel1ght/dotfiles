@@ -19,6 +19,11 @@
 # someone else, or in any other status (Rejected Incomplete, Awaiting Details,
 # Done, Closed), are left alone.
 #
+# A Bug whose MRs all merged is not moved to Ready for QA while its Resolution Summary
+# (customfield_10604) is empty: Jira refuses that move with HTTP 400. It is counted as
+# needs_summary and listed, so the session can draft the summary and move it with
+# `jira-write --resolution-summary`.
+#
 # Every MR is also linked on its ticket with the same globalId GitLab's own
 # integration uses, so a link that already exists is updated, not duplicated.
 #
@@ -129,12 +134,13 @@ transition_to() {
   return 1
 }
 
-moved=0 linked=0 behind=0 skipped=0 failed=0
+moved=0 linked=0 behind=0 skipped=0 needs_summary=0 failed=0
+needs_keys=()
 while IFS=$'\t' read -r key target mrs_b64; do
   [ -n "${key:-}" ] || continue
   mrs=$(base64 -d <<<"$mrs_b64")
   refs=$(jq -r 'map(.ref | sub("^.*/"; "")) | join(", ")' <<<"$mrs")
-  issue=$(jira GET "/rest/api/3/issue/$key?fields=status,assignee") || { failed=$((failed + 1)); continue; }
+  issue=$(jira GET "/rest/api/3/issue/$key?fields=status,assignee,issuetype,customfield_10604") || { failed=$((failed + 1)); continue; }
   status=$(jq -r .fields.status.name <<<"$issue")
   assignee=$(jq -r '.fields.assignee.accountId // ""' <<<"$issue")
 
@@ -148,7 +154,10 @@ while IFS=$'\t' read -r key target mrs_b64; do
   fi
 
   if [ "$(rank "$target")" -gt "$(rank "$status")" ]; then
-    if [ "$dry" -eq 1 ]; then echo "  would  $key $status → $target ($refs)"; moved=$((moved + 1))
+    if [ "$target" = "Ready for QA" ] && jq -e '.fields.issuetype.name == "Bug" and .fields.customfield_10604 == null' <<<"$issue" >/dev/null; then
+      needs_summary=$((needs_summary + 1)); needs_keys+=("$key")
+      [ "$verbose" -eq 1 ] && echo "  wait   $key — Bug needs a Resolution Summary; move it with jira-write --resolution-summary"
+    elif [ "$dry" -eq 1 ]; then echo "  would  $key $status → $target ($refs)"; moved=$((moved + 1))
     elif transition_to "$key" "$target"; then echo "  moved  $key $status → $target ($refs)"; moved=$((moved + 1))
     else failed=$((failed + 1)); fi
   elif [ "$status" = "In QA" ] && [ "$target" = "Ready for QA" ]; then :  # QA picked it up: in step
@@ -174,7 +183,8 @@ while IFS=$'\t' read -r key target mrs_b64; do
   done < <(jq -c '.[]' <<<"$mrs")
 done <<<"$plan"
 
-echo "since $since: $moved moved, $linked linked, $behind behind, $skipped skipped, $failed failed$([ "$dry" -eq 1 ] && echo ' (dry run)')"
+echo "since $since: $moved moved, $linked linked, $behind behind, $skipped skipped, $needs_summary needs_summary, $failed failed$([ "$dry" -eq 1 ] && echo ' (dry run)')"
+[ "$needs_summary" -eq 0 ] || echo "needs summary: $(IFS=,; echo "${needs_keys[*]}" | sed 's/,/, /g')"
 
 if [ "$dry" -eq 0 ] && [ "$failed" -eq 0 ]; then
   mkdir -p "$(dirname "$STATE_FILE")"

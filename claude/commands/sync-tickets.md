@@ -22,6 +22,9 @@ Reply with a short summary of its output:
 - **Moved** tickets, as `KEY: from → to`.
 - **Linked** MRs, as a count per ticket.
 - **Behind** tickets, verbatim, since they need a human decision.
+- **Needs summary** keys (the `needs summary:` line), verbatim: merged Bugs left in place
+  because Jira wants a Resolution Summary first; the user drafts it and moves them with
+  `jira-write --resolution-summary`.
 - The final summary line.
 
 Leave out skipped tickets unless `-v` was passed. If the script failed, show its error

@@ -29,9 +29,10 @@ mr() { # key-in-branch state draft repo iid
     printf '{"id":%s,"iid":%s,"state":"%s","draft":%s,"source_branch":"dmitry/%s_x","title":"t %s","web_url":"https://gitlab.com/ecfx/%s/-/merge_requests/%s","references":{"full":"ecfx/%s!%s"}}' \
         "$5$RANDOM" "$5" "$2" "$3" "$1" "$1" "$4" "$5" "$4" "$5"
 }
-issue() { # key status assignee
-    printf '{"fields":{"status":{"name":"%s"},"assignee":%s}}' "$2" \
-        "$([ -n "$3" ] && printf '{"accountId":"%s","displayName":"%s"}' "$3" "$3" || echo null)" > "$FIX/issue/$1"
+issue() { # key status assignee [type [summary-set]]
+    printf '{"fields":{"status":{"name":"%s"},"assignee":%s,"issuetype":{"name":"%s"},"customfield_10604":%s}}' "$2" \
+        "$([ -n "$3" ] && printf '{"accountId":"%s","displayName":"%s"}' "$3" "$3" || echo null)" \
+        "${4:-Task}" "$([ -n "${5:-}" ] && echo '{"type":"doc","version":1,"content":[]}' || echo null)" > "$FIX/issue/$1"
 }
 
 # Recent window: a ticket to move (draft+ready → In MR), one whose MRs all
@@ -48,6 +49,9 @@ cat > "$FIX/recent.json" <<EOF
  $(mr ECFX-9 merged false backend 18),
  $(mr ECFX-10 merged false backend 19),
  $(mr ECFX-11 opened false backend 21),
+ $(mr ECFX-12 merged false backend 22),
+ $(mr ECFX-13 merged false backend 23),
+ $(mr ECFX-14 merged false backend 24),
  {"id":98,"iid":98,"state":"merged","draft":false,"source_branch":"dmitry/ECFX-8_x","title":"ECFX-8: \"Retrieve again\" row action","web_url":"https://gitlab.com/ecfx/backend/-/merge_requests/17","references":{"full":"ecfx/backend!17"}},
  {"id":99,"iid":99,"state":"opened","draft":false,"source_branch":"no-key","title":"chore","web_url":"u","references":{"full":"ecfx/backend!99"}}]
 EOF
@@ -69,6 +73,9 @@ issue ECFX-8 "In Progress" me
 issue ECFX-9 "In QA" me
 issue ECFX-10 "Ready for QA" me
 issue ECFX-11 "Ready for QA" me
+issue ECFX-12 "In MR" me Bug
+issue ECFX-13 "In MR" me Bug set
+issue ECFX-14 "In MR" me Task
 
 cat > "$STUBS/glab" <<'EOF'
 #!/bin/bash
@@ -131,6 +138,10 @@ assert_lacks "$out" "ECFX-2 In MR → In QA" "a merged MR never targets In QA, t
 assert_lacks "$out" "ECFX-9 is In QA" "a merged ticket already in In QA is neither moved nor reported behind"
 assert_contains "$out" "behind ECFX-11 is Ready for QA, MRs say In MR" "a Ready for QA ticket with an open ready MR is reported behind"
 assert_lacks "$out" "would  ECFX-10 " "a merged ticket already in Ready for QA is left alone"
+assert_contains "$out" "wait   ECFX-12 — Bug needs a Resolution Summary; move it with jira-write --resolution-summary" "a merged Bug without a summary waits"
+assert_lacks "$out" "would  ECFX-12 " "a merged Bug without a summary is not moved"
+assert_contains "$out" "would  ECFX-13 In MR → Ready for QA" "a merged Bug with a summary moves"
+assert_contains "$out" "would  ECFX-14 In MR → Ready for QA" "a merged Task without a summary moves"
 assert_contains "$out" "behind ECFX-3 is In QA, MRs say In Progress" "reports a ticket ahead of its MRs"
 assert_contains "$out" "skip   ECFX-4 — assigned to someone" "skips tickets not assigned to me"
 assert_contains "$out" "skip   ECFX-5 — Rejected Incomplete is left alone" "skips unmanaged statuses"
@@ -153,6 +164,12 @@ out="$(run --since 1d)"
 [ "$(status_of ECFX-6)" = "In MR" ] && pass "takes To-Do to In MR via In Progress" \
     || fail "takes To-Do to In MR via In Progress" "$(status_of ECFX-6)"
 [ "$(status_of ECFX-2)" = "Ready for QA" ] && pass "moves a merged ticket from In MR to Ready for QA" || fail "moves a merged ticket from In MR to Ready for QA" "$(status_of ECFX-2)"
+[ "$(status_of ECFX-12)" = "In MR" ] && pass "a merged Bug without a summary stays put" || fail "a merged Bug without a summary stays put" "$(status_of ECFX-12)"
+assert_lacks "$(cat "$FIX/writes.log")" "ECFX-12/transitions" "no transition is POSTed for it"
+[ "$(status_of ECFX-13)" = "Ready for QA" ] && pass "a merged Bug with a summary moves" || fail "a merged Bug with a summary moves" "$(status_of ECFX-13)"
+[ "$(status_of ECFX-14)" = "Ready for QA" ] && pass "a merged Task without a summary moves" || fail "a merged Task without a summary moves" "$(status_of ECFX-14)"
+assert_contains "$out" "2 skipped, 1 needs_summary, 0 failed" "summary line counts needs_summary, not failed"
+assert_contains "$out" "needs summary: ECFX-12" "the keys are listed on their own line"
 assert_lacks "$(cat "$FIX/writes.log")" '"id":"31"' "no merged ticket is sent through the In QA transition"
 [ "$(status_of ECFX-9)" = "In QA" ] && pass "does not move In QA back to Ready for QA" || fail "does not move In QA back to Ready for QA" "$(status_of ECFX-9)"
 [ "$(status_of ECFX-10)" = "Ready for QA" ] && pass "leaves Ready for QA where it is" || fail "leaves Ready for QA where it is" "$(status_of ECFX-10)"
