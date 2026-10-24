@@ -4,7 +4,8 @@
 # transcript (~/.claude/projects/<slug>/<session>/subagents/agent-<id>.jsonl).
 # The Wake check uses it when an agent finished but its report never reached the
 # session. Prints the text blocks of the last assistant line that has any,
-# joined by a blank line. Only the last 200 lines are parsed, so big transcripts
+# joined by a blank line. Malformed lines (e.g. a truncated last line) are
+# skipped. Only the last 200 lines are parsed, so big transcripts
 # stay fast.
 #
 # Exit: 0 printed, 1 no assistant text, 2 missing file or no argument.
@@ -15,8 +16,10 @@ if [ $# -ne 1 ] || [ ! -f "$1" ]; then
     exit 2
 fi
 
-text="$(tail -n 200 "$1" | jq -rs '
-    [ .[]
+text="$(tail -n 200 "$1" | jq -Rrn '
+    [ inputs
+      | fromjson?
+      | objects
       | select(.type == "assistant")
       | [ .message.content[]? | select(.type == "text") | .text ]
       | select(length > 0) ]

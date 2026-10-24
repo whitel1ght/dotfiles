@@ -37,6 +37,19 @@ while [ "$i" -lt 500 ]; do
 done
 echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"final answer"}]}}' >> "$LONG"
 
+# A valid reply followed by a truncated last line (transcript cut off mid-write).
+TRUNCATED="$SANDBOX/truncated.jsonl"
+cat > "$TRUNCATED" <<'JSONL'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"earlier reply"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"te
+JSONL
+
+# Assistant content as a plain string, not an array of blocks.
+STRING_CONTENT="$SANDBOX/string-content.jsonl"
+cat > "$STRING_CONTENT" <<'JSONL'
+{"type":"assistant","message":{"role":"assistant","content":"plain string"}}
+JSONL
+
 echo "agent-report"
 
 out="$("$SCRIPT" "$WITH_TEXT" 2>"$SANDBOX/err")"; rc=$?
@@ -60,6 +73,20 @@ if [ "$rc" -eq 0 ] && [ "$out" = "final answer" ]; then
     pass "finds the final reply in a long transcript"
 else
     fail "long transcript" "rc=$rc out=[$out]"
+fi
+
+out="$("$SCRIPT" "$TRUNCATED" 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "earlier reply" ]; then
+    pass "skips a truncated line and prints the earlier reply"
+else
+    fail "truncated line" "rc=$rc out=[$out]"
+fi
+
+out="$("$SCRIPT" "$STRING_CONTENT" 2>&1)"; rc=$?
+if [ "$rc" -eq 1 ] && [[ "$out" == *"no assistant text"* ]]; then
+    pass "string content is not block text: exit 1"
+else
+    fail "string content" "rc=$rc out=[$out]"
 fi
 
 out="$("$SCRIPT" "$SANDBOX/missing.jsonl" 2>&1)"; rc=$?
