@@ -25,6 +25,7 @@ const FRICTION = 'F="$(command -v friction || echo "$HOME/.local/bin/friction")"
 const LID = ['/usr/sbin/ioreg', '-r', '-k', 'AppleClamshellState', '-d', '1']
 const SYSTEM_STATE = ['/usr/bin/pmset', '-g', 'systemstate']
 const COLD_RELAY = 'daily: relayed past the cold-cache guard'
+const BLIND_PROBES = 3
 const EMPTY: ViewState = { active: false, status: '', groups: [] }
 const view = atom({ plugin: 'daily', key: 'view' } as const, EMPTY)
 const inbox = atom({ plugin: 'daily', key: 'inbox' } as const, EMPTY_INBOX as InboxState)
@@ -173,12 +174,13 @@ const wake = {
   gen: 0,
   subagents: null as { sessionId: string; dir: string } | null,
   hasAgentsFailed: false,
+  blindProbes: 0,
 }
 
-async function isFullWakeNow($: EngineInterface): Promise<boolean> {
+async function probeWake($: EngineInterface) {
   const out = (argv: string[]) => $.process.run(argv, { timeoutMs: 2_000 }).then(r => (r.exitCode === 0 ? r.stdout : ''), () => '')
   const [lid, state] = await Promise.all([out(LID), out(SYSTEM_STATE)])
-  return isFullWake(parseLid(lid), parseGraphics(state))
+  return { lid: parseLid(lid), graphics: parseGraphics(state) }
 }
 
 // A session's transcripts sit under ~/.claude/projects/<slug>/<id>/subagents; the folder appears
@@ -223,14 +225,26 @@ function submitWake($: EngineInterface, text: string) {
   void $.prompt.submit({ text }).catch(() => $.ui.toast('daily wake: prompt submit failed'))
 }
 
-// Runs on every refresh tick with the tick's time and the one before it.
+// Runs early on every refresh tick with the tick's time and the one before it, so a failure later
+// in the tick cannot lose the sleep. Probes that read neither lid nor display give up on it.
 async function checkWake($: EngineInterface, ctx: DayCtx, owns: boolean, prevTickAt: number | null, now: number) {
   if (!owns || ctx.dayEnded) {
     wake.pending = null
+    wake.blindProbes = 0
     return
   }
   if (prevTickAt !== null && sleptBetween(prevTickAt, now)) wake.pending ??= { since: prevTickAt }
-  if (wake.pending === null || !(await isFullWakeNow($))) return
+  if (wake.pending === null) return
+  const { lid, graphics } = await probeWake($)
+  if (lid === null && graphics === null) {
+    if (++wake.blindProbes < BLIND_PROBES) return
+    wake.blindProbes = 0
+    wake.pending = null
+    $.ui.log('daily wake: cannot read lid or display state; no wake nudge for this sleep')
+    return
+  }
+  wake.blindProbes = 0
+  if (!isFullWake(lid, graphics)) return
   // Another tick may have taken this wake while the probe ran.
   const taken = wake.pending
   if (taken === null) return
@@ -300,10 +314,11 @@ async function refresh($: EngineInterface) {
     await update($, view, () => EMPTY)
     return
   }
-  const agents = (await $.agent.list()).map(a => ({ id: a.id, description: a.description, status: a.status }))
-  const rows = joinRows(ctx.items, ctx.runs, agents)
   const owner = parseOwner(await readOr($, ctx.day.ownerPath))
   const sessionId = await $.session.id()
+  await checkWake($, ctx, receivesPings(owner, sessionId), prevTickAt, now)
+  const agents = (await $.agent.list()).map(a => ({ id: a.id, description: a.description, status: a.status }))
+  const rows = joinRows(ctx.items, ctx.runs, agents)
   const note = ownerNote(owner, sessionId)
   const status = statusLine(rows, (await read($, inbox)).pending) + (note ? ` · ${note}` : '')
   $.ui.status(status)
@@ -314,7 +329,6 @@ async function refresh($: EngineInterface) {
     $.ui.toast(`needs you: ${fresh.join(', ')}`)
     await $.audio.play({ asset: 'sounds/needs-you.wav' }).catch(() => undefined)
   }
-  await checkWake($, ctx, receivesPings(owner, sessionId), prevTickAt, now)
 }
 
 async function safeRefresh($: EngineInterface) {

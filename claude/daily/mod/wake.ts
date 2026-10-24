@@ -21,9 +21,9 @@ export function parseGraphics(systemstateOut: string): boolean | null {
   return m ? /\bGraphics\b/.test(m[1]) : null
 }
 
+/** The display decides (clamshell mode runs with the lid closed); the lid only when it is unknown. */
 export function isFullWake(lid: 'open' | 'closed' | null, graphics: boolean | null): boolean {
-  if (lid === null && graphics === null) return false
-  return lid !== 'closed' && graphics !== false
+  return graphics ?? lid === 'open'
 }
 
 export const outstanding = (runs: RunItem[]): RunItem[] => runs.filter(r => r.owner === 'main' && (r.agent !== '' || r.round !== ''))

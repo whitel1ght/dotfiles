@@ -32,11 +32,15 @@ test('parseGraphics looks for Graphics on the capabilities line', async () => {
   expect(parseGraphics('')).toBe(null)
 })
 
-test('isFullWake needs a lid not closed, graphics not off, and one known signal', async () => {
+test('isFullWake: the display state decides, the lid only when the display state is unknown', async () => {
   expect(isFullWake('open', true)).toBe(true)
-  expect(isFullWake('closed', true)).toBe(false)
-  expect(isFullWake('open', false)).toBe(false)
+  expect(isFullWake('closed', true)).toBe(true)
   expect(isFullWake(null, true)).toBe(true)
+  expect(isFullWake('open', false)).toBe(false)
+  expect(isFullWake('closed', false)).toBe(false)
+  expect(isFullWake(null, false)).toBe(false)
+  expect(isFullWake('open', null)).toBe(true)
+  expect(isFullWake('closed', null)).toBe(false)
   expect(isFullWake(null, null)).toBe(false)
 })
 

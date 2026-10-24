@@ -25,7 +25,7 @@ async function start($: any, on: any, opts: Opts) {
     sleepUntil = clock.now() + ms
     return clock.advance(ms)
   }
-  const world = { lid: 'open' as 'open' | 'closed', graphics: true }
+  const world = { lid: 'open' as 'open' | 'closed' | null, graphics: true as boolean | null, agentListFails: false }
   const agents: { id: string; status: string; description: string }[] = []
   const mtimes: Record<string, number> = {}
   const state = opts.state === undefined ? RUN_STATE : opts.state
@@ -44,8 +44,8 @@ async function start($: any, on: any, opts: Opts) {
     calls.push(e.argv)
     if (opts.frictionDenied && isFriction(e.argv)) return { deny: 'friction exploded' }
     if (opts.inbox !== undefined && isInboxLs(e.argv)) return { value: { exitCode: 0, stdout: opts.inbox, stderr: '' } } as never
-    if (e.argv[0].endsWith('/ioreg')) return { value: { exitCode: 0, stdout: `| |   "AppleClamshellState" = ${world.lid === 'closed' ? 'Yes' : 'No'}\n`, stderr: '' } } as never
-    if (e.argv[0].endsWith('/pmset')) return { value: { exitCode: 0, stdout: `Current System Capabilities are: CPU${world.graphics ? ' Graphics Audio' : ''} Network\n`, stderr: '' } } as never
+    if (e.argv[0].endsWith('/ioreg')) return { value: { exitCode: 0, stdout: world.lid === null ? '' : `| |   "AppleClamshellState" = ${world.lid === 'closed' ? 'Yes' : 'No'}\n`, stderr: '' } } as never
+    if (e.argv[0].endsWith('/pmset')) return { value: { exitCode: 0, stdout: world.graphics === null ? '' : `Current System Capabilities are: CPU${world.graphics ? ' Graphics Audio' : ''} Network\n`, stderr: '' } } as never
     if (isSubagentsLs(e.argv)) return { value: { exitCode: 0, stdout: `${SUBAGENTS}\n`, stderr: '' } } as never
     return { value: e.argv[0] === 'date' ? { exitCode: 0, stdout: '2026-10-08\n', stderr: '' } : typeof opts.day === 'function' ? (isChangesSince(e.argv) ? opts.day() : OK) : opts.day } as never
   })
@@ -94,7 +94,7 @@ async function start($: any, on: any, opts: Opts) {
     return { value: undefined } as never
   })
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
-  on('agent.list', () => ({ value: agents }) as never)
+  on('agent.list', () => (world.agentListFails ? { deny: 'agent list unavailable' } : { value: agents }) as never)
   on('fs.stat', (_$: any, e: any) => (e.path in mtimes ? { value: { kind: 'file', size: 1, mtimeMs: mtimes[e.path], isLink: false } } : { deny: 'ENOENT' }) as never)
   await $.session.start({ cwd: '/home/t', surface: 'terminal', source: 'startup' } as never)
   return { clock, sleep, world, agents, mtimes, calls, toasts, logs, registered, statuses, files, prompts, origins, forks, reads }
@@ -576,4 +576,65 @@ test('a typed prompt in a cold owner session passes unchanged', async ($, on) =>
   await s.clock.advance(61 * MIN)
   expect(await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' } } as never)).toEqual({ text: 'hello' })
   expect(s.prompts).toEqual(['hello'])
+})
+
+test('clamshell: lid closed with the display on is a full wake', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await s.clock.advance(10_000)
+  s.world.lid = 'closed'
+  s.world.graphics = false
+  await s.sleep(95 * MIN)
+  s.world.graphics = true
+  await s.clock.advance(5_000)
+  expect(wakes(s.prompts)).toHaveLength(1)
+  expect(wakes(s.prompts)[0].startsWith('[daily-wake] woke after 95 min:')).toBe(true)
+})
+
+test('three probes that read neither lid nor display give up on that sleep, with one log line', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await s.clock.advance(10_000)
+  s.world.lid = 'closed'
+  s.world.graphics = false
+  await s.sleep(95 * MIN)
+  s.world.lid = null
+  s.world.graphics = null
+  await s.clock.advance(15_000)
+  const probes = s.calls.filter(isWakeProbe).length
+  expect(s.logs.filter(l => l.startsWith('daily wake: cannot read lid or display state'))).toHaveLength(1)
+  await s.clock.advance(60_000)
+  expect(s.calls.filter(isWakeProbe).length).toBe(probes)
+  expect(s.logs.filter(l => l.startsWith('daily wake: cannot read lid or display state'))).toHaveLength(1)
+  expect(wakes(s.prompts)).toEqual([])
+})
+
+test('a refresh tick that fails right after the sleep does not lose the wake', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await s.clock.advance(10_000)
+  s.world.lid = 'closed'
+  s.world.graphics = false
+  s.world.agentListFails = true
+  await s.sleep(95 * MIN)
+  s.world.agentListFails = false
+  s.world.lid = 'open'
+  s.world.graphics = true
+  await s.clock.advance(10_000)
+  expect(wakes(s.prompts)).toHaveLength(1)
+  expect(wakes(s.prompts)[0].startsWith('[daily-wake] woke after 95 min:')).toBe(true)
+})
+
+test('a failed agents-file write logs once and the wake prompt still goes out', async ($, on) => {
+  const s = await start($, on, { ...idleDay, writeFails: true })
+  s.agents.push({ id: 'a1b2c3', status: 'running', description: 'ecfx-18169' })
+  await sleepThenOpen(s, 95 * MIN)
+  await s.clock.advance(60_000)
+  expect(wakes(s.prompts)).toHaveLength(1)
+  expect(s.logs.filter(l => l.startsWith('daily: agents file not written'))).toHaveLength(1)
+})
+
+test('a full wake with no outstanding agents but inbox messages still nudges', async ($, on) => {
+  const idle = RUN_STATE.replace('agent=a1b2c3', 'agent=-')
+  const s = await start($, on, { ...idleDay, state: idle, inbox: `${INBOX_MSG}\n` })
+  await sleepThenOpen(s, 95 * MIN)
+  expect(wakes(s.prompts)).toHaveLength(1)
+  expect(wakes(s.prompts)[0]).toContain('0 background agent(s) outstanding')
 })
