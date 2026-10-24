@@ -168,8 +168,11 @@ per repo **sequentially**, each brief naming the contract file both sides must m
 
 ## 3. Check before you tick
 
-A `[pi-sub]` wake-up or result from an agent id that is no longer the item's `agent=` (or
-`round=`, step 5) was already processed, by the Wake check (step 10) or before: ignore it.
+Once a report is handled, whatever the outcome (ticked, retried, blocked, parked on an outage,
+decision filed), and whenever you or the user stop an agent, set its `agent=` (or `round=`, step 5)
+to `-` or to the replacement's id. A `[pi-sub]` wake-up or result from an agent id that is no
+longer the item's `agent=` or `round=` was already processed, by the Wake check (step 10) or
+before: ignore it.
 
 An agent's report is a claim, not evidence. Before any `[x]`:
 
@@ -277,14 +280,14 @@ do nothing. Stop there.
 4. `subagent({role:"worker", model:<runtime choice>, task:<brief>, cwd:<worktree>, label:<KEY>})`;
    it counts toward the cap of 3. It fixes locally and drafts a reply; it does not push. Record
    its id as `round=<id>` on the item's run-state line.
-5. When it reports (and its id is still the item's `round=`; otherwise ignore it, step 3), run
-   the step 3 check on the diff and the tests. Set `round=-` and `needs_you=yes` and file the
-   round as a decision (step 9): `--blocks reply`, question `Push the fixes and post the review
-   reply on <repo>!<iid>?`, the context the findings with their status and SHAs,
-   `git log --oneline @{u}..HEAD` and the **full** draft reply (`cat` the reply file), and the
-   options `Push and post the reply` (recommended), `Change the reply first (add a note with n)`,
-   `Push nothing and post nothing`. When the answer arrives (step 7), option 1 is yes, option 3 is
-   no, and option 2 or a question back with changes is edit.
+5. When it reports (and its id is still the item's `round=`; otherwise ignore it, step 3), run the
+   step 3 check on the diff and the tests. Set `round=-` (whatever the outcome, step 3) and
+   `needs_you=yes` and file the round as a decision (step 9): `--blocks reply`, question `Push the
+   fixes and post the review reply on <repo>!<iid>?`, the context the findings with their status
+   and SHAs, `git log --oneline @{u}..HEAD` and the **full** draft reply (`cat` the reply file),
+   and the options `Push and post the reply` (recommended), `Change the reply first (add a note
+   with n)`, `Push nothing and post nothing`. When the answer arrives (step 7), option 1 is yes,
+   option 3 is no, and option 2 or a question back with changes is edit.
 6. yes → push,
    `glab api "projects/$ENC/merge_requests/$IID/discussions/$DID/notes" -X POST -F body=@<reply>`
    (`$DID` is the report's `discussion:` line), `needs_you=no`, apply the memory block, file a
@@ -331,7 +334,7 @@ Then:
 - `[daily-event:info] ...` lines: no action. Mention them only if the user asks what changed.
 - GitLab or Jira unavailable (5xx, timeout, connection refused; not 401/403/404) → no retry. Add `waiting=<service>`
   to the item's run-state line, run `wait-for <service> --detach --key <KEY>` (no-op if one is waiting) and move on.
-  A sub-agent that hits it reports back; park its item the same way.
+  A sub-agent that hits it reports back; park its item the same way and set its `agent=` or `round=` to `-` (step 3).
   An item with `waiting=<service>` and no live `~/.local/state/wait-for/<service>.lock` (a pid that is a running
   `wait-for`) was given up on: treat it as `gave up` (`needs_you=yes`, `· blocked: <service> down`).
 - `inbox: N new` → step 7.
@@ -474,7 +477,6 @@ For each `owner=main` run-state line, call `subagent_result({id})` for its `agen
   not listed again at the next session start. Process the `subagent_result` text (`lines` raised
   until the whole report shows) exactly as step 3 for a ticket agent, or step 5.5 for a review
   round; that sets `agent=-` or `round=-`, so its late `[pi-sub]` wake-up is ignored.
-- `stopped` by you or the user this session → leave it.
 - `failed` or `stopped`, or an id pi-sub does not know → its process is gone (a live one shows
   `running` and is adopted above). A complete final report in its result (it failed, or names what
   blocks it) is a real failure: process it as step 3 or 5.5, so a failed check takes the normal
@@ -491,4 +493,4 @@ mention in your reply that it is quiet; no decision, no stop, no second agent.
 
 Then process the inbox (step 7) and any `[daily-event]` messages still unanswered, and redo the
 event you were handling if your last reply was cut off. End with one line per row:
-`<KEY>: left running | left stopped | report processed | continued | re-dispatched`.
+`<KEY>: left running | report processed | continued | re-dispatched`.
