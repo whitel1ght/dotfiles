@@ -237,6 +237,18 @@ function changesSince(): Promise<Exec> {
   });
 }
 
+/** Raw lid and display state for the wake check; unreadable output is an empty string. */
+function lidAndGraphics(): Promise<{ lid: string; systemstate: string }> {
+  const out = (bin: string, args: string[]) =>
+    new Promise<string>((resolve) => {
+      execFile(bin, args, { timeout: 2_000 }, (err, stdout) => resolve(err ? "" : String(stdout)));
+    });
+  return Promise.all([
+    out("/usr/sbin/ioreg", ["-r", "-k", "AppleClamshellState", "-d", "1"]),
+    out("/usr/bin/pmset", ["-g", "systemstate"]),
+  ]).then(([lid, systemstate]) => ({ lid, systemstate }));
+}
+
 type Ui = { notify?: (message: string, type?: "info" | "warning" | "error") => void } | undefined;
 
 /**
@@ -262,6 +274,14 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
         return [];
       }
     },
+    holdsLock: () => {
+      try {
+        return (JSON.parse(readFileSync(lockPath(), "utf8")) as { pid: number }).pid === process.pid;
+      } catch {
+        return false;
+      }
+    },
+    lidAndGraphics,
     wake: (t) => send(t, true),
     note: (t) => send(t, false),
     notify: (m, level) => getUi()?.notify?.(m, level),
@@ -291,7 +311,12 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
       t.unref?.();
       timers.push(t);
     };
-    every(INBOX_MS, () => watcher.checkInbox());
+    every(INBOX_MS, async () => {
+      // the wake check first: it records the tick gap, and an inbox failure must not lose it
+      const nudge = await watcher.checkWake(Date.now()).catch(() => null);
+      if (nudge) send(nudge, true);
+      watcher.checkInbox();
+    });
     every(WATCH_MS, () => watcher.checkEvents());
     return (
       "Watching: the inbox every 30 s, GitLab/Jira events every 3 min. New inbox messages arrive " +

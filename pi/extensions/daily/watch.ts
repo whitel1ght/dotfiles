@@ -6,11 +6,15 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import { mrKeyFromRef, mrKeysOf, parseItems, ticketKey } from "./mod/diary.ts";
 import { classify, formatNote, formatPrompt, parseEvents } from "./mod/events.ts";
-import { inboxPrompt, nextInbox } from "./mod/inbox.ts";
+import { inboxPrompt, messageFiles, nextInbox } from "./mod/inbox.ts";
 import { parseRunState } from "./mod/runstate.ts";
+import { isFullWake, outstanding, parseGraphics, parseLid, sleptBetween, WAKE_PREFIX } from "./mod/wake.ts";
+import { REPORT_MARK } from "./mod/warm.ts";
 
 export const WATCH_MS = 180_000;
 export const INBOX_MS = 30_000;
+
+const BLIND_PROBES = 3;
 
 export type Exec = { code: number; stdout: string; stderr: string };
 
@@ -19,6 +23,10 @@ export type WatchDeps = {
   /** changes-since --cursor run-day */
   changes: () => Promise<Exec>;
   listInbox: () => string[];
+  /** True while this session holds watch.lock. */
+  holdsLock: () => boolean;
+  /** Raw output of ioreg (lid) and pmset systemstate (display); an empty string when unreadable. */
+  lidAndGraphics: () => Promise<{ lid: string; systemstate: string }>;
   /** Add a message and start a turn on it. */
   wake: (text: string) => void;
   /** Add a message for the next turn, without starting one. */
@@ -34,6 +42,9 @@ export class DayWatcher {
   private checking = false;
   private failed = false;
   private seen: string[] = [];
+  private prevTickAt: number | null = null;
+  private pendingSince: number | null = null;
+  private blindProbes = 0;
   private deps: WatchDeps;
 
   constructor(deps: WatchDeps) {
@@ -92,6 +103,44 @@ export class DayWatcher {
     } finally {
       this.checking = false;
     }
+  }
+
+  /**
+   * Called on the 30 s tick. A gap since the last tick means the machine slept; on a full wake
+   * (display on) with work outstanding it returns the prompt telling the session to run the
+   * Wake check, once. The gap is recorded before anything that could throw.
+   */
+  async checkWake(now: number): Promise<string | null> {
+    const prev = this.prevTickAt;
+    this.prevTickAt = now;
+    const watching = this.deps.holdsLock() && this.active() && !readOr(this.deps.paths().diary).includes(REPORT_MARK);
+    if (!watching) {
+      this.pendingSince = null;
+      this.blindProbes = 0;
+      return null;
+    }
+    if (prev !== null && sleptBetween(prev, now)) this.pendingSince ??= prev;
+    if (this.pendingSince === null) return null;
+
+    const probed = await this.deps.lidAndGraphics();
+    const lid = parseLid(probed.lid);
+    const graphics = parseGraphics(probed.systemstate);
+    if (lid === null && graphics === null) {
+      if (++this.blindProbes < BLIND_PROBES) return null;
+      this.blindProbes = 0;
+      this.pendingSince = null;
+      this.deps.notify("daily wake: cannot read lid or display state; no wake nudge for this sleep", "info");
+      return null;
+    }
+    this.blindProbes = 0;
+    if (!isFullWake(lid, graphics)) return null;
+    // Another tick may have taken this wake while the probe ran.
+    const since = this.pendingSince;
+    if (since === null) return null;
+    this.pendingSince = null;
+    const hasInbox = messageFiles(this.deps.listInbox()).length > 0;
+    if (outstanding(parseRunState(readOr(this.deps.paths().runState))).length === 0 && !hasInbox) return null;
+    return `${WAKE_PREFIX} woke after ${Math.round((now - since) / 60_000)} min: run the Wake check of /run-day (section 10).`;
   }
 
   checkInbox(): void {

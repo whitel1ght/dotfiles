@@ -20,18 +20,28 @@ const RUN_STATE = `# run-day ${DAY}\nmax_agents: 3\n- ecfx-1003 | class=auto | a
 
 const ev = (o: Record<string, unknown>) => JSON.stringify({ project: "ecfx", summary: "s", url: "u", at: "t", ...o });
 
-type Calls = { wakes: string[]; notes: string[]; notices: string[]; frictions: string[]; runs: number };
+type Calls = { wakes: string[]; notes: string[]; notices: string[]; frictions: string[]; runs: number; probes: number };
 
-function setup(opts: { runState?: boolean; changes?: Exec[]; inbox?: string[][] } = {}) {
+const WORKING = RUN_STATE.replace("agent=-", "agent=a1b2");
+const OPEN = { lid: '"AppleClamshellState" = No', systemstate: "Current System Capabilities are: CPU Graphics Audio Network" };
+const DARK = { lid: '"AppleClamshellState" = No', systemstate: "Current System Capabilities are: CPU Network" };
+const BLIND = { lid: "", systemstate: "" };
+type Probe = { lid: string; systemstate: string };
+
+function setup(
+  opts: { runState?: boolean; state?: string; changes?: Exec[]; inbox?: string[][]; held?: boolean; probes?: Probe[]; report?: boolean } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "daily-watch-"));
   const stateDir = join(root, "state");
   mkdirSync(join(stateDir, "inbox"), { recursive: true });
   mkdirSync(join(root, "diary"), { recursive: true });
   writeFileSync(join(root, "diary", `${DAY}.md`), PLAN);
-  if (opts.runState !== false) writeFileSync(join(stateDir, `${DAY}.md`), RUN_STATE);
-  const calls: Calls = { wakes: [], notes: [], notices: [], frictions: [], runs: 0 };
+  if (opts.report) writeFileSync(join(root, "diary", `${DAY}.md`), `${PLAN}\n<!-- daily-report:start -->\n`);
+  if (opts.runState !== false) writeFileSync(join(stateDir, `${DAY}.md`), opts.state ?? RUN_STATE);
+  const calls: Calls = { wakes: [], notes: [], notices: [], frictions: [], runs: 0, probes: 0 };
   const changes = [...(opts.changes ?? [])];
   const listings = [...(opts.inbox ?? [])];
+  const probes = [...(opts.probes ?? [])];
   const deps: WatchDeps = {
     paths: () => ({ runState: join(stateDir, `${DAY}.md`), diary: join(root, "diary", `${DAY}.md`) }),
     changes: async () => {
@@ -39,6 +49,11 @@ function setup(opts: { runState?: boolean; changes?: Exec[]; inbox?: string[][] 
       return changes.shift() ?? { code: 0, stdout: "", stderr: "" };
     },
     listInbox: () => listings.shift() ?? [],
+    holdsLock: () => opts.held !== false,
+    lidAndGraphics: async () => {
+      calls.probes += 1;
+      return probes.shift() ?? OPEN;
+    },
     wake: (t) => calls.wakes.push(t),
     note: (t) => calls.notes.push(t),
     notify: (m) => calls.notices.push(m),
@@ -151,4 +166,103 @@ test("a lock left by a dead process is taken over", () => {
   writeFileSync(lock, JSON.stringify({ pid: 999999, session: "gone" }));
   assert.equal(acquireLock(lock, { pid: process.pid, session: "s1" }), null);
   rmSync(root, { recursive: true });
+});
+
+const MIN = 60_000;
+const T0 = 1_000_000_000;
+const NUDGE = "[daily-wake] woke after 10 min: run the Wake check of /run-day (section 10).";
+
+test("a full wake after a tick gap gives one prompt, with the minutes slept", async () => {
+  const { root, watcher } = setup({ state: WORKING });
+  assert.equal(await watcher.checkWake(T0), null);
+  assert.equal(await watcher.checkWake(T0 + 10 * MIN), NUDGE);
+  assert.equal(await watcher.checkWake(T0 + 10 * MIN + 30_000), null);
+  rmSync(root, { recursive: true });
+});
+
+test("no probe runs while no gap is pending", async () => {
+  const { root, calls, watcher } = setup({ state: WORKING });
+  await watcher.checkWake(T0);
+  await watcher.checkWake(T0 + 30_000);
+  assert.equal(calls.probes, 0);
+  rmSync(root, { recursive: true });
+});
+
+test("a dark wake gives nothing, and the next full-wake tick still nudges", async () => {
+  const { root, watcher } = setup({ state: WORKING, probes: [DARK, OPEN] });
+  await watcher.checkWake(T0);
+  assert.equal(await watcher.checkWake(T0 + 10 * MIN), null);
+  assert.equal(await watcher.checkWake(T0 + 10 * MIN + 30_000), "[daily-wake] woke after 11 min: run the Wake check of /run-day (section 10).");
+  rmSync(root, { recursive: true });
+});
+
+test("no outstanding work and an empty inbox: no nudge", async () => {
+  const { root, watcher } = setup();
+  await watcher.checkWake(T0);
+  assert.equal(await watcher.checkWake(T0 + 10 * MIN), null);
+  rmSync(root, { recursive: true });
+});
+
+test("inbox messages alone are enough", async () => {
+  const msg = "20260101T090000-ecfx-1002-ab12.md";
+  const { root, watcher } = setup({ inbox: [[msg]] });
+  await watcher.checkWake(T0);
+  assert.equal(await watcher.checkWake(T0 + 10 * MIN), NUDGE);
+  rmSync(root, { recursive: true });
+});
+
+test("another session's lock, a finished report or no run state: no nudge", async () => {
+  for (const o of [{ held: false }, { report: true }, { runState: false }]) {
+    const { root, calls, watcher } = setup({ state: WORKING, ...o });
+    await watcher.checkWake(T0);
+    assert.equal(await watcher.checkWake(T0 + 10 * MIN), null);
+    assert.equal(calls.probes, 0);
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("a gap during a time the lock was not held is forgotten", async () => {
+  const { root, watcher } = setup({ state: WORKING });
+  let held = false;
+  (watcher as unknown as { deps: WatchDeps }).deps.holdsLock = () => held;
+  await watcher.checkWake(T0);
+  assert.equal(await watcher.checkWake(T0 + 10 * MIN), null);
+  held = true;
+  assert.equal(await watcher.checkWake(T0 + 10 * MIN + 30_000), null);
+  rmSync(root, { recursive: true });
+});
+
+test("a probe that throws never loses the sleep", async () => {
+  const { root, watcher } = setup({ state: WORKING });
+  const deps = (watcher as unknown as { deps: WatchDeps }).deps;
+  const real = deps.lidAndGraphics;
+  deps.lidAndGraphics = async () => {
+    throw new Error("boom");
+  };
+  await watcher.checkWake(T0);
+  await assert.rejects(watcher.checkWake(T0 + 10 * MIN));
+  deps.lidAndGraphics = real;
+  assert.match((await watcher.checkWake(T0 + 10 * MIN + 30_000)) ?? "", /^\[daily-wake\] woke after 11 min/);
+  rmSync(root, { recursive: true });
+});
+
+test("three blind probes in a row clear the wake with one notice; a known probe resets the count", async () => {
+  const { root, calls, watcher } = setup({ state: WORKING, probes: [BLIND, BLIND, OPEN] });
+  await watcher.checkWake(T0);
+  // two blind probes, then a known one: the count resets and no notice is given
+  await watcher.checkWake(T0 + 10 * MIN);
+  await watcher.checkWake(T0 + 10 * MIN + 30_000);
+  assert.ok((await watcher.checkWake(T0 + 11 * MIN)) !== null);
+  assert.deepEqual(calls.notices, []);
+  rmSync(root, { recursive: true });
+
+  const b = setup({ state: WORKING, probes: [BLIND, BLIND, BLIND] });
+  await b.watcher.checkWake(T0);
+  await b.watcher.checkWake(T0 + 10 * MIN);
+  await b.watcher.checkWake(T0 + 10 * MIN + 30_000);
+  assert.equal(await b.watcher.checkWake(T0 + 11 * MIN), null);
+  assert.deepEqual(b.calls.notices, ["daily wake: cannot read lid or display state; no wake nudge for this sleep"]);
+  assert.equal(await b.watcher.checkWake(T0 + 12 * MIN), null);
+  assert.equal(b.calls.probes, 3, "no more probes once cleared");
+  rmSync(b.root, { recursive: true });
 });
