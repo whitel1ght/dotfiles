@@ -8,8 +8,10 @@ import { applyEdit, checkTicks, denyMessage, isTodaysDiary } from '../mod/guard.
 import type { EditInput } from '../mod/guard.ts'
 import { claimsDay, claimsDayPrompt, formatOwner, ownerNote, ownerPath, parseOwner, receivesPings } from '../mod/owner.ts'
 import { parseRunState } from '../mod/runstate.ts'
-import { isWarm, nextWarm, pingFailure, REPORT_MARK, WARM_PROMPT } from '../mod/warm.ts'
-import type { InboxState, ViewState } from '../mod/types.ts'
+import { isWarm, nextWarm, pingFailure, REPORT_MARK, TTL_MS, WARM_PROMPT } from '../mod/warm.ts'
+import { agentRows, formatAgents, isFullWake, outstanding, parseGraphics, parseLid, sleptBetween, STUCK_MS, stuckPrompt, stuckRows, wakePrompt } from '../mod/wake.ts'
+import type { AgentRow } from '../mod/wake.ts'
+import type { InboxState, RunItem, ViewState } from '../mod/types.ts'
 import { joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts'
 
 const REFRESH_MS = 5_000
@@ -20,11 +22,14 @@ const INBOX_MS = 30_000
 const DAY_PLAN = 'exec "$(command -v day-plan || echo "$HOME/.local/bin/day-plan")"'
 const INBOX_LS = 'ls -1 "$HOME/.local/state/run-day/inbox" 2>/dev/null; true'
 const FRICTION = 'F="$(command -v friction || echo "$HOME/.local/bin/friction")"; [ -x "$F" ] && exec "$F" "$@" || true'
+const LID = ['/usr/sbin/ioreg', '-r', '-k', 'AppleClamshellState', '-d', '1']
+const SYSTEM_STATE = ['/usr/bin/pmset', '-g', 'systemstate']
+const COLD_RELAY = 'daily: relayed past the cold-cache guard'
 const EMPTY: ViewState = { active: false, status: '', groups: [] }
 const view = atom({ plugin: 'daily', key: 'view' } as const, EMPTY)
 const inbox = atom({ plugin: 'daily', key: 'inbox' } as const, EMPTY_INBOX as InboxState)
 
-type Day = { home: string; today: string; diaryPath: string; statePath: string; ownerPath: string }
+type Day = { home: string; today: string; diaryPath: string; statePath: string; ownerPath: string; agentsPath: string }
 
 async function today($: EngineInterface): Promise<Day | null> {
   const home = await $.env.get('HOME')
@@ -39,6 +44,7 @@ async function today($: EngineInterface): Promise<Day | null> {
     diaryPath: `${home}/wiki/diary/${day}.md`,
     statePath: `${stateDir}/${day}.md`,
     ownerPath: ownerPath(stateDir, day),
+    agentsPath: `${stateDir}/${day}.agents`,
   }
 }
 
@@ -55,13 +61,22 @@ async function load($: EngineInterface) {
   const state = await readOr($, day.statePath)
   if (state === null) return { day, active: false as const }
   const diary = (await readOr($, day.diaryPath)) ?? ''
-  return { day, active: true as const, items: parseItems(diary), runs: parseRunState(state) }
+  return { day, active: true as const, items: parseItems(diary), runs: parseRunState(state), dayEnded: diary.includes(REPORT_MARK) }
 }
+
+type DayCtx = Extract<NonNullable<Awaited<ReturnType<typeof load>>>, { active: true }>
 
 // Inbox and event prompts go only to the session that ran /run-day last (F-057); the others
 // count the inbox for their status line only and never move the changes-since cursor.
 async function isOwner($: EngineInterface, day: Day): Promise<boolean> {
   return receivesPings(parseOwner(await readOr($, day.ownerPath)), await $.session.id())
+}
+
+// The day session while the day runs: today's run state, this session owns it, no report yet.
+async function runningDay($: EngineInterface): Promise<DayCtx | null> {
+  const ctx = await load($)
+  if (!ctx || !ctx.active || ctx.dayEnded || !(await isOwner($, ctx.day))) return null
+  return ctx
 }
 
 async function claimDay($: EngineInterface) {
@@ -148,6 +163,119 @@ async function safeArmWarm($: EngineInterface) {
   }
 }
 
+// Waking from sleep (mod/wake.ts). With the lid closed macOS dark-wakes every ~15 min and the
+// timers run in slices, so a gap between refresh ticks only arms the probe; the day session is
+// nudged once, on the first tick that finds a full wake (lid open, display on).
+const wake = {
+  lastTickAt: null as number | null,
+  pending: null as { since: number } | null,
+  timer: null as { cancel: () => void } | null,
+  gen: 0,
+  subagents: null as { sessionId: string; dir: string } | null,
+  hasAgentsFailed: false,
+}
+
+async function isFullWakeNow($: EngineInterface): Promise<boolean> {
+  const out = (argv: string[]) => $.process.run(argv, { timeoutMs: 2_000 }).then(r => (r.exitCode === 0 ? r.stdout : ''), () => '')
+  const [lid, state] = await Promise.all([out(LID), out(SYSTEM_STATE)])
+  return isFullWake(parseLid(lid), parseGraphics(state))
+}
+
+// A session's transcripts sit under ~/.claude/projects/<slug>/<id>/subagents; the folder appears
+// with its first subagent, so only a found one is cached (per session id: /clear makes a new one).
+async function subagentsDir($: EngineInterface): Promise<string> {
+  const sessionId = await $.session.id()
+  if (wake.subagents?.sessionId === sessionId) return wake.subagents.dir
+  if (!/^[\w-]+$/.test(sessionId)) return ''
+  const ls = `ls -d "$HOME"/.claude/projects/*/${sessionId}/subagents 2>/dev/null | head -1`
+  const ran = await $.process.run(['/bin/sh', '-c', ls], { timeoutMs: 2_000 }).catch(() => null)
+  const dir = ran?.exitCode === 0 ? ran.stdout.trim() : ''
+  if (dir) wake.subagents = { sessionId, dir }
+  return dir
+}
+
+// Never rejects: what cannot be read shows as unknown or '-' in the file.
+async function agentState($: EngineInterface, runs: RunItem[], now: number): Promise<AgentRow[]> {
+  const ids = outstanding(runs).flatMap(r => [r.agent, r.round]).filter(id => id !== '')
+  if (ids.length === 0) return []
+  const listed = (await $.agent.list().catch(() => [])).map(a => ({ id: a.id, status: a.status }))
+  const dir = await subagentsDir($)
+  const quiet: Record<string, { ms: number | null; path: string }> = {}
+  for (const id of ids) {
+    const path = dir ? `${dir}/agent-${id}.jsonl` : ''
+    const stat = path ? await $.fs.stat(path).catch(() => null) : null
+    quiet[id] = stat ? { ms: now - stat.mtimeMs, path } : { ms: null, path: '' }
+  }
+  return agentRows(runs, listed, quiet)
+}
+
+async function writeAgents($: EngineInterface, day: Day, rows: AgentRow[], now: number) {
+  try {
+    await $.fs.write(day.agentsPath, `${formatAgents(rows, now)}\n`)
+    wake.hasAgentsFailed = false
+  } catch (err) {
+    if (!wake.hasAgentsFailed) $.ui.log(`daily: agents file not written: ${err instanceof Error ? err.message : String(err)}`)
+    wake.hasAgentsFailed = true
+  }
+}
+
+function submitWake($: EngineInterface, text: string) {
+  void $.prompt.submit({ text }).catch(() => $.ui.toast('daily wake: prompt submit failed'))
+}
+
+// Runs on every refresh tick with the tick's time and the one before it.
+async function checkWake($: EngineInterface, ctx: DayCtx, owns: boolean, prevTickAt: number | null, now: number) {
+  if (!owns || ctx.dayEnded) {
+    wake.pending = null
+    return
+  }
+  if (prevTickAt !== null && sleptBetween(prevTickAt, now)) wake.pending ??= { since: prevTickAt }
+  if (wake.pending === null || !(await isFullWakeNow($))) return
+  // Another tick may have taken this wake while the probe ran.
+  const taken = wake.pending
+  if (taken === null) return
+  wake.pending = null
+  if (outstanding(ctx.runs).length === 0 && (await read($, inbox)).pending === 0) return
+  const rows = await agentState($, ctx.runs, now)
+  await writeAgents($, ctx.day, rows, now)
+  submitWake($, wakePrompt(now - taken.since, rows, ctx.day.agentsPath))
+  const gen = ++wake.gen
+  wake.timer?.cancel()
+  wake.timer = $.clock.after(STUCK_MS, () => void stuckFollowUp($, gen))
+}
+
+// One look, STUCK_MS after a nudge. Skipped when the machine slept again meanwhile: the next full
+// wake nudges afresh.
+async function stuckFollowUp($: EngineInterface, gen: number) {
+  if (gen !== wake.gen) return
+  wake.timer = null
+  try {
+    const now = await $.clock.now()
+    if (wake.pending !== null || (wake.lastTickAt !== null && sleptBetween(wake.lastTickAt, now))) return
+    const ctx = await runningDay($)
+    if (!ctx) return
+    const rows = await agentState($, ctx.runs, now)
+    const stuck = stuckRows(rows)
+    if (stuck.length === 0) return
+    await writeAgents($, ctx.day, rows, now)
+    submitWake($, stuckPrompt(stuck, ctx.day.agentsPath))
+  } catch (err) {
+    $.ui.log(`daily wake follow-up: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+async function refreshAgents($: EngineInterface, ctx: DayCtx) {
+  const now = await $.clock.now()
+  await writeAgents($, ctx.day, await agentState($, ctx.runs, now), now)
+}
+
+// A background task's notification in a cold day session (last request past the cache TTL).
+async function isColdNotification($: EngineInterface, kind: string | undefined): Promise<boolean> {
+  if (kind !== 'task-notification' || warm.lastRequestAt === null) return false
+  if ((await $.clock.now()) - warm.lastRequestAt <= TTL_MS) return false
+  return (await runningDay($)) !== null
+}
+
 const flags = { lastNeeds: null as Set<string> | null, isWatching: false, timeouts: 0, hasWatchFailed: false, hasRefreshFailed: false, isListing: false, hasInboxFailed: false }
 
 // Fire-and-forget: a missing or failing friction must never slow or change the caller.
@@ -161,8 +289,12 @@ function friction($: EngineInterface, kind: string, msg: string, source = 'chang
 }
 
 async function refresh($: EngineInterface) {
+  const now = await $.clock.now()
+  const prevTickAt = wake.lastTickAt
+  wake.lastTickAt = now
   const ctx = await load($)
   if (!ctx || !ctx.active) {
+    wake.pending = null
     $.ui.status(undefined)
     flags.lastNeeds = null
     await update($, view, () => EMPTY)
@@ -170,7 +302,9 @@ async function refresh($: EngineInterface) {
   }
   const agents = (await $.agent.list()).map(a => ({ id: a.id, description: a.description, status: a.status }))
   const rows = joinRows(ctx.items, ctx.runs, agents)
-  const note = ownerNote(parseOwner(await readOr($, ctx.day.ownerPath)), await $.session.id())
+  const owner = parseOwner(await readOr($, ctx.day.ownerPath))
+  const sessionId = await $.session.id()
+  const note = ownerNote(owner, sessionId)
   const status = statusLine(rows, (await read($, inbox)).pending) + (note ? ` · ${note}` : '')
   $.ui.status(status)
   await update($, view, () => ({ active: true, status, groups: panelGroups(rows) }))
@@ -180,6 +314,7 @@ async function refresh($: EngineInterface) {
     $.ui.toast(`needs you: ${fresh.join(', ')}`)
     await $.audio.play({ asset: 'sounds/needs-you.wav' }).catch(() => undefined)
   }
+  await checkWake($, ctx, receivesPings(owner, sessionId), prevTickAt, now)
 }
 
 async function safeRefresh($: EngineInterface) {
@@ -287,6 +422,7 @@ async function watchInbox($: EngineInterface) {
     const before = await read($, inbox)
     const { fresh, state } = nextInbox(parseListing(ran.stdout), before.seen)
     await update($, inbox, () => state)
+    if (owns && !ctx.dayEnded && outstanding(ctx.runs).length > 0) await refreshAgents($, ctx)
     if (owns && fresh.length > 0) {
       $.ui.toast(`inbox: ${fresh.length} new`)
       void $.prompt.submit({ text: inboxPrompt(fresh.length) }).catch(() => $.ui.toast('daily inbox: prompt submit failed'))
@@ -339,8 +475,16 @@ export const register: Register = on => {
     })
   }
 
-  // Backup for a build where a plugin's markdown command does not raise command.run.
+  // A cold task-notification is re-sent as this plugin's own prompt, past a cold-cache guard that
+  // would hold it (cache-tax's, when it runs first); the Wake check covers the order not working.
+  // The host refuses a submit from inside a prompt.submit hook, so it goes out on the next clock turn.
+  // The claim is the backup for a build where a plugin's markdown command does not raise command.run.
   on('prompt.submit', async ($, e, next) => {
+    if (await isColdNotification($, e.origin?.kind)) {
+      const { text } = e
+      $.clock.after(0, () => void $.prompt.submit({ text }).catch(() => $.ui.toast('daily: relaying a task notification failed')))
+      return { drop: COLD_RELAY }
+    }
     if (e.origin?.kind !== 'plugin' && claimsDayPrompt(e.text)) await claimDay($)
     return next(e)
   })

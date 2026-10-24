@@ -11,14 +11,30 @@ const WARM_REPLY = { isAnswered: true, text: 'warm', usage: { input_tokens: 5, o
 
 type Run = { exitCode: number; stdout: string; stderr: string }
 
-type Opts = { day: Run | (() => Run); refuse?: boolean; frictionDenied?: boolean; owner?: string | null; writeFails?: boolean; inbox?: string; diary?: string; fork?: () => unknown }
+type Opts = { day: Run | (() => Run); refuse?: boolean; frictionDenied?: boolean; owner?: string | null; writeFails?: boolean; inbox?: string; diary?: string; state?: string | null; fork?: () => unknown }
 
 async function start($: any, on: any, opts: Opts) {
+  // A closed lid stops the 5 s refresh tick: while asleep its next period waits for the wake.
+  let sleepUntil = 0
+  on('clock.every', { ms: 5_000 }, (_$: any, e: any, next: any) => {
+    const now = clock.now()
+    return now < sleepUntil ? next({ ...e, ms: sleepUntil - now }) : next(e)
+  })
   const clock = mock.clock(on, { now: T0 })
-  const files: Record<string, string> = { [WIKI]: opts.diary ?? DIARY, [STATE]: RUN_STATE }
+  const sleep = (ms: number) => {
+    sleepUntil = clock.now() + ms
+    return clock.advance(ms)
+  }
+  const world = { lid: 'open' as 'open' | 'closed', graphics: true }
+  const agents: { id: string; status: string; description: string }[] = []
+  const mtimes: Record<string, number> = {}
+  const state = opts.state === undefined ? RUN_STATE : opts.state
+  const files: Record<string, string> = { [WIKI]: opts.diary ?? DIARY }
+  if (state !== null) files[STATE] = state
   const owner = opts.owner === undefined ? ME : opts.owner
   if (owner !== null) files[OWNER] = `${owner}\n`
   const prompts: string[] = []
+  const origins: unknown[] = []
   const calls: string[][] = []
   const toasts: string[] = []
   const logs: string[] = []
@@ -28,6 +44,9 @@ async function start($: any, on: any, opts: Opts) {
     calls.push(e.argv)
     if (opts.frictionDenied && isFriction(e.argv)) return { deny: 'friction exploded' }
     if (opts.inbox !== undefined && isInboxLs(e.argv)) return { value: { exitCode: 0, stdout: opts.inbox, stderr: '' } } as never
+    if (e.argv[0].endsWith('/ioreg')) return { value: { exitCode: 0, stdout: `| |   "AppleClamshellState" = ${world.lid === 'closed' ? 'Yes' : 'No'}\n`, stderr: '' } } as never
+    if (e.argv[0].endsWith('/pmset')) return { value: { exitCode: 0, stdout: `Current System Capabilities are: CPU${world.graphics ? ' Graphics Audio' : ''} Network\n`, stderr: '' } } as never
+    if (isSubagentsLs(e.argv)) return { value: { exitCode: 0, stdout: `${SUBAGENTS}\n`, stderr: '' } } as never
     return { value: e.argv[0] === 'date' ? { exitCode: 0, stdout: '2026-10-08\n', stderr: '' } : typeof opts.day === 'function' ? (isChangesSince(e.argv) ? opts.day() : OK) : opts.day } as never
   })
   const reads: string[] = []
@@ -53,6 +72,7 @@ async function start($: any, on: any, opts: Opts) {
   on('command.run', (_$: any, e: any) => ({ text: `ran ${e.command}` }))
   on('prompt.submit', (_$: any, e: any) => {
     prompts.push(e.text)
+    origins.push(e.origin)
     return { text: e.text }
   })
   on('command.register', (_$: any, e: any) => {
@@ -74,9 +94,10 @@ async function start($: any, on: any, opts: Opts) {
     return { value: undefined } as never
   })
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
-  on('agent.list', () => ({ value: [] }))
+  on('agent.list', () => ({ value: agents }) as never)
+  on('fs.stat', (_$: any, e: any) => (e.path in mtimes ? { value: { kind: 'file', size: 1, mtimeMs: mtimes[e.path], isLink: false } } : { deny: 'ENOENT' }) as never)
   await $.session.start({ cwd: '/home/t', surface: 'terminal', source: 'startup' } as never)
-  return { clock, calls, toasts, logs, registered, statuses, files, prompts, forks, reads }
+  return { clock, sleep, world, agents, mtimes, calls, toasts, logs, registered, statuses, files, prompts, origins, forks, reads }
 }
 
 const isFriction = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('friction')
@@ -88,6 +109,8 @@ const isInboxLs = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes(
 const INBOX_MSG = '20261008T154200-ECFX-18169-ab12.md'
 const EVENT = JSON.stringify({ kind: 'review', repo: 'ecfx/ecfx-backend', mr: 6576, ticket: 'ECFX-9190', summary: 'please fix', url: 'u' })
 const isDayPlan = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('day-plan')
+const SUBAGENTS = `/home/t/.claude/projects/-home-t/${ME}/subagents`
+const isSubagentsLs = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('/subagents')
 
 test('/day-plan runs day-plan without blocking and reports it opened', async ($, on) => {
   const s = await start($, on, { day: OK })
@@ -380,4 +403,177 @@ test('a session that does not own the day reads no diary for keepwarm after a tu
   await turn($)
   await s.clock.settle()
   expect(s.reads.filter(p => p === WIKI)).toEqual([])
+})
+
+// Waking from sleep: one [daily-wake] prompt on a full wake (lid open, display on), never on a dark wake.
+const AGENTS = '/home/t/.local/state/run-day/2026-10-08.agents'
+const isWakeProbe = (argv: string[]) => argv[0].endsWith('/ioreg') || argv[0].endsWith('/pmset')
+const wakes = (prompts: string[]) => prompts.filter(p => p.startsWith('[daily-wake]'))
+const agentLines = (text: string) => text.split('\n').filter(l => l !== '' && !l.startsWith('#'))
+const TWO_AGENTS = `# run-day 2026-10-08
+max_agents: 3
+- ecfx-18169 | class=auto | agent=a1 | worktree=- | mr=- | retries=0 | needs_you=no
+- ecfx-18171 | class=auto | agent=b2 | worktree=- | mr=- | retries=0 | needs_you=no
+`
+
+async function sleepThenOpen(s: any, ms: number) {
+  await s.clock.advance(10_000)
+  s.world.lid = 'closed'
+  s.world.graphics = false
+  await s.sleep(ms)
+  s.world.lid = 'open'
+  s.world.graphics = true
+  await s.clock.advance(5_000)
+}
+
+test('full wake after a gap nudges once', async ($, on) => {
+  const s = await start($, on, idleDay)
+  s.agents.push({ id: 'a1b2c3', status: 'running', description: 'ecfx-18169' })
+  s.mtimes[`${SUBAGENTS}/agent-a1b2c3.jsonl`] = T0
+  await sleepThenOpen(s, 95 * MIN)
+  await s.clock.advance(60_000)
+  expect(wakes(s.prompts)).toHaveLength(1)
+  expect(wakes(s.prompts)[0].startsWith('[daily-wake] woke after 95 min:')).toBe(true)
+  expect(wakes(s.prompts)[0]).toContain(AGENTS)
+  const lines = agentLines(s.files[AGENTS])
+  expect(lines).toHaveLength(1)
+  expect(lines[0]).toMatch(/^ecfx-18169 \| ticket \| a1b2c3 \| running \| quiet=\d+ \| .*agent-a1b2c3\.jsonl$/)
+})
+
+test('dark wakes never nudge', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await s.clock.advance(10_000)
+  s.world.lid = 'closed'
+  s.world.graphics = false
+  for (let i = 0; i < 3; i++) await s.sleep(15 * MIN)
+  expect(s.calls.filter(isWakeProbe).length).toBeGreaterThan(0)
+  expect(wakes(s.prompts)).toEqual([])
+  s.world.lid = 'open'
+  s.world.graphics = true
+  await s.clock.advance(5_000)
+  await s.clock.advance(60_000)
+  expect(wakes(s.prompts)).toHaveLength(1)
+  expect(wakes(s.prompts)[0].startsWith('[daily-wake] woke after 45 min:')).toBe(true)
+})
+
+test('no wake probe runs without a gap', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await s.clock.advance(10 * MIN)
+  expect(s.calls.filter(isWakeProbe)).toEqual([])
+})
+
+test('no outstanding work, no nudge', async ($, on) => {
+  const idle = RUN_STATE.replace('agent=a1b2c3', 'agent=-').replace('ECFX-9190 | class=me', 'ECFX-9190 | class=me | agent=- | round=-')
+  const s = await start($, on, { ...idleDay, state: idle, inbox: '' })
+  await sleepThenOpen(s, 95 * MIN)
+  expect(s.calls.filter(isWakeProbe).length).toBeGreaterThan(0)
+  expect(wakes(s.prompts)).toEqual([])
+  expect(s.files[AGENTS]).toBeUndefined()
+})
+
+test('a session that does not own the day gets no wake prompt and no agents file', async ($, on) => {
+  const s = await start($, on, { ...idleDay, owner: 'sess-other' })
+  await sleepThenOpen(s, 95 * MIN)
+  expect(wakes(s.prompts)).toEqual([])
+  expect(s.files[AGENTS]).toBeUndefined()
+  expect(s.calls.filter(isWakeProbe)).toEqual([])
+})
+
+test('after the daily report there is no wake prompt and no agents file', async ($, on) => {
+  const s = await start($, on, { day: OK })
+  await sleepThenOpen(s, 95 * MIN)
+  expect(wakes(s.prompts)).toEqual([])
+  expect(s.files[AGENTS]).toBeUndefined()
+  expect(s.calls.filter(isWakeProbe)).toEqual([])
+})
+
+test('without a run state there is no wake prompt and no agents file', async ($, on) => {
+  const s = await start($, on, { ...idleDay, state: null })
+  await sleepThenOpen(s, 95 * MIN)
+  expect(wakes(s.prompts)).toEqual([])
+  expect(s.files[AGENTS]).toBeUndefined()
+  expect(s.calls.filter(isWakeProbe)).toEqual([])
+})
+
+test('the agents file is refreshed on the inbox tick while agents are outstanding', async ($, on) => {
+  const s = await start($, on, idleDay)
+  s.agents.push({ id: 'a1b2c3', status: 'running', description: 'ecfx-18169' })
+  await s.clock.advance(30_000)
+  expect(agentLines(s.files[AGENTS])).toEqual(['ecfx-18169 | ticket | a1b2c3 | running | quiet=- | -'])
+})
+
+test('stuck follow-up names a running agent silent for 15+ min, once', async ($, on) => {
+  const s = await start($, on, { ...idleDay, state: TWO_AGENTS })
+  s.agents.push({ id: 'a1', status: 'running', description: 'ecfx-18169' }, { id: 'b2', status: 'completed', description: 'ecfx-18171' })
+  await sleepThenOpen(s, 95 * MIN)
+  expect(wakes(s.prompts)).toHaveLength(1)
+  s.mtimes[`${SUBAGENTS}/agent-a1.jsonl`] = s.clock.now() - MIN
+  s.mtimes[`${SUBAGENTS}/agent-b2.jsonl`] = s.clock.now() - MIN
+  await s.clock.advance(15 * MIN)
+  const stuck = s.prompts.filter(p => p.startsWith('[daily-wake] stuck:'))
+  expect(stuck).toHaveLength(1)
+  expect(stuck[0]).toContain('ecfx-18169 a1')
+  expect(stuck[0]).not.toContain('b2')
+  await s.clock.advance(60 * MIN)
+  expect(s.prompts.filter(p => p.startsWith('[daily-wake] stuck:'))).toHaveLength(1)
+})
+
+test('no stuck follow-up while the running agent keeps writing', async ($, on) => {
+  const s = await start($, on, { ...idleDay, state: TWO_AGENTS })
+  s.agents.push({ id: 'a1', status: 'running', description: 'ecfx-18169' })
+  await sleepThenOpen(s, 95 * MIN)
+  await s.clock.advance(14 * MIN)
+  s.mtimes[`${SUBAGENTS}/agent-a1.jsonl`] = s.clock.now()
+  await s.clock.advance(2 * MIN)
+  expect(s.prompts.filter(p => p.startsWith('[daily-wake] stuck:'))).toEqual([])
+})
+
+test('no stuck follow-up when the machine sleeps again before it is due', async ($, on) => {
+  const s = await start($, on, { ...idleDay, state: TWO_AGENTS })
+  s.agents.push({ id: 'a1', status: 'running', description: 'ecfx-18169' })
+  s.mtimes[`${SUBAGENTS}/agent-a1.jsonl`] = T0
+  await sleepThenOpen(s, 95 * MIN)
+  s.world.lid = 'closed'
+  s.world.graphics = false
+  await s.sleep(20 * MIN)
+  expect(s.prompts.filter(p => p.startsWith('[daily-wake] stuck:'))).toEqual([])
+  expect(wakes(s.prompts)).toHaveLength(1)
+})
+
+const NOTE = '<task-notification>agent a1 completed</task-notification>'
+const notify = ($: any) => $.prompt.submit({ text: NOTE, origin: { kind: 'task-notification' } } as never)
+
+test('a cold task-notification is relayed as a plugin prompt', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await turn($)
+  await s.clock.advance(61 * MIN)
+  const out = await notify($)
+  await s.clock.settle()
+  expect(out).toEqual({ drop: 'daily: relayed past the cold-cache guard' })
+  expect(s.prompts).toEqual([NOTE])
+  expect((s.origins[0] as { kind: string }).kind).toBe('plugin')
+})
+
+test('a warm task-notification passes unchanged', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await turn($)
+  await s.clock.advance(10 * MIN)
+  expect(await notify($)).toEqual({ text: NOTE })
+  expect(s.origins).toEqual([{ kind: 'task-notification' }])
+})
+
+test('a task-notification in a session that does not own the day passes unchanged', async ($, on) => {
+  const s = await start($, on, { ...idleDay, owner: 'sess-other' })
+  await turn($)
+  await s.clock.advance(61 * MIN)
+  expect(await notify($)).toEqual({ text: NOTE })
+  expect(s.origins).toEqual([{ kind: 'task-notification' }])
+})
+
+test('a typed prompt in a cold owner session passes unchanged', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await turn($)
+  await s.clock.advance(61 * MIN)
+  expect(await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' } } as never)).toEqual({ text: 'hello' })
+  expect(s.prompts).toEqual(['hello'])
 })
