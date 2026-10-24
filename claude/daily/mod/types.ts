@@ -21,6 +21,7 @@ export type RunItem = {
   needsYou: boolean
   owner: string
   waiting: string
+  round: string
 }
 
 export type AgentLite = { id: string; description: string; status: string }

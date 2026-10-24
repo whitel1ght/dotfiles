@@ -25,6 +25,7 @@ export function parseRunState(text: string): RunItem[] {
       needsYou: f.needs_you === 'yes',
       owner: blank(f.owner) || 'main',
       waiting: blank(f.waiting),
+      round: blank(f.round),
     })
   }
   return out

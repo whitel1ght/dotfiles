@@ -15,6 +15,7 @@ test('parseRunState reads every field and lowercases the key', async () => {
     needsYou: true,
     owner: 'main',
     waiting: '',
+    round: '',
   })
 })
 
@@ -54,4 +55,10 @@ test('waiting reads the service an item is parked on; absent, empty or dash is n
   expect(parked.waiting).toBe('gitlab')
   expect(parseRunState('- ecfx-1 | class=auto')[0].waiting).toBe('')
   expect(parseRunState('- ecfx-1 | waiting=-')[0].waiting).toBe('')
+})
+
+test('round reads the id, and a dash or a missing field is empty', async () => {
+  expect(parseRunState('- ecfx-1 | agent=- | round=abc')[0].round).toBe('abc')
+  expect(parseRunState('- ecfx-1 | round=-')[0].round).toBe('')
+  expect(parseRunState('- ecfx-1 | agent=a1')[0].round).toBe('')
 })
