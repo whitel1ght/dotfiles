@@ -17,6 +17,7 @@ import {
   readExit,
   readMeta,
   stateDir,
+  writeMeta,
   type Exit,
   type Meta,
 } from "./state.ts";
@@ -55,6 +56,8 @@ function agentDir(id: string): string {
 
 /** How long a cached ps ownership answer is trusted for a live pid. */
 const PS_CACHE_MS = 30_000;
+/** A gap between sweeps longer than this is the machine asleep. */
+const SLEEP_GAP_MS = 60_000;
 
 /** `4m12s` / `2h03m04s` — minutes unpadded, seconds always two digits. */
 export function formatDur(ms: number): string {
@@ -124,7 +127,8 @@ export function idleText(m: Meta, ordinal: number, minutes: number): string {
  * Idle: quiet for `idle_minutes` since `lastEventAt` (the events.jsonl mtime),
  * and not already flagged for this quiet spell (`flaggedSince` is the time of
  * the last flag; a new event since then re-arms it). A limit of 0 disables it.
- * Timeout: `max_minutes` since `meta.started_at`, so it survives restarts.
+ * Timeout: `max_minutes` since `meta.started_at` minus `asleep_ms` (time the
+ * machine slept), so it survives restarts and a closed lid.
  */
 export function checkLimits(
   m: Meta,
@@ -137,8 +141,13 @@ export function checkLimits(
     m.idle_minutes > 0 &&
     quietMs >= m.idle_minutes * 60_000 &&
     (flaggedSince === undefined || lastEventAt > flaggedSince);
-  const timeout = m.max_minutes > 0 && now - Date.parse(m.started_at) >= m.max_minutes * 60_000;
+  const timeout = m.max_minutes > 0 && now - Date.parse(m.started_at) - (m.asleep_ms ?? 0) >= m.max_minutes * 60_000;
   return { idle, timeout };
+}
+
+/** `m` with `gapMs` more time asleep. */
+export function addSleep(m: Meta, gapMs: number): Meta {
+  return { ...m, asleep_ms: (m.asleep_ms ?? 0) + gapMs };
 }
 
 /**
@@ -245,6 +254,7 @@ export class Watcher {
   private readonly onError: (e: unknown) => void;
   private started = false;
   private sweeping = false;
+  private lastSweepAt?: number;
   private interval?: ReturnType<typeof setInterval>;
   private fw?: ReturnType<typeof watch>;
   private readonly flagged = new Map<string, number>();
@@ -361,7 +371,22 @@ export class Watcher {
     try {
       let changed = false;
       const now = this.now();
-      const mine = owned(listAgents(), this.session);
+      // A gap over a minute between sweeps is the machine asleep (a dark wake
+      // sweeps once in a while): running agents did not run, so the hard
+      // timeout must not count it.
+      const gapMs = this.lastSweepAt === undefined ? 0 : now - this.lastSweepAt;
+      this.lastSweepAt = now;
+      const mine = owned(listAgents(), this.session).map((m) => {
+        if (gapMs <= SLEEP_GAP_MS || readExit(m.id) !== undefined) return m;
+        try {
+          const slept = addSleep(m, gapMs);
+          writeMeta(slept);
+          return slept;
+        } catch (e) {
+          this.report(e);
+          return m;
+        }
+      });
       mine.forEach((m) => {
         // One bad agent dir (corrupt files, a throwing send) must not stop
         // the others.

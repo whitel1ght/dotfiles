@@ -28,6 +28,8 @@ export type Meta = {
   handoff_from?: string;
   idle_minutes: number;
   max_minutes: number;
+  /** Time the machine slept while the agent ran; the hard timeout does not count it. */
+  asleep_ms?: number;
   argv: string[];
 };
 

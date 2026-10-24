@@ -16,6 +16,7 @@ import {
   type Meta,
 } from "./state.ts";
 import {
+  addSleep,
   checkLimits,
   deliverPending,
   flagText,
@@ -491,6 +492,48 @@ test("Watcher flags an idle agent once per quiet spell, re-arming on a new event
     } finally {
       watcher.stop();
     }
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("checkLimits: time asleep does not count toward the hard timeout", () => {
+  const now = Date.parse("2026-10-14T11:30:00Z");
+  const base = { started_at: "2026-10-14T10:00:00Z", max_minutes: 60, idle_minutes: 0 };
+  assert.equal(checkLimits(meta({ ...base, asleep_ms: 45 * 60_000 }), now, now).timeout, false);
+  assert.equal(checkLimits(meta(base), now, now).timeout, true);
+});
+
+test("addSleep adds to an existing asleep_ms", () => {
+  assert.equal(addSleep(meta(), 5 * 60_000).asleep_ms, 5 * 60_000);
+  assert.equal(addSleep(meta({ asleep_ms: 1000 }), 2000).asleep_ms, 3000);
+});
+
+test("Watcher adds a sweep gap over 60s to a running agent's asleep_ms and does not time it out", async () => {
+  const root = sandbox();
+  try {
+    let t = Date.parse("2026-10-14T10:20:00Z");
+    // Started 20 min before the first sweep; 45 min later it is 65 min old on
+    // the wall clock, over the 60-minute cap, but 45 of those were asleep.
+    const m = meta({ started_at: "2026-10-14T10:00:00Z", max_minutes: 60, idle_minutes: 0, pid: 4194304, pgid: 4194304 });
+    writeMeta(m);
+    touchEvents(m.id);
+    const watcher = new Watcher("sess-a", () => {}, () => {}, {
+      pollMs: 3_600_000,
+      ps: () => `node -e sleeper PI_SUB_ID=${m.id}`,
+      graceMs: 200,
+      now: () => t,
+    });
+    const sweep = () => (watcher as any).sweep();
+    await sweep(); // first sweep: no gap counted
+    assert.equal(readMeta(m.id)?.asleep_ms, undefined);
+    t += 30_000;
+    await sweep(); // short gap: not sleep
+    assert.equal(readMeta(m.id)?.asleep_ms, undefined);
+    t += 45 * 60_000;
+    await sweep();
+    assert.equal(readMeta(m.id)?.asleep_ms, 45 * 60_000);
+    assert.equal(existsSync(join(stateDir(), m.id, "stop-request.json")), false);
   } finally {
     cleanup(root);
   }
