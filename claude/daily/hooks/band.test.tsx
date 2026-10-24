@@ -502,6 +502,13 @@ test('the agents file is refreshed on the inbox tick while agents are outstandin
   expect(agentLines(s.files[AGENTS])).toEqual(['ecfx-18169 | ticket | a1b2c3 | running | quiet=- | -'])
 })
 
+test('after a restart /daily:run-day rewrites the agents file the dead process left', async ($, on) => {
+  const s = await start($, on, { ...idleDay, owner: 'sess-dead' })
+  s.files[AGENTS] = `# agents 2026-10-08T05:59:00Z\necfx-18169 | ticket | a1b2c3 | running | quiet=0 | -\n`
+  await $.command.run({ command: 'daily:run-day', args: 'resume' })
+  expect(agentLines(s.files[AGENTS])).toEqual(['ecfx-18169 | ticket | a1b2c3 | unknown | quiet=- | -'])
+})
+
 test('stuck follow-up names a running agent silent for 15+ min, once', async ($, on) => {
   const s = await start($, on, { ...idleDay, state: TWO_AGENTS })
   s.agents.push({ id: 'a1', status: 'running', description: 'ecfx-18169' }, { id: 'b2', status: 'completed', description: 'ecfx-18171' })

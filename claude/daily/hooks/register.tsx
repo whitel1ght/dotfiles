@@ -87,6 +87,9 @@ async function claimDay($: EngineInterface) {
     // Re-running /daily:run-day restarts a keepwarm that stopped (a failed ping, yesterday's report).
     warm.stopped = null
     warm.wasCold = false
+    // After a restart the agents file is the dead process's: the resume's Wake check reads this one.
+    const ctx = await runningDay($)
+    if (ctx) await refreshAgents($, ctx)
   } catch (err) {
     const why = `run-day owner not recorded: ${err instanceof Error ? err.message : String(err)}`
     $.ui.toast(`daily: ${why}`)
