@@ -50,7 +50,51 @@ cat > "$STRING_CONTENT" <<'JSONL'
 {"type":"assistant","message":{"role":"assistant","content":"plain string"}}
 JSONL
 
+# Tail shaped like a real day-agent transcript: narration text, then the
+# SubagentHandback tool call carrying the report, then its tool result.
+HANDBACK="$SANDBOX/handback.jsonl"
+cat > "$HANDBACK" <<'JSONL'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"All checks pass. Handing back."}]}}
+{"type":"api-request-blob","message":{"content":[{"type":"text","text":"request echo"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"h1","name":"SubagentHandback","input":{"message":"Fixed the widget.\n\nTests: 3 passed."}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"h1","content":"Handed back."}]}}
+JSONL
+
+# An earlier handback is superseded by a later one.
+TWO_HANDBACKS="$SANDBOX/two-handbacks.jsonl"
+cat > "$TWO_HANDBACKS" <<'JSONL'
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"h1","name":"SubagentHandback","input":{"message":"first report"}}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"more work"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"},{"type":"tool_use","id":"h2","name":"SubagentHandback","input":{"message":"second report"}}]}}
+JSONL
+
 echo "agent-report"
+
+out="$("$SCRIPT" "$HANDBACK" 2>&1)"; rc=$?
+expected="$(printf 'Fixed the widget.\n\nTests: 3 passed.')"
+if [ "$rc" -eq 0 ] && [ "$out" = "$expected" ]; then
+    pass "prints the SubagentHandback report, not the narration"
+else
+    fail "handback report" "rc=$rc out=[$out]"
+fi
+
+out="$("$SCRIPT" "$TWO_HANDBACKS" 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "second report" ]; then
+    pass "prints the last SubagentHandback report"
+else
+    fail "last handback" "rc=$rc out=[$out]"
+fi
+
+# No jq on PATH: a PATH holding only what the script needs besides jq.
+NOJQ="$SANDBOX/nojq-bin"
+mkdir -p "$NOJQ"
+for tool in bash tail; do ln -s "$(command -v "$tool")" "$NOJQ/$tool"; done
+out="$(PATH="$NOJQ" "$NOJQ/bash" "$SCRIPT" "$HANDBACK" 2>&1)"; rc=$?
+if [ "$rc" -eq 2 ] && [ "$out" = "agent-report: jq not found" ]; then
+    pass "exit 2 when jq is not on PATH"
+else
+    fail "jq missing" "rc=$rc out=[$out]"
+fi
 
 out="$("$SCRIPT" "$WITH_TEXT" 2>"$SANDBOX/err")"; rc=$?
 expected="$(printf 'first part\n\nsecond part')"

@@ -1,30 +1,42 @@
 #!/usr/bin/env bash
 #
-# agent-report — print the final reply of a Claude Code subagent from its
+# agent-report — print the report of a Claude Code subagent from its
 # transcript (~/.claude/projects/<slug>/<session>/subagents/agent-<id>.jsonl).
 # The Wake check uses it when an agent finished but its report never reached the
-# session. Prints the text blocks of the last assistant line that has any,
-# joined by a blank line. Malformed lines (e.g. a truncated last line) are
-# skipped. Only the last 200 lines are parsed, so big transcripts
+# session. Prints the message of the agent's last SubagentHandback call (its
+# hand-back report); without one, the text blocks of the last assistant line
+# that has any, joined by a blank line. Malformed lines (e.g. a truncated last
+# line) are skipped. Only the last 200 lines are parsed, so big transcripts
 # stay fast.
 #
-# Exit: 0 printed, 1 no assistant text, 2 missing file or no argument.
+# Exit: 0 printed, 1 no report or assistant text, 2 missing file, no argument
+# or no jq.
 set -uo pipefail
 
 if [ $# -ne 1 ] || [ ! -f "$1" ]; then
     echo "usage: agent-report <transcript.jsonl>" >&2
     exit 2
 fi
+if ! command -v jq >/dev/null 2>&1; then
+    echo "agent-report: jq not found" >&2
+    exit 2
+fi
 
 text="$(tail -n 200 "$1" | jq -Rrn '
-    [ inputs
-      | fromjson?
-      | objects
-      | select(.type == "assistant")
-      | [ .message.content[]? | select(.type == "text") | .text ]
-      | select(length > 0) ]
-    | last // empty
-    | join("\n\n")' 2>/dev/null)"
+    [ inputs | fromjson? | objects | select(.type == "assistant") ] as $lines
+    | ( [ $lines[]
+          | .message.content[]?
+          | objects
+          | select(.type == "tool_use" and .name == "SubagentHandback")
+          | .input.message
+          | strings
+          | select(length > 0) ]
+        | last )
+      // ( [ $lines[]
+             | [ .message.content[]? | objects | select(.type == "text") | .text ]
+             | select(length > 0) ]
+           | last // empty
+           | join("\n\n") )' 2>/dev/null)"
 
 if [ -z "$text" ]; then
     echo "agent-report: no assistant text in $1" >&2
