@@ -71,13 +71,11 @@ Empty output: tell the user to run `/start-day` first, and stop.
 No run state: go to triage (step 1). The run state is created in step 2, after the go-ahead.
 
 Run state exists and the argument is not `--dry`: this is a resume. Skip triage. Read the run
-state, then for every agent id still listed `read` the result file its `[pi-sub]`
-wake-up named — or `subagent_result({id})` when none arrived yet. If a session_start notice reported
-orphaned agents (their launching session is gone, e.g. after a crash), decide each before any dispatch:
-`subagent_adopt({from:"<old session id>"})` to keep them, or `subagent_stop({id})`. Re-read the
-plan block too: the user edits the diary directly. A `[/]` item whose agent is neither running nor
-has a result to read is lost: file a decision (step 9) with the options `Re-dispatch into its
-existing worktree` and `Leave it`, and on the first re-dispatch it (step 2, without `wt add`). Otherwise never re-dispatch an item already `[/]` or `[x]`, and
+state and re-read the plan block: the user edits the diary directly. If a session_start notice
+reported orphaned agents (their launching session is gone, e.g. after a crash), the run state's own
+ids are handled by the Wake check; decide any other before any dispatch:
+`subagent_adopt({from:"<old session id>"})` to keep them, or `subagent_stop({id})`. Then run the
+Wake check (step 10). Beyond what it does, never re-dispatch an item already `[/]` or `[x]`, and
 never one with `owner=external:<KEY>` (a side session works it). Then start the watcher (step 6;
 `run_day_watch` says when it is already running), process the inbox (step 7), and continue at
 step 3. `decide list` shows decisions still waiting: leave them; answers arrive through the inbox.
@@ -147,7 +145,7 @@ For each `auto` item:
 5. Record it in the run state, one line per item, inserted above `notes:`:
 
 ```
-- <key> | class=auto | agent=<subagent id> | worktree=<path> | mr=- | retries=0 | needs_you=no | owner=main
+- <key> | class=auto | agent=<subagent id> | round=- | worktree=<path> | mr=- | retries=0 | needs_you=no | owner=main
 ```
 
    The key is the lowercase ticket key from the plan line; items without a ticket key are not
@@ -156,8 +154,9 @@ For each `auto` item:
    lines under it carry `state_change` lines for `/end-day`. `owner` is `main` (this session
    dispatches and checks the item) or `external:<KEY>` (a side session works it after `/handoff`:
    never dispatched, no review-round agent, no agent id); it defaults to `main` on read, but always
-   write it. While an item is parked on an outage (section 6) append ` | waiting=<gitlab|jira>` as
-   the ninth field; drop it on resume.
+   write it. `agent` is the ticket agent's id and `round` the review-round agent's id (step 5),
+   each set back to `-` once its report is processed. While an item is parked on an outage
+   (section 6) append ` | waiting=<gitlab|jira>` as the tenth field; drop it on resume.
 
 6. Set the diary line to `- [/]` and run `~/.local/bin/diary-links ~/wiki/diary/$(date +%F).md`.
 7. End the turn. A `[pi-sub]` wake-up starts the next one when the agent finishes, fails, is
@@ -180,7 +179,8 @@ An agent's report is a claim, not evidence. Before any `[x]`:
   silently polls nothing until it times out.
 
 All good: tick `[x]` with `· draft MR <repo>!<iid>  [↗][<repo>!<iid>]`, apply the report's
-`memory:` block (step 4), set `mr=` on the run-state line, and dispatch the next queued item.
+`memory:` block (step 4), set `mr=` and `agent=-` on the run-state line, and dispatch the next
+queued item.
 
 A ticket has one top-level line on the plan; indented `  - [ ]` children under it are the
 user's breakdown, which the tick guard and panel ignore: mark and annotate the parent line only,
@@ -198,9 +198,10 @@ The `daily` extension refuses a bare `[x]` — that refusal is correct, add the 
 around it. A `me` item you tick on the user's word gets `· note: <what the user said>`.
 
 Failed or wrong work: one retry, one tier up in `<subagent_models>`: a fresh `worker` in the same
-worktree whose brief quotes the failure and names the earlier result file; `retries=1`.
-Second failure → `[!]` with `· blocked: <reason>`, `needs_you=yes` in the run state. The extension
-notifies the user when `needs_you` flips; you do not send anything yourself.
+worktree whose brief quotes the failure and names the earlier result file; `retries=1`,
+`agent=<new id>`. Second failure → `[!]` with `· blocked: <reason>`, `needs_you=yes` and `agent=-`
+in the run state. The extension notifies the user when `needs_you` flips; you do not send anything
+yourself.
 
 ## 4. Apply a memory block
 
@@ -271,11 +272,12 @@ do nothing. Stop there.
    `glab api "projects/$ENC/merge_requests/$IID" | jq -r .source_branch` and
    `wt add <repo> <KEY> <branch>`.
 4. `subagent({role:"worker", model:<runtime choice>, task:<brief>, cwd:<worktree>, label:<KEY>})`;
-   it counts toward the cap of 3. It fixes locally and drafts a reply; it does not push.
-5. When it reports, run the step 3 check on the diff and the tests. Set `needs_you=yes` and file
-   the round as a decision (step 9): `--blocks reply`, question `Push the fixes and post the review
-   reply on <repo>!<iid>?`, the context the findings with their status and SHAs,
-   `git log --oneline @{u}..HEAD` and the **full** draft reply (`cat` the reply file), and the
+   it counts toward the cap of 3. It fixes locally and drafts a reply; it does not push. Record
+   its id as `round=<id>` on the item's run-state line.
+5. When it reports, run the step 3 check on the diff and the tests. Set `round=-` and
+   `needs_you=yes` and file the round as a decision (step 9): `--blocks reply`, question `Push the
+   fixes and post the review reply on <repo>!<iid>?`, the context the findings with their status
+   and SHAs, `git log --oneline @{u}..HEAD` and the **full** draft reply (`cat` the reply file), and the
    options `Push and post the reply` (recommended), `Change the reply first (add a note with n)`,
    `Push nothing and post nothing`. When the answer arrives (step 7), option 1 is yes, option 3 is
    no, and option 2 or a question back with changes is edit.
@@ -285,9 +287,10 @@ do nothing. Stop there.
    decision without `--blocks`, `Post a Jira one-liner with the new head SHA on <KEY>?` (options
    `Post it` and `No`); on `Post it`, post it through `jira-write`.
    edit → apply the user's changes to the reply file yourself, or launch a fresh `subagent` worker
-   in the same worktree whose task names the earlier result file and the requested edits. When the
-   changes came as a question back, the round's decision is still open: withdraw and close the old
-   decision first. Then come back to step 5, which files a new decision for the revised reply.
+   in the same worktree whose task names the earlier result file and the requested edits
+   (`round=<id>` again until it reports). When the changes came as a question back, the round's
+   decision is still open: withdraw and close the old decision first. Then come back to step 5,
+   which files a new decision for the revised reply.
    no → push and post nothing, leave the commits in the worktree, `needs_you=no`. Set the item `[!]`
    with `· note: review round declined by user` only if the user says to.
 
@@ -450,3 +453,32 @@ EOF
   else is open for the item.
 - The user answers in the popup (tmux prefix `y`). The answer arrives as an inbox message of kind
   `decision` or `clarify` (step 7), which the watcher wakes you with.
+
+## 10. Wake check
+
+Run it on a `[daily-wake] woke after …` prompt (the `daily` extension sends one when the Mac wakes
+with agents outstanding) and on a resume (step 0). Never file a decision from this step and never
+ask: act, then say what you did. Items with `owner=external:<KEY>` are never touched here.
+
+For each `owner=main` run-state line, call `subagent_result({id})` for its `agent=` id and its
+`round=` id (each is one row; the head line says `done`, `failed` or `stopped`, or `running`):
+
+- `running` → leave it; never dispatch a second agent for that item. If a `[pi-sub]` notice listed
+  it as orphaned, `subagent_adopt({id})` so its wake-up reaches this session.
+- `done`, and its result was not processed in this session → process the `subagent_result` text
+  (`lines` raised until the whole report shows) exactly as step 3 for a ticket agent, or step 5.5
+  for a review round.
+- `failed` or `stopped`, or an id pi-sub does not know → its process is gone (a live one shows
+  `running` and is adopted above) and pi-sub cannot message it, so continue it with a fresh
+  `worker` in the same worktree (step 2 without `wt add`; a round gets the review-round brief,
+  step 5.2) with its last result (the `subagent_result` text, or `none`) and
+  `git -C <worktree> log --oneline -5` appended to the brief under `## Resume note`, and record
+  the new id in `agent=` or `round=`. It counts as the same attempt, not a retry: `retries` stays. A worktree that is gone is recreated as for a `handback` (step 7); worktree and
+  branch both gone is the blocker there (`[!]`, `needs_you=yes`).
+
+A `[pi-sub idle]` flag after a wake: pi-sub has no message to a running agent, so leave it and
+mention in your reply that it is quiet; no decision, no stop, no second agent.
+
+Then process the inbox (step 7) and any `[daily-event]` messages still unanswered, and redo the
+event you were handling if your last reply was cut off. End with one line per row:
+`<KEY>: left running | report processed | continued | re-dispatched`.

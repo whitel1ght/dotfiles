@@ -37,7 +37,7 @@ awk '/<!-- start-day:start -->/{f=1;next} /<!-- start-day:end -->/{f=0} f' ~/wik
 ```
 
    Empty output: tell the user to run `/start-day` first, and stop.
-2. If `~/.local/state/run-day/$T.md` exists and the argument is not `--dry`, this is a resume: read it and skip triage. Background agents from before the resume are gone: for each `[/]` item with no report in this session, file a decision (section 9) with the options `Re-dispatch into its existing worktree` and `Leave it`, and on the first re-dispatch it (step 2.2, without `wt add`). Items whose run-state line says `owner=external:<KEY>` are in a side session: never re-dispatch them. Then process the inbox (section 7) and continue at step 3.
+2. If `~/.local/state/run-day/$T.md` exists and the argument is not `--dry`, this is a resume: read it and skip triage. Background agents from before the resume may be gone: run the Wake check (section 10). Items whose run-state line says `owner=external:<KEY>` are in a side session: never re-dispatch them. Then process the inbox (section 7) and continue at step 3.
 
 ## 1. Triage (the one planned pause)
 
@@ -58,7 +58,7 @@ With `--dry`: stop after printing the table (a merge-class `me` row says: merged
 ```
 # run-day 2026-10-08
 max_agents: 3
-- ecfx-18169 | class=auto | agent=- | worktree=- | mr=- | retries=0 | needs_you=no | owner=main
+- ecfx-18169 | class=auto | agent=- | round=- | worktree=- | mr=- | retries=0 | needs_you=no | owner=main
 notes:
   ecfx: <one line from a state_change>
 ```
@@ -67,7 +67,9 @@ notes:
 
    `owner` is `main` (this session dispatches and checks the item) or `owner=external:<KEY>` (a side session works it after `/daily:handoff`; the item is never dispatched, never gets a review-round agent, and has no agent id). It is optional on read and defaults to `main`; always write it.
 
-   `waiting=<service>` (`gitlab` or `jira`) is a ninth field, written only while an item is parked on an outage (section 6); drop it when the item resumes.
+   `agent` is the ticket agent's id and `round` the review-round agent's id (section 5), each set back to `-` once its report is processed.
+
+   `waiting=<service>` (`gitlab` or `jira`) is a tenth field, written only while an item is parked on an outage (section 6); drop it when the item resumes.
 
    Immediately after creating the file, seed the watcher cursor so the first watcher tick does not replay events from earlier today (a missing cursor means "since the beginning"):
 
@@ -79,7 +81,7 @@ changes-since --cursor run-day >/dev/null
 
    The key is the lowercase ticket key from the plan line. Items without a ticket key are not tracked in this file.
 2. For each auto item, in plan order, while fewer than **3** ticket agents are running (review-round agents count): `wt add <repo> <KEY> <branch>` with the branch from `glab mr view` when the item already has an MR or branch, else `wt add <repo> <KEY>` (KEY uppercase, e.g. `ECFX-18169`), fill `${CLAUDE_PLUGIN_ROOT}/templates/ticket-brief.md` (replace every `{{...}}` placeholder; `grep -c '{{'` on the filled brief must print 0), save it in the scratchpad as `brief-<key>.md`, and spawn a background `sonnet` subagent: `Agent` with `run_in_background: true`, `model: "sonnet"`, `description: "<KEY> <three words>"`, the repo's specialist `subagent_type` when one exists, and a prompt that points at the brief file. Skip items whose run state says `owner=external:<KEY>`. Queue the rest in plan order; start the next as one finishes.
-3. Record the agent id the `Agent` call returned, the worktree and `needs_you=no` in the run-state line. Set the diary line to `[/]`.
+3. Record the agent id the `Agent` call returned, the worktree and `needs_you=no` in the run-state line (`agent=` keeps the id until its report is processed, section 3). Set the diary line to `[/]`.
 
 ## 3. Diary markers and check-before-tick
 
@@ -88,8 +90,8 @@ Markers: `[ ]` todo, `[/]` in progress, `[x]` done, `[!]` blocked, `[>]` deferre
 When a ticket agent reports:
 1. Read its report. Run `git -C <worktree> diff --stat` and check it matches what the report claims.
 2. Confirm it ran the tests it names, by running the same command yourself, and that the MR pipeline status is known (`glab api "projects/<urlencoded path>/merge_requests/<iid>" | jq -r .head_pipeline.status`).
-3. All good: tick `[x]` with `· draft MR <repo>!<iid>  [↗][<repo>!<iid>]`, then apply the `memory:` block (step 4), update the run-state line (`mr=`), and dispatch the next queued item.
-4. A check fails: **one retry** with the next model tier (`sonnet` then `opus`), the failure quoted in the brief, `retries=1`. A second failure: mark `[!]` with `· blocked: <reason>`, set `needs_you=yes`, call `PushNotification` with the ticket key and the reason.
+3. All good: tick `[x]` with `· draft MR <repo>!<iid>  [↗][<repo>!<iid>]`, then apply the `memory:` block (step 4), update the run-state line (`mr=`, `agent=-`), and dispatch the next queued item.
+4. A check fails: **one retry** with the next model tier (`sonnet` then `opus`), the failure quoted in the brief, `retries=1`, `agent=<new id>`. A second failure: mark `[!]` with `· blocked: <reason>`, set `needs_you=yes` and `agent=-`, call `PushNotification` with the ticket key and the reason.
 
 ## 4. Applying a `memory:` block
 
@@ -134,8 +136,8 @@ printf '%s %s %s\n' "$PROJECT_PATH" "$IID" "$ENC"
 
    `<urlencoded path>` below means the `$ENC` value printed by this block (write it out literally in later calls, or derive it again in the same call), `{{PROJECT_PATH}}` is `$PROJECT_PATH`, `{{MR_IID}}` is `$IID`. If the url is `-` or does not match, use the `mr=<group>/<repo>!<iid>` field of the item's run-state line instead; if that is empty too, file a decision asking for the MR link (the user answers with a question back, `c`, or a note) and skip the round until it arrives.
    Find the item's worktree in the run-state file. If it has none, get the branch with `glab api "projects/<urlencoded path>/merge_requests/<iid>" | jq -r .source_branch` and run `wt add <repo> <KEY> <branch>`.
-2. Spawn a background `sonnet` subagent (counts toward the cap of 3) with `${CLAUDE_PLUGIN_ROOT}/templates/review-round-brief.md` filled in. `{{REPLY_FILE}}` is `<scratchpad>/round-<repo>-<iid>.md`. The template's ten placeholders are {{BRANCH}}, {{EVENT_LINE}}, {{KEY}}, {{MR_IID}}, {{MR_URL}}, {{PROJECT_PATH}}, {{PROJECT}}, {{REPLY_FILE}}, {{REPO}}, {{WORKTREE}} (the template is the source of truth); `grep -c '{{'` on the filled review-round brief must print 0. The agent fixes (commits locally, no push) or declines or defers every finding and drafts the reply; `shared:mr-review-response` has no draft-only mode, so the brief stops it before its post step.
-3. When it reports: run the check from step 3 on the diff and tests. Set `needs_you=yes` and file the round as a decision (section 9): `--blocks reply`, question `Push the fixes and post the review reply on <repo>!<iid>?`, the context the findings with their status and SHAs, `git log --oneline` of the new commits and the full draft reply (`cat` the reply file), and the options `Push and post the reply` (recommended), `Change the reply first (add a note with n)`, `Push nothing and post nothing`. When the answer arrives (section 7), option 1 is `yes`, option 3 is `no`, and option 2 or a question back with changes is `edit`.
+2. Spawn a background `sonnet` subagent (counts toward the cap of 3) with `${CLAUDE_PLUGIN_ROOT}/templates/review-round-brief.md` filled in. `{{REPLY_FILE}}` is `<scratchpad>/round-<repo>-<iid>.md`. The template's ten placeholders are {{BRANCH}}, {{EVENT_LINE}}, {{KEY}}, {{MR_IID}}, {{MR_URL}}, {{PROJECT_PATH}}, {{PROJECT}}, {{REPLY_FILE}}, {{REPO}}, {{WORKTREE}} (the template is the source of truth); `grep -c '{{'` on the filled review-round brief must print 0. The agent fixes (commits locally, no push) or declines or defers every finding and drafts the reply; `shared:mr-review-response` has no draft-only mode, so the brief stops it before its post step. Record the id the `Agent` call returned as `round=<id>` on the item's run-state line.
+3. When it reports: run the check from step 3 on the diff and tests. Set `round=-` and `needs_you=yes` and file the round as a decision (section 9): `--blocks reply`, question `Push the fixes and post the review reply on <repo>!<iid>?`, the context the findings with their status and SHAs, `git log --oneline` of the new commits and the full draft reply (`cat` the reply file), and the options `Push and post the reply` (recommended), `Change the reply first (add a note with n)`, `Push nothing and post nothing`. When the answer arrives (section 7), option 1 is `yes`, option 3 is `no`, and option 2 or a question back with changes is `edit`.
 4. `yes`: `git -C <worktree> push`, then post the reply into the review's discussion:
 
 ```bash
@@ -143,7 +145,7 @@ glab api --method POST "projects/<urlencoded path>/merge_requests/<iid>/discussi
 ```
 
    `<discussion id>` comes from the agent's `discussion:` report line. Then set `needs_you=no`, apply the `memory:` block, and file a decision without `--blocks`, `Post a Jira one-liner with the new head SHA on <KEY>?` (options `Post it` and `No`); on `Post it`, post it through the `jira-write` skill.
-   `edit`: apply the user's changes (the decision's note and Discussion) to the reply file or send the agent back (`SendMessage`). When the changes came as a question back, the round's decision is still open: withdraw and close the old decision first. Then file a new decision for the revised reply. `no`: push and post nothing; leave the commits in the worktree; set the item `[!]` with `· note: review round declined by user` only if the user says to.
+   `edit`: apply the user's changes (the decision's note and Discussion) to the reply file or send the agent back (`SendMessage`; `round=<id>` again until it reports). When the changes came as a question back, the round's decision is still open: withdraw and close the old decision first. Then file a new decision for the revised reply. `no`: push and post nothing; leave the commits in the worktree; set the item `[!]` with `· note: review round declined by user` only if the user says to.
 
 ## 6. Other events
 
@@ -253,3 +255,23 @@ EOF
 - A decision that stops mattering (the reviewer resolved it, the MR merged, the item went another way): `decide withdraw <id> "<reason>"` and `decide close <id>`; clear `needs_you` when nothing else is open for the item.
 - The user answers in the popup (tmux prefix `y`). The answer arrives as an inbox message of kind `decision` or `clarify` (section 7).
 - On a resume (section 0), `decide list` shows what is still waiting: leave it; answers arrive through the inbox.
+
+## 10. Wake check
+
+Run it on a `[daily-wake] woke after …` prompt (the mod sends one when the Mac wakes with agents outstanding), on a `[daily-wake] stuck: …` prompt, and on a resume (section 0). Never file a decision from this section and never ask: act, then say what you did. Items whose run-state line says `owner=external:<KEY>` are never touched here.
+
+1. Read the agents file. The mod rewrites it every 30 s while an `owner=main` item has `agent=` or `round=` set:
+
+```bash
+date -u +%FT%TZ
+cat ~/.local/state/run-day/$(date +%F).agents 2>/dev/null || echo 'no agents file'
+```
+
+   Header `# agents <ISO time>`, then one row per agent: `<key> | ticket|round | <id> | <status> | quiet=<minutes|-> | <transcript|->`. The file is stale when it is missing or its header is more than 2 minutes older than the time printed first: then every id in an `agent=` or `round=` field of an `owner=main` run-state line counts as one row with status `unknown` (transcript `-`).
+2. Per row:
+   - `running`, `pending` or `waiting`: leave it. Never dispatch a second agent for that item.
+   - `completed` or `idle`, and its report was not processed in this session: `agent-report <transcript>` prints its last reply. Process it exactly as section 3 ("When a ticket agent reports") for a `ticket` row, or section 5 step 3 for a `round` row. No reply (exit 1 or 2, or transcript `-`): treat the row as `failed`.
+   - `failed`, `killed` or `unknown`: `SendMessage` to the id: it was interrupted by sleep or a restart; check `git -C <worktree> status` and its last step, then carry on and report as its brief says. If `SendMessage` errors, dispatch a fresh agent into the same worktree (section 2.2 without `wt add`; a `round` row gets the review-round brief, section 5 step 2) with its last reply (`agent-report <transcript>`, or `none`) and `git -C <worktree> log --oneline -5` appended to the brief under `## Resume note`, and record the new id in `agent=` or `round=`. It counts as the same attempt, not a retry: `retries` stays. A worktree that is gone is recreated as for a `handback` (section 7); worktree and branch both gone is the blocker there (`[!]`, `needs_you=yes`).
+3. On a `[daily-wake] stuck: <KEY> <id>, …` prompt the named agents are `running` but silent for 15 minutes or more: `SendMessage` each once: the machine slept; check its background commands and carry on, or report what blocks it. If a later stuck prompt names the same id again, say in your reply that it is stuck: no decision, no kill, no second agent.
+4. Then process the inbox (section 7) and any `[daily-event]` prompts still unanswered, and redo the event you were handling if your last reply was cut off.
+5. End with one line per row: `<KEY>: left running | report processed | continued | re-dispatched` (a stuck agent: `messaged` the first time, `stuck` after).

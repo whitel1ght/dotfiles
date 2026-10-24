@@ -37,7 +37,7 @@ has "$F" "[daily-event] <kind> | <repo>!<iid> | <TICKET> | <summary> | <url>" "e
 has "$F" "[daily-event:info]" "informational lines"
 line="$(grep -m1 '^- ecfx-18169 | class=auto' "$F")"
 order="$(printf '%s' "$line" | tr '|' '\n' | sed -n 's/^ *\([a-z_]*\)=.*/\1/p' | tr '\n' ' ' | sed 's/ $//')"
-[ "$order" = "class agent worktree mr retries needs_you owner" ] && pass "run-state example has the fields mod/runstate.ts reads, in order" \
+[ "$order" = "class agent round worktree mr retries needs_you owner" ] && pass "run-state example has the fields mod/runstate.ts reads, in order" \
   || fail "run-state field order" "got [$order]"
 has "$F" "inbox: <N> new" "handles the mod's inbox prompt"
 has "$F" "**Unplanned**" "uses the group name mod/view.ts orders last"
