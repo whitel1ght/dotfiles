@@ -505,6 +505,11 @@ if [ -f "$DOTFILES_DIR/bin/coach-fix" ]; then
     create_symlink "$DOTFILES_DIR/bin/coach-fix" "$HOME/.local/bin/coach-fix"
 fi
 
+# agent-report prints a background agent's final reply from its transcript (Wake check in the day session).
+if [ -f "$DOTFILES_DIR/bin/agent-report" ]; then
+    create_symlink "$DOTFILES_DIR/bin/agent-report" "$HOME/.local/bin/agent-report"
+fi
+
 # wait-for waits out a GitLab or Jira outage and then tells the run-day inbox.
 if [ -f "$DOTFILES_DIR/bin/wait-for" ]; then
     create_symlink "$DOTFILES_DIR/bin/wait-for" "$HOME/.local/bin/wait-for"

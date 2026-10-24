@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#
+# agent-report — print the final reply of a Claude Code subagent from its
+# transcript (~/.claude/projects/<slug>/<session>/subagents/agent-<id>.jsonl).
+# The Wake check uses it when an agent finished but its report never reached the
+# session. Prints the text blocks of the last assistant line that has any,
+# joined by a blank line. Only the last 200 lines are parsed, so big transcripts
+# stay fast.
+#
+# Exit: 0 printed, 1 no assistant text, 2 missing file or no argument.
+set -uo pipefail
+
+if [ $# -ne 1 ] || [ ! -f "$1" ]; then
+    echo "usage: agent-report <transcript.jsonl>" >&2
+    exit 2
+fi
+
+text="$(tail -n 200 "$1" | jq -rs '
+    [ .[]
+      | select(.type == "assistant")
+      | [ .message.content[]? | select(.type == "text") | .text ]
+      | select(length > 0) ]
+    | last // empty
+    | join("\n\n")' 2>/dev/null)"
+
+if [ -z "$text" ]; then
+    echo "agent-report: no assistant text in $1" >&2
+    exit 1
+fi
+printf '%s\n' "$text"
