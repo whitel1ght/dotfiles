@@ -15,7 +15,7 @@ Three jobs, all reusing Claude Code's harness-free parsers in place
   and the same trim order (diary block first, run state always survives). Also announces
   items whose `needs_you` flipped on, once each — pi's replacement for `PushNotification`.
 - **`tool_call`** — the diary tick guard. Blocks an `edit`/`write` on today's diary that would
-  newly tick `[x]` without evidence (an MR link, a `[↗]` ref, `merged`, or `· note:`), or that
+  newly tick `[X]` without evidence (an MR link, a `[↗]` ref, `merged`, or `· note:`), or that
   would delete the plan block. pi's edit tool takes `{path, edits:[{oldText,newText}]}`, so the
   edits are applied in order through CC's `applyEdit` before `checkTicks` judges the result.
 - **`run_day_watch` tool** ([`watch.ts`](watch.ts)) — the event and inbox watcher, CC's

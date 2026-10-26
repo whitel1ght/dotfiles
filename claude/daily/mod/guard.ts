@@ -51,5 +51,5 @@ function checkTicksPure(before: string, after: string): GuardResult {
 }
 
 export function denyMessage(lines: string[]): string {
-  return `daily: refusing to tick [x] without evidence (an MR link or [↗][repo!N] ref, "merged", or "· note: <why>"):\n${lines.join('\n')}`
+  return `daily: refusing to tick [X] without evidence (an MR link or [↗][repo!N] ref, "merged", or "· note: <why>"):\n${lines.join('\n')}`
 }

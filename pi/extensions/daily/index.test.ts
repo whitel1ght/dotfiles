@@ -72,7 +72,7 @@ test("refuses a newly ticked [x] with no evidence", () => {
   const { root, diary } = sandbox();
   const verdict = tick(diary, "- [ ] ecfx-1001 fix the export", "- [x] ecfx-1001 fix the export");
   assert.ok(verdict);
-  assert.match(verdict, /refusing to tick \[x\] without evidence/);
+  assert.match(verdict, /refusing to tick \[X\] without evidence/);
   assert.match(verdict, /ecfx-1001 fix the export/);
   cleanup(root);
 });

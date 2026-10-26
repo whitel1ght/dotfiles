@@ -157,9 +157,9 @@ and wait for my answer (yes or no per item), and do not continue until answered.
 "Consolidate memory", and do not add anything, before the answer arrives. For each yes, add one
 line under the plan block's `**Unplanned**` group (create the group as the last group, just
 above `<!-- start-day:end -->`, when it is missing):
-`- [x] <key> <summary> · MR <repo>!<iid>  [↗][<repo>!<iid>]` (the URL goes in a
+`- [X] <key> <summary> · MR <repo>!<iid>  [↗][<repo>!<iid>]` (the URL goes in a
 `[<repo>!<iid>]: <url>` line above the end marker; an inline `[<repo>!<iid>](<url>)` is fine too),
-or `· note: <summary>` when there is no MR, because the diary's tick guard refuses an `[x]` without
+or `· note: <summary>` when there is no MR, because the diary's tick guard refuses an `[X]` without
 an MR link, `merged` or `· note:`. Use `[/]` for work that is clearly unfinished. After the edits
 run `~/.local/bin/diary-links ~/wiki/diary/$DAY.md`. Never add a line I did not approve and never
 edit a line outside the block.

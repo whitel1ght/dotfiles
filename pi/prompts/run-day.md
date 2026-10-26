@@ -75,7 +75,7 @@ state and re-read the plan block: the user edits the diary directly. If a sessio
 reported orphaned agents (their launching session is gone, e.g. after a crash), the run state's own
 ids are handled by the Wake check; decide any other before any dispatch:
 `subagent_adopt({from:"<old session id>"})` to keep them, or `subagent_stop({id})`. Then run the
-Wake check (step 10). Beyond what it does, never re-dispatch an item already `[/]` or `[x]`, and
+Wake check (step 10). Beyond what it does, never re-dispatch an item already `[/]` or `[X]`, and
 never one with `owner=external:<KEY>` (a side session works it). Then start the watcher (step 6;
 `run_day_watch` says when it is already running) and continue at step 3. `decide list` shows
 decisions still waiting: leave them; answers arrive through the inbox.
@@ -88,7 +88,7 @@ and edit nothing.
 
 ## 1. Triage
 
-Classify every open item (`[ ]`, `[/]`, `[!]`; skip `[x]` and `[>]`) and build one table — the only
+Classify every open item (`[ ]`, `[/]`, `[!]`; skip `[X]` and `[>]`) and build one table — the only
 planned pause in the day:
 
 | Item | Class | Repo(s) | Model | Depends on | Why |
@@ -174,7 +174,7 @@ to `-` or to the replacement's id. A `[pi-sub]` wake-up or result from an agent 
 longer the item's `agent=` or `round=` was already processed, by the Wake check (step 10) or
 before: ignore it.
 
-An agent's report is a claim, not evidence. Before any `[x]`:
+An agent's report is a claim, not evidence. Before any `[X]`:
 
 - `git -C <worktree> diff --stat`, check it matches what the report claims, and read the real diff.
 - Re-run the tests the report names, yourself.
@@ -184,7 +184,7 @@ An agent's report is a claim, not evidence. Before any `[x]`:
   GitLab matches `?sha=` on full shas only, so a short sha returns an empty array and a watcher loop
   silently polls nothing until it times out.
 
-All good: tick `[x]` with `· draft MR <repo>!<iid>  [↗][<repo>!<iid>]`, apply the report's
+All good: tick `[X]` with `· draft MR <repo>!<iid>  [↗][<repo>!<iid>]`, apply the report's
 `memory:` block (step 4), set `mr=` and `agent=-` on the run-state line, and dispatch the next
 queued item.
 
@@ -193,14 +193,15 @@ user's breakdown, which the tick guard and panel ignore: mark and annotate the p
 and never add a second top-level line for a key already on the plan (put the new action on its
 line instead).
 
-Markers: `[ ]` not started · `[/]` in progress · `[x]` done · `[!]` blocked, needs the user ·
-`[>]` deferred. Evidence goes after the first ` · ` on the line: an MR link, `merged`, or
-`note: <why>`; e.g. `· draft MR dashboard!2240  [↗][dashboard!2240]` or `· blocked: <reason>`.
+Markers: `[ ]` not started · `[/]` in progress · `[X]` done (an older `[x]` counts too) ·
+`[!]` blocked, needs the user · `[>]` deferred. Evidence goes after the first ` · ` on the line:
+an MR link, `merged`, or `note: <why>`; e.g. `· draft MR dashboard!2240  [↗][dashboard!2240]`
+or `· blocked: <reason>`.
 Links are trailing refs: the label stays plain text, `  [↗][<repo>!<iid>]` ends the line, and the
 URL sits once in a `[<repo>!<iid>]: <url>` definition just above `<!-- start-day:end -->`. An inline
 `[<repo>!<iid>](<url>)` is fine too: `diary-links` converts it.
 Edit one line at a time, then run `diary-links` (no output when fine) after every diary edit.
-The `daily` extension refuses a bare `[x]` — that refusal is correct, add the evidence, do not work
+The `daily` extension refuses a bare `[X]` — that refusal is correct, add the evidence, do not work
 around it. A `me` item you tick on the user's word gets `· note: <what the user said>`.
 
 Failed or wrong work: one retry, one tier up in `<subagent_models>`: a fresh `worker` in the same
@@ -365,7 +366,7 @@ block. `decision` and `clarify` messages also carry `decision: D-<n>` and have n
 2. Find the diary item: the plan-block line whose ticket key equals `key` exactly, ignoring case
    (`ecfx-1816` does not match `ecfx-18169`); the run-state line has the same key. A key that is
    not on the plan, or an empty key, makes the message off-plan work whatever its `kind` (except
-   `handback`). Never downgrade an `[x]`.
+   `handback`). Never downgrade an `[X]`.
 3. Apply by kind. The *summary clip* is the summary's first sentence, ≤100 chars, ` · `→` - `.
    When the message has an `mr`, the run-state `mr=` becomes `<group>/<repo>!<iid>` (from the url,
    as in step 5). A key with no run-state line (a `me` item, or one added later): skip every
@@ -373,12 +374,12 @@ block. `decision` and `clarify` messages also carry `decision: D-<n>` and have n
    - `done` → run the step 3 check as far as it can run: `git -C <worktree> diff --stat` when the
      run-state worktree exists, the MR pipeline when `mr` is set, the tests the summary names. Name
      what cannot be checked (no worktree, no MR) to the user as unverified. Passes or cannot run:
-     `[x]` with `· MR <repo>!<iid>  [↗][<repo>!<iid>]` when `mr` is set, else
+     `[X]` with `· MR <repo>!<iid>  [↗][<repo>!<iid>]` when `mr` is set, else
      `· note: <summary clip>` (replacing any `· with you:` / `· progress:` suffix); `owner=main`,
      `needs_you=no`. A check fails: no tick, keep `[/]`, `needs_you=yes`, tell the user what
      failed (no agent to retry).
    - `progress` → `[/]` with `· progress: <summary clip>` (after `· with you: <KEY>` when the owner
-     is external); `owner` stays. A line already `[x]` is left entirely as it is.
+     is external); `owner` stays. A line already `[X]` is left entirely as it is.
    - `handback` → `owner=main`, `agent=-`, `needs_you=no`, marker `[ ]`, suffix
      `· handed back: <summary clip>`; tell the user it was re-queued. It goes back into the dispatch
      queue (step 2) in plan order; when dispatched, refill the brief and append the message body
@@ -409,19 +410,19 @@ block. `decision` and `clarify` messages also carry `decision: D-<n>` and have n
 ```
 <blank line>
 **Unplanned**
-- [x] ecfx-18200 fix typo in export header · MR dashboard!2250  [↗][dashboard!2250]
+- [X] ecfx-18200 fix typo in export header · MR dashboard!2250  [↗][dashboard!2250]
 
 [dashboard!2250]: https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2250
 <!-- start-day:end -->
 ```
 
-     The line is `- [x] <key lowercase, if any> <summary clip, 80 chars> · <evidence>`: `[/]`
+     The line is `- [X] <key lowercase, if any> <summary clip, 80 chars> · <evidence>`: `[/]`
      instead when the summary says the work is unfinished (wip, started, in progress,
      continuing); evidence is the MR ref when `mr` is set, else `note: <summary clip>`. No run-state line. The same key
      already has an Unplanned line: update it instead. An `offplan` whose key is on the plan means
      the plan changed after it was written: treat it as `progress`.
    - A second message for the same key is handled in file order, each in full: the later marker and
-     evidence win, except never downgrade `[x]`; both memory blocks are applied.
+     evidence win, except never downgrade `[X]`; both memory blocks are applied.
 4. Apply the memory block (step 4; not for `service`, `decision` or `clarify`), then `diary-links`, then `mv` the file to
    `inbox/done/$T/` (today's date, not the message's).
 
