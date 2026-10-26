@@ -37,7 +37,15 @@ for f in "$C" "$P"; do
   has "$f" "Commit nothing on the branch after \`built\`" "$side: the reviewed head is final"
   has "$f" 'cd "$W" && glab mr create --draft --source-branch coach-$F' "$side: MR from the worktree with its source branch"
   lacks "$f" '--title "Draft:' "$side: no double Draft prefix"
+  has "$f" "<F-NNN> [--auto|--revise]" "$side: argument hint names --revise"
+  has "$f" "## Revise mode (--revise)" "$side: revise mode section exists"
+  has "$f" 'friction-cards revised $F --answer-file' "$side: revise ends with revised"
+  has "$f" 'friction-cards unrevised $F --reason' "$side: revise can end with unrevised"
+  has "$f" "never edits code" "$side: revise mode is read-only"
+  has "$f" "with the file-write tool" "$side: revise files are written with the file-write tool"
 done
+has "$C" "/daily:fix-friction F-NNN --revise" "commands: names the namespaced revise command"
+has "$P" "/fix-friction F-NNN --revise" "pi: names the revise command"
 has "$C" "/daily:fix-friction F-NNN --auto" "commands: names the namespaced command the job runs"
 
 finish

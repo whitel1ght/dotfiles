@@ -1,6 +1,6 @@
 ---
-description: Turn a proposed friction-ledger entry into a tested fix on a branch, stop for your test, and fast-forward it into local main on your approval (or, with --auto, build it unattended for coach-fix to land)
-argument-hint: <F-NNN> [--auto]
+description: Turn a proposed friction-ledger entry into a tested fix on a branch, stop for your test, and fast-forward it into local main on your approval (or, with --auto, build it unattended for coach-fix to land; with --revise, answer your questions on the card unattended)
+argument-hint: <F-NNN> [--auto|--revise]
 ---
 
 # /fix-friction <F-NNN>
@@ -21,7 +21,7 @@ carry on); only this session writes the ledger, in step 5.
 Never push. Never merge before the user's explicit approval in step 4. Below, `F` is the argument
 (`F-007`) and `W=~/projects/worktrees/dotfiles/friction-$F`.
 
-When the arguments include `--auto`, skip steps 1–5 and follow **Auto mode** at the end instead.
+When the arguments include `--auto`, skip steps 1–5 and follow **Auto mode** at the end instead; with `--revise`, skip them and follow **Revise mode** instead.
 
 ## 1. Check
 
@@ -164,3 +164,19 @@ Never undraft it, merge it or request reviewers. Then `~/.local/bin/coach-fix bu
 
 Whatever blocks you (a missing tool, an unclear proposal, a failed command), fail with the reason
 rather than wait for an answer.
+
+## Revise mode (--revise)
+
+`friction-cards` starts this (as `/fix-friction F-NNN --revise`) in a tmux window `reply-$F` when the user asks a question on the friction card. It runs unattended: it never asks the user anything (nobody is watching), never edits code, never merges or pushes, and never writes the ledger itself. `F` is the first argument.
+
+1. Read `~/wiki/work/friction/$F.md` and the job file `~/.local/state/coach/replies/$F.json`; its `questions` array is what the user asked. You may read code, `~/wiki/work/system/` pages and `git log` to answer, read-only.
+2. Answer the questions in plain language, at most 8 lines. If the answer changes the fix (an alternative the user proposed, a better rung, a missing exact change), also write a revised `## Proposal` body in the same format as the original: the rung line and, for a safety change, a `### Change` block of before → after lines.
+3. Write the answer (and the revised proposal, if any) to files with the file-write tool, never via a shell command, then end with:
+
+   ```bash
+   ~/.local/bin/friction-cards revised $F --answer-file <A> [--proposal-file <P>]
+   ```
+
+4. If the questions cannot be answered (a missing entry, unreadable context), end with `~/.local/bin/friction-cards unrevised $F --reason "<one line: why>"` instead.
+
+End with exactly one of those two calls.
