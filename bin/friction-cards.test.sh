@@ -39,6 +39,7 @@ case "$cmd" in
       shift
     done
     if [ -f "$SANDBOX/add.fail" ] && grep -qx "$key" "$SANDBOX/add.fail"; then echo "deck refused $key" >&2; exit 1; fi
+    if [ -f "$SANDBOX/add.rewrite" ]; then "$FRICTION_LEDGER" set "$key" --proposal-file "$SANDBOX/add.rewrite" --date 2026-10-12 >/dev/null; fi
     n=$(( $(ls "$STDINS" | wc -l) + 1 ))
     cat >"$STDINS/$n"
     printf 'add key=%s source=%s opts=%s q=%s stdin=%s\n' "$key" "$src" "$opts" "$q" "$n" >>"$CALLS"
@@ -398,6 +399,31 @@ OUT="$(PATH="$SANDBOX/nojq" /bin/bash "$SCRIPT" sync --date 2026-10-20 2>&1)"; r
 assert_eq "1" "$rc" "exits 1"
 assert_eq "1" "$(wc -l <<<"$OUT" | tr -d ' ')" "one line"
 assert_has "jq" "$OUT" "naming jq"
+
+newest() { ls "$FRICTION_WIKI" | sed -n "s/^\(F-[0-9]*\)\.md$/\1/p" | sort | tail -1; }
+echo "hook: a refused apply logs its reason"
+groups "k:tool:rr1|tool|2"; N1="$(newest)"
+propose "$N1" "$SANDBOX/p1.md"; sync >/dev/null
+printf 'Tighten the thing differently\n\n## Change\n- a → c\n' >"$SANDBOX/p2.md"
+"$LEDGER" set "$N1" --proposal-file "$SANDBOX/p2.md" --date 2026-10-20
+hook answered "$N1" 1
+assert_eq "proposed" "$(fld "$N1" status)" "the entry went back to proposed"
+assert_has "answer apply refused: the proposal changed after its card was shown" "$(grep "$N1" "$COACH_STATE_DIR/logs/cards.log" | tail -1)" "the log line carries the reason"
+sync >/dev/null
+
+echo "sync: a proposal rewritten between the listing and card-filed"
+groups "k:tool:rw1|tool|2"; N2="$(newest)"
+propose "$N2" "$SANDBOX/p1.md"
+cp "$SANDBOX/p2.md" "$SANDBOX/add.rewrite"
+OUT="$(sync)"; rm -f "$SANDBOX/add.rewrite"
+assert_eq "" "$(deck_id "$N2")" "no open card is left for it"
+assert_eq "proposed|" "$(fld "$N2" status)|$(fld "$N2" card_hash)" "the entry is not offered and has no hash"
+assert_has "closed" "$OUT" "the sync says it closed the card"
+sync >/dev/null
+assert_eq "offered" "$(fld "$N2" status)" "the next sync files the current proposal"
+assert_has "a → c" "$(last_stdin_for "$N2")" "and the card shows the new text"
+assert_eq "16" "$(fld "$N2" card_hash | tr -d '\n' | wc -c | tr -d ' ')" "with its card_hash stored"
+
 
 echo
 echo "$PASS passed, $FAIL failed"

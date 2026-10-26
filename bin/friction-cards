@@ -142,7 +142,7 @@ file_card() { # item JSON, date, result(0|1)
     rm -f "$errf"; return 1
   fi
   if [ "$result" = 1 ]; then rm -f "$errf"; "$FRICTION_LEDGER" card-filed "$id" --date "$date_" --result
-  elif ! "$FRICTION_LEDGER" card-filed "$id" --date "$date_" 2>"$errf"; then
+  elif ! "$FRICTION_LEDGER" card-filed "$id" --date "$date_" --hash "$(jq -r .card_hash <<<"$item")" 2>"$errf"; then
     echo "friction-cards: $id no longer waits for a card; closed $new: $(one_line "$(tail -1 "$errf")")"
     drop_card "$new" "the entry moved on"; rm -f "$errf"; return 1
   fi
@@ -261,7 +261,7 @@ cmd_handle() { # event file: the hook's work, run detached
       errf="$(mktemp)"
       lock cards || { log "hook: $F: another sync is busy; answer $ans dropped"; rm -f "$errf"; return 0; }
       if ! out="$("$FRICTION_LEDGER" card-answer "$F" "$ans" --date "$date_" 2>"$errf")"; then
-        log "hook: $F: answer $ans refused: $(one_line "$(tail -1 "$errf")")"
+        log "hook: $F: answer $ans refused: $(one_line "$(cat "$errf"; printf ' %s' "$out")")"
         rm -f "$errf"; drop_card "$id"; unlock cards; return 0
       fi
       drop_card "$id"

@@ -9,7 +9,7 @@
 #   friction-ledger coach-offer --date D [--limit 3]
 #   friction-ledger coach-answer F-NNN yes|no|later|done --date D
 #   friction-ledger cards --date D
-#   friction-ledger card-filed F-NNN --date D [--result]
+#   friction-ledger card-filed F-NNN --date D (--hash H | --result)
 #   friction-ledger card-answer F-NNN apply|ignore|later|done --date D
 #   friction-ledger revise F-NNN --question-file Q --answer-file A [--proposal-file P] --date D
 #   friction-ledger safety-check F-NNN
@@ -142,7 +142,8 @@
 #           change to show.
 # card-filed  marks a suggestion's card as filed: status offered, offered_on D, answer cleared,
 #           card_hash = fingerprint (sha256, 16 hex) of the ## Proposal text plus safety, taken after
-#           backfill_safety;
+#           backfill_safety; --hash H (what `cards` listed) is required and card-filed refuses (exit 1)
+#           when the entry's hash now differs;
 #           with --result only result_reported_on D (the result card was filed).
 # card-answer  the answer on a filed card, accepted only while the entry is offered (else exit 1).
 #           apply: a rule card adds the standing direction (rule through a temp file, scope from
@@ -931,11 +932,12 @@ cmd_cards() {
     [ -f "$f" ] || continue
     case "$(fm_get "$f" status)" in fixed | landed | wontfix) ;; *) backfill_safety "$f" ;; esac
     rows+="$(coach_item "$f" | jq -c --arg diag "$(section_get "$f" Diagnosis | cut -c1-600 | head -c 600)" \
-      --arg disc "$(section_get "$f" Discussion | grep '^- ' | tail -1 | sed 's/^- //')" '. + {diagnosis: $diag, discussion: $disc}')"$'\n'
+      --arg disc "$(section_get "$f" Discussion | grep '^- ' | tail -1 | sed 's/^- //')" --arg h "$(card_hash "$f")" \
+      '. + {diagnosis: $diag, discussion: $disc, card_hash: $h}')"$'\n'
   done
   printf '%s' "$rows" | jq -sc --arg d "$date_" "$CARD_JQ"'
     def secs($x): $x | strptime("%Y-%m-%d") | mktime;
-    def item: {id, kind, sig, count, days, safety, rung, proposal_summary, change, proposal, direction, evidence, card: card, diagnosis, discussion, reason};
+    def item: {id, kind, sig, card_hash, count, days, safety, rung, proposal_summary, change, proposal, direction, evidence, card: card, diagnosis, discussion, reason};
     def result: item + {card: .status, fix, retryable: (.status == "failed" and (.reason | startswith("needs the user") | not))};
     { file: [.[] | select(.proposal != ""
           and (.status == "proposed" or .status == "regressed"
@@ -953,18 +955,20 @@ card_hash() { # file
 }
 
 cmd_card_filed() {
-  local id="${1:-}" date_="" result=0
+  local id="${1:-}" date_="" hash_="" result=0
   [[ "$id" =~ ^F-[0-9]+$ ]] || die "card-filed needs an F-NNN id"
   shift
   while [ $# -gt 0 ]; do
     case "$1" in
       --date) need "$@"; date_="$2"; shift ;;
+      --hash) need "$@"; hash_="$2"; shift ;;
       --result) result=1 ;;
       *) die "card-filed: unknown option $1" ;;
     esac
     shift
   done
   [ -n "$date_" ] || die "card-filed needs --date"
+  [ "$result" = 1 ] || [ -n "$hash_" ] || die "card-filed needs --hash (or --result)"
   valid_date "$date_"
   local f; f="$(fpath "$id")"
   [ -f "$f" ] || die "no such entry: $id"
@@ -975,9 +979,10 @@ cmd_card_filed() {
       proposed | regressed | offered | declined) ;;
       *) die "card-filed: $id is $(fm_get "$f" status), not waiting for a card" ;;
     esac
-    cmd_set "$id" --status offered --date "$date_"
     backfill_safety "$f"
-    fm_set "$f" card_hash "$(card_hash "$f")"
+    [ "$(card_hash "$f")" = "$hash_" ] || die "card-filed: the proposal of $id changed after it was listed"
+    cmd_set "$id" --status offered --date "$date_"
+    fm_set "$f" card_hash "$hash_"
     fm_set "$f" offered_on "$date_"
     fm_set "$f" answer ""
   fi
@@ -1008,6 +1013,7 @@ cmd_card_answer() {
     if [ -z "$(fm_get "$f" card_hash)" ] || [ "$(card_hash "$f")" != "$(fm_get "$f" card_hash)" ]; then
       cmd_set "$id" --status proposed --reason "the proposal changed after its card was shown" --date "$date_"
       echo '{"changed":true}'
+      echo "the proposal changed after its card was shown" >&2
       exit 1
     fi
   fi
