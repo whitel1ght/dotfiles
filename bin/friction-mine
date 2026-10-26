@@ -25,7 +25,8 @@
 # group whose signature is in the ledger gets known=<F-id> and ledger_status; status
 # fixed also sets regression. A Claude Bash failure that is only "Exit code N" is kept
 # only when its command (any pipeline segment) is one of our tools (glab, jira, secret,
-# end-day and the like); other commands, or none found, are dropped.
+# end-day and the like) and is a single statement (`;`, a newline, `&&` or `||` after a
+# leading `cd DIR &&` make it several, so the code names no command); others are dropped.
 # user_signals: broad-recall candidate user prompts (direction and frustration markers,
 # or sent right after an interrupt) with the preceding assistant text, at most 40,
 # most-marked first; injected, meta and command-expansion messages are skipped.
@@ -95,7 +96,9 @@ def ourtool: any(splits("[;&|\\n]+");
     | until(test("^[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+") | not; sub("^[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+"; ""))
     | (match("^\\S*").string | sub(".*/"; ""))
     | IN("glab", "jira", "secret", "secrets", "changes-since", "mr-watch", "end-day", "start-day", "day-plan", "day-note", "diary-links",
-         "friction", "friction-mine", "friction-ledger", "jt", "wt", "wait-for", "sync-tickets", "wiki-sync", "cs", "cs-add", "plink", "decide", "decisions"));'
+         "friction", "friction-mine", "friction-ledger", "jt", "wt", "wait-for", "sync-tickets", "wiki-sync", "cs", "cs-add", "plink", "decide", "decisions"));
+# more than one statement after a leading "cd DIR &&": a bare exit code there names no command
+def compound: sub("^\\s*cd\\s+\\S+\\s*&&\\s*"; "") | test(";|\\n|&&|\\|\\|");'
 
 out="$(mktemp -d)"
 trap 'rm -rf "${out:?}"' EXIT
@@ -180,7 +183,7 @@ foreach inputs as $e ({f: null, tools: {}, lastq: false, atext: "", int: false, 
         | (.content | text) as $x
         | if ($x | test("doesn.t want to proceed|requires approval|permission to use|was denied"; "i")) then rec("claude"; "denied"; "\($t.name) denied by user or permissions"; $key; $ev; "high")
           elif ($x | startswith("[Request interrupted")) then empty
-          elif ($x | split("\n")[0] | test("^Exit code [0-9]+$")) and ($t.cmd | ourtool | not) then empty
+          elif ($x | split("\n")[0] | test("^Exit code [0-9]+$")) and (($t.cmd | ourtool | not) or ($t.cmd | compound)) then empty
           else rec("claude"; "tool_error"; "\($t.name): \($x | split("\n")[0])"; $key; $ev; "high") + {file: input_filename, cmd: "\($t.name) \($t.cmd | flat | .[0:200])"} end),
       ($e.message.content[] | select(.type == "text") | .text | select(startswith("[Request interrupted")) | rec("claude"; "interrupt"; .; $key; $ev; "high")),
       (($e.message.content | text) as $x | select(($e.isMeta | not) and ($x | startswith("<") | not) and ($x | startswith("[") | not) and ($x | correction($st.lastq))) | rec("claude"; "correction"; $x; $key; $ev; "low"))
