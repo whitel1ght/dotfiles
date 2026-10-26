@@ -34,7 +34,8 @@
 # that window exit 1 at once, like any failing source, so nothing is lost.
 #
 # Every Jira and glab call is bounded: CHANGES_SINCE_CALL_TIMEOUT seconds (10),
-# one retry after CHANGES_SINCE_BACKOFF seconds (1), and the whole run stops at
+# one retry after CHANGES_SINCE_BACKOFF seconds (1) on a timeout or any other
+# failure (gitlab.com drops connections now and then; F-021), and the whole run stops at
 # CHANGES_SINCE_BUDGET seconds (40), inside the 60 s the daily watcher allows. A
 # call that times out twice fails the run with exit 75 and "timed out" on
 # stderr, no service_down line and no cursor move: the caller skips that tick.
@@ -105,16 +106,22 @@ with_timeout() {
   ' "$@"
 }
 
+# A failed attempt's output is dropped, so a connection cut mid-page never prints half a body.
 bounded() {
-  local attempt left t rc
+  local attempt left t rc=124 out
   for attempt in 1 2; do
     left=$((BUDGET - ($(date +%s) - now)))
     [ "$left" -gt 0 ] || break
     t=$CALL_TIMEOUT; [ "$t" -le "$left" ] || t=$left
-    with_timeout "$t" "$@"; rc=$?
-    [ "$rc" -eq 124 ] || return "$rc"
+    if out=$(with_timeout "$t" "$@"); then
+      [ -z "$out" ] || printf '%s\n' "$out"
+      return 0
+    else
+      rc=$?
+    fi
     [ "$attempt" -eq 2 ] || sleep "$BACKOFF"
   done
+  [ "$rc" -eq 124 ] || return "$rc"
   : > "$TIMED_OUT"
   return 124
 }

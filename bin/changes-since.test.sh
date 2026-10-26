@@ -47,6 +47,8 @@ echo "$*" >> "${FIX:?}/glab.log"
 [ -n "${GLAB_SLEEP_ON:-}" ] && case "$*" in *"$GLAB_SLEEP_ON"*) sleep 30 ;; esac
 [ -n "${GLAB_FAIL:-}" ] && case "$*" in *"$GLAB_FAIL"*) exit 1 ;; esac
 [ -n "${GLAB_FAIL_EXACT:-}" ] && [ "$*" = "$GLAB_FAIL_EXACT" ] && exit 1
+# a connection dropped mid-answer, once: half a body on stdout, then exit 1
+[ -n "${GLAB_FAIL_ONCE:-}" ] && case "$*" in *"$GLAB_FAIL_ONCE"*) mkdir "$FIX/dropped-once" 2>/dev/null && { echo '[{"half":'; exit 1; } ;; esac
 case "$*" in
     "api user") echo '{"username":"me"}' ;;
     *todos*) cat "$FIX/todos.json" ;;
@@ -385,6 +387,27 @@ assert_eq "--source gitlab-mrs service_down GitLab MRs unavailable" "$(cat "$FIX
 reset; cursor 2026-10-08T07:00:00Z
 run >/dev/null
 [ ! -e "$FIX/friction.log" ] && pass "a healthy run records nothing" || fail "a healthy run records nothing" "$(cat "$FIX/friction.log")"
+seed() { # one to-do and one review note on dashboard!2231, both after the cursor
+  reset; cursor 2026-10-08T07:00:00Z
+  echo '[{"id":1,"project":{"path_with_namespace":"ecfx/ecfx-dashboard"},"author":{"username":"bkeeling"},"action_name":"mentioned","target_type":"MergeRequest","target":{"iid":2231,"title":"ECFX-18169 majors","source_branch":"b","web_url":"u"},"target_url":"u#n","body":"b","created_at":"2026-10-08T07:30:00.000Z"}]' > "$FIX/todos.json"
+  echo '[{"id":10,"iid":2231,"project_id":2,"references":{"full":"ecfx/ecfx-dashboard!2231"}}]' > "$FIX/mrs.json"
+  echo '{"iid":2231,"title":"ECFX-18169 majors","state":"opened","source_branch":"b","web_url":"u","references":{"full":"ecfx/ecfx-dashboard!2231"},"head_pipeline":null}' > "$FIX/detail-2-2231.json"
+  echo '[{"id":3,"type":"DiffNote","system":false,"body":"x","author":{"username":"bkeeling"},"created_at":"2026-10-08T07:35:00.000Z"}]' > "$FIX/notes-2-2231.json"
+}
+seed
+healthy=$(CHANGES_SINCE_BACKOFF=0 run)
+assert_eq "2" "$(printf '%s\n' "$healthy" | grep -c .)" "the seeded healthy run has two events (a mention and a review)"
+for feed in "api user" todos "merge_requests?scope=created_by_me" "merge_requests/2231/notes"; do
+  seed
+  out=$(CHANGES_SINCE_BACKOFF=0 GLAB_FAIL_ONCE="$feed" run); rc=$?
+  assert_eq "0|$healthy" "$rc|$out" "a connection dropped once on '$feed' is retried: same events as a healthy run, no half body"
+  [ ! -e "$FIX/friction.log" ] && [ ! -e "$STATE/gitlab:down" ] && pass "and no service_down, no 15-minute hold" \
+    || fail "and no service_down, no 15-minute hold" "$(cat "$FIX/friction.log" 2>/dev/null) marker: $(ls "$STATE")"
+done
+reset; cursor 2026-10-08T07:00:00Z
+out=$(CHANGES_SINCE_BACKOFF=0 GLAB_FAIL="merge_requests?scope=created_by_me" run); rc=$?
+assert_eq "1|2" "$rc|$(grep -c 'scope=created_by_me' "$FIX/glab.log")" "a feed that keeps failing is tried twice, then exit 1"
+assert_eq "--source gitlab-mrs service_down GitLab MRs unavailable" "$(cat "$FIX/friction.log")" "and still records the outage"
 reset; cursor 2026-10-08T07:00:00Z
 out=$(FRICTION_FAIL=1 JIRA_MYSELF_FAIL=1 run); rc=$?
 assert_eq "1" "$rc" "a failing friction leaves exit 1"
@@ -402,7 +425,8 @@ assert_eq "1" "$rc" "probe fails: exit 1"
 assert_eq "" "$out" "nothing on stdout"
 assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor unchanged"
 assert_eq "--source gitlab service_down GitLab unavailable" "$(cat "$FIX/friction.log")" "one service_down line for both GitLab feeds"
-assert_eq "api user" "$(cat "$FIX/glab.log")" "one probe call, no feed call behind it"
+assert_eq "api user
+api user" "$(cat "$FIX/glab.log")" "the probe is tried twice, no feed call behind it"
 assert_contains "$(errs)" "GitLab unavailable" "stderr names the source"
 jira_calls=$(wc -l < "$FIX/jira.log")
 out=$(run); rc=$?
@@ -410,13 +434,13 @@ assert_eq "1" "$rc" "second run inside the window: exit 1"
 assert_eq "" "$out" "nothing on stdout"
 assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor still unchanged"
 assert_eq "1" "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "no second friction line"
-assert_eq "1" "$(wc -l < "$FIX/glab.log" | tr -d ' ')" "no second glab call"
+assert_eq "2" "$(wc -l < "$FIX/glab.log" | tr -d ' ')" "no glab call inside the window (the two are the first run's probe)"
 assert_eq "$jira_calls" "$(wc -l < "$FIX/jira.log")" "and no Jira call either, the run could not succeed"
 assert_contains "$(errs)" "GitLab unavailable" "stderr still says why"
 printf '%s\n' "$(($(date +%s) - 901))" > "$STATE/gitlab:down"
 out=$(run); rc=$?
 assert_eq "0" "$rc" "after 15 minutes the probe runs again and a recovered GitLab works"
-assert_eq "4" "$(wc -l < "$FIX/glab.log" | tr -d ' ')" "the probe ran again, then the to-dos and MR feeds (the probe's answer serves as the user lookup)"
+assert_eq "5" "$(wc -l < "$FIX/glab.log" | tr -d ' ')" "the probe ran again, then the to-dos and MR feeds (the probe's answer serves as the user lookup)"
 [ ! -e "$STATE/gitlab:down" ] && pass "a healthy probe clears the marker" || fail "a healthy probe clears the marker" "marker left"
 reset; cursor 2026-10-08T07:00:00Z; echo '{}' > "$FIX/todos.json"
 run >/dev/null
