@@ -240,6 +240,24 @@ out=$(APPROVALS_FAIL=1 run collect --since 2026-09-20T00:00:00Z)
 assert_eq "- [review requested] ecfx/ecfx-backend!6610 Delete Retrieve request — @bkeeling — w6610" "$(todos "$out" | head -1)" "a failed approvals lookup leaves the to-do listed, unmarked"
 assert_contains "$out" "## Jira" "and the digest keeps going"
 
+echo "start-day — GitLab to-dos on MRs whose last review from me is unaddressed (F-050)"
+reset
+cat > "$STUBS/triage.py" <<'EOF'
+import os, sys
+sys.stdout.write(open(os.environ["FIX"] + "/triage.json").read())
+EOF
+cat > "$FIX/todos.json" <<'JSON'
+[{"id":1,"project":{"id":3,"path_with_namespace":"ecfx/ecfx-backend"},"author":{"username":"carol"},"action_name":"review_requested","target_type":"MergeRequest","target":{"iid":6611,"project_id":3,"title":"Other","author":{"username":"carol"},"web_url":"w6611"},"target_url":"w6611","body":"b","created_at":"2026-10-08T06:20:00.000Z"},
+ {"id":2,"project":{"id":3,"path_with_namespace":"ecfx/ecfx-backend"},"author":{"username":"dan"},"action_name":"review_requested","target_type":"MergeRequest","target":{"iid":6620,"project_id":3,"title":"Fresh","author":{"username":"dan"},"web_url":"w6620"},"target_url":"w6620","body":"b","created_at":"2026-10-08T06:40:00.000Z"}]
+JSON
+echo '{"buckets":{"review_now":[{"ref":"ecfx/ecfx-backend!6620","title":"Fresh","author":"dan","context":"first time at you"}],"waiting_on_author":[{"ref":"ecfx/ecfx-backend!6611","title":"Other","author":"carol","context":"no activity since your last review"}]}}' > "$FIX/triage.json"
+out=$(START_DAY_TRIAGE="$STUBS/triage.py" run collect --since 2026-09-20T00:00:00Z)
+assert_eq "- [review requested] ecfx/ecfx-backend!6611 Other (waiting on author — my last review is unaddressed, leave out) — @carol — w6611
+- [review requested] ecfx/ecfx-backend!6620 Fresh — @dan — w6620" "$(todos "$out")" "a to-do on an MR waiting on its author is marked; a fresh one is not"
+assert_contains "$out" "- [waiting_on_author] ecfx/ecfx-backend!6611 Other — @carol: no activity since your last review" "the review queue still lists it, from the same triage run"
+out=$(START_DAY_TRIAGE=/nonexistent/triage.py run collect --since 2026-09-20T00:00:00Z)
+assert_eq "- [review requested] ecfx/ecfx-backend!6611 Other — @carol — w6611" "$(todos "$out" | head -1)" "without triage the to-do is listed, unmarked"
+
 echo "start-day save — trailing diary refs"
 reset
 printf '%s\n' '- [ ] ECFX-1 thing [dashboard!1](https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/1)' \

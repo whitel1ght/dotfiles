@@ -18,9 +18,12 @@
 #                 another of my own open MRs (stacked branch, GitLab /blocks, or
 #                 same ticket in an upstream repo), in merge order
 #   review queue  MRs waiting on me, from mr-review-queue's triage script
+#                 ($START_DAY_TRIAGE overrides its path)
 #   gitlab to-dos GitLab's pending to-dos (assigned, mentioned, review requested,
 #                 failed pipelines), one line each, oldest first; someone else's
-#                 MR I already approved says "(approved by you — no review)"
+#                 MR I already approved says "(approved by you — no review)", one
+#                 the triage put in waiting_on_author says "(waiting on author — my
+#                 last review is unaddressed, leave out)"
 #   jira          tickets newly assigned to me, my tickets others touched, and
 #                 my To-Do backlog
 # Slack and the calendar come through claude.ai connectors, which the command
@@ -303,13 +306,16 @@ collect_ready_to_merge() {
 collect_review_queue() {
   section "Review queue (MRs waiting on me)"
   local triage
-  triage=$(ls ~/.claude/plugins/cache/*/shared/*/skills/mr-review-queue/scripts/triage.py 2>/dev/null | sort -V | tail -1)
-  [ -n "$triage" ] || { echo "(mr-review-queue not installed)"; return; }
-  python3 "$triage" 2>/dev/null | jq -r '
+  triage="${START_DAY_TRIAGE:-$(ls ~/.claude/plugins/cache/*/shared/*/skills/mr-review-queue/scripts/triage.py 2>/dev/null | sort -V | tail -1)}"
+  [ -n "$triage" ] && [ -f "$triage" ] || { echo "(mr-review-queue not installed)"; return; }
+  # kept for collect_gitlab_todos, which marks to-dos on MRs waiting on their author (F-050)
+  TRIAGE_JSON=$(python3 "$triage" 2>/dev/null) || TRIAGE_JSON=""
+  [ -n "$TRIAGE_JSON" ] || { echo "(triage failed)"; return; }
+  jq -r '
     .buckets | to_entries[] | select(.value | length > 0) | .key as $b
     | if ($b == "already_approved" or $b == "draft") then "- \($b): \(.value | length) (\(.value | map(.ref) | join(", ")))"
       else (.value[] | "- [\($b)] \(.ref) \(.title) — @\(.author)\(if .context then ": \(.context)" else "" end)") end' \
-    || echo "(triage failed)"
+    <<<"$TRIAGE_JSON" 2>/dev/null || echo "(triage failed)"
 }
 
 collect_gitlab_todos() {
@@ -329,10 +335,17 @@ collect_gitlab_todos() {
          | [((.target.project_id // .project.id // (.project.path_with_namespace | @uri)) | tostring), (.target.iid | tostring)]]
         | unique[] | @tsv else empty end' <<<"$todos")
   fi
-  jq -r --argjson approved "$approved" 'if type == "array" and length > 0 then
+  local waiting
+  waiting=$(jq -c '[.buckets.waiting_on_author[]?.ref]' <<<"${TRIAGE_JSON:-}" 2>/dev/null) || waiting='[]'
+  [ -n "$waiting" ] || waiting='[]'
+  jq -r --argjson approved "$approved" --argjson waiting "$waiting" 'if type == "array" and length > 0 then
       sort_by(.created_at)[]
       | (((.target.project_id // .project.id // (.project.path_with_namespace | @uri)) | tostring) + ":" + (.target.iid | tostring)) as $k
-      | (if .target_type == "MergeRequest" and any($approved[]; . == $k) then " (approved by you — no review)" else "" end) as $mark
+      | "\(.project.path_with_namespace // "")!\(.target.iid // "")" as $ref
+      | (if .target_type != "MergeRequest" then ""
+         elif any($approved[]; . == $k) then " (approved by you — no review)"
+         elif any($waiting[]; . == $ref) then " (waiting on author — my last review is unaddressed, leave out)"
+         else "" end) as $mark
       | "- [\(.action_name | gsub("_"; " "))] \(.project.path_with_namespace // "?")\(if .target_type == "MergeRequest" then "!" else "#" end)\(.target.iid // "?") \(.target.title // .body)\($mark) — @\(.author.username // "?") — \(.target_url // .target.web_url // "")"
     else "(none)" end' <<<"$todos"
 }
