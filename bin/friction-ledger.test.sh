@@ -743,6 +743,8 @@ assert_eq "no" "$(jq -r '[.file[].id] | index("F-004") | if . == null then "no" 
 OUT="$("$SCRIPT" card-answer F-003 apply --date 2026-10-15)"
 assert_eq '{"enqueue":true,"safety":false}' "$OUT" "apply on a suggestion enqueues"
 assert_eq "landing|yes|2026-10-15" "$(fld F-003 status)|$(fld F-003 answer)|$(fld F-003 answered_on)" "apply sets landing, answer yes, answered_on"
+"$SCRIPT" card-filed F-003 --date 2026-10-16 2>/dev/null; assert_eq "1" "$?" "card-filed on a landing entry exits 1"
+assert_eq "landing" "$(fld F-003 status)" "and leaves it landing"
 "$SCRIPT" card-answer F-003 apply --date 2026-10-15 2>"$SANDBOX/err"; assert_eq "1" "$?" "answering a landing entry exits 1"
 assert_has "F-003 is landing, not on a card" "$(cat "$SANDBOX/err")" "and says why"
 # safety suggestion reports safety true

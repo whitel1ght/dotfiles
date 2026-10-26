@@ -364,6 +364,34 @@ echo "count"
 assert_eq "7" "$("$SCRIPT" count)" "count asks the deck"
 "$SCRIPT" count --badge >/dev/null; assert_has "count --badge" "$(cat "$CALLS")" "count passes --badge on"
 
+echo "hook: a failed retry comes back"
+lastid() { ls "$FRICTION_WIKI" | sed -n 's/^\(F-[0-9]*\)\.md$/\1/p' | sort | tail -1; }
+groups "k:tool:rt|tool|2"; RT="$(lastid)"
+"$LEDGER" set "$RT" --status failed --reason "tests failed" --date 2026-10-20
+sync >/dev/null
+assert_eq "2026-10-20" "$(fld "$RT" result_reported_on)" "the failed result is reported"
+touch "$SANDBOX/cf.fail"
+hook answered "$RT" 1
+rm "$SANDBOX/cf.fail"
+assert_eq "2" "$(grep -c "^add key=$RT " "$CALLS")" "the failed result card is filed again"
+assert_has "could not retry: boom" "$(last_stdin_for "$RT")" "its context carries the note"
+assert_has "could not retry: boom" "$(fld "$RT" reason)" "the reason carries the last stderr line"
+
+echo "sync: a stale cards listing"
+groups "k:tool:st|tool|2"; ST="$(lastid)"
+propose "$ST" "$SANDBOX/p1.md"
+cat >"$SANDBOX/stale-ledger" <<'STUB'
+#!/bin/bash
+out="$("$LEDGER" "$@")"; rc=$?
+if [ "$1" = cards ]; then "$LEDGER" set "$STALE_ID" --status landing --date 2026-10-20; fi
+printf '%s\n' "$out"; exit $rc
+STUB
+chmod +x "$SANDBOX/stale-ledger"
+FRICTION_LEDGER="$SANDBOX/stale-ledger" LEDGER="$LEDGER" STALE_ID="$ST" sync >"$SANDBOX/out"
+assert_eq "landing" "$(fld "$ST" status)" "the entry stays landing"
+assert_eq "" "$(deck_id "$ST")" "no card stays open for it"
+assert_has "closed" "$(cat "$SANDBOX/out")" "one line says the card was closed"
+
 echo "jq missing"
 mkdir -p "$SANDBOX/nojq"
 OUT="$(PATH="$SANDBOX/nojq" /bin/bash "$SCRIPT" sync --date 2026-10-20 2>&1)"; rc=$?

@@ -42,7 +42,8 @@
 #         rung: script|config|prompt. --safety writes the `safety` field (ingest only ever sets
 #         it true); --queued-by records who queued the entry (`queued_by`). --reason writes
 #         `reason` on one line (why a coach fix failed, or a user step after it landed; "" clears
-#         it). A change to `landing` clears `reason` and `result_reported_on`, so the result of
+#         it). --clear-result-reported clears `result_reported_on` so the result card is filed
+#         again. A change to `landing` clears `reason` and `result_reported_on`, so the result of
 #         the new attempt is reported. A change to `proposed` clears `offered_on`, `answer` and
 #         `answered_on`: the entry waits to be offered afresh (coach-fix holds an unapproved
 #         safety change this way), and an earlier yes never counts for it.
@@ -452,7 +453,7 @@ cmd_apply() {
 
 cmd_set() {
   local id="${1:-}" class="" status="" rung="" fix="" diag="" pfile="" date_="" has_fix=0 safety="" queued_by=""
-  local reason="" has_reason=0
+  local reason="" has_reason=0 clear_reported=0
   [[ "$id" =~ ^F-[0-9]+$ ]] || die "set needs an F-NNN id"
   shift
   while [ $# -gt 0 ]; do
@@ -467,6 +468,7 @@ cmd_set() {
       --safety) need "$@"; safety="$2"; shift ;;
       --queued-by) need "$@"; queued_by="$2"; shift ;;
       --reason) need "$@"; reason="$2"; has_reason=1; shift ;;
+      --clear-result-reported) clear_reported=1 ;;
       *) die "set: unknown option $1" ;;
     esac
     shift
@@ -503,6 +505,7 @@ cmd_set() {
     fi
   fi
   [ "$has_reason" = 0 ] || fm_set "$f" reason "$(one_line "$reason")"
+  [ "$clear_reported" = 0 ] || [ -z "$(fm_get "$f" result_reported_on)" ] || fm_set "$f" result_reported_on ""
   rebuild_ledger
 }
 
@@ -968,6 +971,10 @@ cmd_card_filed() {
   if [ "$result" = 1 ]; then
     fm_set "$f" result_reported_on "$date_"
   else
+    case "$(fm_get "$f" status)" in
+      proposed | regressed | offered | declined) ;;
+      *) die "card-filed: $id is $(fm_get "$f" status), not waiting for a card" ;;
+    esac
     cmd_set "$id" --status offered --date "$date_"
     backfill_safety "$f"
     fm_set "$f" card_hash "$(card_hash "$f")"

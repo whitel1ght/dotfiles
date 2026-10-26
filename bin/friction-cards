@@ -141,9 +141,11 @@ file_card() { # item JSON, date, result(0|1)
     echo "friction-cards: could not file the card for $id: $(one_line "$(tail -1 "$errf")")" >&2
     rm -f "$errf"; return 1
   fi
-  rm -f "$errf"
-  if [ "$result" = 1 ]; then "$FRICTION_LEDGER" card-filed "$id" --date "$date_" --result
-  else "$FRICTION_LEDGER" card-filed "$id" --date "$date_"; fi
+  if [ "$result" = 1 ]; then rm -f "$errf"; "$FRICTION_LEDGER" card-filed "$id" --date "$date_" --result
+  elif ! "$FRICTION_LEDGER" card-filed "$id" --date "$date_" 2>"$errf"; then
+    echo "friction-cards: $id no longer waits for a card; closed $new: $(one_line "$(tail -1 "$errf")")"
+    drop_card "$new" "the entry moved on"; rm -f "$errf"; return 1
+  fi
   echo "filed $new for $id ($card)"
 }
 
@@ -244,16 +246,26 @@ cmd_handle() { # event file: the hook's work, run detached
       label="$(options_for "$card" "$retry" | sed -n "${opt:-0}p")"
       case "$label" in
         Apply*) ans=apply ;; Ignore) ans=ignore ;; Later) ans=later ;; Done*) ans=done ;;
-        Retry) drop_card "$id"; "$COACH_FIX" retry "$F" || log "hook: $F: coach-fix retry failed"; return 0 ;;
+        Retry)
+          drop_card "$id"; errf="$(mktemp)"
+          if ! "$COACH_FIX" retry "$F" 2>"$errf"; then
+            log "hook: $F: coach-fix retry failed"
+            "$FRICTION_LEDGER" set "$F" --reason "could not retry: $(one_line "$(tail -1 "$errf")")" --clear-result-reported --date "$date_" || true
+            rm -f "$errf"; cmd_sync
+            return 0
+          fi
+          rm -f "$errf"; return 0 ;;
         OK) drop_card "$id"; return 0 ;;
         *) log "hook: $F: no answer $opt on a $card card"; return 0 ;;
       esac
       errf="$(mktemp)"
+      lock cards || { log "hook: $F: another sync is busy; answer $ans dropped"; rm -f "$errf"; return 0; }
       if ! out="$("$FRICTION_LEDGER" card-answer "$F" "$ans" --date "$date_" 2>"$errf")"; then
         log "hook: $F: answer $ans refused: $(one_line "$(tail -1 "$errf")")"
-        rm -f "$errf"; drop_card "$id"; return 0
+        rm -f "$errf"; drop_card "$id"; unlock cards; return 0
       fi
       drop_card "$id"
+      unlock cards
       if [ "$(jq -r '.enqueue // false' <<<"$out")" = true ]; then
         local args=(enqueue "$F")
         [ "$(jq -r '.safety // false' <<<"$out")" != true ] || args+=(--approved-safety)
