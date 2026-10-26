@@ -61,7 +61,7 @@ export COACH_FIX="$SANDBOX/cf" CF_LOG="$SANDBOX/cf.log" FAKE_TMUX_DIR="$SANDBOX/
 cat >"$COACH_FIX" <<'STUB'
 #!/bin/bash
 echo "$*" >>"$CF_LOG"
-[ ! -f "$SANDBOX/cf.sleep" ] || sleep 30
+[ ! -f "$SANDBOX/cf.sleep" ] || { echo $$ >"$SANDBOX/cf.pid"; exec sleep 30; }
 [ ! -f "$SANDBOX/cf.fail" ] || { echo "first line" >&2; echo "boom" >&2; exit 1; }
 STUB
 chmod +x "$COACH_FIX"
@@ -180,14 +180,13 @@ sync >/dev/null
 assert_eq "0" "$(jq '[.[] | select(.key == "F-011")] | length' "$DECK")" "a result card closes once its entry moves on"
 
 TODAY="$(date +%F)"
-wait_for() { local i=0; while [ $i -lt 100 ]; do eval "$1" >/dev/null 2>&1 && return 0; sleep 0.1; i=$((i + 1)); done; return 1; }
 deck_id() { jq -r --arg k "$1" '[.[] | select(.key == $k)][0].id // empty' "$DECK"; }
 event() { # kind key option [text]: one hook line for the open card on key
   local d; d="$(deck_id "$2")"
   jq -nc --arg e "$1" --arg id "$d" --arg k "$2" --arg s "$(jq -r --arg k "$2" '[.[] | select(.key == $k)][0].source' "$DECK")" \
     --arg o "${3:-}" --arg t "${4:-}" '{event: $e, id: $id, key: $k, source: $s, option: (if $o == "" then null else ($o | tonumber) end), note: null, text: (if $t == "" then null else $t end), at: "x"}'
 }
-hook() { event "$@" | "$SCRIPT" hook; }
+hook() { local f="$SANDBOX/ev.json"; event "$@" >"$f"; "$SCRIPT" handle "$f"; } # the hook's work, run synchronously
 windows_log() { cat "$FAKE_TMUX_DIR/log" 2>/dev/null; }
 
 echo "review: a failing add does not block the next card"
@@ -222,29 +221,32 @@ assert_eq "1" "$(stdin_for F-012 | grep -c 'tests failed')" "the reason appears 
 
 echo "hook: apply"
 hook answered F-002 1
-wait_for '[ "$(fld F-002 status)" = landing ]' && pass "suggestion Apply -> landing" || fail "suggestion Apply -> landing" "$(fld F-002 status)"
-wait_for 'grep -q "enqueue F-002" "$CF_LOG"'; assert_eq "enqueue F-002" "$(grep 'enqueue F-002' "$CF_LOG")" "coach-fix enqueue, no flag"
-wait_for '[ -z "$(deck_id F-002)" ]'; assert_eq "" "$(deck_id F-002)" "the card is closed"
+assert_eq "landing" "$(fld F-002 status)" "suggestion Apply -> landing"
+assert_eq "enqueue F-002" "$(grep 'enqueue F-002' "$CF_LOG")" "coach-fix enqueue, no flag"
+assert_eq "" "$(deck_id F-002)" "the card is closed"
 hook answered F-006 1
-wait_for 'grep -q "enqueue F-006" "$CF_LOG"'; assert_eq "enqueue F-006 --approved-safety" "$(grep 'enqueue F-006' "$CF_LOG")" "a safety card enqueues with --approved-safety"
+assert_eq "enqueue F-006 --approved-safety" "$(grep 'enqueue F-006' "$CF_LOG")" "a safety card enqueues with --approved-safety"
 hook answered F-009 1
-wait_for '[ "$(fld F-009 status)" = fixed ]'; assert_has "D-" "$(fld F-009 fix)" "a rule card makes a D-NNN"
+assert_eq "fixed" "$(fld F-009 status)" "a rule card is fixed"
+assert_has "D-" "$(fld F-009 fix)" "a rule card makes a D-NNN"
 assert_eq "" "$(grep 'F-009' "$CF_LOG")" "and never calls coach-fix"
-wait_for '[ -z "$(deck_id F-009)" ]'; assert_eq "" "$(deck_id F-009)" "its card is closed"
+assert_eq "" "$(deck_id F-009)" "its card is closed"
 
 echo "hook: other answers"
-hook answered F-003 3; wait_for '[ "$(fld F-003 offered_on)" = "$TODAY" ]' && pass "Later -> offered_on today" || fail "Later" "$(fld F-003 offered_on)"
-hook answered F-004 2; wait_for '[ "$(fld F-004 status)" = declined ]' && pass "Ignore -> declined" || fail "Ignore" "$(fld F-004 status)"
-hook answered F-010 1; wait_for '[ "$(fld F-010 status)" = fixed ]' && pass "Done on a secret card -> fixed" || fail "Done" "$(fld F-010 status)"
-hook answered F-012 1; wait_for 'grep -q "retry F-012" "$CF_LOG"' && pass "Retry on a failed result -> coach-fix retry" || fail "Retry" "$(cat "$CF_LOG")"
+hook answered F-003 3; assert_eq "$TODAY" "$(fld F-003 offered_on)" "Later -> offered_on today"
+hook answered F-004 2; assert_eq "declined" "$(fld F-004 status)" "Ignore -> declined"
+hook answered F-010 1; assert_eq "fixed" "$(fld F-010 status)" "Done on a secret card -> fixed"
+assert_eq "" "$(grep 'F-010' "$CF_LOG")" "and never calls coach-fix"
+assert_eq "" "$(deck_id F-010)" "the secret card is closed"
+hook answered F-012 1; assert_eq "retry F-012" "$(grep 'F-012' "$CF_LOG")" "Retry on a failed result -> coach-fix retry"
 hook answered F-013 1
-wait_for '[ -z "$(deck_id F-013)" ]'; assert_eq "" "$(deck_id F-013)" "OK on a result card closes it"
+assert_eq "" "$(deck_id F-013)" "OK on a result card closes it"
 assert_eq "" "$(grep 'F-013' "$CF_LOG")" "and calls nothing"
 
 echo "hook: a refused answer"
 "$LEDGER" set F-015 --status landing --date 2026-10-21
 hook answered F-015 1
-wait_for '[ -z "$(deck_id F-015)" ]' && pass "the card is closed" || fail "card closed" "still open"
+assert_eq "" "$(deck_id F-015)" "the card is closed"
 assert_eq "landing" "$(fld F-015 status)" "the ledger is unchanged"
 assert_eq "" "$(grep 'F-015' "$CF_LOG")" "no coach-fix call"
 assert_eq "1" "$(grep -c 'F-015' "$COACH_STATE_DIR/logs/cards.log")" "one log line"
@@ -254,30 +256,36 @@ groups "k:tool:q1|tool|2"
 propose F-016 "$SANDBOX/p1.md"; sync >/dev/null
 touch "$SANDBOX/cf.fail"
 hook answered F-016 1
-wait_for '[ "$(grep -c "^add key=F-016 " "$CALLS")" = 2 ]' && pass "the card is filed again" || fail "refiled" "$(fld F-016 status)"
+assert_eq "2" "$(grep -c "^add key=F-016 " "$CALLS")" "the card is filed again"
 assert_has "could not queue the fix: boom" "$(fld F-016 reason)" "with the last stderr line as the reason"
 assert_has "could not queue the fix: boom" "$(last_stdin_for F-016 | head -1)" "the re-filed card starts with the note"
 rm "$SANDBOX/cf.fail"
 
-echo "hook: returns fast"
+echo "hook: returns fast, detached"
 groups "k:tool:r1|tool|2"
 propose F-017 "$SANDBOX/p1.md"; sync >/dev/null
-touch "$SANDBOX/cf.sleep"
-start=$(date +%s); hook answered F-017 1; took=$(( $(date +%s) - start ))
+touch "$SANDBOX/cf.sleep"; rm -f "$SANDBOX/cf.pid"
+start=$(date +%s); event answered F-017 1 | "$SCRIPT" hook; took=$(( $(date +%s) - start ))
 [ "$took" -lt 3 ] && pass "the hook returns in under 3 s" || fail "fast hook" "${took}s"
-rm "$SANDBOX/cf.sleep"
+i=0; while [ ! -s "$SANDBOX/cf.pid" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+[ -s "$SANDBOX/cf.pid" ] && pass "the detached work reached coach-fix" || fail "detached work" "coach-fix never started"
+kill "$(cat "$SANDBOX/cf.pid" 2>/dev/null)" 2>/dev/null
+rm -f "$SANDBOX/cf.sleep"
+i=0; while pgrep -f "handle $COACH_STATE_DIR" >/dev/null && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+pgrep -f "handle $COACH_STATE_DIR" >/dev/null && fail "no orphan" "handle still running" || pass "no process outlives the test"
+sync >/dev/null # the killed coach-fix left F-017 proposed; settle its card now
 
 echo "reply: asked"
 D7="$(deck_id F-007)"
 hook asked F-007 "" "why not a config fix?"
-wait_for '[ -f "$COACH_STATE_DIR/replies/F-007.json" ] && [ -n "$(windows_log)" ]' && pass "a job file and a window" || fail "job" "$(windows_log)"
+[ -f "$COACH_STATE_DIR/replies/F-007.json" ] && [ -n "$(windows_log)" ] && pass "a job file and a window" || fail "job" "$(windows_log)"
 assert_eq '["why not a config fix?"]' "$(jq -c .questions "$COACH_STATE_DIR/replies/F-007.json")" "the job file holds the question"
 assert_eq "$D7" "$(jq -r .card "$COACH_STATE_DIR/replies/F-007.json")" "and the card"
 assert_has "reply-F-007|" "$(windows_log)" "window reply-F-007"
 assert_has "claude '/daily:fix-friction F-007 --revise'" "$(windows_log)" "running the revise prompt"
 assert_eq "$D7" "$(deck_id F-007)" "the card stays open"
 hook told F-007 "" "and what about a hook?"
-wait_for '[ "$(jq ".questions | length" "$COACH_STATE_DIR/replies/F-007.json")" = 2 ]' && pass "a second question is appended" || fail "append" "$(cat "$COACH_STATE_DIR/replies/F-007.json")"
+assert_eq "2" "$(jq ".questions | length" "$COACH_STATE_DIR/replies/F-007.json")" "a second question is appended"
 assert_eq "1" "$(windows_log | wc -l | tr -d ' ')" "no second window"
 
 echo "reply: a permission flag"
@@ -314,14 +322,15 @@ assert_has "reply-F-020" "$(cat "$FAKE_TMUX_DIR/windows")" "the stalled window i
 [ -f "$COACH_STATE_DIR/replies/F-021.json" ] && pass "10 s old, no window: untouched" || fail "untouched" "job removed"
 assert_eq "offered" "$(fld F-021 status)" "its entry is untouched"
 [ ! -f "$COACH_STATE_DIR/replies/F-019.json" ] && pass "handled job files are gone" || fail "job file" "left"
+rm -f "$COACH_STATE_DIR/replies/F-021.json" # it would age past the watchdog threshold while later tests run
 
 echo "fix round: a late revision never undoes an answer"
 groups "k:tool:v1|tool|2" "k:tool:v2|tool|2"
 propose F-022 "$SANDBOX/p1.md"; propose F-023 "$SANDBOX/p1.md"; sync >/dev/null
 job F-022 60
 hook answered F-022 1
-wait_for '[ "$(fld F-022 status)" = landing ] && [ ! -f "$COACH_STATE_DIR/replies/F-022.json" ]' && pass "answering Apply cancels the reply job" || fail "job cancelled" "$(fld F-022 status)"
-sleep 1; before="$(adds)"
+[ "$(fld F-022 status)" = landing ] && [ ! -f "$COACH_STATE_DIR/replies/F-022.json" ] && pass "answering Apply cancels the reply job" || fail "job cancelled" "$(fld F-022 status)"
+before="$(adds)"
 job F-022 60; "$SCRIPT" revised F-022 --answer-file "$SANDBOX/ans.md" >/dev/null 2>&1
 assert_eq "landing" "$(fld F-022 status)" "a late revised leaves the entry landing"
 assert_eq "$before" "$(adds)" "and files no card"
@@ -341,6 +350,15 @@ FRICTION_LEDGER="$SANDBOX/ledger-wrap" "$SCRIPT" unrevised F-023 --reason x >/de
 assert_eq "1" "$rc" "direct: exits 1"
 [ -f "$COACH_STATE_DIR/replies/F-023.json" ] && pass "direct: the job file stays" || fail "job file" "gone"
 [ ! -d "$COACH_STATE_DIR/.cards.lock" ] && pass "the lock is released" || fail "lock" "held"
+
+echo "hook: Ignore on a failed result"
+groups "k:tool:w1|tool|2"
+"$LEDGER" set F-024 --status failed --reason "tests failed" --date 2026-10-20
+sync >/dev/null
+assert_eq "Retry|Ignore" "$(call_for F-024 | sed 's/.*opts=\([^ ]*\) .*/\1/')" "the failed card offers Retry and Ignore"
+hook answered F-024 2
+assert_eq "" "$(deck_id F-024)" "Ignore closes the failed result card"
+assert_eq "" "$(grep 'F-024' "$CF_LOG")" "and calls no coach-fix"
 
 echo "count"
 assert_eq "7" "$("$SCRIPT" count)" "count asks the deck"
