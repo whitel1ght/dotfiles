@@ -87,6 +87,8 @@ us() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"user",content:$c}')" us
   tu 2026-10-15T07:27:00.000Z c1 "glab api projects/1/notes; echo =====; rg -l x notes"; tr_ 2026-10-15T07:27:30.000Z c1 "Exit code 1\n"
   tu 2026-10-15T07:28:00.000Z c2 "cat state.md\necho =====\nend-day entries 2026-10-15 ecfx | rg x"; tr_ 2026-10-15T07:28:30.000Z c2 "Exit code 1\n"
   tu 2026-10-15T07:29:00.000Z c3 "secret X >/dev/null && ls ~/x || true"; tr_ 2026-10-15T07:29:30.000Z c3 "Exit code 1\n"
+  tu 2026-10-15T07:30:00.000Z s1 "glab mr view 77;\n"; tr_ 2026-10-15T07:30:30.000Z s1 "Exit code 1\n"
+  tu 2026-10-15T07:31:00.000Z s2 "cd \\\"my dir\\\" && glab mr view 78"; tr_ 2026-10-15T07:31:30.000Z s2 "Exit code 1\n"
   tu 2026-10-15T07:10:00.000Z t4 "git push"; tr_ 2026-10-15T07:10:10.000Z t4 "The user doesn't want to proceed with this tool use. The tool use was rejected"
   tu 2026-10-15T07:11:00.000Z t5 "ls"; tr_ 2026-10-15T07:11:10.000Z t5 "ls: nope"
   us 2026-10-15T07:12:00.000Z "[Request interrupted by user]"
@@ -178,10 +180,10 @@ assert_eq "retry" "$(f "$(grp 'pi-sub:retry:auto retry: connection error.')" .ki
 
 echo "friction-mine — Claude transcripts"
 g=$(grp "claude:tool_error:bash: exit code <n>")
-assert_eq "tool_error|4|ECFX-77" "$(f "$g" '[.kind,.count,.keys[0]]|join("|")')" "bare Exit code from our tools grouped (glab x3, end-day by path in a pipeline); key from the cwd"
+assert_eq "tool_error|6|ECFX-77" "$(f "$g" '[.kind,.count,.keys[0]]|join("|")')" "bare Exit code from our tools grouped (glab x3, end-day by path in a pipeline, glab with a trailing ;, glab after a quoted cd); key from the cwd"
 assert_eq "retry" "$(f "$(grp 'claude:retry:repeated failing command x<n>: bash glab mr view <n>')" .kind)" "same failing command 3 times -> retry"
 assert_eq "" "$(jq -r '.groups[]|select(.sig|test("make build|npm run dev|unknown command"))' <<<"$OUT")" "bare Exit code from other commands, or with no command found, is dropped (no group, no retry)"
-assert_eq "4" "$(f "$g" .count)" "bare Exit code from a compound command (; newline && ||) with one of our tools in it is dropped; a leading cd DIR && is not a second statement"
+assert_eq "6" "$(f "$g" .count)" "bare Exit code from a compound command (; newline && ||) with one of our tools in it is dropped; a leading cd DIR && (quoted too) and a trailing ; or newline are not a second statement"
 assert_eq "denied" "$(f "$(grp 'claude:denied:bash denied by user or permissions')" .kind)" "permission denial"
 assert_eq "interrupt" "$(f "$(grp 'claude:interrupt:[request interrupted by user]')" .kind)" "interrupt"
 g=$(grp "claude:correction:no, that's not what i asked")

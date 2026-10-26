@@ -98,7 +98,7 @@ def ourtool: any(splits("[;&|\\n]+");
     | IN("glab", "jira", "secret", "secrets", "changes-since", "mr-watch", "end-day", "start-day", "day-plan", "day-note", "diary-links",
          "friction", "friction-mine", "friction-ledger", "jt", "wt", "wait-for", "sync-tickets", "wiki-sync", "cs", "cs-add", "plink", "decide", "decisions"));
 # more than one statement after a leading "cd DIR &&": a bare exit code there names no command
-def compound: sub("^\\s*cd\\s+\\S+\\s*&&\\s*"; "") | test(";|\\n|&&|\\|\\|");'
+def compound: sub("^\\s*cd\\s+(\"[^\"]*\"|'"'"'[^'"'"']*'"'"'|\\S+)\\s*&&\\s*"; "") | sub("[\\s;]+$"; "") | test(";|\\n|&&|\\|\\|");'
 
 out="$(mktemp -d)"
 trap 'rm -rf "${out:?}"' EXIT
