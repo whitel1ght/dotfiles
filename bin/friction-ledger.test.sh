@@ -699,6 +699,98 @@ assert_eq "$HOLDER" "$(cat "$FRICTION_WIKI/.lock/pid")" "a timed-out run leaves 
 "$SCRIPT" directions render >/dev/null 2>&1; assert_eq "0" "$?" "directions render ignores the lock"
 kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null; rm -rf "$FRICTION_WIKI/.lock"
 
+# --- cards verbs --------------------------------------------------------------
+echo "cards verbs"
+rm -rf "$FRICTION_WIKI"
+fmset() { bash -c 'eval "$(sed -n "/^fm_set()/,/^}/p" "$1")"; fm_set "$2" "$3" "$4"' _ "$SCRIPT" "$FRICTION_WIKI/$1.md" "$2" "$3"; }
+ids() { jq -r "[.$1[].id] | sort | join(\" \")" <<<"$2"; }
+cg "$SANDBOX/k1.json" 2026-10-10 "k:tool:plain|tool|8|" "k:tool:noprop|tool|2|" "k:tool:off|tool|2|" "k:tool:dec|tool|8|" "k:repeat:thin|repeat|3|1" \
+  "k:secret:key|secret|2|" "k:restated:rule|restated|2|" "k:tool:guard|tool|2|" "k:tool:landed|tool|2|"
+apply 2026-10-10 "$SANDBOX/k1.json" >/dev/null
+printf 'Tighten the thing\n\n## Change\n- a → b\n' >"$SANDBOX/kp.md"
+printf 'Add a rule\nDirection: Always run the tests first `now` $(id)\nScope: dotfiles\n' >"$SANDBOX/kr.md"
+printf 'Loosen the permission guard\n' >"$SANDBOX/kg.md"
+# F-001 plain, 002 noprop, 003 off, 004 dec, 005 thin, 006 secret, 007 rule, 008 nochange, 009 landed
+for n in 1 3 4 5 6; do "$SCRIPT" set "F-00$n" --status proposed --proposal-file "$SANDBOX/kp.md" --date 2026-10-12; done
+"$SCRIPT" set F-007 --status proposed --proposal-file "$SANDBOX/kr.md" --date 2026-10-12
+"$SCRIPT" set F-008 --status proposed --proposal-file "$SANDBOX/kg.md" --date 2026-10-12
+"$SCRIPT" set F-002 --status proposed --date 2026-10-12
+"$SCRIPT" set F-009 --status landed --date 2026-10-12
+OUT="$("$SCRIPT" cards --date 2026-10-15)"
+assert_eq "F-001 F-003 F-004 F-006 F-007 F-008" "$(ids file "$OUT")" "cards lists proposed entries with a proposal, not one without or a thin repeat"
+assert_eq "suggestion|secret|rule|nochange" "$(jq -r '[.file[] | select(.id == "F-006" or .id == "F-007" or .id == "F-008" or .id == "F-001") | {i: .id, c: .card}] | sort_by(.i) | map(.c) | join("|")' <<<"$OUT")" "card kinds: secret, rule, nochange, suggestion"
+assert_eq "Always run the tests first \`now\` \$(id)|dotfiles" "$(jq -r '.file[] | select(.id == "F-007") | .direction.rule + "|" + .direction.scope' <<<"$OUT")" "a rule item carries its direction"
+assert_eq "F-009" "$(ids results "$OUT")" "results lists a landed entry not yet reported"
+assert_eq "landed" "$(jq -r '.results[0].card' <<<"$OUT")" "a result card is landed"
+assert_eq "false" "$(jq -r '.results[0].retryable' <<<"$OUT")" "a landed result is not retryable"
+"$SCRIPT" card-filed F-009 --result --date 2026-10-15
+assert_eq "2026-10-15|landed" "$(fld F-009 result_reported_on)|$(fld F-009 status)" "card-filed --result sets only result_reported_on"
+assert_eq "" "$(ids results "$("$SCRIPT" cards --date 2026-10-15)")" "a reported result is not listed again"
+# offered 2 days ago is skipped, 3 days listed
+"$SCRIPT" card-filed F-001 --date 2026-10-13
+assert_eq "offered|2026-10-13|" "$(fld F-001 status)|$(fld F-001 offered_on)|$(fld F-001 answer)" "card-filed marks the entry offered"
+assert_eq "no" "$(jq -r '[.file[].id] | index("F-001") | if . == null then "no" else "yes" end' <<<"$("$SCRIPT" cards --date 2026-10-15)")" "offered 2 days ago is skipped"
+assert_eq "yes" "$(jq -r '[.file[].id] | index("F-001") | if . == null then "no" else "yes" end' <<<"$("$SCRIPT" cards --date 2026-10-16)")" "offered 3 days ago is listed"
+# declined_count
+"$SCRIPT" set F-004 --status declined --date 2026-10-14; fmset F-004 declined_count 4
+assert_eq "yes" "$(jq -r '[.file[].id] | index("F-004") | if . == null then "no" else "yes" end' <<<"$("$SCRIPT" cards --date 2026-10-15)")" "declined at count 8 with declined_count 4 is listed"
+fmset F-004 declined_count 5
+assert_eq "no" "$(jq -r '[.file[].id] | index("F-004") | if . == null then "no" else "yes" end' <<<"$("$SCRIPT" cards --date 2026-10-15)")" "declined at count 8 with declined_count 5 is not"
+# apply on a suggestion
+"$SCRIPT" card-filed F-003 --date 2026-10-15
+OUT="$("$SCRIPT" card-answer F-003 apply --date 2026-10-15)"
+assert_eq '{"enqueue":true,"safety":false}' "$OUT" "apply on a suggestion enqueues"
+assert_eq "landing|yes|2026-10-15" "$(fld F-003 status)|$(fld F-003 answer)|$(fld F-003 answered_on)" "apply sets landing, answer yes, answered_on"
+"$SCRIPT" card-answer F-003 apply --date 2026-10-15 2>"$SANDBOX/err"; assert_eq "1" "$?" "answering a landing entry exits 1"
+assert_has "F-003 is landing, not on a card" "$(cat "$SANDBOX/err")" "and says why"
+# safety suggestion reports safety true
+"$SCRIPT" set F-004 --status proposed --proposal-file "$SANDBOX/kg.md" --date 2026-10-16
+printf 'Loosen the permission guard\n- a → b\n' >"$SANDBOX/kg2.md"
+"$SCRIPT" set F-004 --proposal-file "$SANDBOX/kg2.md" --date 2026-10-16
+"$SCRIPT" card-filed F-004 --date 2026-10-16
+assert_eq '{"enqueue":true,"safety":true}' "$("$SCRIPT" card-answer F-004 apply --date 2026-10-16)" "apply on a safety suggestion reports safety true"
+# nochange, secret
+"$SCRIPT" card-filed F-008 --date 2026-10-15; "$SCRIPT" card-answer F-008 apply --date 2026-10-15 2>"$SANDBOX/err"; assert_eq "1" "$?" "apply on a nochange card exits 1"
+assert_has "no exact change to approve" "$(cat "$SANDBOX/err")" "nochange refusal says why"
+assert_eq "offered" "$(fld F-008 status)" "a refused apply leaves the entry offered"
+"$SCRIPT" card-filed F-006 --date 2026-10-15; "$SCRIPT" card-answer F-006 apply --date 2026-10-15 2>/dev/null; assert_eq "1" "$?" "apply on a secret card exits 1"
+assert_eq "{}" "$("$SCRIPT" card-answer F-006 done --date 2026-10-15)" "done on a secret card prints {}"
+assert_eq "fixed" "$(fld F-006 status)" "and fixes it"
+"$SCRIPT" card-answer F-006 done --date 2026-10-15 2>/dev/null; assert_eq "1" "$?" "a second answer on a fixed entry exits 1"
+# rule
+"$SCRIPT" card-filed F-007 --date 2026-10-15
+OUT="$("$SCRIPT" card-answer F-007 apply --date 2026-10-15)"
+assert_eq '{"rule":"D-001"}' "$OUT" "apply on a rule card prints the direction id"
+assert_eq "fixed|D-001" "$(fld F-007 status)|$(fld F-007 fix)" "the rule entry is fixed with the direction as fix"
+assert_eq "| D-001 | Always run the tests first \`now\` \$(id) | dotfiles | 2026-10-15 |  | active |" "$(grep '^| D-001' "$FRICTION_WIKI/directions.md")" "the direction row is added literally with its scope"
+# later / ignore
+"$SCRIPT" card-filed F-001 --date 2026-10-16
+assert_eq "{}" "$("$SCRIPT" card-answer F-001 later --date 2026-10-17)" "later prints {}"
+assert_eq "offered|2026-10-17|later" "$(fld F-001 status)|$(fld F-001 offered_on)|$(fld F-001 answer)" "later keeps it offered with offered_on D"
+assert_eq "no" "$(jq -r '[.file[].id] | index("F-001") | if . == null then "no" else "yes" end' <<<"$("$SCRIPT" cards --date 2026-10-19)")" "a later card is skipped until D+3"
+assert_eq "yes" "$(jq -r '[.file[].id] | index("F-001") | if . == null then "no" else "yes" end' <<<"$("$SCRIPT" cards --date 2026-10-20)")" "and listed at D+3"
+assert_eq "{}" "$("$SCRIPT" card-answer F-001 ignore --date 2026-10-20)" "ignore prints {}"
+assert_eq "declined|8" "$(fld F-001 status)|$(fld F-001 declined_count)" "ignore declines with declined_count"
+"$SCRIPT" card-answer F-001 later --date 2026-10-20 2>/dev/null; assert_eq "1" "$?" "answering a declined entry exits 1"
+# revise
+printf 'Why `rm -rf` and $(id)?\nsecond line\n' >"$SANDBOX/q.md"; printf 'Because `x` $(id) stays literal.\n' >"$SANDBOX/a.md"
+printf 'Revised plan\n## Change\n- c → d\n' >"$SANDBOX/rp.md"
+"$SCRIPT" set F-002 --status failed --reason "boom" --date 2026-10-20
+"$SCRIPT" revise F-002 --question-file "$SANDBOX/q.md" --answer-file "$SANDBOX/a.md" --proposal-file "$SANDBOX/rp.md" --date 2026-10-20
+assert_eq '- 2026-10-20: you asked: Why `rm -rf` and $(id)? second line · coach: Because `x` $(id) stays literal.' "$(sed -n '/^## Discussion/,$p' "$FRICTION_WIKI/F-002.md" | grep '^- ')" "revise stores the question literally in ## Discussion"
+assert_eq "Revised plan" "$(section_first() { sed -n '/^## Proposal/,/^## /p' "$FRICTION_WIKI/F-002.md" | sed -n 3p; }; section_first)" "revise replaces the proposal"
+assert_eq "proposed|" "$(fld F-002 status)|$(fld F-002 reason)" "revise sets proposed and clears reason"
+"$SCRIPT" revise F-002 --question-file "$SANDBOX/q.md" --answer-file "$SANDBOX/a.md" --date 2026-10-21
+assert_eq "2" "$(grep -c '^- 2026-10-2[01]: you asked' "$FRICTION_WIKI/F-002.md")" "a second revise appends another Discussion entry"
+assert_eq "Because \`x\` \$(id) stays literal." "$(jq -r '.file[] | select(.id == "F-002") | .discussion | sub(".*coach: "; "")' <<<"$("$SCRIPT" cards --date 2026-10-21)")" "cards carries the last discussion entry"
+"$SCRIPT" card-filed F-002 --date 2026-10-21
+"$SCRIPT" revise F-006 --question-file "$SANDBOX/q.md" --answer-file "$SANDBOX/a.md" --date 2026-10-21
+assert_eq "proposed" "$(fld F-006 status)" "revise makes a fixed entry proposed"
+"$SCRIPT" revise F-002 --question-file "$SANDBOX/q.md" --answer-file "$SANDBOX/a.md" --date 2026-10-22
+assert_eq "yes" "$(jq -r '[.file[].id] | index("F-002") | if . == null then "no" else "yes" end' <<<"$("$SCRIPT" cards --date 2026-10-22)")" "a revised entry is listed again"
+assert_eq "|" "$(fld F-002 offered_on)|$(fld F-002 answer)" "and its offered_on and answer are cleared"
+rm -rf "$FRICTION_WIKI"
+
 # --- misc ---------------------------------------------------------------------
 echo "misc"
 "$SCRIPT" apply 2>/dev/null; assert_eq "1" "$?" "apply without --date fails"

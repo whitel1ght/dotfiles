@@ -8,6 +8,10 @@
 #                             [--safety true|false] [--queued-by user] [--reason TEXT]
 #   friction-ledger coach-offer --date D [--limit 3]
 #   friction-ledger coach-answer F-NNN yes|no|later|done --date D
+#   friction-ledger cards --date D
+#   friction-ledger card-filed F-NNN --date D [--result]
+#   friction-ledger card-answer F-NNN apply|ignore|later|done --date D
+#   friction-ledger revise F-NNN --question-file Q --answer-file A [--proposal-file P] --date D
 #   friction-ledger safety-check F-NNN
 #   friction-ledger coach-log --date D --offered N --answered N --landed N --failed N --cards N
 #   friction-ledger diary-section --date D [--mine-json FILE]
@@ -126,6 +130,26 @@
 #           a different one wins and adds one History line. Accepted only while the entry is
 #           offered (with offered_on), or landing/declined/fixed from an answer given on D;
 #           otherwise exit 1 and nothing is written.
+# cards   prints {file: [item], results: [item]} for the friction queue's card deck, selecting like
+#           coach-offer but without marking anything. item = coach-offer's public fields plus
+#           `card` (suggestion|rule|nochange|secret; results landed|failed), `diagnosis` (600
+#           chars), `discussion` (the last `## Discussion` entry, or ""), `reason`; a result also
+#           has `fix` and `retryable`. file: entries with a proposal that are proposed|regressed,
+#           or offered 3+ days ago, or declined and at 2x declined_count (repeat: count >= 3 and
+#           days >= 2). results: landed|failed with no result_reported_on. Newest `last` first.
+#           rule = a restated entry with a `Direction:`; nochange = a safety entry with no exact
+#           change to show.
+# card-filed  marks a suggestion's card as filed: status offered, offered_on D, answer cleared;
+#           with --result only result_reported_on D (the result card was filed).
+# card-answer  the answer on a filed card, accepted only while the entry is offered (else exit 1).
+#           apply: a rule card adds the standing direction (rule through a temp file, scope from
+#           `Scope:`) and fixes the entry, prints {"rule":"D-NNN"}; a suggestion goes landing with
+#           answer yes and prints {"enqueue":true,"safety":BOOL}; secret and nochange cards refuse
+#           (exit 1). ignore -> declined (declined_count = count); later -> offered_on D, answer
+#           later; done -> fixed (secret only). Each prints one JSON line ({} for all but apply).
+# revise  records a question and the coach's answer on F as a `## Discussion` bullet (created when
+#           missing), optionally replaces `## Proposal`, re-checks safety (never true -> false)
+#           and sets the entry proposed with `reason` cleared, so its card is filed afresh.
 # coach-log  writes the day's counts as one row of $FRICTION_WIKI/coach-log.md (a header and a
 #           table sorted by date). A re-run for the same date replaces that row. The date and
 #           every count are validated (counts: non-negative integers); nothing is written on error.
@@ -877,6 +901,151 @@ cmd_coach_answer() {
   fm_set "$f" answered_on "$date_"
 }
 
+# --- cards --------------------------------------------------------------------
+
+# jq: which card an item is (needs kind, direction, safety, change, status)
+CARD_JQ='def card: if .kind == "secret" then "secret" elif .kind == "restated" and .direction != null then "rule"
+  elif .safety and (.change | length) == 0 then "nochange" else "suggestion" end;'
+
+cmd_cards() {
+  local date_=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      *) die "cards: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "cards needs --date"
+  valid_date "$date_"
+  local f rows=""
+  for f in "$FRICTION_WIKI"/F-*.md; do
+    [ -f "$f" ] || continue
+    case "$(fm_get "$f" status)" in fixed | landed | wontfix) ;; *) backfill_safety "$f" ;; esac
+    rows+="$(coach_item "$f" | jq -c --arg diag "$(section_get "$f" Diagnosis | cut -c1-600 | head -c 600)" \
+      --arg disc "$(section_get "$f" Discussion | grep '^- ' | tail -1 | sed 's/^- //')" '. + {diagnosis: $diag, discussion: $disc}')"$'\n'
+  done
+  printf '%s' "$rows" | jq -sc --arg d "$date_" "$CARD_JQ"'
+    def secs($x): $x | strptime("%Y-%m-%d") | mktime;
+    def item: {id, kind, sig, count, days, safety, rung, proposal_summary, change, proposal, direction, evidence, card: card, diagnosis, discussion, reason};
+    def result: item + {card: .status, fix, retryable: (.status == "failed" and (.reason | startswith("needs the user") | not))};
+    { file: [.[] | select(.proposal != ""
+          and (.status == "proposed" or .status == "regressed"
+            or (.status == "offered" and .offered_on != "" and secs($d) - secs(.offered_on) >= 3 * 86400)
+            or (.status == "declined" and .declined_count > 0 and .count >= 2 * .declined_count))
+          and (.kind != "repeat" or (.count >= 3 and .days >= 2)))]
+        | sort_by(.last, .id) | reverse | map(item),
+      results: [.[] | select((.status == "landed" or .status == "failed") and .reported == "")]
+        | sort_by(.last, .id) | reverse | map(result) }'
+}
+
+cmd_card_filed() {
+  local id="${1:-}" date_="" result=0
+  [[ "$id" =~ ^F-[0-9]+$ ]] || die "card-filed needs an F-NNN id"
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      --result) result=1 ;;
+      *) die "card-filed: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "card-filed needs --date"
+  valid_date "$date_"
+  local f; f="$(fpath "$id")"
+  [ -f "$f" ] || die "no such entry: $id"
+  if [ "$result" = 1 ]; then
+    fm_set "$f" result_reported_on "$date_"
+  else
+    cmd_set "$id" --status offered --date "$date_"
+    fm_set "$f" offered_on "$date_"
+    fm_set "$f" answer ""
+  fi
+}
+
+cmd_card_answer() {
+  local id="${1:-}" ans="${2:-}" date_=""
+  [[ "$id" =~ ^F-[0-9]+$ ]] || die "card-answer needs an F-NNN id"
+  [[ "$ans" =~ ^(apply|ignore|later|done)$ ]] || die "card-answer needs apply|ignore|later|done"
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      *) die "card-answer: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "card-answer needs --date"
+  valid_date "$date_"
+  local f st; f="$(fpath "$id")"
+  [ -f "$f" ] || die "no such entry: $id"
+  st="$(fm_get "$f" status)"
+  [ "$st" = offered ] || die "$id is $st, not on a card"
+  local item card; item="$(coach_item "$f")"
+  card="$(jq -r "$CARD_JQ"' card' <<<"$item")"
+  case "$ans" in
+    apply)
+      case "$card" in
+        secret) die "$id is a secret in a file: its steps are the user's; answer done, ignore or later" ;;
+        nochange) die "$id: no exact change to approve" ;;
+        rule)
+          local tmp rid; tmp="$(mktemp -d)"
+          jq -r .direction.rule <<<"$item" >"$tmp/rule"
+          rid="$(cmd_dir_add --rule-file "$tmp/rule" --scope "$(jq -r .direction.scope <<<"$item")" --date "$date_")" || { rm -rf "$tmp"; exit 1; }
+          rm -rf "$tmp"
+          cmd_set "$id" --status fixed --fix "$rid" --date "$date_"
+          jq -nc --arg r "$rid" '{rule: $r}' ;;
+        *)
+          backfill_safety "$f"
+          cmd_set "$id" --status landing --date "$date_"
+          fm_set "$f" answer yes
+          fm_set "$f" answered_on "$date_"
+          jq -nc --argjson s "$([ "$(fm_get "$f" safety)" = true ] && echo true || echo false)" '{enqueue: true, safety: $s}' ;;
+      esac ;;
+    ignore)
+      fm_set "$f" declined_count "$(entry_count "$f")"
+      cmd_set "$id" --status declined --date "$date_"
+      echo '{}' ;;
+    later)
+      fm_set "$f" offered_on "$date_"
+      fm_set "$f" answer later
+      echo '{}' ;;
+    done)
+      [ "$card" = secret ] || die "done is only for secret entries; $id is $(kind_of "$f")"
+      cmd_set "$id" --status fixed --date "$date_"
+      echo '{}' ;;
+  esac
+}
+
+cmd_revise() {
+  local id="${1:-}" qfile="" afile="" pfile="" date_=""
+  [[ "$id" =~ ^F-[0-9]+$ ]] || die "revise needs an F-NNN id"
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --question-file) need "$@"; qfile="$2"; shift ;;
+      --answer-file) need "$@"; afile="$2"; shift ;;
+      --proposal-file) need "$@"; pfile="$2"; shift ;;
+      --date) need "$@"; date_="$2"; shift ;;
+      *) die "revise: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "revise needs --date"
+  valid_date "$date_"
+  [ -f "$qfile" ] || die "revise needs --question-file"
+  [ -f "$afile" ] || die "revise needs --answer-file"
+  [ -z "$pfile" ] || [ -f "$pfile" ] || die "no such file: $pfile"
+  local f; f="$(fpath "$id")"
+  [ -f "$f" ] || die "no such entry: $id"
+  grep -qx '## Discussion' "$f" || printf '\n## Discussion\n' >>"$f"
+  section_edit "$f" Discussion append "- $date_: you asked: $(one_line "$(cat "$qfile")") · coach: $(one_line "$(cat "$afile")" | cut -c1-600)"
+  [ -z "$pfile" ] || cmd_set "$id" --proposal-file "$pfile" --date "$date_"
+  backfill_safety "$f"
+  cmd_set "$id" --status proposed --reason "" --date "$date_"
+}
+
 cmd_safety_check() {
   local id="${1:-}" f
   [[ "$id" =~ ^F-[0-9]+$ ]] || die "safety-check needs an F-NNN id"
@@ -1056,6 +1225,10 @@ case "${1:-}" in
   directions) [ "${2:-}" = render ] || acquire_lock; shift; cmd_directions "$@" ;;
   coach-offer) acquire_lock; shift; cmd_coach_offer "$@" ;;
   coach-answer) acquire_lock; shift; cmd_coach_answer "$@" ;;
+  cards) acquire_lock; shift; cmd_cards "$@" ;;
+  card-filed) acquire_lock; shift; cmd_card_filed "$@" ;;
+  card-answer) acquire_lock; shift; cmd_card_answer "$@" ;;
+  revise) acquire_lock; shift; cmd_revise "$@" ;;
   coach-log) acquire_lock; shift; cmd_coach_log "$@" ;;
   safety-check) acquire_lock 75; shift; cmd_safety_check "$@" ;;
   -h|--help|"") awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print } /^set -/ { exit }' "$0"; [ -n "${1:-}" ] ;;
