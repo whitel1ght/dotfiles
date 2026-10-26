@@ -13,6 +13,10 @@ Global instructions applied across all projects. Keep this short — project-lev
   session rewrites (the wiki's `state.md`, `index.md`) included.
 - For an exact replacement in one file use the Edit tool, not a python heredoc or `sed -i`;
   keep python, jq or sed for bulk transforms (many files, JSON, CSV).
+- When a step is denied or blocked, never reach for a destructive git or `rm` command to
+  get past it; stop and ask me.
+- Ask clarifying questions in plain text. Keep the question form for picking among fixed
+  options, and never send again one I turned down.
 
 ## Shell
 
@@ -60,7 +64,8 @@ Global instructions applied across all projects. Keep this short — project-lev
   list, search or copy that folder or `~/.config/ecfx/jira.env` (a link into
   it); a hook and deny rules block it anyway. A command that needs a token takes
   it inline as `$(secret NAME)`; a bare `secret NAME` would print it and is
-  blocked. When a secret is missing or expired, tell the user which name to fix
+  blocked (right: `curl -H "PRIVATE-TOKEN: $(secret NAME)" …`; wrong: `secret NAME`,
+  `secret NAME | …`). When a secret is missing or expired, tell the user which name to fix
   with `secrets`.
 
 ## Artifacts
@@ -69,6 +74,8 @@ Global instructions applied across all projects. Keep this short — project-lev
   the page as `<name>.html` and its link in a `url` file (see the README there).
   Write new pages there, not in /tmp or a repo. To change one, edit that file
   and publish it with the link from `url`, so the same page updates.
+- When a publish is refused and hands back a newer live version, merge your change onto
+  that version and publish again; never resend the refused content unchanged.
 
 ## GitLab MR references
 
