@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# The friction queue's cards: files friction-ledger entries as cards in the `frictions` deck.
+#
+#   friction-cards sync [--date D]    file a card for every entry `friction-ledger cards` lists
+#                                     (a suggestion, rule, nochange or secret card; a result
+#                                     card for a landed or failed entry), then close the cards
+#                                     whose entry has moved on. Prints one line per card filed
+#                                     or closed. Runs under $COACH_STATE_DIR/.cards.lock (a
+#                                     dead holder's lock is taken over), so two syncs never
+#                                     file one card twice.
+#   friction-cards count [--badge]    the deck's waiting cards (`frictions count`)
+#
+# sync keeps a result card (source coach:landed|failed) open while its entry is landed or
+# failed, and any other card open while its entry is offered; every other open card is
+# withdrawn and closed. A card's key is the entry id, so an entry has one card at a time.
+# Ledger text reaches the deck only through stdin (the card's context) or one quoted argument
+# (the question, one line); never through the shell's word splitting or eval.
+# FRICTIONS_BIN (default ~/.local/bin/frictions), FRICTION_LEDGER, FRICTION_WIKI and
+# COACH_STATE_DIR can be overridden (the tests do).
+set -euo pipefail
+
+command -v jq >/dev/null 2>&1 || { echo "friction-cards: jq is required and was not found on PATH" >&2; exit 1; }
+HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
+COACH_STATE_DIR="${COACH_STATE_DIR:-$HOME/.local/state/coach}"
+FRICTION_WIKI="${FRICTION_WIKI:-$HOME/wiki/work/friction}"
+FRICTION_LEDGER="${FRICTION_LEDGER:-$HERE/friction-ledger}"
+FRICTIONS_BIN="${FRICTIONS_BIN:-$HOME/.local/bin/frictions}"
+HELD=""
+
+die() { echo "friction-cards: $*" >&2; exit 1; }
+need() { [ $# -ge 2 ] || die "$1 needs a value"; }
+one_line() { tr '\n\r\t' '   ' <<<"$1" | sed 's/  */ /g; s/^ //; s/ $//'; }
+
+lock() { # name [tries, 0.2 s apart; default 150]; a dead holder's lock is taken over
+  local d="$COACH_STATE_DIR/.$1.lock" i=0 pid
+  mkdir -p "$COACH_STATE_DIR"
+  while ! mkdir "$d" 2>/dev/null; do
+    pid="$(cat "$d/pid" 2>/dev/null || true)"
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then rm -rf "$d"; continue; fi
+    i=$((i + 1)); [ "$i" -lt "${2:-150}" ] || return 1
+    sleep 0.2
+  done
+  echo $$ >"$d/pid"
+  HELD="$HELD $d"
+}
+unlock() { rm -rf "$COACH_STATE_DIR/.$1.lock"; HELD="${HELD/ $COACH_STATE_DIR\/.$1.lock/}"; }
+trap 'for d in $HELD; do rm -rf "$d"; done' EXIT
+
+options_for() { # card retryable(true|false): the card's answers, one per line
+  case "$1" in
+    suggestion) printf '%s\n' Apply Ignore Later ;;
+    rule) printf '%s\n' "Apply: add the rule" Ignore Later ;;
+    nochange) printf '%s\n' Ignore Later ;;
+    secret) printf '%s\n' "Done (I did the steps)" Later Ignore ;;
+    landed) printf '%s\n' OK ;;
+    failed) if [ "${2:-false}" = true ]; then printf '%s\n' Retry Ignore; else printf '%s\n' OK; fi ;;
+    *) die "no answers for card kind: $1" ;;
+  esac
+}
+
+card_context() { # item JSON on stdin -> the card's markdown
+  jq -r '
+    def bullets: map("- " + .) | join("\n");
+    def asked: (.discussion | sub("^[0-9-]+: you asked: "; "") | split(" · coach: ")) as $p
+      | "**You asked:** \($p[0])" + (if ($p | length) > 1 then "\n\n**Answer:** \($p[1:] | join(" · coach: "))" else "" end);
+    def keeps: "## What keeps happening\n\nSeen \(.count) times on \(.days) days.\n\n" + (.evidence | bullets);
+    if .card == "landed" then
+      [ (if .reason != "" then "**Note:** \(.reason)" else empty end),
+        "## What landed\n\n\(.proposal_summary)\n\nTo undo it: `git revert \(.fix)`" ]
+    elif .card == "failed" then
+      [ (if .reason != "" then "**Note:** \(.reason)" else empty end),
+        "## What went wrong\n\nThe fix for \(.proposal_summary) did not land.\n\n" + (if .reason != "" then .reason else "No reason was recorded." end) ]
+    else
+      [ (if .safety then "**Loosens a safety control**" else empty end),
+        (if .reason != "" then "**Note:** \(.reason)" else empty end),
+        (if .discussion != "" then asked else empty end),
+        keeps,
+        (if .diagnosis != "" then "## Why\n\n\(.diagnosis)" else empty end),
+        "## The fix" + (if .rung != "" then " (\(.rung))" else "" end) + "\n\n"
+          + (if (.change | length) > 0 then "Before → after:\n\n" + (.change | bullets) else .proposal end),
+        (if .card == "nochange" then "Press `a` to ask the coach for the exact change." else empty end) ]
+    end | join("\n\n")'
+}
+
+entry_status() { sed -n 's/^status: *//p' "$FRICTION_WIKI/$1.md" 2>/dev/null | head -1; }
+
+keeps_card() { # source status -> 0 when an open card with that source stays open for an entry in that status
+  case "$1" in
+    coach:landed | coach:failed) [ "$2" = landed ] || [ "$2" = failed ] ;;
+    *) [ "$2" = offered ] ;;
+  esac
+}
+
+file_card() { # item JSON, date, result(0|1)
+  local item="$1" date_="$2" result="$3" id card retry q opts=() o ctx new
+  id="$(jq -r .id <<<"$item")"; card="$(jq -r .card <<<"$item")"
+  retry="$(jq -r '.retryable // false' <<<"$item")"
+  q="$(one_line "$id · $(jq -r .proposal_summary <<<"$item")")"
+  while IFS= read -r o; do opts+=(--option "$o"); done < <(options_for "$card" "$retry")
+  ctx="$(card_context <<<"$item")"
+  new="$("$FRICTIONS_BIN" add --key "$id" --source "coach:$card" --question "$q" "${opts[@]}" <<<"$ctx")" || die "could not file the card for $id"
+  if [ "$result" = 1 ]; then "$FRICTION_LEDGER" card-filed "$id" --date "$date_" --result
+  else "$FRICTION_LEDGER" card-filed "$id" --date "$date_"; fi
+  echo "filed $new for $id ($card)"
+}
+
+cmd_sync() {
+  local date_
+  date_="$(date +%F)"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      *) die "sync: unknown option $1" ;;
+    esac
+    shift
+  done
+  lock cards || die "another sync is busy"
+  local cards open row id src st item
+  cards="$("$FRICTION_LEDGER" cards --date "$date_")"
+  open="$("$FRICTIONS_BIN" list --json)"
+  while IFS= read -r row; do
+    id="$(jq -r .id <<<"$row")"; src="$(jq -r .source <<<"$row")"
+    st="$(entry_status "$(jq -r .key <<<"$row")")"
+    keeps_card "$src" "$st" && continue
+    "$FRICTIONS_BIN" withdraw "$id" "the entry is now ${st:-gone}" >/dev/null || true
+    "$FRICTIONS_BIN" close "$id" >/dev/null || true
+    echo "closed $id for $(jq -r .key <<<"$row") (entry is ${st:-gone})"
+  done < <(jq -c '.[] | select(.key | test("^F-[0-9]+$"))' <<<"$open")
+  open="$("$FRICTIONS_BIN" list --json)"
+  while IFS= read -r item; do
+    id="$(jq -r .id <<<"$item")"
+    jq -e --arg k "$id" 'any(.[]; .key == $k)' <<<"$open" >/dev/null && continue
+    file_card "$item" "$date_" 0
+  done < <(jq -c '.file[]' <<<"$cards")
+  while IFS= read -r item; do
+    id="$(jq -r .id <<<"$item")"
+    jq -e --arg k "$id" 'any(.[]; .key == $k)' <<<"$open" >/dev/null && continue
+    file_card "$item" "$date_" 1
+  done < <(jq -c '.results[]' <<<"$cards")
+  unlock cards
+}
+
+cmd_count() { exec "$FRICTIONS_BIN" count "$@"; }
+
+case "${1:-}" in
+  sync) shift; cmd_sync "$@" ;;
+  count) shift; cmd_count "$@" ;;
+  -h | --help | help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' ;;
+  *) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+esac

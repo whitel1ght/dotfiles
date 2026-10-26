@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# frictions: the decisions deck (same binary) pointed at the friction queue. The coach files
+# one card per friction-ledger proposal here (bin/friction-cards sync); an answer reaches the
+# ledger through `friction-cards hook`. No MR labels, no Telegram bot. Same arguments as
+# `decisions --help`:
+#   frictions            the deck;   frictions list|show|count [--badge] ...
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+BIN="${DECISIONS_BIN:-$HOME/.local/share/decisions/bin/decisions}"
+STATE="${COACH_STATE_DIR:-$HOME/.local/state/coach}"
+export DECISIONS_DIR="${FRICTIONS_DIR:-$STATE/cards}"
+export DECISIONS_ON_ANSWER="${DECISIONS_ON_ANSWER-$(printf %q "$HERE/friction-cards") hook}"
+export DECISIONS_TITLE="${DECISIONS_TITLE-frictions}"
+export DECISIONS_BADGE="${DECISIONS_BADGE-🔧}"
+export DECISIONS_MR_STRIP="${DECISIONS_MR_STRIP-}"
+export DECISIONS_TELEGRAM_TOKEN_CMD="${DECISIONS_TELEGRAM_TOKEN_CMD-}"
+
+if [ ! -x "$BIN" ]; then
+  echo "$(basename "$0"): the decisions binary is not built ($BIN); run ./install.sh in ~/projects/dotfiles" >&2
+  exit 1
+fi
+exec "$BIN" "$@"
