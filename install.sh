@@ -590,6 +590,34 @@ if [ "${DECISIONS_TELEGRAM_AGENT:-1}" != "0" ]; then
     setup_decisions_telegram || log_warn "could not set up the decisions Telegram bot"
 fi
 
+# frictions is the deck over the friction queue (tmux prefix+` f); friction-cards builds its cards
+# and prints the status badge. The tick LaunchAgent (launchd/frictions-tick.plist) runs
+# `friction-cards tick` every 2 minutes. FRICTIONS_TICK_AGENT=0 skips it.
+for f in frictions friction-cards; do
+    [ -f "$DOTFILES_DIR/bin/$f" ] && create_symlink "$DOTFILES_DIR/bin/$f" "$HOME/.local/bin/$f"
+done
+
+setup_frictions_tick() {
+    local label="local.frictions-tick" agent
+    agent="$HOME/Library/LaunchAgents/$label.plist"
+    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+    sed -e "s#__LABEL__#$label#g" -e "s#__HOME__#$HOME#g" \
+        "$DOTFILES_DIR/launchd/frictions-tick.plist" > "$agent.new"
+    if ! cmp -s "$agent.new" "$agent"; then
+        mv "$agent.new" "$agent"
+        launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+        launchctl bootstrap "gui/$(id -u)" "$agent" \
+            && log_info "Loaded the frictions tick agent" \
+            || log_warn "Could not load $agent"
+    else
+        rm -f "$agent.new"
+    fi
+}
+
+if [ "${FRICTIONS_TICK_AGENT:-1}" != "0" ]; then
+    setup_frictions_tick || log_warn "could not set up the frictions tick agent"
+fi
+
 # mr-watch finds new review notes on my MRs and posts the replies; driven by /watch-mrs.
 if [ -f "$DOTFILES_DIR/bin/mr-watch" ]; then
     create_symlink "$DOTFILES_DIR/bin/mr-watch" "$HOME/.local/bin/mr-watch"

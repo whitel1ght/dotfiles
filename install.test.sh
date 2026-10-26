@@ -25,6 +25,7 @@ run_install() {
     HOME="$SANDBOX" \
     SKILLS_SYNC=0 MACOS_DAEMONS=0 REPY_SETUP=0 DECISIONS_SETUP="${DECISIONS_SETUP:-0}" \
     DECISIONS_TELEGRAM_AGENT="${DECISIONS_TELEGRAM_AGENT:-0}" \
+    FRICTIONS_TICK_AGENT="${FRICTIONS_TICK_AGENT:-0}" \
     ECFX_TOOLING=0 ZSH_SETUP=0 KEYBOARD_SETUP=0 TMUX_SETUP=0 PROXY_SETUP=0 WIKI_SYNC_AGENT=0 \
     CLAUDE_COMPONENTS_DIR=/nonexistent \
         bash "$SCRIPT" 2>&1
@@ -238,6 +239,31 @@ run_tg >/dev/null
 echo '// changed' >> "$FIXTURE/src/main.rs"
 DECISIONS_SETUP=1 DECISIONS_SRC="$FIXTURE" run_tg >/dev/null
 assert_contains "$(cat "$SANDBOX/launchctl.log" 2>/dev/null)" "kickstart -k gui/" "a rebuilt binary restarts the bot"
+
+# --- frictions tick agent ---------------------------------------------------------
+echo "frictions tick agent"
+FAGENT="$SANDBOX/Library/LaunchAgents/local.frictions-tick.plist"
+run_ft() { PATH="$STUB:$PATH" FRICTIONS_TICK_AGENT=1 run_install; }
+run_ft >/dev/null
+for f in frictions friction-cards; do
+    [ "$(readlink "$SANDBOX/.local/bin/$f")" = "$TEST_DIR/bin/$f" ] && pass "$f is linked into ~/.local/bin" \
+        || fail "$f is linked into ~/.local/bin" "$(ls -l "$SANDBOX/.local/bin/$f" 2>&1)"
+done
+ftxt="$(cat "$FAGENT" 2>/dev/null)"
+assert_contains "$ftxt" "<string>local.frictions-tick</string>" "the tick agent has its label"
+assert_contains "$ftxt" "<key>StartInterval</key>
+  <integer>120</integer>" "the tick agent runs every 120 seconds"
+assert_contains "$ftxt" "<string>$SANDBOX/.local/bin/friction-cards</string>" "the tick agent runs friction-cards"
+assert_contains "$ftxt" "<string>tick</string>" "with tick"
+assert_contains "$ftxt" "<string>$SANDBOX/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>" "with the PATH that finds the links"
+assert_contains "$ftxt" "$SANDBOX/Library/Logs/frictions-tick.log" "and logs to ~/Library/Logs"
+assert_contains "$(cat "$SANDBOX/launchctl.log" 2>/dev/null)" "bootstrap gui/$(id -u) $FAGENT" "and loads it"
+n=$(grep -c "bootstrap.*frictions-tick" "$SANDBOX/launchctl.log" 2>/dev/null)
+sum_before="$(cd "$SANDBOX" && ls -l .local/bin/frictions .local/bin/friction-cards | shasum; shasum "$FAGENT")"
+run_ft >/dev/null
+sum_after="$(cd "$SANDBOX" && ls -l .local/bin/frictions .local/bin/friction-cards | shasum; shasum "$FAGENT")"
+[ "$sum_before" = "$sum_after" ] && pass "re-running install leaves the links and the plist unchanged" || fail "re-running install leaves the links and the plist unchanged" "$sum_before / $sum_after"
+[ "$(grep -c "bootstrap.*frictions-tick" "$SANDBOX/launchctl.log" 2>/dev/null)" = "$n" ] && pass "an unchanged tick agent is not reloaded" || fail "an unchanged tick agent is not reloaded" "$(cat "$SANDBOX/launchctl.log")"
 
 # --- the sibling system repos get the same commit hook --------------------
 echo "commit hooks for the decisions and articles repos"
