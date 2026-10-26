@@ -231,6 +231,7 @@ cmd_handle() { # event file: the hook's work, run detached
   rm -f "$f"
   F="$key"; card="${src#coach:}"; date_="$(today)"
   [[ "$F" =~ ^F-[0-9]+$ ]] && [ "$src" != "$card" ] || { log "hook: not a friction card: $id $key $src"; return 0; }
+  [ "$ev" != answered ] || rm -f "$REPLIES/$F.json"
   case "$ev" in
     asked | told)
       [ -n "$text" ] || { log "hook: $F: $ev without text"; return 0; }
@@ -302,11 +303,18 @@ finish_job() { # F answer-file [proposal-file]: revise the entry, drop the asked
   local F="$1" afile="$2" pfile="${3:-}" job="$REPLIES/$1.json" qfile
   [ -f "$job" ] || die "no reply job for $F"
   lock cards || die "another sync is busy"
+  if [ "$(entry_field "$F" status)" != offered ]; then
+    log "reply: $F is no longer on a card (status $(entry_field "$F" status)); dropped its reply job without revising"
+    drop_card "$(jq -r .card "$job")" "answered while the reply was running"
+    rm -f "$job"; unlock cards; return 0
+  fi
   qfile="$(mktemp)"
   jq -r '.questions | join(" / ")' "$job" >"$qfile"
-  if [ -n "$pfile" ]; then "$FRICTION_LEDGER" revise "$F" --question-file "$qfile" --answer-file "$afile" --proposal-file "$pfile" --date "$(today)"
-  else "$FRICTION_LEDGER" revise "$F" --question-file "$qfile" --answer-file "$afile" --date "$(today)"; fi
+  local rc=0
+  if [ -n "$pfile" ]; then "$FRICTION_LEDGER" revise "$F" --question-file "$qfile" --answer-file "$afile" --proposal-file "$pfile" --date "$(today)" || rc=1
+  else "$FRICTION_LEDGER" revise "$F" --question-file "$qfile" --answer-file "$afile" --date "$(today)" || rc=1; fi
   rm -f "$qfile"
+  if [ "$rc" = 1 ]; then unlock cards; echo "friction-cards: could not revise $F; its reply job and card stay" >&2; return 1; fi
   drop_card "$(jq -r .card "$job")" "revised after your question"
   rm -f "$job"
   sync_locked "$(today)"

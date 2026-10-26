@@ -315,6 +315,33 @@ assert_has "reply-F-020" "$(cat "$FAKE_TMUX_DIR/windows")" "the stalled window i
 assert_eq "offered" "$(fld F-021 status)" "its entry is untouched"
 [ ! -f "$COACH_STATE_DIR/replies/F-019.json" ] && pass "handled job files are gone" || fail "job file" "left"
 
+echo "fix round: a late revision never undoes an answer"
+groups "k:tool:v1|tool|2" "k:tool:v2|tool|2"
+propose F-022 "$SANDBOX/p1.md"; propose F-023 "$SANDBOX/p1.md"; sync >/dev/null
+job F-022 60
+hook answered F-022 1
+wait_for '[ "$(fld F-022 status)" = landing ] && [ ! -f "$COACH_STATE_DIR/replies/F-022.json" ]' && pass "answering Apply cancels the reply job" || fail "job cancelled" "$(fld F-022 status)"
+sleep 1; before="$(adds)"
+job F-022 60; "$SCRIPT" revised F-022 --answer-file "$SANDBOX/ans.md" >/dev/null 2>&1
+assert_eq "landing" "$(fld F-022 status)" "a late revised leaves the entry landing"
+assert_eq "$before" "$(adds)" "and files no card"
+[ ! -f "$COACH_STATE_DIR/replies/F-022.json" ] && pass "the job file is gone" || fail "job file" "left"
+job F-022 60; "$SCRIPT" tick >/dev/null 2>&1
+assert_eq "landing" "$(fld F-022 status)" "a tick with a dead window leaves it landing"
+assert_eq "$before" "$(adds)" "and files no card"
+[ ! -f "$COACH_STATE_DIR/replies/F-022.json" ] && pass "job file gone after tick" || fail "job file" "left"
+
+echo "fix round: a failed revise keeps the job and the card"
+printf '#!/bin/bash\n[ "$1" = revise ] && exit 1\nexec "%s" "$@"\n' "$LEDGER" >"$SANDBOX/ledger-wrap"; chmod +x "$SANDBOX/ledger-wrap"
+D23="$(deck_id F-023)"; job F-023 60
+FRICTION_LEDGER="$SANDBOX/ledger-wrap" "$SCRIPT" tick >/dev/null 2>&1
+[ -f "$COACH_STATE_DIR/replies/F-023.json" ] && pass "tick: the job file stays" || fail "job file" "gone"
+assert_eq "$D23" "$(deck_id F-023)" "tick: the card stays open"
+FRICTION_LEDGER="$SANDBOX/ledger-wrap" "$SCRIPT" unrevised F-023 --reason x >/dev/null 2>&1; rc=$?
+assert_eq "1" "$rc" "direct: exits 1"
+[ -f "$COACH_STATE_DIR/replies/F-023.json" ] && pass "direct: the job file stays" || fail "job file" "gone"
+[ ! -d "$COACH_STATE_DIR/.cards.lock" ] && pass "the lock is released" || fail "lock" "held"
+
 echo "count"
 assert_eq "7" "$("$SCRIPT" count)" "count asks the deck"
 "$SCRIPT" count --badge >/dev/null; assert_has "count --badge" "$(cat "$CALLS")" "count passes --badge on"
