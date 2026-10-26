@@ -47,7 +47,7 @@
 #         `answered_on`: the entry waits to be offered afresh (coach-fix holds an unapproved
 #         safety change this way), and an earlier yes never counts for it.
 # diary-section  prints the `## Friction` markdown for D (nothing when there is no friction):
-#         counts of new / recurring / regressed, a `→ /daily:fix-friction F-NNN (pi: /fix-friction F-NNN)` line per proposed or
+#         counts of new / recurring / regressed, a `→ in the friction queue (` f)` suffix per proposed or
 #         regressed item seen on D, and one line for possible corrections (unverified).
 #
 # frustration  records a user frustration as a ledger group (source user, kind frustration,
@@ -541,7 +541,7 @@ cmd_diary() {
     | if ($seen | length) == 0 and $ncor == 0 and ($dnew | length) == 0 then empty else
         "## Friction", "",
         "\($new | length) new · \($rec | length) recurring · \($reg | length) regressed", "",
-        ($seen[] | select(.status == "proposed" or .regressed) | "- \(.id) — \(.text) → /daily:fix-friction \(.id) (pi: /fix-friction \(.id))"),
+        ($seen[] | select(.status == "proposed" or .regressed) | "- \(.id) — \(.text) → in the friction queue (` f)"),
         ($seen[] | select(.frustr and (.status != "proposed") and (.regressed | not)) | "- \(.id) — \(.text) (frustration)"),
         (if $ncor > 0 then "- \($ncor) possible corrections (unverified): " + ([$cor[].samples[]? | short | "\"" + . + "\""] | .[:3] | join(" · ")) else empty end),
         (if ($dnew | length) > 0 then "", "Directions learned today (active from the next session; retire with `friction-ledger directions retire D-NNN`):", ($dnew[] | "- \(.id) — \(.rule) (\(.scope))") else empty end),
