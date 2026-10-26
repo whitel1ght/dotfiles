@@ -395,8 +395,8 @@ EOF
 git push -u origin dmitry/ECFX-15234_short-slug
 ```
 
-Use `/commit-msg` if you want the message generated, and `/mr-description` for
-the body. Then:
+Run `/mr-description` for the body first; `glab mr create` is blocked without it.
+Use `/commit-msg` if you want the commit message generated. Then:
 
 ```bash
 glab mr create --draft \

@@ -9,6 +9,10 @@ Global instructions applied across all projects. Keep this short — project-lev
 - Match the surrounding code's style, naming, and comment density.
 - Don't add explanatory comments for self-evident code.
 - Long-term memory: `~/wiki` — read `~/wiki/AGENTS.md` before searching it.
+- Read a file in this session before you Edit or Write it, state files a background
+  session rewrites (the wiki's `state.md`, `index.md`) included.
+- For an exact replacement in one file use the Edit tool, not a python heredoc or `sed -i`;
+  keep python, jq or sed for bulk transforms (many files, JSON, CSV).
 
 ## Shell
 
@@ -79,8 +83,16 @@ Global instructions applied across all projects. Keep this short — project-lev
 - GitLab API writes send `Content-Type: application/json`. Never pipe a request body in
   through stdin: write it to a file and pass that (`curl --data @file`, `glab api --input
   file`). `gitlab-api-guard` blocks both mistakes.
+- Run `/mr-description` before any `glab mr create`, `glab mr update --description` or MR
+  description write through `glab api`; the MR-description gate blocks them otherwise.
 - When an API merge fails, report it and leave the merge to me; no retries with other flags.
 - Never move a Jira ticket backwards (e.g. Done → In QA) without asking.
+
+## Review replies
+
+- Answer review findings on an MR with the `mr-review-response` skill, unasked. Show the
+  drafted replies once per round as one batch; "yes", "post it" or "post both" posts
+  exactly what was shown, through that skill, with no further question.
 
 ## Worktrees
 
