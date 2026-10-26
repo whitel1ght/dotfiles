@@ -139,7 +139,9 @@
 #           days >= 2). results: landed|failed with no result_reported_on. Newest `last` first.
 #           rule = a restated entry with a `Direction:`; nochange = a safety entry with no exact
 #           change to show.
-# card-filed  marks a suggestion's card as filed: status offered, offered_on D, answer cleared;
+# card-filed  marks a suggestion's card as filed: status offered, offered_on D, answer cleared,
+#           card_hash = fingerprint (sha256, 16 hex) of the ## Proposal text plus safety, taken after
+#           backfill_safety;
 #           with --result only result_reported_on D (the result card was filed).
 # card-answer  the answer on a filed card, accepted only while the entry is offered (else exit 1).
 #           apply: a rule card adds the standing direction (rule through a temp file, scope from
@@ -147,6 +149,9 @@
 #           answer yes and prints {"enqueue":true,"safety":BOOL}; secret and nochange cards refuse
 #           (exit 1). ignore -> declined (declined_count = count); later -> offered_on D, answer
 #           later; done -> fixed (secret only). Each prints one JSON line ({} for all but apply).
+#           apply first recomputes the card_hash: if the proposal or safety differs from what the
+#           card showed (or card_hash is empty) nothing is approved: the entry goes proposed with
+#           reason "the proposal changed after its card was shown", prints {"changed":true}, exit 1.
 # revise  records a question and the coach's answer on F as a `## Discussion` bullet (created when
 #           missing), optionally replaces `## Proposal`, re-checks safety (never true -> false)
 #           and sets the entry proposed with `reason` cleared, so its card is filed afresh.
@@ -939,6 +944,11 @@ cmd_cards() {
         | sort_by(.last, .id) | reverse | map(result) }'
 }
 
+# fingerprint of what a card shows: the exact ## Proposal text plus the safety value
+card_hash() { # file
+  { section_get "$1" Proposal; printf '\nsafety=%s\n' "$([ "$(fm_get "$1" safety)" = true ] && echo true || echo false)"; } | shasum -a 256 | cut -c1-16
+}
+
 cmd_card_filed() {
   local id="${1:-}" date_="" result=0
   [[ "$id" =~ ^F-[0-9]+$ ]] || die "card-filed needs an F-NNN id"
@@ -959,6 +969,8 @@ cmd_card_filed() {
     fm_set "$f" result_reported_on "$date_"
   else
     cmd_set "$id" --status offered --date "$date_"
+    backfill_safety "$f"
+    fm_set "$f" card_hash "$(card_hash "$f")"
     fm_set "$f" offered_on "$date_"
     fm_set "$f" answer ""
   fi
@@ -984,6 +996,14 @@ cmd_card_answer() {
   [ "$st" = offered ] || die "$id is $st, not on a card"
   local item card; item="$(coach_item "$f")"
   card="$(jq -r "$CARD_JQ"' card' <<<"$item")"
+  if [ "$ans" = apply ] && [ "$card" != secret ] && [ "$card" != nochange ]; then
+    backfill_safety "$f"
+    if [ -z "$(fm_get "$f" card_hash)" ] || [ "$(card_hash "$f")" != "$(fm_get "$f" card_hash)" ]; then
+      cmd_set "$id" --status proposed --reason "the proposal changed after its card was shown" --date "$date_"
+      echo '{"changed":true}'
+      exit 1
+    fi
+  fi
   case "$ans" in
     apply)
       case "$card" in

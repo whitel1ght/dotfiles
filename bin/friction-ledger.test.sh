@@ -765,6 +765,38 @@ OUT="$("$SCRIPT" card-answer F-007 apply --date 2026-10-15)"
 assert_eq '{"rule":"D-001"}' "$OUT" "apply on a rule card prints the direction id"
 assert_eq "fixed|D-001" "$(fld F-007 status)|$(fld F-007 fix)" "the rule entry is fixed with the direction as fix"
 assert_eq "| D-001 | Always run the tests first \`now\` \$(id) | dotfiles | 2026-10-15 |  | active |" "$(grep '^| D-001' "$FRICTION_WIKI/directions.md")" "the direction row is added literally with its scope"
+# a proposal changed after its card was shown is never approved
+printf 'Tweak the thing\n\n## Change\n- x → y\n' >"$SANDBOX/cx.md"
+printf 'Tweak the thing\n\n## Change\n- x → z\n' >"$SANDBOX/cx2.md"
+for n in 1 2 3; do
+  jq -n --arg s "user:frustration:chg$n" '{groups: [{sig: $s, source: "user", kind: "frustration", count: 1, confidence: "high", samples: ["s"], evidence: []}]}' >"$SANDBOX/chg$n.json"
+  apply 2026-10-23 "$SANDBOX/chg$n.json" >/dev/null
+done
+CH1="$(grep -l 'chg1' "$FRICTION_WIKI"/F-*.md | head -1 | xargs basename | sed 's/\.md//')"
+CH2="$(grep -l 'chg2' "$FRICTION_WIKI"/F-*.md | head -1 | xargs basename | sed 's/\.md//')"
+CH3="$(grep -l 'chg3' "$FRICTION_WIKI"/F-*.md | head -1 | xargs basename | sed 's/\.md//')"
+for id in "$CH1" "$CH2" "$CH3"; do "$SCRIPT" set "$id" --status proposed --proposal-file "$SANDBOX/cx.md" --date 2026-10-23; "$SCRIPT" card-filed "$id" --date 2026-10-23; done
+assert_eq "16" "$(fld "$CH1" card_hash | wc -c | tr -d ' ' | awk '{print $1 - 1}')" "card-filed stores a 16-char card_hash"
+"$SCRIPT" set "$CH1" --proposal-file "$SANDBOX/cx2.md" --date 2026-10-23
+OUT="$("$SCRIPT" card-answer "$CH1" apply --date 2026-10-23 2>/dev/null)"; RC=$?
+assert_eq "1|{\"changed\":true}" "$RC|$OUT" "apply after the proposal changed is refused"
+assert_eq "proposed|the proposal changed after its card was shown" "$(fld "$CH1" status)|$(fld "$CH1" reason)" "and the entry is proposed with the reason"
+assert_eq "0" "$(grep -c landing "$FRICTION_WIKI/$CH1.md" | head -1)" "and never landed"
+"$SCRIPT" set "$CH2" --safety true --date 2026-10-23
+"$SCRIPT" card-answer "$CH2" apply --date 2026-10-23 >/dev/null 2>&1; assert_eq "1" "$?" "apply after only safety flipped is refused"
+assert_eq "proposed" "$(fld "$CH2" status)" "safety flip leaves it proposed"
+OUT="$("$SCRIPT" card-answer "$CH3" apply --date 2026-10-23)"
+assert_eq '{"enqueue":true,"safety":false}' "$OUT" "an unchanged proposal applies"
+printf 'Add a rule\nDirection: Always do A\nScope: dotfiles\n' >"$SANDBOX/cr1.md"
+printf 'Add a rule\nDirection: Always do B\nScope: dotfiles\n' >"$SANDBOX/cr2.md"
+jq -n '{groups: [{sig: "k:restated:chgrule", source: "mine", kind: "restated", count: 2, confidence: "high", samples: ["s"], evidence: []}]}' >"$SANDBOX/chgr.json"
+apply 2026-10-23 "$SANDBOX/chgr.json" >/dev/null
+CHR="$(grep -l 'chgrule' "$FRICTION_WIKI"/F-*.md | head -1 | xargs basename | sed 's/\.md//')"
+"$SCRIPT" set "$CHR" --status proposed --proposal-file "$SANDBOX/cr1.md" --date 2026-10-23
+"$SCRIPT" card-filed "$CHR" --date 2026-10-23
+"$SCRIPT" set "$CHR" --proposal-file "$SANDBOX/cr2.md" --date 2026-10-23
+"$SCRIPT" card-answer "$CHR" apply --date 2026-10-23 >/dev/null 2>&1; assert_eq "1" "$?" "a rule whose Direction changed is refused"
+assert_eq "proposed|1" "$(fld "$CHR" status)|$(grep -c "^| D-" "$FRICTION_WIKI/directions.md")" "and no direction was added"
 # later / ignore
 "$SCRIPT" card-filed F-001 --date 2026-10-16
 assert_eq "{}" "$("$SCRIPT" card-answer F-001 later --date 2026-10-17)" "later prints {}"
