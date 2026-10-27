@@ -535,6 +535,11 @@ if [ -f "$DOTFILES_DIR/bin/pi-autoupdate" ]; then
     create_symlink "$DOTFILES_DIR/bin/pi-autoupdate" "$HOME/.local/bin/pi-autoupdate"
 fi
 
+# ideas keeps the memory copy of ~/wiki/IDEA.md for the system session's idle review (/daily:ideas).
+if [ -f "$DOTFILES_DIR/bin/ideas" ]; then
+    create_symlink "$DOTFILES_DIR/bin/ideas" "$HOME/.local/bin/ideas"
+fi
+
 # tmux-here prints the caller's tmux pane even without $TMUX (day-plan, handoff-open).
 if [ -f "$DOTFILES_DIR/bin/tmux-here" ]; then
     create_symlink "$DOTFILES_DIR/bin/tmux-here" "$HOME/.local/bin/tmux-here"
