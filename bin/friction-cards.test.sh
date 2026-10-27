@@ -246,7 +246,15 @@ assert_eq "" "$(deck_id F-009)" "its card is closed"
 
 echo "hook: other answers"
 hook answered F-003 3; assert_eq "$TODAY" "$(fld F-003 offered_on)" "Later -> offered_on today"
-hook answered F-004 2; assert_eq "declined" "$(fld F-004 status)" "Ignore -> declined"
+sleep 60 & HOLDER=$!
+mkdir -p "$COACH_STATE_DIR/.cards.lock"; echo "$HOLDER" >"$COACH_STATE_DIR/.cards.lock/pid"
+FRICTION_CARDS_LOCK_TRIES=1 hook answered F-004 2
+assert_eq "offered" "$(fld F-004 status)" "an answer that meets a busy deck is not applied yet"
+assert_eq "1" "$(ls "$COACH_STATE_DIR/answers" 2>/dev/null | wc -l | tr -d ' ')" "nor dropped: it is kept as a pending answer"
+kill "$HOLDER" 2>/dev/null; wait "$HOLDER" 2>/dev/null; rm -rf "$COACH_STATE_DIR/.cards.lock"
+"$SCRIPT" tick >/dev/null 2>&1
+assert_eq "declined" "$(fld F-004 status)" "the next tick applies it: Ignore -> declined"
+assert_eq "0" "$(ls "$COACH_STATE_DIR/answers" 2>/dev/null | wc -l | tr -d ' ')" "and the pending answer is gone"
 hook answered F-010 1; assert_eq "fixed" "$(fld F-010 status)" "Done on a secret card -> fixed"
 assert_eq "" "$(grep 'F-010' "$CF_LOG")" "and never calls coach-fix"
 assert_eq "" "$(deck_id F-010)" "the secret card is closed"

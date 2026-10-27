@@ -13,8 +13,11 @@
 #                                     ({event, id, key, source, option, note, text, at}); returns
 #                                     at once, the work runs detached (log: $COACH_STATE_DIR/logs/
 #                                     cards.log). answered: Apply/Ignore/Later/Done go to
-#                                     `friction-ledger card-answer` (a refused answer closes the
-#                                     card and logs one line), then the card is closed; an Apply that
+#                                     `friction-ledger card-answer` under the cards lock (waited for
+#                                     up to 5 min; still busy, the event is kept in
+#                                     $COACH_STATE_DIR/answers/ for tick, never dropped; a refused
+#                                     answer closes the card and logs one line), then the card is
+#                                     closed; an Apply that
 #                                     needs a fix runs `coach-fix enqueue F [--approved-safety]`
 #                                     ($COACH_FIX), and when that fails the entry goes back to
 #                                     proposed with the reason and the card is filed again; Retry on
@@ -35,7 +38,9 @@
 #                                     card is filed). Holds the cards lock throughout.
 #   friction-cards unrevised F-NNN --reason R    the job could not answer: same, with the answer
 #                                     "could not revise: R" and no new proposal.
-#   friction-cards tick               sync, then the reply watchdog: a job whose process is gone
+#   friction-cards tick               replays the answers kept in answers/ (each waits up to 30 s
+#                                     for the lock, else stays kept), sync, then the reply
+#                                     watchdog: a job whose process is gone
 #                                     (one from before headless replies, with no pid: its tmux
 #                                     window reply-F-NNN) and older than $COACH_STALE_GRACE s (30)
 #                                     ends "the reply job ended without an answer (log: ...)"; one
@@ -65,6 +70,7 @@ COACH_REPLY_MAX="${COACH_REPLY_MAX:-1800}"
 SELF="$HERE/friction-cards"
 LOG="$COACH_STATE_DIR/logs/cards.log"
 REPLIES="$COACH_STATE_DIR/replies"
+ANSWERS="$COACH_STATE_DIR/answers"
 HELD=""
 
 die() { echo "friction-cards: $*" >&2; exit 1; }
@@ -239,7 +245,8 @@ cmd_hook() {
 }
 
 cmd_handle() { # event file: the hook's work, run detached
-  local f="$1" ev id key src opt text card F retry label ans out errf date_
+  local f="$1" ev id key src opt text card F retry label ans out errf date_ evjson
+  evjson="$(cat "$f")"
   ev="$(jq -r '.event // ""' "$f")"; id="$(jq -r '.id // ""' "$f")"; key="$(jq -r '.key // ""' "$f")"
   src="$(jq -r '.source // ""' "$f")"; opt="$(jq -r '.option // ""' "$f")"
   text="$(jq -r '.text // .note // ""' "$f")"
@@ -272,7 +279,11 @@ cmd_handle() { # event file: the hook's work, run detached
         *) log "hook: $F: no answer $opt on a $card card"; return 0 ;;
       esac
       errf="$(mktemp)"
-      lock cards || { log "hook: $F: another sync is busy; answer $ans dropped"; rm -f "$errf"; return 0; }
+      # detached, so it can wait (5 min); past that the answer is kept for tick, never dropped
+      if ! lock cards "${FRICTION_CARDS_LOCK_TRIES:-1500}"; then
+        mkdir -p "$ANSWERS"; printf '%s\n' "$evjson" >"$(mktemp "$ANSWERS/$F.XXXXXX")"
+        log "hook: $F: the deck is busy; answer $ans kept for the next tick"; rm -f "$errf"; return 0
+      fi
       if ! out="$("$FRICTION_LEDGER" card-answer "$F" "$ans" --date "$date_" 2>"$errf")"; then
         log "hook: $F: answer $ans refused: $(one_line "$(cat "$errf"; printf ' %s' "$out")")"
         rm -f "$errf"; drop_card "$id"; unlock cards; return 0
@@ -386,7 +397,13 @@ cmd_unrevised() {
 }
 
 cmd_tick() {
-  local job F age t pid; cmd_sync
+  local job F age t pid p
+  # answers kept while the deck was busy; handle removes each file first, and keeps it again if still busy
+  for p in "$ANSWERS"/F-*; do
+    [ -f "$p" ] || continue
+    FRICTION_CARDS_LOCK_TRIES=150 cmd_handle "$p"
+  done
+  cmd_sync
   [ -d "$REPLIES" ] || return 0
   t="$(date +%s)"
   for job in "$REPLIES"/F-*.json; do

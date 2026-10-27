@@ -572,7 +572,7 @@ cmd_diary() {
         ($seen[] | select(.frustr and (.status != "proposed") and (.regressed | not)) | "- \(.id) — \(.text) (frustration)"),
         (if $ncor > 0 then "- \($ncor) possible corrections (unverified): " + ([$cor[].samples[]? | short | "\"" + . + "\""] | .[:3] | join(" · ")) else empty end),
         (if ($dnew | length) > 0 then "", "Directions learned today (active from the next session; retire with `friction-ledger directions retire D-NNN`):", ($dnew[] | "- \(.id) — \(.rule) (\(.scope))") else empty end),
-        ($dgrp[] | "", "\(length) active directions share the scope \"\(.[0].scope)\" (\([.[].id] | join(", "))): run /daily:fix-friction (pi: /fix-friction) to fold them into that prompt or skill, then `friction-ledger directions promote D-NNN --fix <sha>`.")
+        ($dgrp[] | "", "\(length) active directions share the scope \"\(.[0].scope)\" (\([.[].id] | join(", "))): they can be folded into that prompt or skill; say so to any session, which commits the change and runs `friction-ledger directions promote D-NNN --fix <sha>`.")
       end'
 }
 

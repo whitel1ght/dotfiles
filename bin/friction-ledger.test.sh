@@ -204,7 +204,8 @@ OUT="$("$SCRIPT" diary-section --date 2026-10-15 --mine-json "$SANDBOX/us.json")
 grep -q '^Directions learned today (active from the next session; retire with' <<<"$OUT" && pass "lists the directions learned today" || fail "directions header" "$OUT"
 grep -q '^- D-.* — Never merge without asking (global)$' <<<"$OUT" && pass "one D-NNN — rule line per direction" || fail "direction line" "$OUT"
 assert_eq "0" "$(grep -c 'docs rule one (' <<<"$OUT")" "older directions are not listed"
-grep -q '^3 active directions share the scope "docs" (D-.*, D-.*, D-.*): run /daily:fix-friction (pi: /fix-friction) to' <<<"$OUT" && pass "3 directions on one scope suggest /fix-friction" || fail "scope suggestion" "$OUT"
+grep -q '^3 active directions share the scope "docs" (D-.*, D-.*, D-.*): they can be folded into that prompt or skill' <<<"$OUT" && pass "3 directions on one scope suggest folding them" || fail "scope suggestion" "$OUT"
+assert_eq "0" "$(grep -c 'fix-friction' <<<"$OUT")" "and never tell the user to run /fix-friction"
 grep -q "^- F-.* — Gitlab outage made the run loop on retries (frustration)$" <<<"$OUT" || grep -q "(frustration)" <<<"$OUT" && pass "a frustration seen today is listed" || fail "frustration line" "$OUT"
 "$SCRIPT" directions retire "$last" >/dev/null
 OUT="$("$SCRIPT" diary-section --date 2026-10-15 --mine-json "$SANDBOX/us.json")"
