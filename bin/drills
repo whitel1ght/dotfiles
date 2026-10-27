@@ -7,6 +7,12 @@ reaches it. The user practises them by typing the real commands in a tmux window
         save a drill: A is the words a typed line must hold, in order, the first being the
         command (`friction-cards count`); --back defaults to A; run no = checked, never run.
         Prints the slug; a drill with the same accept prints its slug and writes nothing.
+  drills check --accept A LINE
+        ok, wrong or refuse. ok: LINE is one command holding A's words in order, the same
+        command first (an alias is expanded, a path cut to its name; extra flags are fine),
+        piped at most into head, tail, less, jq, rg or wc. refuse: ;, &&, ||, &, a redirect,
+        $(..) or backticks, sudo, env, a pipe into anything else, or a line the shell can't parse.
+        Aliases come from $DRILLS_ALIASES, else the dotfiles zsh/ folder.
 
 A drill card's extra front matter: cmd, accept, run (yes|no), from (manual|hand), page, stage
 (learning|known). Cards are written through `cards` ($DRILLS_CARDS, default the one next to this
@@ -15,6 +21,7 @@ script).
 import argparse
 import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -69,6 +76,83 @@ def run_cards(*args):
     return ran.stdout.strip()
 
 
+READERS = {"head", "tail", "less", "jq", "rg", "wc"}
+
+
+def load_aliases():
+    """{name: [words]} from `alias name=...` lines in $DRILLS_ALIASES, else every file in the
+    dotfiles zsh/ folder"""
+    if os.environ.get("DRILLS_ALIASES"):
+        paths = [os.environ["DRILLS_ALIASES"]]
+    else:
+        zdir = os.path.join(HERE, "..", "zsh")
+        try:
+            paths = [os.path.join(zdir, n) for n in sorted(os.listdir(zdir))]
+        except OSError:
+            paths = []
+    out = {}
+    for path in paths:
+        try:
+            with open(path, encoding="utf-8") as f:
+                lines = f.read().split("\n")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line in lines:
+            m = re.match(r"\s*alias\s+([\w.-]+)=(.+)$", line)
+            if not m:
+                continue
+            try:
+                value = shlex.split(m.group(2), comments=True)
+            except ValueError:
+                continue
+            if value:
+                out[m.group(1)] = value[0].split()
+    return out
+
+
+def tokens(line):
+    lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    return list(lex)
+
+
+def match(line, accept, aliases):
+    """ok, wrong or refuse: is line one command (piped into readers at most) holding the accept
+    words in order, with the same command first"""
+    if "`" in line or "$(" in line:
+        return "refuse"
+    try:
+        toks = tokens(line)
+    except ValueError:
+        return "refuse"
+    segments, cur = [], []
+    for t in toks:
+        if t and all(ch in "();<>|&" for ch in t):
+            if t != "|":
+                return "refuse"
+            segments.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    segments.append(cur)
+    if any(not s for s in segments) or any(os.path.basename(s[0]) not in READERS for s in segments[1:]):
+        return "refuse"
+    words = segments[0]
+    if words[0] in ("sudo", "env"):
+        return "refuse"
+    first = os.path.basename(words[0]) if "/" in words[0] else words[0]
+    words = (aliases.get(first) or [first]) + words[1:]
+    want = accept.split()
+    if not want or words[0] != want[0]:
+        return "wrong"
+    rest = iter(words[1:])
+    return "ok" if all(w in rest for w in want[1:]) else "wrong"
+
+
+def cmd_check(a):
+    print(match(a.line, one_line(a.accept), load_aliases()))
+
+
 def cmd_add(a):
     goal, accept = one_line(a.goal), one_line(a.accept)
     if not goal or not accept or not one_line(a.cmd):
@@ -110,6 +194,10 @@ def main():
     s.add_argument("--from", dest="src", default="hand")
     s.add_argument("--date")
     s.set_defaults(fn=cmd_add)
+    s = sub.add_parser("check")
+    s.add_argument("--accept", required=True)
+    s.add_argument("line")
+    s.set_defaults(fn=cmd_check)
     a = p.parse_args()
     try:
         a.fn(a)

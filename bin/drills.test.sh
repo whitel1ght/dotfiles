@@ -37,6 +37,30 @@ drills add --goal "" --cmd x --accept "x" --run yes >/dev/null; assert_eq "2" "$
 S2="$(drills add --goal "Open the hand-off window for ECFX-123." --cmd handoff-open --accept "handoff-open ECFX-123" --run no --back "handoff-open ECFX-123 ~/w" --page terminal.md --from manual)"
 assert_eq "no|manual|terminal.md|handoff-open ECFX-123 ~/w" "$(fm "$S2" run)|$(fm "$S2" from)|$(fm "$S2" page)|$(sed -n 's/^### Answer: //p' "$CARDS_DIR/$S2.md")" "--back, --page and --from are kept"
 
+echo "drills check"
+chk() { drills check --accept "$1" -- "$2"; }
+A="friction-cards count"
+assert_eq "ok" "$(chk "$A" 'friction-cards count')" "forms: the command"
+assert_eq "ok" "$(chk "$A" 'friction-cards  count --json')" "forms: extra spaces and flags"
+assert_eq "ok" "$(chk "$A" '"friction-cards" count')" "forms: quotes"
+assert_eq "ok" "$(chk "$A" '~/.local/bin/friction-cards count')" "forms: a full path"
+assert_eq "wrong" "$(chk "$A" 'friction-cards')" "forms: a required word missing"
+assert_eq "wrong" "$(chk "$A" 'cards count')" "forms: another command"
+assert_eq "wrong" "$(chk "$A" 'count friction-cards')" "forms: words out of order"
+assert_eq "ok" "$(chk "words look gordian knot" 'w gordian knot')" "alias: expanded before matching"
+assert_eq "wrong" "$(chk "words look gordian knot" 'w gordian')" "alias: still needs the arguments"
+assert_eq "refuse" "$(chk "$A" 'friction-cards count; rm -rf ~/x')" "compound: ;"
+assert_eq "refuse" "$(chk "$A" 'friction-cards count && git push')" "compound: &&"
+assert_eq "refuse" "$(chk "$A" 'friction-cards count || true')" "compound: ||"
+assert_eq "refuse" "$(chk "$A" 'friction-cards count &')" "compound: &"
+assert_eq "refuse" "$(chk "$A" 'sudo friction-cards count')" "compound: sudo"
+assert_eq "refuse" "$(chk "$A" 'env X=1 friction-cards count')" "compound: env"
+assert_eq "refuse" "$(chk "$A" 'friction-cards count > out')" "compound: a redirect"
+assert_eq "refuse" "$(chk "$A" 'friction-cards count $(rm x)')" "compound: a command substitution"
+assert_eq "ok" "$(chk "cards due" 'cards due | head -3')" "pipe: into a reader"
+assert_eq "refuse" "$(chk "cards due" 'cards due | sh')" "pipe: into anything else"
+assert_eq "refuse" "$(chk "$A" 'friction-cards count "unclosed')" "a line the shell cannot parse"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
