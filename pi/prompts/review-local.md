@@ -52,8 +52,8 @@ Then read only the panel-selection section into your context:
 Parse each URL into `<group/project>` and `<iid>`. For each:
 
 ```bash
-glab mr view <iid> -R <project> --output json \
-  | jq '{title, author: .author.username, source_branch, target_branch, draft, description, sha: .diff_refs.head_sha, base: .diff_refs.base_sha}' \
+glab mr view <iid> -R <project> --unresolved -F json > "$RUN/<slug>.view.json"
+jq '{title, author: .author.username, source_branch, target_branch, draft, description, sha: .diff_refs.head_sha, base: .diff_refs.base_sha}' "$RUN/<slug>.view.json" \
   > "$RUN/<slug>.meta.json"
 glab mr diff <iid> -R <project> > "$RUN/<slug>.diff"
 bash ~/.pi/agent/skills-team/mr-review/scripts/locate-checkout.sh <project>   # exit 1/2: see below
@@ -62,9 +62,10 @@ git -C <checkout> worktree add -q --detach "$RUN/<slug>" <head_sha>
 ```
 
 `<slug>` is `<repo-name>-<iid>`. If locate-checkout exits 1 or 2, ask the user for the
-clone path; don't review without source. Existing unresolved discussions are worth one
-GET (`glab api "projects/<url-encoded-project>/merge_requests/<iid>/discussions" | jq`
-reduced to unresolved note bodies, first 300 chars each) so reviewers don't re-raise them.
+clone path; don't review without source. The same `--unresolved` call already holds
+the existing unresolved discussions (`.Discussions[].notes[] | select(.system|not)`,
+`.body[:300]` each) — reduce them with `jq` so reviewers don't re-raise them; no separate
+discussions GET.
 
 Take `git -C <worktree> diff --stat <base>...<head_sha>` and the meta JSON — that is all
 you read about the change. Then write `$RUN/context.md`:
