@@ -19,6 +19,8 @@ assert_contains() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3" "[$2] not in 
 SANDBOX="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$SANDBOX"' EXIT
 STUBS="$SANDBOX/stubs"; FIX="$SANDBOX/fixtures"; STATE="$SANDBOX/state"
+# The outage marker (glab-gate) lives in the friction dir: keep it out of the real one.
+export FRICTION_DIR="$SANDBOX/friction-state"
 mkdir -p "$STUBS"
 
 # jira-api <METHOD> <path> [body]: GET myself answers the profile zone (JIRA_TZ,
@@ -76,7 +78,7 @@ STUB
 chmod +x "$STUBS/friction"
 
 reset() {
-  rm -rf "$FIX" "$STATE"; mkdir -p "$FIX" "$STATE"
+  rm -rf "$FIX" "$STATE" "$FRICTION_DIR"; mkdir -p "$FIX" "$STATE"
   echo '{"issues":[],"isLast":true}' > "$FIX/jira-assigned.json"
   echo '{"issues":[],"isLast":true}' > "$FIX/jira-updated.json"
   echo '[]' > "$FIX/todos.json"; echo '[]' > "$FIX/mrs.json"
@@ -343,7 +345,7 @@ assert_eq "null" "$(jq -r 'select(.mr == 100) | .approved_by_me' <<<"$out")" "an
 assert_eq "true" "$(jq -r 'select(.mr == 104) | .approved_by_me' <<<"$out")" "the other MR is still marked"
 assert_eq "--source gitlab-approvals tool_error approvals lookup failed for 3!100" "$(cat "$FIX/friction.log" 2>/dev/null)" "the failure is logged as friction"
 assert_contains "$(errs)" "approvals of 3!100" "and noted on stderr"
-[ ! -e "$STATE/gitlab:down" ] && pass "no GitLab outage marker for one MR" || fail "no GitLab outage marker for one MR" "marker written"
+[ ! -e "$FRICTION_DIR/gitlab-down" ] && pass "no GitLab outage marker for one MR" || fail "no GitLab outage marker for one MR" "marker written"
 [ "$(cat "$STATE/default")" != "2026-10-08T07:00:00Z" ] && pass "the cursor moves" || fail "the cursor moves" "unchanged"
 
 prefix=$(sed -n 's/.*"\(\[approved by you[^"]*\)".*/\1/p' "$SCRIPT" | head -1)
@@ -377,6 +379,12 @@ echo "changes-since — friction capture"
 reset; cursor 2026-10-08T07:00:00Z
 out=$(JIRA_MYSELF_FAIL=1 run); rc=$?
 assert_eq "--source jira service_down Jira unavailable (are JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env still valid?)" "$(cat "$FIX/friction.log")" "a failing Jira records service_down with source jira"
+reset; cursor 2026-10-08T07:00:00Z
+PATH="$STUBS:$PATH" FIX="$FIX" "$TEST_DIR/glab-gate" down --source end-day "GitLab unavailable"
+out=$(run); rc=$?
+assert_eq "1" "$rc" "an outage another script marked holds this one off too"
+assert_eq "1" "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "and logs nothing more"
+[ ! -e "$FIX/glab.log" ] && [ ! -e "$FIX/jira.log" ] && pass "and makes no glab or Jira call" || fail "and makes no glab or Jira call" "calls made"
 reset; cursor 2026-10-08T07:00:00Z; echo '{}' > "$FIX/todos.json"
 run >/dev/null
 assert_eq "--source gitlab-todos service_down GitLab to-dos unavailable" "$(cat "$FIX/friction.log")" "a failing to-dos source records source gitlab-todos"
@@ -401,7 +409,7 @@ for feed in "api user" todos "merge_requests?scope=created_by_me" "merge_request
   seed
   out=$(CHANGES_SINCE_BACKOFF=0 GLAB_FAIL_ONCE="$feed" run); rc=$?
   assert_eq "0|$healthy" "$rc|$out" "a connection dropped once on '$feed' is retried: same events as a healthy run, no half body"
-  [ ! -e "$FIX/friction.log" ] && [ ! -e "$STATE/gitlab:down" ] && pass "and no service_down, no 15-minute hold" \
+  [ ! -e "$FIX/friction.log" ] && [ ! -e "$FRICTION_DIR/gitlab-down" ] && pass "and no service_down, no 15-minute hold" \
     || fail "and no service_down, no 15-minute hold" "$(cat "$FIX/friction.log" 2>/dev/null) marker: $(ls "$STATE")"
 done
 reset; cursor 2026-10-08T07:00:00Z
@@ -437,11 +445,11 @@ assert_eq "1" "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "no second friction l
 assert_eq "2" "$(wc -l < "$FIX/glab.log" | tr -d ' ')" "no glab call inside the window (the two are the first run's probe)"
 assert_eq "$jira_calls" "$(wc -l < "$FIX/jira.log")" "and no Jira call either, the run could not succeed"
 assert_contains "$(errs)" "GitLab unavailable" "stderr still says why"
-printf '%s\n' "$(($(date +%s) - 901))" > "$STATE/gitlab:down"
+printf '%s\n' "$(($(date +%s) - 901))" > "$FRICTION_DIR/gitlab-down"
 out=$(run); rc=$?
 assert_eq "0" "$rc" "after 15 minutes the probe runs again and a recovered GitLab works"
 assert_eq "5" "$(wc -l < "$FIX/glab.log" | tr -d ' ')" "the probe ran again, then the to-dos and MR feeds (the probe's answer serves as the user lookup)"
-[ ! -e "$STATE/gitlab:down" ] && pass "a healthy probe clears the marker" || fail "a healthy probe clears the marker" "marker left"
+[ ! -e "$FRICTION_DIR/gitlab-down" ] && pass "a healthy probe clears the marker" || fail "a healthy probe clears the marker" "marker left"
 reset; cursor 2026-10-08T07:00:00Z; echo '{}' > "$FIX/todos.json"
 run >/dev/null
 glab_calls=$(wc -l < "$FIX/glab.log")
@@ -463,7 +471,7 @@ assert_eq "2" "$(wc -l < "$FIX/jira.log" | tr -d ' ')" "the hung call was retrie
 assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor unchanged"
 assert_contains "$(errs)" "timed out" "stderr says it timed out"
 [ ! -e "$FIX/friction.log" ] && pass "a timeout logs no service_down" || fail "a timeout logs no service_down" "$(cat "$FIX/friction.log")"
-[ ! -e "$STATE/gitlab:down" ] && pass "and sets no GitLab outage marker" || fail "and sets no GitLab outage marker" "marker written"
+[ ! -e "$FRICTION_DIR/gitlab-down" ] && pass "and sets no GitLab outage marker" || fail "and sets no GitLab outage marker" "marker written"
 
 reset; cursor 2026-10-08T07:00:00Z; touch "$FIX/jira-hang-once"
 out=$(run); rc=$?
@@ -476,7 +484,7 @@ assert_eq "75" "$rc" "a glab call that hangs: exit 75"
 assert_eq "" "$out" "nothing on stdout"
 assert_eq "2" "$(grep -c todos "$FIX/glab.log")" "the to-dos call was retried once"
 [ ! -e "$FIX/friction.log" ] && pass "no service_down for a glab timeout" || fail "no service_down for a glab timeout" "$(cat "$FIX/friction.log")"
-[ ! -e "$STATE/gitlab:down" ] && pass "no marker for a glab timeout" || fail "no marker for a glab timeout" "marker written"
+[ ! -e "$FRICTION_DIR/gitlab-down" ] && pass "no marker for a glab timeout" || fail "no marker for a glab timeout" "marker written"
 
 reset; cursor 2026-10-08T07:00:00Z
 echo "[$(todo 1 review_requested alice 100 3 2026-10-08T07:10:00Z)]" > "$FIX/todos.json"

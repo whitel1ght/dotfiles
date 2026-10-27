@@ -62,6 +62,9 @@ next=$(shift_day "$day" +1)
 prev=$(shift_day "$day" -1)
 
 friction_log() { command -v friction >/dev/null 2>&1 && friction "$@" >/dev/null 2>&1 || true; }
+glab_held() { local rc=0; "$HERE/glab-gate" check || rc=$?; [ "$rc" -eq 1 ]; }
+glab_down() { "$HERE/glab-gate" down --source "$@" || true; }
+glab_up() { "$HERE/glab-gate" up || true; }
 section() { printf '\n## %s\n\n' "$1"; }
 
 collect_commits() {
@@ -73,13 +76,15 @@ collect_commits() {
 collect_gitlab() {
   section "GitLab activity"
   local user me username events
-  user=$(glab api user) || { friction_log --source end-day service_down "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
+  glab_held && { echo "(GitLab unavailable)"; return; }
+  user=$(glab api user) || { glab_down end-day "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
+  glab_up
   me=$(jq -r .id <<<"$user"); username=$(jq -r .username <<<"$user")
   # after/before are exclusive dates in UTC; widen by a day, then keep only
   # events whose local date is the one asked for.
   events=$(glab api --paginate "users/$me/events?after=$prev&before=$next&per_page=100" | jq -s --arg d "$day" '
     add // [] | map(select((.created_at | sub("\\.[0-9]+"; "") | fromdateiso8601 | strflocaltime("%Y-%m-%d")) == $d))
-    | map(select(.action_name | test("^(pushed|deleted)") | not))') || { friction_log --source end-day service_down "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
+    | map(select(.action_name | test("^(pushed|deleted)") | not))') || { glab_down end-day "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
   [ "$(jq length <<<"$events")" -gt 0 ] || { echo "(none)"; return; }
 
   # One line per MR: what I did to it, and whose it is.

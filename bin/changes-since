@@ -30,8 +30,9 @@
 #
 # A GitLab outage is probed once per run (glab api user). When the probe or a
 # GitLab feed fails, one service_down line is logged and a marker in the state
-# dir (gitlab:down) holds off both the probe and the log for 15 minutes; runs in
-# that window exit 1 at once, like any failing source, so nothing is lost.
+# dir shared with the other glab callers (glab-gate; F-021) holds off both the probe
+# and the log for 15 minutes; runs in that window exit 1 at once, like any failing
+# source, so nothing is lost.
 #
 # Every Jira and glab call is bounded: CHANGES_SINCE_CALL_TIMEOUT seconds (10),
 # one retry after CHANGES_SINCE_BACKOFF seconds (1) on a timeout or any other
@@ -59,7 +60,7 @@ down() {
   [ ! -e "$TIMED_OUT" ] || { echo "changes-since: timed out waiting for Jira or GitLab" >&2; exit 75; }
   friction_log --source "$1" service_down "$2"; die "$2"
 }
-GITLAB_DOWN="$STATE_DIR/gitlab:down" GITLAB_HOLD=900
+HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 epoch_of() { date -j -u -f %Y-%m-%dT%H:%M:%SZ "$1" +%s 2>/dev/null || date -u -d "$1" +%s; }
 
@@ -264,18 +265,14 @@ feed_gitlab_mrs() {
   done < <(jq -r '.[] | [.project_id, .iid] | @tsv' <<<"$mrs")
 }
 
-gitlab_down() { [ -e "$TIMED_OUT" ] || { mkdir -p "$STATE_DIR" && date +%s > "$GITLAB_DOWN"; } || true; down "$@"; }
+gitlab_down() { [ ! -e "$TIMED_OUT" ] || down "$@"; "$HERE/glab-gate" down --source "$1" "$2" || true; die "$2"; }
 
-if [ -s "$GITLAB_DOWN" ]; then
-  held=$(cat "$GITLAB_DOWN")
-  if [[ "$held" =~ ^[0-9]+$ ]] && [ $((now - held)) -lt "$GITLAB_HOLD" ]; then
-    die "GitLab unavailable (holding off until the 15-minute window since the last failure passes)"
-  fi
-fi
+gate_rc=0; "$HERE/glab-gate" check || gate_rc=$?
+[ "$gate_rc" -ne 1 ] || die "GitLab unavailable (holding off until the 15-minute window since the last failure passes)"
 
 feed_jira || down jira "Jira unavailable (are JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env still valid?)"
 ME=$(bounded glab api user | jq -er .username) || gitlab_down gitlab "GitLab unavailable"
-rm -f "$GITLAB_DOWN"
+"$HERE/glab-gate" up || true
 feed_gitlab_todos || gitlab_down gitlab-todos "GitLab to-dos unavailable"
 feed_gitlab_mrs || gitlab_down gitlab-mrs "GitLab MRs unavailable"
 

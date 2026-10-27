@@ -31,15 +31,11 @@ set -euo pipefail
 STATE_DIR="${MR_WATCH_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/mr-watch}"
 PROJECTS_DIR="${PROJECTS_DIR:-$HOME/projects}"
 BOT_RE='^(project|group)_[0-9]+_bot'
+HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
 
 friction_log() { command -v friction >/dev/null 2>&1 && friction "$@" >/dev/null 2>&1 || true; }
-down() {
-  if [ ! -e "$STATE_DIR/gitlab-down" ]; then
-    friction_log --source mr-watch service_down "GitLab unavailable"
-    mkdir -p "$STATE_DIR" && touch "$STATE_DIR/gitlab-down"
-  fi
-  return 2
-}
+down() { "$HERE/glab-gate" down --source mr-watch "GitLab unavailable" || true; return 2; }
+glab_held() { local rc=0; "$HERE/glab-gate" check || rc=$?; [ "$rc" -eq 1 ]; }
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 ignore_re() {
   local re="$BOT_RE" u
@@ -64,9 +60,10 @@ check() {
   default_floor=$(iso $(($(date +%s) - 7 * 86400)))
   [ "${1:-}" = --since ] && [ -n "${2:-}" ] && default_floor="$2"
   local me mrs
+  glab_held && return 2
   me=$(glab api user | jq -r .username) || { down; return 2; }
   mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { down; return 2; }
-  rm -f "$STATE_DIR/gitlab-down"
+  "$HERE/glab-gate" up || true
   mkdir -p "$STATE_DIR/seen" "$STATE_DIR/rounds"
   local found=0 re stamp
   re=$(ignore_re); stamp=$(date +%Y%m%dT%H%M%S)

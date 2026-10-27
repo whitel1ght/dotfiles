@@ -20,6 +20,8 @@ assert_eq() { [ "$1" = "$2" ] && pass "$3" || fail "$3" "expected [$1] got [$2]"
 SANDBOX="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$SANDBOX"' EXIT
 STUBS="$SANDBOX/stubs"; FIX="$SANDBOX/fixtures"; STATE="$SANDBOX/state"; DIARY="$SANDBOX/diary"
+# The outage marker (glab-gate) lives in the friction dir: keep it out of the real one.
+export FRICTION_DIR="$SANDBOX/friction-state"
 mkdir -p "$STUBS" "$FIX" "$STATE" "$DIARY"
 # Never run the real repos-sync: it would fetch and fast-forward the repos in ~/projects.
 printf '#!/bin/bash\n[ -z "${REPOS_SYNC_SILENT:-}" ] || exit 0\necho "- ecfx-dashboard: main fast-forwarded 2 commit(s)"\necho "9 GitLab repos: 1 updated, 8 up to date, 0 left alone, 0 failed"\n' >"$STUBS/repos-sync"
@@ -36,12 +38,13 @@ echo '### ECFX' > "$DIARY/2020-01-01.md"
 
 cat > "$STUBS/glab" <<'EOF'
 #!/bin/bash
-[ -n "${GLAB_DOWN:-}" ] && exit 1
 FIX="${FIX:?}"
+echo "$*" >> "$FIX/glab.log"
+[ -n "${GLAB_DOWN:-}" ] && exit 1
 case "$*" in
     "api user") echo '{"username":"me"}' ;;
     *todos*) cat "$FIX/todos.json" 2>/dev/null || echo '[]' ;;
-    *merge_requests\?scope=created_by_me\&state=opened*) cat "$FIX/mrs.json" ;;
+    *merge_requests\?scope=created_by_me\&state=opened*) cat "$FIX/mrs.json" 2>/dev/null || echo '[]' ;;
     *merge_requests/*/approvals)
         echo "$*" >> "$FIX/approvals.log"
         [ -n "${APPROVALS_FAIL:-}" ] && exit 1
@@ -65,7 +68,7 @@ esac
 EOF
 chmod +x "$STUBS/glab"
 
-reset() { rm -rf "$FIX" "$STATE"; mkdir -p "$FIX" "$STATE"; }
+reset() { rm -rf "$FIX" "$STATE" "$FRICTION_DIR"; mkdir -p "$FIX" "$STATE"; }
 
 # MRs deliberately carry no updated_at, so "My open MRs" treats them all as
 # idle and never touches the notes endpoint our stub doesn't model.
@@ -199,11 +202,23 @@ TEST_REPO_ORDER=
 
 echo "start-day — GitLab failure doesn't abort collect"
 reset
-out=$(GLAB_DOWN=1 run collect --since 2026-09-20T00:00:00Z)
+out=$(GLAB_DOWN=1 START_DAY_TRIAGE=/nonexistent run collect --since 2026-09-20T00:00:00Z)
 assert_contains "$out" "## Ready to merge" "the section heading still prints"
 assert_contains "$(ready "$out")" "(GitLab unavailable)" "Ready to merge reports GitLab unavailable"
 assert_contains "$out" "## Review queue" "collect keeps running the rest of the digest"
 assert_contains "$out" "## Team plugins" "including the final section"
+# The best-effort merged-since lookup is not gated; the review-queue triage is a plugin script, switched off here.
+gated() { grep -vc 'state=merged' "$FIX/glab.log"; }
+assert_eq "1" "$(gated)" "the failing probe is tried once, no gated call behind it (the outage is held)"
+out=$(START_DAY_TRIAGE=/nonexistent run collect --since 2026-09-20T00:00:00Z)
+assert_contains "$(ready "$out")" "(GitLab unavailable)" "a run inside the 15-minute window prints GitLab unavailable"
+assert_eq "1" "$(gated)" "and makes no probe, MR-list or to-dos call"
+assert_eq "" "$(cat "$FRICTION_DIR"/*.jsonl 2>/dev/null | sed -n '2,$p')" "and logs no second service_down"
+printf '%s\n' "$(($(date +%s) - 901))" > "$FRICTION_DIR/gitlab-down"
+out=$(START_DAY_TRIAGE=/nonexistent run collect --since 2026-09-20T00:00:00Z)
+[ "$(gated)" -gt 1 ] && pass "after the window GitLab is probed again" || fail "after the window GitLab is probed again" "$(gated) calls"
+unset -f gated
+
 
 echo "start-day — repos"
 reset

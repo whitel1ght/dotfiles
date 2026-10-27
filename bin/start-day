@@ -61,11 +61,17 @@ collect_carryover() {
     || echo "(empty)"
 }
 
+glab_held() { local rc=0; "$HERE/glab-gate" check || rc=$?; [ "$rc" -eq 1 ]; }
+glab_down() { "$HERE/glab-gate" down --source "$@" || true; }
+glab_up() { "$HERE/glab-gate" up || true; }
+
 collect_my_mrs() {
   section "My open MRs"
   local me mrs
-  me=$(glab api user | jq -r .username) || { echo "(GitLab unavailable)"; return; }
-  mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { echo "(GitLab unavailable)"; return; }
+  glab_held && { echo "(GitLab unavailable)"; return; }
+  me=$(glab api user | jq -r .username) || { glab_down start-day "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
+  mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { glab_down start-day "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
+  glab_up
   ME_USERNAME="$me"; MY_MRS_JSON="$mrs"
   [ "$(jq length <<<"$mrs")" -gt 0 ] || echo "(none)"
   # Detail only for MRs touched since then; long-idle ones get one line, since
@@ -188,7 +194,8 @@ collect_ready_to_merge() {
   local mrs
   mrs="${MY_MRS_JSON:-}"
   if [ -z "$mrs" ]; then
-    mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { echo "(GitLab unavailable)"; return; }
+    glab_held && { echo "(GitLab unavailable)"; return; }
+    mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { glab_down start-day "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
   fi
   [ "$(jq length <<<"$mrs")" -gt 0 ] || { echo "(none)"; return; }
 
@@ -328,7 +335,8 @@ collect_review_queue() {
 collect_gitlab_todos() {
   section "GitLab to-dos (pending)"
   local todos
-  todos=$(glab api --paginate 'todos?state=pending&per_page=100' | jq -s 'add // []') || { echo "(GitLab unavailable)"; return; }
+  glab_held && { echo "(GitLab unavailable)"; return; }
+  todos=$(glab api --paginate 'todos?state=pending&per_page=100' | jq -s 'add // []') || { glab_down start-day "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
   # D-011: mark others' MRs I already approved; a failed lookup leaves them unmarked.
   local me approved='[]' ref iid
   me="${ME_USERNAME:-$(glab api user 2>/dev/null | jq -r '.username // empty' 2>/dev/null || true)}"
