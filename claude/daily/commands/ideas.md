@@ -25,14 +25,18 @@ step here.
    - the setup: the system map and pages under `~/wiki/work/system/`, the manual `~/wiki/tools/`,
      the scripts in `~/projects/dotfiles/bin/`, and the other entries in `~/wiki/work/ideas/` — is
      it done already, partly done, or overtaken?
-   - the web, for an existing tool or a well-known way to do it (one or two searches);
+   - existing solutions, always (the user's default: never propose building before looking):
+     at least three searches (an all-in-one product, open-source or self-hosted tools, and
+     pieces that could be combined), the most promising read at their own page; name 2-4
+     candidates with what each gives, what it lacks for this idea, and how mature it is; then
+     say whether to adopt one, borrow ideas from them, or build;
    - whether it is worth doing now, judged from what the wiki shows the user spends time on (the
      diary, `IDEA.md`, the tools manual). For an idea outside the setup keep this to a line.
 
    Decide one verdict: `stale` (done, covered, overtaken, or not worth it), `actionable` (clear
    enough to build: what, where, roughly how big), `elaborate` (half-formed: the one or two
    questions that would make it actionable).
-4. **Record.** Write the review (3-10 lines: verdict, why, sources, the proposal or the questions)
+4. **Record.** Write the review (verdict, why, the existing solutions found and the adopt/borrow/build call, sources, the proposal or the questions)
    to `~/.local/state/run-day/scratch/idea-<id>.md` with the Write tool, then run
    `~/.local/bin/ideas record <id> --verdict <verdict> --summary "<one line in your own words>" --file ~/.local/state/run-day/scratch/idea-<id>.md`.
    The summary is your own words, never the idea's text.
@@ -40,7 +44,7 @@ step here.
 6. **Tell the user**, in one message, plain language, 2-4 lines per idea, empty groups left out:
    - **Stale**: `<id>` and the idea in a few words: why, and whether to move it to
      `## implemented:` (done) or drop it. The user moves it; you never edit `IDEA.md`.
-   - **Actionable**: `<id>`: the short proposal (what, where, roughly how big).
+   - **Actionable**: `<id>`: what already exists (adopt, borrow or build), then the short proposal (what, where, roughly how big).
    - **Needs your input**: `<id>`: the questions.
 
    End by asking which to take forward, then wait for the user's yes. Build nothing before it.

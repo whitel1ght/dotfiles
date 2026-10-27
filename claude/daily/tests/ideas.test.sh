@@ -23,6 +23,9 @@ for f in "$C" "$P"; do
   has "$f" "--id" "$side: named ideas are reviewed whatever the cap"
   has "$f" "wiki-commit" "$side: commits the memory copy"
   has "$f" "~/wiki/work/system/" "$side: checks the setup before the web"
+  has "$f" "existing solutions" "$side: every review surveys existing solutions"
+  has "$f" "at least three searches" "$side: a real survey, not one search"
+  has "$f" "adopt one, borrow ideas from them, or build" "$side: the review says which way to go"
   lacks "$f" 'ideas record I-NNN --verdict "$' "$side: no idea text in shell"
   lacks "$f" '$(cat' "$side: no idea text in shell (no command substitution of entry files)"
 done
