@@ -112,3 +112,6 @@ Global instructions applied across all projects. Keep this short — project-lev
 - In a worktree session the harness refuses a command whose option could be computed at
   runtime. Double-quote every variable (`rg -n 'x' "$t"`), put `--` before operands, and
   split `t=$(…); cmd $t` into plain, separate commands run from the worktree path.
+- In Claude Code, to move a session into a worktree call `EnterWorktree` with `name` only:
+  the `WorktreeCreate` hook (`wt hook-create`) creates it in that layout, without a prompt.
+  Never pass `path`: a path outside `.claude/worktrees/` asks me to approve it every time.
