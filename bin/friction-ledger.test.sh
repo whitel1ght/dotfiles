@@ -852,9 +852,11 @@ mine "$SANDBOX/f1.json" 2026-10-14 "$C|tool_error|high|2|jq missing"
 apply 2026-10-14 "$SANDBOX/f1.json" >/dev/null
 TZ=Etc/GMT-3 "$SCRIPT" set F-001 --status fixed --fix abc1234 --date 2026-10-16
 assert_eq "2026-10-15T21:00:00Z" "$(fld F-001 fixed_at)" "set --status fixed with a past --date stamps that local midnight, in UTC"
-mine_seen "$SANDBOX/f2.json" 2026-10-16 2026-10-15T20:59:59Z
+TZ=Etc/GMT-3 "$SCRIPT" set F-001 --status fixed --fix abc1234 --rung script --date 2026-10-17
+assert_eq "2026-10-15T21:00:00Z" "$(fld F-001 fixed_at)" "setting fixed again with the same fix keeps fixed_at"
+mine_seen "$SANDBOX/f2.json" 2026-10-16 2026-10-15T21:00:00Z
 OUT="$(apply 2026-10-16 "$SANDBOX/f2.json")"
-assert_eq "fixed" "$(fld F-001 status)" "last seen before fixed_at: stays fixed"
+assert_eq "fixed" "$(fld F-001 status)" "last seen at fixed_at: stays fixed"
 assert_eq "" "$(jq -r '[.regressed[].id] | join(" ")' <<<"$OUT")" "and is not reported as regressed"
 grep -q '^- 2026-10-16 (2×)' "$FRICTION_WIKI/F-001.md" && pass "the sighting is still recorded as evidence" || fail "the sighting is still recorded as evidence" "$(cat "$FRICTION_WIKI/F-001.md")"
 mine_seen "$SANDBOX/f3.json" 2026-10-17 2026-10-17T06:00:00Z
@@ -866,6 +868,9 @@ before="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 after="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 stamp="$(fld F-001 fixed_at)"
 [[ ! "$stamp" < "$before" && ! "$stamp" > "$after" ]] && pass "set --status fixed for today stamps the current time" || fail "set --status fixed for today stamps the current time" "[$stamp] not in [$before, $after]"
+TZ=Etc/GMT-3 "$SCRIPT" set F-001 --status fixed --fix fed9876 --date 2026-10-20
+assert_eq "2026-10-19T21:00:00Z" "$(fld F-001 fixed_at)" "a new fix sha re-stamps fixed_at"
+stamp="$(fld F-001 fixed_at)"
 "$SCRIPT" set F-001 --status regressed --date 2026-10-18
 assert_eq "$stamp" "$(fld F-001 fixed_at)" "another status leaves fixed_at alone"
 "$SCRIPT" set F-001 --status fixed --fix def5678 --date 2026-10-18

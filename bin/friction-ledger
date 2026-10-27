@@ -40,8 +40,9 @@
 # set     writes the given front-matter fields and sections; a status change adds a dated
 #         History line. class: env|instruction|script|model|external; status:
 #         open|proposed|fixed|regressed|wontfix|offered|declined|landing|landed|failed;
-#         rung: script|config|prompt. --status fixed stamps `fixed_at` (UTC): now for today's
-#         date, that day's local midnight for an earlier --date. --safety writes the `safety` field (ingest only ever sets
+#         rung: script|config|prompt. --status fixed stamps `fixed_at` (UTC) when the status
+#         turns fixed, the --fix sha changes or there is no stamp yet: now for today's date,
+#         that day's local midnight for an earlier --date. --safety writes the `safety` field (ingest only ever sets
 #         it true); --queued-by records who queued the entry (`queued_by`). --reason writes
 #         `reason` on one line (why a coach fix failed, or a user step after it landed; "" clears
 #         it). --clear-result-reported clears `result_reported_on` so the result card is filed
@@ -502,8 +503,11 @@ cmd_set() {
   [ -z "$queued_by" ] || fm_set "$f" queued_by "$queued_by"
   [ -z "$class" ] || fm_set "$f" class "$class"
   [ -z "$rung" ] || fm_set "$f" rung "$rung"
+  if [ "$status" = fixed ] && { [ "$(fm_get "$f" status)" != fixed ] || [ -z "$(fm_get "$f" fixed_at)" ] \
+      || { [ "$has_fix" = 1 ] && [ "$fix" != "$(fm_get "$f" fix)" ]; }; }; then
+    fm_set "$f" fixed_at "$(fixed_stamp "$date_")"
+  fi
   [ "$has_fix" = 0 ] || fm_set "$f" fix "$fix"
-  [ "$status" != fixed ] || fm_set "$f" fixed_at "$(fixed_stamp "$date_")"
   [ -z "$diag" ] || section_edit "$f" Diagnosis replace "$(one_line "$diag")"
   [ -z "$pfile" ] || section_edit "$f" Proposal replace "$(cat "$pfile")"
   if [ -n "$status" ]; then
