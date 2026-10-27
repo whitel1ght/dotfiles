@@ -18,6 +18,11 @@
         back; a bare word gets the dictionary's; one the dictionary lacks gets "(look this one up
         again)" and tag word-check. Dated by the diary day, from diary; words already saved are
         skipped. Prints "imported N, already saved M, to check K".
+  words stats [--date D] [--json|--line]
+        {total, new_today, reviewed_today, known, streak} over the word cards, from their
+        `## Reviews` history (cards grade writes it): known = interval of 21 days or more (its
+        stage is written `known`); streak = days in a row with a word review, up to D (or D-1
+        when D has none yet). --line: "Words: R reviewed, N new, K known of T · streak S days".
 
 A word card's extra front matter: word, met_in, from (mw|lookup|book|diary), captured (date),
 stage (learning|known). Cards are written through `cards` ($WORDS_CARDS, default the one next to
@@ -27,6 +32,7 @@ import argparse
 import datetime
 import email.utils
 import html
+import json
 import os
 import re
 import subprocess
@@ -144,6 +150,74 @@ def cmd_add(a):
     print(add(a.word, a.back, a.met_in, a.src, a.date))
 
 
+REVIEW_LINE = re.compile(r"^- (\d{4}-\d{2}-\d{2}) grade [0-3] interval \d+", re.M)
+KNOWN_DAYS = 21
+
+
+def word_cards():
+    """[(path, text, front matter dict)] of the cards tagged word"""
+    out = []
+    try:
+        names = sorted(n for n in os.listdir(CARDS_DIR) if n.endswith(".md") and not n.startswith("."))
+    except OSError:
+        return out
+    for n in names:
+        path = os.path.join(CARDS_DIR, n)
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        m = re.match(r"---\n(.*?)\n---\n", text, re.S)
+        if not m:
+            continue
+        fm = {k.strip(): v.strip() for k, _, v in (l.partition(":") for l in m.group(1).split("\n")) if k.strip()}
+        if "word" in [t.strip() for t in fm.get("tags", "").strip("[]").split(",")]:
+            out.append((path, text, fm))
+    return out
+
+
+def mark_known(path, text):
+    new = re.sub(r"^stage:.*$", "stage: known", text, count=1, flags=re.M)
+    if new != text:
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(new)
+        os.replace(tmp, path)
+
+
+def stats(day):
+    cards, review_days = word_cards(), set()
+    s = {"total": len(cards), "new_today": 0, "reviewed_today": 0, "known": 0, "streak": 0}
+    for path, text, fm in cards:
+        days = REVIEW_LINE.findall(text.split("\n## Reviews", 1)[1] if "\n## Reviews" in text else "")
+        review_days.update(days)
+        s["new_today"] += fm.get("captured") == day
+        s["reviewed_today"] += day in days
+        try:
+            known = int(float(fm.get("interval", "0"))) >= KNOWN_DAYS
+        except ValueError:
+            known = False
+        if known:
+            s["known"] += 1
+            if fm.get("stage") != "known":
+                mark_known(path, text)
+    d = datetime.date.fromisoformat(day)
+    if d.isoformat() not in review_days:
+        d -= datetime.timedelta(days=1)
+    while d.isoformat() in review_days:
+        s["streak"] += 1
+        d -= datetime.timedelta(days=1)
+    return s
+
+
+def cmd_stats(a):
+    s = stats(a.date or datetime.date.today().isoformat())
+    if a.line:
+        unit = "day" if s["streak"] == 1 else "days"
+        print(f"Words: {s['reviewed_today']} reviewed, {s['new_today']} new, {s['known']} known of {s['total']}"
+              f" · streak {s['streak']} {unit}")
+    else:
+        print(json.dumps(s))
+
+
 DIARY_LINE = re.compile(r"^\s*-\s*\[[xX]\]\s*merriam-webster word of the day\s*\((.*)\)\s*$", re.I)
 SEPARATOR = re.compile(r"\s+-\s+|\s*=\s*|,\s*")
 CHECK_BACK = "(look this one up again)"
@@ -245,6 +319,12 @@ def main():
     s = sub.add_parser("today")
     s.add_argument("--date")
     s.set_defaults(fn=cmd_today)
+    s = sub.add_parser("stats")
+    s.add_argument("--date")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--json", action="store_true")
+    g.add_argument("--line", action="store_true")
+    s.set_defaults(fn=cmd_stats)
     s = sub.add_parser("import-diary")
     s.add_argument("--diary-dir", default="~/wiki/diary")
     s.set_defaults(fn=cmd_import_diary)

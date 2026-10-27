@@ -105,6 +105,19 @@ assert_eq "patina" "$(fm "$(words add patina)" word)" "stress capitals become a 
 assert_eq "" "$(rg -l 'vindicate' "$CARDS_DIR" 2>/dev/null)" "an unticked line is skipped"
 assert_eq "imported 0, already saved 7, to check 0" "$(words import-diary --diary-dir "$DIARY")" "a second run imports nothing"
 
+echo "words stats"
+reset
+A="$(words add balmy --date 2026-10-20)"; B="$(words add milieu --date 2026-10-20)"; C="$(words add cordial --date 2026-10-27)"
+printf '\n## Reviews\n\n- 2026-10-25 grade 2 interval 1\n- 2026-10-27 grade 2 interval 3\n' >>"$CARDS_DIR/$A.md"
+printf '\n## Reviews\n\n- 2026-10-26 grade 3 interval 25\n' >>"$CARDS_DIR/$B.md"; sed -i '' 's/^interval: .*/interval: 25/' "$CARDS_DIR/$B.md"
+printf -- '---\ndue: 2026-10-30\ninterval: 3\nease: 2.5\nreps: 2\nlapses: 0\ntags: [ecfx]\n---\n\n## Question: Q?\n\n### Answer: A.\n\n## Reviews\n\n- 2026-10-28 grade 2 interval 3\n' >"$CARDS_DIR/other.md"
+assert_eq '{"total": 3, "new_today": 1, "reviewed_today": 1, "known": 1, "streak": 3}' "$(words stats --date 2026-10-27 --json)" "counts word cards only: total, new today, reviewed today, known, streak"
+assert_eq "known" "$(fm "$B" stage)" "a word whose interval reached 21 days is marked known"
+assert_eq "learning" "$(fm "$A" stage)" "the others stay learning"
+assert_eq "3" "$(words stats --date 2026-10-28 --json | jq .streak)" "the streak still counts on a day with no review yet"
+assert_eq "0" "$(words stats --date 2026-10-30 --json | jq .streak)" "a missed day ends it"
+assert_eq "Words: 1 reviewed, 1 new, 1 known of 3 · streak 3 days" "$(words stats --date 2026-10-27 --line)" "--line is one sentence for the diary"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
