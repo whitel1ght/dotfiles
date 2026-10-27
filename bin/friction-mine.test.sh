@@ -74,8 +74,8 @@ printf '%s\n' '{"type":"agent_start"}' '{"type":"auto_retry_start","attempt":1,"
 
 # Claude transcript
 cl() { jq -cn --arg ts "$1" --arg cwd "$2" --argjson m "$3" --arg t "$4" '{type:$t, timestamp:$ts, cwd:$cwd, message:$m}'; }
-tu() { cl "$1" /w/ECFX-77 "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"$2\",\"name\":\"Bash\",\"input\":{\"command\":\"$3\"}}]}" assistant; }
-tr_() { cl "$1" /w/ECFX-77 "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"$2\",\"is_error\":true,\"content\":\"$3\"}]}" user; }
+tu() { cl "$1" "${4:-/w/ECFX-77}" "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"$2\",\"name\":\"Bash\",\"input\":{\"command\":\"$3\"}}]}" assistant; }
+tr_() { cl "$1" "${4:-/w/ECFX-77}" "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"$2\",\"is_error\":true,\"content\":\"$3\"}]}" user; }
 meta() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"user",content:$c}')" user | jq -c '. + {isMeta:true}'; }
 aq() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"assistant",content:[{type:"text",text:$c}]}')" assistant; }
 us() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"user",content:$c}')" user; }
@@ -88,11 +88,11 @@ us() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"user",content:$c}')" us
   tu 2026-10-15T07:28:00.000Z c2 "cat state.md\necho =====\nend-day entries 2026-10-15 ecfx | rg x"; tr_ 2026-10-15T07:28:30.000Z c2 "Exit code 1\n"
   tu 2026-10-15T07:29:00.000Z c3 "secret X >/dev/null && ls ~/x || true"; tr_ 2026-10-15T07:29:30.000Z c3 "Exit code 1\n"
   tu 2026-10-15T07:30:00.000Z s1 "glab mr view 77;\n"; tr_ 2026-10-15T07:30:30.000Z s1 "Exit code 1\n"
-  tu 2026-10-15T07:08:00.000Z q1 "rg -ln 'start-day collect|bin/start-day|START_DAY_TRIAGE' bin/*.test.sh claude/tests 2>/dev/null"; tr_ 2026-10-15T07:08:30.000Z q1 "Exit code 2"
-  tu 2026-10-15T07:08:40.000Z q2 "glab api x | jq -r '.[] | \\\"\\\\(.a); \\\\(.b)\\\"'"; tr_ 2026-10-15T07:08:45.000Z q2 "Exit code 1"
-  tu 2026-10-15T07:08:50.000Z q3 "echo \\\"it's\\\" | glab mr note 1 -F - --x \\\"won't\\\""; tr_ 2026-10-15T07:08:55.000Z q3 "Exit code 1"
-  tu 2026-10-15T07:09:00.000Z q4 "glab mr note 1 -m \\\"it's ok\\\" && rg \\\"don't\\\" x"; tr_ 2026-10-15T07:09:05.000Z q4 "Exit code 1"
-  tu 2026-10-15T07:09:10.000Z q5 "glab mr note 1 -m \\\"a \\\\\\\" b\\\" && rg \\\"x\\\" y"; tr_ 2026-10-15T07:09:15.000Z q5 "Exit code 1"
+  tu 2026-10-15T07:08:00.000Z q1 "rg -ln 'start-day collect|bin/start-day|START_DAY_TRIAGE' bin/*.test.sh claude/tests 2>/dev/null" /w/ECFX-81; tr_ 2026-10-15T07:08:30.000Z q1 "Exit code 2" /w/ECFX-81
+  tu 2026-10-15T07:08:40.000Z q2 "glab api x | jq -r '.[] | \\\"\\\\(.a); \\\\(.b)\\\"'" /w/ECFX-82; tr_ 2026-10-15T07:08:45.000Z q2 "Exit code 1" /w/ECFX-82
+  tu 2026-10-15T07:08:50.000Z q3 "echo \\\"it's\\\" | glab mr note 1 -F - --x \\\"won't\\\"" /w/ECFX-83; tr_ 2026-10-15T07:08:55.000Z q3 "Exit code 1" /w/ECFX-83
+  tu 2026-10-15T07:09:00.000Z q4 "glab mr note 1 -m \\\"it's ok\\\" && rg \\\"don't\\\" x" /w/ECFX-84; tr_ 2026-10-15T07:09:05.000Z q4 "Exit code 1" /w/ECFX-84
+  tu 2026-10-15T07:09:10.000Z q5 "glab mr note 1 -m \\\"a \\\\\\\" b\\\" && rg \\\"x\\\" y" /w/ECFX-85; tr_ 2026-10-15T07:09:15.000Z q5 "Exit code 1" /w/ECFX-85
   tu 2026-10-15T07:31:00.000Z s2 "cd \\\"my dir\\\" && glab mr view 78"; tr_ 2026-10-15T07:31:30.000Z s2 "Exit code 1\n"
   tu 2026-10-15T07:10:00.000Z t4 "git push"; tr_ 2026-10-15T07:10:10.000Z t4 "The user doesn't want to proceed with this tool use. The tool use was rejected"
   tu 2026-10-15T07:12:00.000Z d1 "git reset --hard"; tr_ 2026-10-15T07:12:10.000Z d1 "Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Git Destructive]. If you have other tasks that don't depend on this action, continue working on those."
@@ -191,6 +191,11 @@ assert_eq "retry" "$(f "$(grp 'pi-sub:retry:auto retry: connection error.')" .ki
 echo "friction-mine — Claude transcripts"
 g=$(grp "claude:tool_error:bash: exit code <n>")
 assert_eq "tool_error|8|ECFX-77" "$(f "$g" '[.kind,.count,.keys[0]]|join("|")')" "bare Exit code from our tools grouped (glab x3, end-day by path in a pipeline, glab with a trailing ;, glab after a quoted cd, glab with a ; inside a quoted jq arg, glab after an echo with an apostrophe in double quotes); key from the cwd"
+for q in "1 dropped" "2 counted" "3 counted" "4 dropped" "5 dropped"; do
+  set -- $q
+  case $2 in counted) want=true ;; *) want=false ;; esac
+  assert_eq "$want" "$(f "$g" "[.keys[]|select(. == \"ECFX-8$1\")]|length > 0")" "quote fixture q$1 (own cwd ECFX-8$1) is $2"
+done
 assert_eq "retry" "$(f "$(grp 'claude:retry:repeated failing command x<n>: bash glab mr view <n>')" .kind)" "same failing command 3 times -> retry"
 assert_eq "" "$(jq -r '.groups[]|select(.sig|test("make build|npm run dev|unknown command"))' <<<"$OUT")" "bare Exit code from other commands, or with no command found, is dropped (no group, no retry)"
 assert_eq "8" "$(f "$g" .count)" "bare Exit code from a compound command (; newline && ||) with one of our tools in it is dropped, also past an apostrophe inside double quotes (glab -m \"it's ok\" && rg \"don't\"; glab -m \"a \\\" b\" && rg); a leading cd DIR && (quoted too), a trailing ; or newline, and a ; inside quotes are not a second statement"
