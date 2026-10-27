@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""Keep the system's memory copy of the user's ideas file, for the idle idea review.
+
+  ideas sync      read $IDEAS_FILE (~/wiki/IDEA.md) into one entry per idea under $IDEAS_DIR
+                  (~/wiki/work/ideas): I-NNN.md files and index.md. Prints
+                  {"new": [ids], "edited": [ids], "closed": [ids], "gone": [ids]}.
+
+IDEA.md is only ever read. Its top lines (before any `##` heading, or under a heading other than
+the two below) are loose ideas; `## review & implement:` items are review ideas; `## implemented:`
+items are implemented. A bullet may carry a checkbox: `[ ]` open, `[X]`/`[x]` done, `[-]` dropped.
+An indented line under a bullet continues it. A done or dropped idea is recorded, never reviewed.
+Entry ids (I-001 up) are never reused. A file is rewritten only when its content changes.
+"""
+import json
+import os
+import re
+import sys
+from datetime import date
+
+IDEAS_FILE = os.environ.get("IDEAS_FILE", os.path.expanduser("~/wiki/IDEA.md"))
+IDEAS_DIR = os.environ.get("IDEAS_DIR", os.path.expanduser("~/wiki/work/ideas"))
+KEYS = ["id", "text", "section", "mark", "first_seen", "last_seen", "status", "verdict", "summary",
+        "reviewed_on", "answer", "answered_on", "later_until"]
+BULLET = re.compile(r"^[-*]\s+(.*)$")
+BOX = re.compile(r"^\[( |x|X|-)\]\s*(.*)$")
+
+
+def today():
+    return os.environ.get("IDEAS_TODAY") or date.today().isoformat()
+
+
+def die(msg, code=1):
+    print(f"ideas: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def normalize(text):
+    return re.sub(r"[.!?;:,]+$", "", re.sub(r"\s+", " ", text.strip().lower()))
+
+
+def parse_ideas(path):
+    """[(text, section, mark)] in file order."""
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    ideas, section, current = [], "loose", None
+    for line in lines:
+        if line.startswith("## "):
+            head = line[3:].strip().lower()
+            section = "implemented" if head.startswith("implemented") else "review" if "review" in head else "loose"
+            current = None
+            continue
+        if line.startswith("#") or not line.strip():
+            current = None
+            continue
+        m = BULLET.match(line)
+        if m:
+            body, mark = m.group(1).strip(), "none"
+            b = BOX.match(body)
+            if b:
+                mark = {" ": "open", "-": "dropped"}.get(b.group(1), "done")
+                body = b.group(2).strip()
+            if not body:
+                current = None
+                continue
+            current = {"text": body, "section": section, "mark": mark}
+            ideas.append(current)
+        elif line[:1].isspace() and current is not None:
+            current["text"] = f"{current['text']} {line.strip()}"
+    return [(i["text"], i["section"], i["mark"]) for i in ideas]
+
+
+def read_entry(path):
+    entry, body, in_fm, seen = {}, [], False, 0
+    with open(path, encoding="utf-8") as f:
+        for line in f.read().split("\n"):
+            if line == "---" and seen < 2:
+                seen += 1
+                in_fm = seen == 1
+                continue
+            if in_fm:
+                key, _, val = line.partition(":")
+                entry[key.strip()] = val.strip()
+            elif seen >= 2:
+                body.append(line)
+    entry["_body"] = "\n".join(body).strip("\n")
+    return entry
+
+
+def render(entry):
+    fm = "\n".join(f"{k}: {entry.get(k, '')}".rstrip() for k in KEYS)
+    body = entry.get("_body") or "## Review"
+    return f"---\n{fm}\n---\n\n{body}\n"
+
+
+def load_entries():
+    entries = {}
+    if os.path.isdir(IDEAS_DIR):
+        for name in sorted(os.listdir(IDEAS_DIR)):
+            if re.fullmatch(r"I-\d+\.md", name):
+                e = read_entry(os.path.join(IDEAS_DIR, name))
+                entries[e["id"]] = e
+    return entries
+
+
+def write_if_changed(path, content):
+    try:
+        with open(path, encoding="utf-8") as f:
+            if f.read() == content:
+                return
+    except FileNotFoundError:
+        pass
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(content)
+    os.replace(tmp, path)
+
+
+def save(entries):
+    os.makedirs(IDEAS_DIR, exist_ok=True)
+    for e in entries.values():
+        write_if_changed(os.path.join(IDEAS_DIR, f"{e['id']}.md"), render(e))
+    rows = ["# Ideas (memory copy of ~/wiki/IDEA.md; written by `ideas`, never by hand)", "",
+            "| id | status | verdict | text |", "|---|---|---|---|"]
+    for e in sorted(entries.values(), key=lambda e: e["id"]):
+        rows.append(f"| {e['id']} | {e.get('status', '')} | {e.get('verdict', '')} | {e['text'].replace('|', '/')} |")
+    write_if_changed(os.path.join(IDEAS_DIR, "index.md"), "\n".join(rows) + "\n")
+
+
+def status_for(mark):
+    return {"done": "done", "dropped": "dropped"}.get(mark)
+
+
+def cmd_sync():
+    if not os.path.isfile(IDEAS_FILE):
+        die(f"no ideas file at {IDEAS_FILE}")
+    ideas = parse_ideas(IDEAS_FILE)
+    entries = load_entries()
+    by_norm = {normalize(e["text"]): e for e in entries.values() if e.get("status") != "gone"}
+    next_n = max([int(i[2:]) for i in entries] + [0]) + 1
+    out = {"new": [], "edited": [], "closed": [], "gone": []}
+    seen, day = set(), today()
+    for text, section, mark in ideas:
+        e = by_norm.get(normalize(text))
+        if e is None or e["id"] in seen:
+            e = {"id": f"I-{next_n:03d}", "text": text, "section": section, "mark": mark,
+                 "first_seen": day, "last_seen": day, "status": status_for(mark) or "new"}
+            next_n += 1
+            entries[e["id"]] = e
+            if e["status"] == "new":
+                out["new"].append(e["id"])
+        else:
+            closed = status_for(mark)
+            if closed and e.get("status") != closed:
+                out["closed"].append(e["id"])
+                e["status"] = closed
+            elif not closed and e.get("status") in ("done", "dropped"):
+                e["status"] = "new"
+                out["new"].append(e["id"])
+            e.update({"text": text, "section": section, "mark": mark, "last_seen": day})
+        seen.add(e["id"])
+    for e in entries.values():
+        if e["id"] not in seen and e.get("status") != "gone":
+            e["status"] = "gone"
+            out["gone"].append(e["id"])
+    save(entries)
+    print(json.dumps(out))
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return
+    cmd, args = argv[0], argv[1:]
+    if cmd == "sync" and not args:
+        cmd_sync()
+    else:
+        die(f"unknown command: {' '.join(argv)}", 2)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
