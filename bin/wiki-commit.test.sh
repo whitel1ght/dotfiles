@@ -63,6 +63,11 @@ echo c > "$WIKI_DIR/cards/x.md"
 echo f > "$WIKI_DIR/work/friction/F-001.md"
 "$SCRIPT" --by claude -m "friction" -- work/friction/F-001.md >/dev/null 2>&1; check "work/friction path exits 0" "$?" 0
 check "friction file tracked" "$(git -C "$WIKI_DIR" ls-files work/friction/F-001.md)" "work/friction/F-001.md"
+mkdir -p "$WIKI_DIR/work/ideas"; echo i > "$WIKI_DIR/work/ideas/I-001.md"; echo x > "$WIKI_DIR/work/ideas/index.md"
+"$SCRIPT" --by claude -m "ideas" -- work/ideas >/dev/null 2>&1; check "the work/ideas folder exits 0" "$?" 0
+check "its files tracked" "$(git -C "$WIKI_DIR" ls-files work/ideas | paste -sd ' ' -)" "work/ideas/I-001.md work/ideas/index.md"
+echo i2 > "$WIKI_DIR/work/ideas/I-001.md"
+"$SCRIPT" --by pi -m "idea" -- work/ideas/I-001.md >/dev/null 2>&1; check "an ideas entry exits 0" "$?" 0
 
 # usage errors and out-of-scope paths
 "$SCRIPT" --by claude -m "x" -- diary/x.md >/dev/null 2>&1; check "diary path exits 2" "$?" 2

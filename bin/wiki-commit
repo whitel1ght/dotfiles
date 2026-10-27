@@ -43,8 +43,8 @@ for p in "$@"; do
     case "$p" in /*) abs="$p" ;; *) abs="$root/$p" ;; esac
     abs="$(normalize "$abs")"
     case "$abs" in
-        "$root/work/system/"?*|"$root/tools/"?*|"$root/cards/"?*|"$root/work/friction/"?*) rel+=("${abs#"$root"/}") ;;
-        *) echo "wiki-commit: outside work/system, tools, cards and work/friction: $p" >&2; exit 2 ;;
+        "$root/work/system/"?*|"$root/tools/"?*|"$root/cards/"?*|"$root/work/friction/"?*|"$root/work/ideas"|"$root/work/ideas/"?*) rel+=("${abs#"$root"/}") ;;
+        *) echo "wiki-commit: outside work/system, tools, cards, work/friction and work/ideas: $p" >&2; exit 2 ;;
     esac
 done
 
