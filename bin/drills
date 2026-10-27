@@ -13,22 +13,37 @@ reaches it. The user practises them by typing the real commands in a tmux window
         piped at most into head, tail, less, jq, rg or wc. refuse: ;, &&, ||, &, a redirect,
         $(..) or backticks, sudo, env, a pipe into anything else, or a line the shell can't parse.
         Aliases come from $DRILLS_ALIASES, else the dotfiles zsh/ folder.
+  drills start [--date D] [--limit 5]
+        start a round ($DRILLS_STATE/round.json): the due drills, new ones first, then the
+        reviewed ones oldest due first. Prints "Goal: <front>", or "no drills due".
+  drills step LINE
+        one JSON line {action, message, done} for a line typed in the round: action run (right,
+        run it), checked (right, a run-no drill: don't run it), wrong, show (LINE "?"), refuse.
+        A right line is graded at once with `cards grade`: 2 first try, 1 after a miss, 0 after
+        the answer was shown; the day's {right, total} go to $DRILLS_STATE/<date>.json. done is
+        true after the last drill or once $DRILLS_ROUND_SECONDS (300) have passed.
+  drills finish
+        end the round (remove round.json) and print "Drills: R right of N".
 
 A drill card's extra front matter: cmd, accept, run (yes|no), from (manual|hand), page, stage
 (learning|known). Cards are written through `cards` ($DRILLS_CARDS, default the one next to this
 script).
 """
 import argparse
+import datetime
+import json
 import os
 import re
 import shlex
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 CARDS = os.environ.get("DRILLS_CARDS") or os.path.join(HERE, "cards")
 CARDS_DIR = os.path.expanduser(os.environ.get("CARDS_DIR") or "~/wiki/cards")
 STATE = os.path.expanduser(os.environ.get("DRILLS_STATE") or "~/.local/state/drills")
+ROUND_SECONDS = int(os.environ.get("DRILLS_ROUND_SECONDS") or 300)
 
 
 class Fail(Exception):
@@ -153,6 +168,107 @@ def cmd_check(a):
     print(match(a.line, one_line(a.accept), load_aliases()))
 
 
+def now():
+    return float(os.environ.get("DRILLS_NOW") or time.time())
+
+
+def write_json(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.tmp{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    os.replace(tmp, path)
+
+
+def read_json(path, default=None):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def round_path():
+    return os.path.join(STATE, "round.json")
+
+
+def results_path(day):
+    return os.path.join(STATE, f"{day}.json")
+
+
+def goal(item):
+    return f"Goal: {item['front']}"
+
+
+def cmd_start(a):
+    day = a.date or datetime.date.today().isoformat()
+    due = json.loads(run_cards("due", "--tag", "drill", "--limit", "50", "--json", "--date", day) or "[]")
+    order = [d for d in due if d["new"]] + [d for d in due if not d["new"]]
+    by_slug = {c["slug"]: c for c in drill_cards()}
+    items = []
+    for d in order[:a.limit]:
+        c = by_slug.get(d["slug"])
+        if c and c["fm"].get("accept"):
+            items.append({"slug": c["slug"], "front": c["front"], "back": c["back"],
+                          "accept": c["fm"]["accept"], "run": c["fm"].get("run", "no")})
+    if not items:
+        print("no drills due")
+        return
+    write_json(round_path(), {"date": day, "started": now(), "items": items, "i": 0,
+                              "missed": False, "shown": False})
+    print(goal(items[0]))
+
+
+def summary(day):
+    r = read_json(results_path(day), {}) or {}
+    return f"Drills: {r.get('right', 0)} right of {r.get('total', 0)}"
+
+
+def cmd_step(a):
+    rnd = read_json(round_path())
+    if not rnd or rnd["i"] >= len(rnd["items"]):
+        print(json.dumps({"action": "show", "message": "No drill round.", "done": True}))
+        return
+    item = rnd["items"][rnd["i"]]
+    over = now() >= rnd["started"] + ROUND_SECONDS
+    line = a.line.strip()
+    verdict = "show" if line == "?" else match(line, item["accept"], load_aliases())
+    if verdict != "ok" and over:
+        print(json.dumps({"action": "show", "message": f"Time's up. {summary(rnd['date'])}", "done": True}))
+        return
+    if verdict == "show":
+        rnd["shown"] = True
+        out = {"action": "show", "message": f"→ {item['back']}   (type it)", "done": False}
+    elif verdict == "refuse":
+        out = {"action": "refuse", "message": "One command please: no ;, &&, redirects, sudo or env.", "done": False}
+    elif verdict == "wrong":
+        rnd["missed"] = True
+        out = {"action": "wrong", "message": f"✗ → {item['back']}   (type it)", "done": False}
+    else:
+        grade = 0 if rnd["shown"] else 1 if rnd["missed"] else 2
+        run_cards("grade", item["slug"], str(grade), "--date", rnd["date"])
+        res = read_json(results_path(rnd["date"]), {}) or {}
+        res = {"right": res.get("right", 0) + (grade == 2), "total": res.get("total", 0) + 1}
+        write_json(results_path(rnd["date"]), res)
+        rnd.update(i=rnd["i"] + 1, missed=False, shown=False)
+        done = over or rnd["i"] >= len(rnd["items"])
+        mark = "✓" if item["run"] == "yes" else "✓ (checked, not run)"
+        nxt = summary(rnd["date"]) if done else goal(rnd["items"][rnd["i"]])
+        out = {"action": "run" if item["run"] == "yes" else "checked", "message": f"{mark}\n{nxt}", "done": done}
+    write_json(round_path(), rnd)
+    print(json.dumps(out, ensure_ascii=False))
+
+
+def cmd_finish(a):
+    rnd = read_json(round_path())
+    day = rnd["date"] if rnd else (a.date or datetime.date.today().isoformat())
+    try:
+        os.remove(round_path())
+    except OSError:
+        pass
+    print(summary(day))
+
+
 def cmd_add(a):
     goal, accept = one_line(a.goal), one_line(a.accept)
     if not goal or not accept or not one_line(a.cmd):
@@ -198,6 +314,16 @@ def main():
     s.add_argument("--accept", required=True)
     s.add_argument("line")
     s.set_defaults(fn=cmd_check)
+    s = sub.add_parser("start")
+    s.add_argument("--date")
+    s.add_argument("--limit", type=int, default=5)
+    s.set_defaults(fn=cmd_start)
+    s = sub.add_parser("step")
+    s.add_argument("line")
+    s.set_defaults(fn=cmd_step)
+    s = sub.add_parser("finish")
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_finish)
     a = p.parse_args()
     try:
         a.fn(a)

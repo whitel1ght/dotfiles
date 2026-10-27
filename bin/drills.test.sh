@@ -61,6 +61,76 @@ assert_eq "ok" "$(chk "cards due" 'cards due | head -3')" "pipe: into a reader"
 assert_eq "refuse" "$(chk "cards due" 'cards due | sh')" "pipe: into anything else"
 assert_eq "refuse" "$(chk "$A" 'friction-cards count "unclosed')" "a line the shell cannot parse"
 
+echo "drills round"
+D=2026-10-27
+T0=1800000000
+export DRILLS_NOW=$T0
+jget() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get(sys.argv[1]))' "$1"; }
+step() { drills step -- "$1"; }
+graded() { sed -n 's/^- [0-9-]* grade \([0-3]\).*/\1/p' "$CARDS_DIR/$1.md" | tail -1; }
+results() { cat "$DRILLS_STATE/$D.json" 2>/dev/null; }
+reset
+A1="$(drills add --goal "Count the friction cards." --cmd friction-cards --accept "friction-cards count" --run yes --date 2026-10-01)"
+A2="$(drills add --goal "Open the hand-off window for ECFX-1." --cmd handoff-open --accept "handoff-open ECFX-1" --run no --date 2026-10-02)"
+assert_eq "Goal: Count the friction cards." "$(drills start --date $D)" "start prints the first goal, oldest new drill first"
+OUT="$(step 'cards count')"
+assert_eq "wrong|False" "$(jget action <<<"$OUT")|$(jget done <<<"$OUT")" "a wrong line is wrong"
+assert_has "friction-cards count" "$(jget message <<<"$OUT")" "and shows the right command"
+OUT="$(step 'friction-cards count; rm -rf ~/x')"
+assert_eq "refuse" "$(jget action <<<"$OUT")" "a compound line is refused"
+OUT="$(step 'friction-cards count')"
+assert_eq "run" "$(jget action <<<"$OUT")" "the right line after a miss runs"
+assert_has "Goal: Open the hand-off window for ECFX-1." "$(jget message <<<"$OUT")" "and the next goal follows"
+assert_eq "1" "$(graded "$A1")" "graded 1 after a miss"
+OUT="$(step '?')"
+assert_eq "show" "$(jget action <<<"$OUT")" "? shows the answer"
+OUT="$(step 'handoff-open ECFX-1 ~/w')"
+assert_eq "checked|True" "$(jget action <<<"$OUT")|$(jget done <<<"$OUT")" "a run-no drill is checked, and the last one ends the round"
+assert_eq "0" "$(graded "$A2")" "graded 0 after the answer was shown"
+assert_eq '{"right": 0, "total": 2}' "$(results)" "the day's results"
+assert_eq "Drills: 0 right of 2" "$(drills finish)" "finish prints the round"
+assert_eq "False" "$([ -e "$DRILLS_STATE/round.json" ] && echo True || echo False)" "and removes the round"
+assert_eq "Drills: 0 right of 2" "$(drills finish)" "finish twice is safe"
+OUT="$(step 'friction-cards count')"
+assert_eq "True" "$(jget done <<<"$OUT")" "no round: done"
+
+reset
+A1="$(drills add --goal "Count the friction cards." --cmd friction-cards --accept "friction-cards count" --run yes --date 2026-10-01)"
+drills start --date $D >/dev/null
+OUT="$(step 'friction-cards count --json')"
+assert_eq "run|True|2" "$(jget action <<<"$OUT")|$(jget done <<<"$OUT")|$(graded "$A1")" "first try: graded 2"
+assert_eq '{"right": 1, "total": 1}' "$(results)" "and counted right"
+
+reset
+A1="$(drills add --goal "G1." --cmd a --accept "a one" --run yes --date 2026-10-01)"
+A2="$(drills add --goal "G2." --cmd b --accept "b two" --run yes --date 2026-10-02)"
+drills start --date $D >/dev/null
+step 'a one; b' >/dev/null
+OUT="$(step 'a one')"
+assert_eq "2" "$(graded "$A1")" "a refused line is not a try"
+OUT="$(DRILLS_NOW=$((T0 + 301)) step 'b two')"
+assert_eq "run|True|2" "$(jget action <<<"$OUT")|$(jget done <<<"$OUT")|$(graded "$A2")" "timeout: the next right line is graded and ends the round"
+drills finish >/dev/null
+
+reset
+A1="$(drills add --goal "G1." --cmd a --accept "a one" --run yes --date 2026-10-01)"
+A2="$(drills add --goal "G2." --cmd b --accept "b two" --run yes --date 2026-10-02)"
+drills start --date $D >/dev/null
+step 'a one' >/dev/null
+assert_eq '{"right": 1, "total": 1}|' "$(results)|$(graded "$A2")" "abandoned round: what was done is kept, the rest ungraded"
+OUT="$(DRILLS_NOW=$((T0 + 301)) step 'nope')"
+assert_eq "True|" "$(jget done <<<"$OUT")|$(graded "$A2")" "timeout on a wrong line ends the round, ungraded"
+
+reset
+assert_eq "no drills due" "$(drills start --date $D)" "no drills: says so"
+assert_eq "False" "$([ -e "$DRILLS_STATE/round.json" ] && echo True || echo False)" "and writes no round"
+G="$(drills add --goal "Due later." --cmd c --accept "c" --run yes --date 2026-10-01)"
+drills start --date $D >/dev/null; step 'c' >/dev/null; drills finish >/dev/null
+N="$(drills add --goal "New one." --cmd n --accept "n" --run yes --date 2026-10-20)"
+assert_eq "Goal: New one." "$(drills start --date 2026-12-31)" "new drills come before reviewed ones"
+drills finish >/dev/null
+unset DRILLS_NOW
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
