@@ -22,6 +22,12 @@ cat >"$WORDS_MACDICT" <<'STUB'
 case "$1" in
   imbroglio) printf 'imbroglio im·bro·glio | imˈbrōlyō |\n\nnoun (plural imbroglios) an extremely confused, complicated, or embarrassing situation: the Watergate imbroglio.\n  • archaic a confused heap.\n\nORIGIN mid 18th century: Italian.\n' ;;
   "gordian knot"|"it's"|well-being|balmy|milieu|cordial) printf '%s\n\nnoun a sense of %s: an example of %s.\n' "$1" "$1" "$1" ;;
+  oxymoron) printf 'oxymoron ox·y·mo·ron | ˌäksəˈmôrˌän |\n\nnoun a figure of speech in which apparently contradictory terms appear in\n\nconjunction (e.g. faith unfaithful kept him falsely true): that fashionable rhetorical novelty, the humblebrag, is itself an oxymoron | the oxymoron forces together two terms which are seemingly incompatible. \n\nDERIVATIVES oxymoronic\n\nadjective \n\nORIGIN mid 17th century: from Greek.\n' ;;
+  gamut) printf 'gamut gam·ut | ˈɡamət | (the gamut)\n\nnoun 1 the complete range or scope of something: the whole gamut of human emotion. 2 Music a complete scale of musical notes; the compass or range of a voice or instrument: the orchestral gamut.\n  • historical a scale consisting of seven overlapping hexachords.\n  • historical the lowest note in the gamut scale. \n\nPHRASES run the gamut experience, display, or perform the complete range of something: wines that run the gamut from dry to sweet. \n\nORIGIN late Middle English.\n' ;;
+  sunny) printf 'sunny sun·ny | ˈsənē |\n\nadjective (sunnier | ˈsənēər |) (, sunniest | ˈbä(l)mēist |) 1 (of the weather) pleasantly warm: the balmy days of late summer | the air was golden and balmy. 2 dated extremely foolish, irrational, or eccentric: this is a balmy decision.\n  • sometimes offensive having a mental illness: I think he is gone balmy again. \n\nORIGIN mid 17th century.\n' ;;
+  rectify) printf 'rectify rec·ti·fy | ˈrektəˌfī |\n\nverb (rectifies, rectifying, rectified) [with object] 1 put right; correct: mistakes made now cannot be rectified later | we are working to rectify the situation. 2 convert (alternating current) to direct current. 3 Mathematics find a straight line equal in length to (a curve): his methods. \n' ;;
+  foible) printf 'foible foi·ble | ˈfoib(ə)l |\n\nnoun 1 a minor weakness or eccentricity in someone'"'"'s character: they have to tolerate each other'"'"'s little foibles. 2 Fencing the weaker part of a sword blade, from the middle to the point. Compare with forte1 \n' ;;
+  gambol) printf 'gambol gam·bol | ˈɡambəl |\n\nverb (gambols) (, gamboling | ˈɡamb(ə)liNG |) (; British English gambols) (, British English gambolling) [no object, usually with adverbial] run or jump about playfully: the mare gamboled toward her.\n' ;;
   *) printf 'No definition found for "%s".\n' "$1" ;;
 esac
 STUB
@@ -46,6 +52,14 @@ BACK="$(sed -n 's/^### Answer: //p' "$CARDS_DIR/$S.md")"
 assert_has "an extremely confused, complicated, or embarrassing situation" "$BACK" "the back is the first sense"
 case "$BACK" in *ORIGIN*|*im·bro·glio*) fail "short back" "$BACK" ;; *) pass "without the headword line or the origin" ;; esac
 [ "${#BACK}" -le 300 ] && pass "at most 300 characters" || fail "short back" "${#BACK} chars"
+back_of() { S2="$(words add "$1")"; sed -n 's/^### Answer: //p' "$CARDS_DIR/$S2.md"; rm -f "$CARDS_DIR/$S2.md"; }
+assert_eq "an extremely confused, complicated, or embarrassing situation" "$BACK" "the back is the definition alone: no part of speech, grammar note, example or sub-sense"
+assert_eq "a figure of speech in which apparently contradictory terms appear in conjunction (e.g. faith unfaithful kept him falsely true)" "$(back_of oxymoron)" "a definition the dictionary wraps mid-sentence is joined"
+assert_eq "the complete range or scope of something · Music a complete scale of musical notes; the compass or range of a voice or instrument" "$(back_of gamut)" "two numbered senses, without examples or later sections"
+assert_eq "(of the weather) pleasantly warm · dated extremely foolish, irrational, or eccentric" "$(back_of sunny)" "inflections with their pronunciation are dropped"
+assert_eq "put right; correct · convert (alternating current) to direct current" "$(back_of rectify)" "word-form notes without a pronunciation are dropped too"
+assert_eq "run or jump about playfully" "$(back_of gambol)" "including British spellings"
+assert_eq "a minor weakness or eccentricity in someone's character · Fencing the weaker part of a sword blade, from the middle to the point" "$(back_of foible)" "a sense ends at its first sentence"
 assert_eq "$S" "$(words add Imbroglio --from mw)" "a word already saved prints its slug"
 assert_eq "1" "$(ncards)" "and writes nothing"
 words add zzqqxx >/dev/null; RC=$?
@@ -147,6 +161,8 @@ case "$OUT" in *"ORIGIN mid 18th century"*) pass "look prints the full definitio
 assert_eq "0|saved" "$RC|$(echo "$OUT" | tail -1)" "and saves the word"
 assert_eq "lookup" "$(fm "$(words add imbroglio)" from)" "from a lookup"
 assert_eq "already saved" "$(words look imbroglio | tail -1)" "a second look says already saved"
+assert_eq "0|saved" "$(words look gordian knot | tail -1 | sed 's/^/0|/')" "w gordian knot needs no quotes"
+assert_eq "gordian knot" "$(fm "$(words add gordian knot)" word)" "and add takes the words as one too"
 OUT="$(words look zzqqxx)"; RC=$?
 assert_eq "1|0" "$RC|$(rg -l 'word: zzqqxx' "$CARDS_DIR" 2>/dev/null | wc -l | tr -d ' ')" "a miss saves nothing, exit 1"
 assert_eq 'No definition found for "zzqqxx".' "$(echo "$OUT" | head -1)" "and shows the dictionary's miss"

@@ -53,4 +53,6 @@ for f in "$C" "$P"; do
   has "$f" "never blocks the plan" "$side: coach never blocks the plan"
 done
 
+has "$C" "Bash(~/.local/bin/words:*)" "claude: allows words"
+
 finish

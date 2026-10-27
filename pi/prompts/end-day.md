@@ -240,7 +240,7 @@ File the day's word progress in its own diary block, skipped silently when `word
 
 ```bash
 DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
-command -v ~/.local/bin/words >/dev/null && L="$(~/.local/bin/words stats --date "$DAY" --line)" && [ -n "$L" ] && printf '%s\n' "$L" | ~/.local/bin/end-day words "$DAY"
+L="$(command -v ~/.local/bin/words >/dev/null && ~/.local/bin/words stats --date "$DAY" --line)"; if [ -n "$L" ]; then printf '%s\n' "$L" | ~/.local/bin/end-day words "$DAY"; fi
 ```
 
 The line reads `Words: R reviewed, N new, K known of T · streak S days`; `end-day words` keeps it between its own markers at the end of the diary, outside the report block. Never tick or write a habit line for words in the diary.

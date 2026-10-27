@@ -2,7 +2,7 @@
 description: Plan the working day from overnight reviews, tickets, Slack, meetings and yesterday's leftovers, filed in the diary
 argument-hint: [--since 2026-09-24T15:00:00Z]
 model: sonnet
-allowed-tools: Bash(~/.local/bin/start-day:*), Bash(~/.local/bin/sync-tickets:*), Bash(~/.local/bin/clean-worktrees:*), Bash(~/.local/bin/friction-ledger:*), Bash(~/.local/bin/cards:*), Bash(~/.local/bin/friction-cards:*), Bash(date:*), Bash(rg:*)
+allowed-tools: Bash(~/.local/bin/start-day:*), Bash(~/.local/bin/sync-tickets:*), Bash(~/.local/bin/clean-worktrees:*), Bash(~/.local/bin/friction-ledger:*), Bash(~/.local/bin/cards:*), Bash(~/.local/bin/words:*), Bash(~/.local/bin/friction-cards:*), Bash(date:*), Bash(rg:*)
 disable-model-invocation: true
 ---
 

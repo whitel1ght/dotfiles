@@ -106,6 +106,17 @@ for f in "$F" "$P"; do
   has "$f" "command -v ~/.local/bin/words" "$side: skipped when words is missing"
   lacks "$f" "merriam-webster word of the day" "$side: the diary habit line is never written"
   awk '/^## Reflect on friction/{a=NR} /^## Words/{b=NR} /^## Check the system/{c=NR} END{exit !(a&&b&&c&&a<b&&b<c)}' "$f" && pass "$side: words sits after friction" || fail "$side: words order" "wrong order in $f"
+  step="$(grep 'command -v ~/.local/bin/words' "$f")"
+  home="$(mktemp -d)"
+  HOME="$home" DAY=2026-10-27 bash -c "$step" && pass "$side: no words installed: the step exits 0" || fail "$side: skip exit" "exit $? with no words"
+  mkdir -p "$home/.local/bin"; printf '#!/bin/sh\n' >"$home/.local/bin/words"; chmod +x "$home/.local/bin/words"
+  HOME="$home" DAY=2026-10-27 bash -c "$step" && pass "$side: no word cards yet: the step exits 0" || fail "$side: skip exit" "exit $? with an empty line"
+  printf '#!/bin/sh\necho "Words: 1 reviewed for $3"\n' >"$home/.local/bin/words"
+  printf '#!/bin/sh\n{ echo "$*"; cat; } >"$HOME/filed"\n' >"$home/.local/bin/end-day"; chmod +x "$home/.local/bin/end-day"
+  HOME="$home" DAY=2026-10-27 bash -c "$step"
+  got="$(paste -sd '|' "$home/filed" 2>/dev/null)"
+  [ "$got" = "words 2026-10-27|Words: 1 reviewed for 2026-10-27" ] && pass "$side: the day's line reaches end-day words" || fail "$side: filed line" "got [$got]"
+  rm -rf "$home"
 done
 has "$F" "Bash(~/.local/bin/words:*)" "claude: allows words"
 
