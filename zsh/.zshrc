@@ -84,6 +84,10 @@ alias jtodo='jt -u'   # current Omni sprint, unassigned and To-Do
 # update), so it never opens on an "update available" notice.
 pi() { (( $+commands[pi-autoupdate] )) && pi-autoupdate "$@"; command pi "$@"; }
 
+# w <word>: define a word (macOS's dictionary) and save it as a word to learn (bin/words; the
+# words track of the learning system). Replaces the Unix `w` (who is logged in) in this shell.
+alias w='words look'
+
 # Local Pi agent on Qwen2.5-Coder 14B in LM Studio (pi/models.json). Load it
 # with `lms load qwen/qwen2.5-coder-14b --context-length 16384`; the default 8k
 # is too small. It can use the built-in tools, but extensions, skills, MCP and

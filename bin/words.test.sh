@@ -135,6 +135,19 @@ assert_eq "" "$(rg -l 'word: milieu' "$CARDS_DIR" 2>/dev/null)" "nothing saved b
 rm -f "$WORDS_STATE/lookups.log" "$WORDS_STATE/pending.cursor"
 assert_eq "0|" "$(words pending >/dev/null; echo $?)|$(words pending)" "no log: nothing pending, exit 0"
 
+echo "words look"
+reset
+OUT="$(words look imbroglio)"; RC=$?
+case "$OUT" in *"ORIGIN mid 18th century"*) pass "look prints the full definition" ;; *) fail "full definition" "$OUT" ;; esac
+assert_eq "0|saved" "$RC|$(echo "$OUT" | tail -1)" "and saves the word"
+assert_eq "lookup" "$(fm "$(words add imbroglio)" from)" "from a lookup"
+assert_eq "already saved" "$(words look imbroglio | tail -1)" "a second look says already saved"
+OUT="$(words look zzqqxx)"; RC=$?
+assert_eq "1|0" "$RC|$(rg -l 'word: zzqqxx' "$CARDS_DIR" 2>/dev/null | wc -l | tr -d ' ')" "a miss saves nothing, exit 1"
+assert_eq 'No definition found for "zzqqxx".' "$(echo "$OUT" | head -1)" "and shows the dictionary's miss"
+assert_eq "saved" "$(words look zzqqxx --back 'my own meaning' | tail -1)" "--back saves a miss"
+assert_eq "alias w='words look'" "$(rg -o "^alias w='words look'" "$TEST_DIR/../zsh/.zshrc")" "zsh: w is words look"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

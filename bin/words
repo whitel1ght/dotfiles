@@ -7,6 +7,10 @@
         $WORDS_MACDICT) unless --back; the front "What does *WORD* mean?" plus the sentence it
         was met in. Prints the slug; a word already saved prints its slug and writes nothing; a
         word the dictionary lacks, with no --back, exits 1 and writes nothing.
+  words look WORD [--back TEXT]
+        (zsh alias `w`) print the full definition, then save the word (from lookup) and print
+        "saved" or "already saved"; a miss prints macdict's message and saves nothing (exit 1)
+        unless --back.
   words today [--date D]
         Merriam-Webster's word of the day ($WORDS_FEED, a URL or a file): the feed item dated D
         (else the newest), its short definition as the back, its example sentence as met_in,
@@ -155,6 +159,25 @@ def add(word, back=None, met_in="", src="lookup", day=None, tags=()):
 
 def cmd_add(a):
     print(add(a.word, a.back, a.met_in, a.src, a.date))
+
+
+def cmd_look(a):
+    """w WORD: the full definition, then the word saved; a miss shows macdict's message"""
+    text = lookup(a.word)
+    if text is None:
+        try:
+            out = subprocess.run([MACDICT, a.word], capture_output=True, text=True, timeout=20,
+                                 env={**os.environ, "MACDICT_LOG": "0"}).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            out = ""
+        print(out or f"no definition for {a.word}")
+        if a.back is None:
+            sys.exit(1)
+    else:
+        print(text)
+    existed = saved(a.word)
+    add(a.word, back=a.back if text is None else None, src="lookup")
+    print("already saved" if existed else "saved")
 
 
 def log_lines():
@@ -373,6 +396,10 @@ def main():
     s.add_argument("--from", dest="src", default="lookup")
     s.add_argument("--date")
     s.set_defaults(fn=cmd_add)
+    s = sub.add_parser("look")
+    s.add_argument("word")
+    s.add_argument("--back")
+    s.set_defaults(fn=cmd_look)
     s = sub.add_parser("today")
     s.add_argument("--date")
     s.set_defaults(fn=cmd_today)
