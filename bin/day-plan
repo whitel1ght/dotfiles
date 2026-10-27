@@ -3,8 +3,9 @@
 #
 #   day-plan [--wait]
 #
-# Reads $DIARY_DIR/<today>.md (default ~/wiki/diary). Needs tmux (exit 2 outside it)
-# and an existing diary file (exit 1). Without --wait the popup is started through
+# Reads $DIARY_DIR/<today>.md (default ~/wiki/diary). Needs tmux (exit 2 with no tmux
+# server or pane; with $TMUX empty, `tmux-here` finds the caller's pane and the popup
+# targets it) and an existing diary file (exit 1). Without --wait the popup is started through
 # `tmux run-shell -b`, so the call returns at once and is safe from a non-interactive
 # caller; --wait runs display-popup in the foreground until the popup is closed.
 # nvim reloads the file when something else (the day session) edits it.
@@ -23,13 +24,17 @@ case "${1:-}" in
   *) die "unknown option $1" ;;
 esac
 
-[ -n "${TMUX:-}" ] || die "needs tmux" 2
+HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
+# a harness can start its shell without $TMUX: then tmux-here finds the caller's pane
+if [ -z "${TMUX:-}" ]; then
+  TMUX_PANE="$("$HERE/tmux-here" 2>/dev/null)" || die "needs tmux" 2
+fi
 
 file="$DIARY_DIR/$(date +%F).md"
 [ -f "$file" ] || die "no diary at $file"
 
 if [ "$wait" = 0 ]; then
-  cmd="$(printf '%q ' env "DIARY_DIR=$DIARY_DIR" "$0" --wait)"
+  cmd="$(printf '%q ' env "DIARY_DIR=$DIARY_DIR" ${TMUX_PANE:+"TMUX_PANE=$TMUX_PANE"} "$0" --wait)"
   target=()
   [ -z "${TMUX_PANE:-}" ] || target=(-t "$TMUX_PANE")
   exec tmux run-shell -b "${target[@]}" "$cmd"

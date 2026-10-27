@@ -530,6 +530,11 @@ if [ -f "$DOTFILES_DIR/bin/team-plugins-sync" ]; then
     create_symlink "$DOTFILES_DIR/bin/team-plugins-sync" "$HOME/.local/bin/team-plugins-sync"
 fi
 
+# tmux-here prints the caller's tmux pane even without $TMUX (day-plan, handoff-open).
+if [ -f "$DOTFILES_DIR/bin/tmux-here" ]; then
+    create_symlink "$DOTFILES_DIR/bin/tmux-here" "$HOME/.local/bin/tmux-here"
+fi
+
 # handoff-open opens a handed-off ticket's side session in a tmux window (/daily:handoff, /handoff).
 if [ -f "$DOTFILES_DIR/bin/handoff-open" ]; then
     create_symlink "$DOTFILES_DIR/bin/handoff-open" "$HOME/.local/bin/handoff-open"

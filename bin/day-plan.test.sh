@@ -17,9 +17,16 @@ SANDBOX="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "${SANDBOX:?}"' EXIT
 BIN="$SANDBOX/bin"; DIARY="$SANDBOX/diary"; LOG="$SANDBOX/tmux.log"
 mkdir -p "$BIN" "$DIARY"
+# FAKE_NOSERVER: no server (nothing logged); FAKE_CLIENT_PANE: one client, its active pane
 cat > "$BIN/tmux" <<'STUB'
 #!/bin/bash
+[ -z "${FAKE_NOSERVER:-}" ] || exit 1
 { echo "--- tmux"; printf '%s\n' "$@"; } >> "$TMUX_LOG"
+case "$1" in
+  list-clients) [ -z "${FAKE_CLIENT_PANE:-}" ] || echo "100 /dev/ttys001" ;;
+  display-message) case "$*" in *"-c /dev/ttys001"*) echo "$FAKE_CLIENT_PANE" ;; *) exit 1 ;; esac ;;
+esac
+exit 0
 STUB
 chmod +x "$BIN/tmux"
 
@@ -84,10 +91,20 @@ assert_eq "" "$(cat "$LOG")" "without calling tmux"
 run; assert_eq "1" "$?" "the non-blocking path reports a missing diary too, before launching"
 
 echo "day-plan — environment and arguments"
-: > "$LOG"; (PATH="$BIN:$PATH" TMUX_LOG="$LOG" DIARY_DIR="$DIARY" TMUX= "$SCRIPT" 2>"$SANDBOX/stderr"); rc=$?
-assert_eq "2" "$rc" "outside tmux exits 2"
+: > "$LOG"; (PATH="$BIN:$PATH" TMUX_LOG="$LOG" DIARY_DIR="$DIARY" TMUX= FAKE_NOSERVER=1 "$SCRIPT" 2>"$SANDBOX/stderr"); rc=$?
+assert_eq "2" "$rc" "with no tmux server exits 2"
 assert_eq "day-plan: needs tmux" "$(errs)" "with a one-line message"
-assert_eq "" "$(cat "$LOG")" "and does not call tmux"
+assert_eq "" "$(cat "$LOG")" "and nothing reaches tmux"
+
+echo "day-plan — \$TMUX empty, tmux running (a harness shell)"
+printf '# %s\n\n<!-- start-day:start -->\n- [ ] ecfx-1 x\n<!-- start-day:end -->\n' "$TODAY" > "$DIARY/$TODAY.md"
+: > "$LOG"; (PATH="$BIN:$PATH" TMUX_LOG="$LOG" DIARY_DIR="$DIARY" TMUX= TMUX_PANE= FAKE_CLIENT_PANE=%9 "$SCRIPT" 2>"$SANDBOX/stderr"); rc=$?
+assert_eq "0" "$rc" "exits 0"
+assert_contains "$(log)" "|run-shell |-b |-t |%9 " "the popup targets the pane tmux-here found"
+assert_contains "$(log)" "TMUX_PANE=%9" "and the background job carries it to the popup"
+: > "$LOG"; (PATH="$BIN:$PATH" TMUX_LOG="$LOG" DIARY_DIR="$DIARY" TMUX= TMUX_PANE= "$SCRIPT" 2>"$SANDBOX/stderr"); rc=$?
+assert_eq "2|day-plan: needs tmux" "$rc|$(errs)" "a server with no client and no pane of ours: needs tmux"
+rm -f "$DIARY/$TODAY.md"
 run --bogus; assert_eq "1" "$?" "an unknown option is an error"
 assert_contains "$("$SCRIPT" -h)" "day-plan [--wait]" "-h prints the usage"
 

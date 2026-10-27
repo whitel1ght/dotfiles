@@ -4,8 +4,9 @@
 #   handoff-open KEY WORKTREE [claude|pi]
 #
 # The window opens in the tmux session the caller runs in, found without relying on $TMUX
-# (a harness can start its shell without it): the session of $TMUX_PANE, else of the pane
-# whose process is an ancestor of this one, else of the most recently active client. A
+# (a harness can start its shell without it): the session of the pane `tmux-here` prints
+# ($TMUX_PANE, else the pane whose process is an ancestor of this one, else the most recently
+# active client's). A
 # window named KEY, or KEY:<anything> (tmux's automatic name), is focused instead of opening
 # a second one. It runs `claude -n KEY "/daily:pickup KEY"` (pi: `pi -n KEY "/pickup KEY"`)
 # in WORKTREE. Prints `opened <session>:KEY`, `focused <session>:<window>`, or, with no tmux
@@ -26,23 +27,11 @@ case "$harness" in
   *) die "harness is claude or pi, not $harness" ;;
 esac
 
-find_session() {
-  local s panes pid
-  if [ -n "${TMUX_PANE:-}" ] && s="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null)" && [ -n "$s" ]; then
-    echo "$s"; return
-  fi
-  panes="$(tmux list-panes -a -F '#{pane_pid} #{session_name}' 2>/dev/null || true)"
-  pid=$$
-  while [ -n "$pid" ] && [ "$pid" -gt 1 ]; do
-    s="$(awk -v p="$pid" '$1 == p { sub(/^[^ ]+ /, ""); print; exit }' <<<"$panes")"
-    if [ -n "$s" ]; then echo "$s"; return; fi
-    pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
-  done
-  tmux list-clients -F '#{client_activity} #{client_session}' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-
-}
-
+HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
 session=""
-command -v tmux >/dev/null 2>&1 && tmux list-sessions >/dev/null 2>&1 && session="$(find_session)"
+if pane="$("$HERE/tmux-here" 2>/dev/null)"; then
+  session="$(tmux display-message -p -t "$pane" '#{session_name}' 2>/dev/null || true)"
+fi
 if [ -z "$session" ]; then
   echo "run: cd $wt && $cmd"
   exit 0
