@@ -74,6 +74,8 @@ export class IdeasNudger {
         waiting: this.waiting,
       };
       if (!shouldNudge(idle) || !(await this.deps.due())) return;
+      // the user may have written while `ideas due` ran
+      if (this.waiting || this.lastUserAt !== idle.lastUserAt) return;
       this.waiting = true;
       this.deps.send(PI_NUDGE_TEXT);
     } finally {

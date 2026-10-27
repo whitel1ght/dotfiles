@@ -161,6 +161,19 @@ assert_eq "no" "$([ -d "$IDEAS_DIR/.lock" ] && echo yes || echo no)" "and releas
 mkdir -p "$IDEAS_DIR/.lock"; echo 999999 >"$IDEAS_DIR/.lock/pid"
 ideas answer "$SIXTH" no; assert_eq "0|no" "$?|$(fm "$SIXTH" answer)" "a dead holder's lock is taken over"
 
+echo "final review fixes"
+start '- [ ] reviewed then later\n'
+RL="$(id_of 'reviewed then later')"
+ideas record "$RL" --verdict actionable --summary "do it" --file "$SANDBOX/review.md"
+ideas answer "$RL" later --days 2
+assert_eq "[]" "$(ideas due | jq -c 'map(.id)')" "a reviewed idea answered later is not due before its date"
+assert_eq "[\"$RL\"]" "$(IDEAS_TODAY=$(date -v+3d +%F) "$SCRIPT" due | jq -c 'map(.id)')" "and is due again once the date has passed"
+printf '# ideas\n\n## review & implement:\n\n- [ ] reviewed then later\n- [ ] a brand new idea\n' >"$IDEAS_FILE"
+assert_has "a brand new idea" "$(ideas due --sync --limit 3 | jq -r '.[].text')" "due --sync picks up a line added since the last sync"
+printf '# ideas\n\n* * *\n\n## implemented:\n\n- plain implemented line\n' >"$IDEAS_FILE"; reset; ideas sync >/dev/null
+assert_eq "done" "$(fm "$(id_of 'plain implemented line')" status)" "a plain bullet under implemented is done, never reviewed"
+assert_eq "1" "$(ls "$IDEAS_DIR"/I-*.md | wc -l | tr -d ' ')" "a * * * rule is not an idea"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

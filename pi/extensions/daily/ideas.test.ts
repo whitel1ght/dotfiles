@@ -82,6 +82,28 @@ test("the user writing again allows the next round; an extension's input does no
   s.cleanup();
 });
 
+test("the user writing while `ideas due` runs cancels the nudge", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ideas-"));
+  let now = 1_000_000;
+  const sent: string[] = [];
+  let nudger: IdeasNudger;
+  nudger = new IdeasNudger({
+    now: () => now,
+    stateHome: () => home,
+    session: () => "sess-1",
+    due: async () => {
+      nudger.onInput("one more thing", "interactive");
+      return true;
+    },
+    send: (text) => void sent.push(text),
+  });
+  nudger.onInput("/system", "interactive");
+  now += IDLE_MS;
+  await nudger.tick();
+  assert.deepEqual(sent, []);
+  rmSync(home, { recursive: true, force: true });
+});
+
 test("a /system in another session moves the mark there", async () => {
   const a = setup("sess-a");
   const b = setup("sess-b");

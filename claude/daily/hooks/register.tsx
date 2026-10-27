@@ -27,7 +27,7 @@ const LID = ['/usr/sbin/ioreg', '-r', '-k', 'AppleClamshellState', '-d', '1']
 const SYSTEM_STATE = ['/usr/bin/pmset', '-g', 'systemstate']
 const COLD_RELAY = 'daily: relayed past the cold-cache guard'
 const IDEAS_MS = 60_000
-const IDEAS_DUE = 'I="$(command -v ideas || echo "$HOME/.local/bin/ideas")"; [ -x "$I" ] && exec "$I" due --limit 3 || echo "[]"'
+const IDEAS_DUE = 'I="$(command -v ideas || echo "$HOME/.local/bin/ideas")"; [ -x "$I" ] && exec "$I" due --sync --limit 3 || echo "[]"'
 const BLIND_PROBES = 3
 const EMPTY: ViewState = { active: false, status: '', groups: [] }
 const view = atom({ plugin: 'daily', key: 'view' } as const, EMPTY)
@@ -131,8 +131,11 @@ async function nudgeIdeas($: EngineInterface) {
     const running = (await $.agent.list().catch(() => [])).filter(a => a.status === 'running').length
     const now = await $.clock.now()
     if (!shouldNudge({ isSystem, now, lastUserAt: idle.lastUserAt, lastTurnEndAt: idle.lastTurnEndAt, agentsRunning: running, waiting: idle.waiting })) return
+    const userAt = idle.lastUserAt
     const ran = await $.process.run(['/bin/sh', '-c', IDEAS_DUE], { timeoutMs: 30_000 })
     if (ran.exitCode !== 0 || !/^\s*\[\s*\{/.test(ran.stdout)) return
+    // the user may have written while `ideas due` ran
+    if (idle.waiting || idle.lastUserAt !== userAt) return
     idle.waiting = true
     void $.prompt.submit({ text: NUDGE_TEXT }).catch(() => $.ui.toast('daily ideas: prompt submit failed'))
   } catch (err) {

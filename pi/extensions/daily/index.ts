@@ -15,11 +15,11 @@ import { IdeasNudger } from "./ideas.ts";
 
 const IDEAS_MS = 60_000;
 
-/** `ideas due --limit 3` has something; any failure counts as nothing due. */
+/** `ideas due --sync --limit 3` has something; any failure counts as nothing due. */
 function ideasDue(): Promise<boolean> {
   return new Promise((resolve) => {
     const bin = existsSync(join(homedir(), ".local/bin/ideas")) ? join(homedir(), ".local/bin/ideas") : "ideas";
-    execFile(bin, ["due", "--limit", "3"], { timeout: 30_000 }, (err, stdout) => {
+    execFile(bin, ["due", "--sync", "--limit", "3"], { timeout: 30_000 }, (err, stdout) => {
       try {
         resolve(!err && (JSON.parse(String(stdout)) as unknown[]).length > 0);
       } catch {

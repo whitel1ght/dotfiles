@@ -4,10 +4,11 @@
   ideas sync      read $IDEAS_FILE (~/wiki/IDEA.md) into one entry per idea under $IDEAS_DIR
                   (~/wiki/work/ideas): I-NNN.md files and index.md. Prints
                   {"new": [ids], "edited": [ids], "closed": [ids], "gone": [ids]}.
-  ideas due [--limit N] [--id I-NNN ...]
+  ideas due [--sync] [--limit N] [--id I-NNN ...]
                   JSON [{id, text, section, status}] of ideas to review: new or edited, not
-                  answered no, "later" date passed; oldest first. --id: those ideas, whatever
-                  their state.
+                  answered no, "later" date passed (a reviewed idea answered later comes back
+                  then too); oldest first. --sync: sync first (the idle timers use it, so a line
+                  added since the last review counts). --id: those ideas, whatever their state.
   ideas record I-NNN --verdict stale|actionable|elaborate --summary TEXT --file F
                   the review: F's text becomes the entry's `## Review`; status reviewed.
   ideas answer I-NNN yes|no|later [--days N]
@@ -78,9 +79,11 @@ def parse_ideas(path):
             if b:
                 mark = {" ": "open", "-": "dropped"}.get(b.group(1), "done")
                 body = b.group(2).strip()
-            if not body:
+            if not body or re.fullmatch(r"[*\-_\s]+", body):  # a bare dash or a `* * *` rule
                 current = None
                 continue
+            if section == "implemented" and mark in ("none", "open"):
+                mark = "done"
             current = {"text": body, "section": section, "mark": mark}
             ideas.append(current)
         elif line[:1].isspace() and current is not None:
@@ -213,13 +216,16 @@ def cmd_sync():
             e["status"] = "gone"
             out["gone"].append(e["id"])
     save(entries)
-    print(json.dumps(out))
+    return out
 
 
 def due(entries, day):
-    return [e for e in entries.values()
-            if e.get("status") in ("new", "edited") and e.get("answer") != "no"
-            and (not e.get("later_until") or e["later_until"] <= day)]
+    def waiting(e):
+        if e.get("status") in ("new", "edited"):
+            return e.get("answer") != "no" and (not e.get("later_until") or e["later_until"] <= day)
+        # reviewed, answered "later": back once its date has passed
+        return e.get("status") == "reviewed" and e.get("answer") == "later" and e.get("later_until", "") <= day
+    return [e for e in entries.values() if waiting(e)]
 
 
 def cmd_due(limit, ids):
@@ -312,9 +318,13 @@ def main(argv):
     cmd, args = argv[0], argv[1:]
     if cmd == "sync" and not args:
         with lock():
-            cmd_sync()
+            print(json.dumps(cmd_sync()))
     elif cmd == "due":
-        o = opts(args, {"--limit": "one", "--id": "many"})
+        sync = "--sync" in args
+        o = opts([a for a in args if a != "--sync"], {"--limit": "one", "--id": "many"})
+        if sync:
+            with lock():
+                cmd_sync()
         cmd_due(int(o["--limit"]) if "--limit" in o else None, o.get("--id", []))
     elif cmd == "record" and args:
         o = opts(args[1:], {"--verdict": "one", "--summary": "one", "--file": "one"})
