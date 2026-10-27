@@ -97,14 +97,16 @@ def errkind: if test("unavailable|overloaded|connection error|econn|enotfound|\\
   elif test("unauthori[sz]ed|\\b40[13]\\b|api key|not logged in|oauth|expired"; "i") then "auth"
   elif test("timed? ?out|timeout"; "i") then "timeout"
   elif test("abort"; "i") then "interrupt" else "other" end;
-def ourtool: any(splits("[;&|\\n]+");
+# quoted strings blanked, so a ; & | or newline inside one is not a statement separator
+def unq: gsub("'"'"'[^'"'"']*'"'"'"; "Q") | gsub("\"[^\"]*\""; "Q");
+def ourtool: any(unq | splits("[;&|\\n]+");
     gsub("^[\\s({]+"; "")
     | until(test("^[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+") | not; sub("^[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+"; ""))
     | (match("^\\S*").string | sub(".*/"; ""))
     | IN("glab", "jira", "secret", "secrets", "changes-since", "mr-watch", "end-day", "start-day", "day-plan", "day-note", "diary-links",
          "friction", "friction-mine", "friction-ledger", "jt", "wt", "wait-for", "sync-tickets", "wiki-sync", "cs", "cs-add", "plink", "decide", "decisions"));
 # more than one statement after a leading "cd DIR &&": a bare exit code there names no command
-def compound: sub("^\\s*cd\\s+(\"[^\"]*\"|'"'"'[^'"'"']*'"'"'|\\S+)\\s*&&\\s*"; "") | sub("[\\s;]+$"; "") | test(";|\\n|&&|\\|\\|");'
+def compound: sub("^\\s*cd\\s+(\"[^\"]*\"|'"'"'[^'"'"']*'"'"'|\\S+)\\s*&&\\s*"; "") | unq | sub("[\\s;]+$"; "") | test(";|\\n|&&|\\|\\|");'
 
 out="$(mktemp -d)"
 trap 'rm -rf "${out:?}"' EXIT

@@ -88,6 +88,8 @@ us() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"user",content:$c}')" us
   tu 2026-10-15T07:28:00.000Z c2 "cat state.md\necho =====\nend-day entries 2026-10-15 ecfx | rg x"; tr_ 2026-10-15T07:28:30.000Z c2 "Exit code 1\n"
   tu 2026-10-15T07:29:00.000Z c3 "secret X >/dev/null && ls ~/x || true"; tr_ 2026-10-15T07:29:30.000Z c3 "Exit code 1\n"
   tu 2026-10-15T07:30:00.000Z s1 "glab mr view 77;\n"; tr_ 2026-10-15T07:30:30.000Z s1 "Exit code 1\n"
+  tu 2026-10-15T07:08:00.000Z q1 "rg -ln 'start-day collect|bin/start-day|START_DAY_TRIAGE' bin/*.test.sh claude/tests 2>/dev/null"; tr_ 2026-10-15T07:08:30.000Z q1 "Exit code 2"
+  tu 2026-10-15T07:08:40.000Z q2 "rg -n 'a; glab' x"; tr_ 2026-10-15T07:08:50.000Z q2 "Exit code 1"
   tu 2026-10-15T07:31:00.000Z s2 "cd \\\"my dir\\\" && glab mr view 78"; tr_ 2026-10-15T07:31:30.000Z s2 "Exit code 1\n"
   tu 2026-10-15T07:10:00.000Z t4 "git push"; tr_ 2026-10-15T07:10:10.000Z t4 "The user doesn't want to proceed with this tool use. The tool use was rejected"
   tu 2026-10-15T07:12:00.000Z d1 "git reset --hard"; tr_ 2026-10-15T07:12:10.000Z d1 "Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Git Destructive]. If you have other tasks that don't depend on this action, continue working on those."
