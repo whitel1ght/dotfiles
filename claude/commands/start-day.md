@@ -33,8 +33,11 @@ Slack. The digest has: carry-over from my last diary entry, my open MRs (reviews
 received, approvals, pipelines), which of my MRs are ready to merge (and in what order,
 when they depend on each other), MRs waiting on my review, Jira, and last `## Repos`:
 `repos-sync` has fetched every GitLab repo in `~/projects` and fast-forwarded its default
-branch where that was safe. Repos are setup, not work: keep them out of the plan, and
-tell me in one line how many moved, plus each repo left alone or failed with its reason.
+branch where that was safe, then `## Team plugins`: `team-plugins-sync` has updated the
+team's Claude plugins to that clone and regenerated pi's team skills (`plink`). Repos are
+setup, not work: keep them out of the plan, and tell me in one line how many repos moved
+and which plugins updated, plus each repo left alone and anything that failed, with its
+reason.
 
 **Slack** (the claude.ai Slack connector; if its tools are deferred, load them with
 ToolSearch). Use only `slack_search_public_and_private`, `slack_read_thread` and

@@ -30,6 +30,9 @@
 #                 GitLab repo in ~/projects fetched and its default branch
 #                 fast-forwarded where safe; started first, in the background,
 #                 and printed last
+#   team plugins  `team-plugins-sync` ($START_DAY_TEAM_PLUGINS_SYNC overrides
+#                 it), right after repos-sync in the same background job:
+#                 team Claude plugins updated to the clone, pi's skills by plink
 # Slack and the calendar come through claude.ai connectors, which the command
 # reads itself; there's no script access to either.
 set -euo pipefail
@@ -384,13 +387,17 @@ case "${1:-}" in
     else SINCE=$(iso $((now - 86400 - 10#$(date +%H) * 3600 - 10#$(date +%M) * 60 - 10#$(date +%S) + 8 * 3600))); fi
     mkdir -p "$STATE_DIR"; iso "$now" > "$STATE_DIR/pending"
     printf '# Since %s (%s local)\n' "$SINCE" "$(date -r "$(epoch_of "$SINCE")" '+%a %H:%M' 2>/dev/null || echo ?)"
-    repos_out="$(mktemp)"
-    "${START_DAY_REPOS_SYNC:-$HERE/repos-sync}" >"$repos_out" 2>&1 </dev/null & repos_pid=$!
+    repos_out="$(mktemp)"; plugins_out="$(mktemp)"
+    # team plugins after repos-sync, so they update from the clone it just fast-forwarded
+    ( "${START_DAY_REPOS_SYNC:-$HERE/repos-sync}" >"$repos_out" 2>&1
+      "${START_DAY_TEAM_PLUGINS_SYNC:-$HERE/team-plugins-sync}" >"$plugins_out" 2>&1 ) </dev/null & repos_pid=$!
     collect_carryover; collect_my_mrs; collect_ready_to_merge; collect_review_queue; collect_gitlab_todos; collect_jira
-    section "Repos (fetched from GitLab)"
     wait "$repos_pid" || true
+    section "Repos (fetched from GitLab)"
     if [ -s "$repos_out" ]; then cat "$repos_out"; else echo "(repos-sync printed nothing)"; fi
-    rm -f "$repos_out" ;;
+    section "Team plugins"
+    if [ -s "$plugins_out" ]; then cat "$plugins_out"; else echo "(team-plugins-sync printed nothing)"; fi
+    rm -f "$repos_out" "$plugins_out" ;;
   save)
     plan=$(cat)
     dups=$(printf '%s\n' "$plan" | sed -nE 's/^- \[.\] //p' | sed 's/ · .*//' \

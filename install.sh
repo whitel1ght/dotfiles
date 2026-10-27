@@ -525,6 +525,11 @@ if [ -f "$DOTFILES_DIR/bin/repos-sync" ]; then
     create_symlink "$DOTFILES_DIR/bin/repos-sync" "$HOME/.local/bin/repos-sync"
 fi
 
+# team-plugins-sync updates the team's Claude plugins and pi's team skills to the clone (start-day collect).
+if [ -f "$DOTFILES_DIR/bin/team-plugins-sync" ]; then
+    create_symlink "$DOTFILES_DIR/bin/team-plugins-sync" "$HOME/.local/bin/team-plugins-sync"
+fi
+
 # handoff-open opens a handed-off ticket's side session in a tmux window (/daily:handoff, /handoff).
 if [ -f "$DOTFILES_DIR/bin/handoff-open" ]; then
     create_symlink "$DOTFILES_DIR/bin/handoff-open" "$HOME/.local/bin/handoff-open"
