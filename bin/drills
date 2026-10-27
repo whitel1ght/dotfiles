@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Drills: the second track of the learning system. A drill is a quiz card in $CARDS_DIR
+(~/wiki/cards) with tag `drill`: the front is a goal in plain words, the back the command that
+reaches it. The user practises them by typing the real commands in a tmux window.
+
+  drills add --goal G --cmd C --accept A --run yes|no [--back B] [--page P] [--from F] [--date D]
+        save a drill: A is the words a typed line must hold, in order, the first being the
+        command (`friction-cards count`); --back defaults to A; run no = checked, never run.
+        Prints the slug; a drill with the same accept prints its slug and writes nothing.
+
+A drill card's extra front matter: cmd, accept, run (yes|no), from (manual|hand), page, stage
+(learning|known). Cards are written through `cards` ($DRILLS_CARDS, default the one next to this
+script).
+"""
+import argparse
+import os
+import re
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+CARDS = os.environ.get("DRILLS_CARDS") or os.path.join(HERE, "cards")
+CARDS_DIR = os.path.expanduser(os.environ.get("CARDS_DIR") or "~/wiki/cards")
+STATE = os.path.expanduser(os.environ.get("DRILLS_STATE") or "~/.local/state/drills")
+
+
+class Fail(Exception):
+    def __init__(self, msg, code=1):
+        super().__init__(msg)
+        self.code = code
+
+
+def one_line(s):
+    return " ".join((s or "").split())
+
+
+def read_card(path):
+    """{slug, fm, front, back, text} of a card file, or None when it has no front matter"""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    m = re.match(r"---\n(.*?)\n---\n", text, re.S)
+    if not m:
+        return None
+    fm = {k.strip(): v.strip() for k, _, v in (l.partition(":") for l in m.group(1).split("\n")) if k.strip()}
+    front = re.search(r"(?m)^## Question: (.*)$", text)
+    back = re.search(r"(?m)^### Answer: (.*)$", text)
+    return {"slug": os.path.basename(path)[:-3], "fm": fm, "text": text,
+            "front": front.group(1) if front else "", "back": back.group(1) if back else ""}
+
+
+def tags(card):
+    return [t.strip() for t in card["fm"].get("tags", "").strip("[]").split(",") if t.strip()]
+
+
+def drill_cards():
+    """the cards tagged drill"""
+    try:
+        names = sorted(n for n in os.listdir(CARDS_DIR) if n.endswith(".md") and not n.startswith("."))
+    except OSError:
+        return []
+    cards = (read_card(os.path.join(CARDS_DIR, n)) for n in names)
+    return [c for c in cards if c and "drill" in tags(c)]
+
+
+def run_cards(*args):
+    ran = subprocess.run([CARDS, *args], capture_output=True, text=True, env={**os.environ, "CARDS_DIR": CARDS_DIR})
+    if ran.returncode != 0:
+        raise Fail(f"cards {args[0]} failed: {ran.stderr.strip()}")
+    return ran.stdout.strip()
+
+
+def cmd_add(a):
+    goal, accept = one_line(a.goal), one_line(a.accept)
+    if not goal or not accept or not one_line(a.cmd):
+        raise Fail("--goal, --cmd and --accept must not be empty", 2)
+    if a.run not in ("yes", "no"):
+        raise Fail("--run is yes or no", 2)
+    for c in drill_cards():
+        if one_line(c["fm"].get("accept")) == accept:
+            print(c["slug"])
+            return
+    args = ["add", "--front", goal, "--back", one_line(a.back) or accept, "--tags", "drill",
+            "--source", f"drills: {a.src}"]
+    if a.date:
+        args += ["--date", a.date]
+    for k, v in (("cmd", one_line(a.cmd)), ("accept", accept), ("run", a.run), ("from", a.src),
+                 ("page", one_line(a.page)), ("stage", "learning")):
+        if v:
+            args += ["--set", f"{k}={v}"]
+    print(run_cards(*args))
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print(f"drills: {message}", file=sys.stderr)
+        sys.exit(2)
+
+
+def main():
+    p = Parser(prog="drills", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("add")
+    s.add_argument("--goal", required=True)
+    s.add_argument("--cmd", required=True)
+    s.add_argument("--accept", required=True)
+    s.add_argument("--run", required=True)
+    s.add_argument("--back", default="")
+    s.add_argument("--page", default="")
+    s.add_argument("--from", dest="src", default="hand")
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_add)
+    a = p.parse_args()
+    try:
+        a.fn(a)
+    except Fail as e:
+        print(f"drills: {e}", file=sys.stderr)
+        sys.exit(e.code)
+
+
+if __name__ == "__main__":
+    main()
