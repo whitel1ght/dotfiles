@@ -18,6 +18,8 @@ due lists due cards, oldest due first, new ones last: `slug<TAB>front`, or --jso
 [{slug, front, back, tags, new}]. grade (SM-2 style, rounded to whole days, min 1):
 0 interval 1, lapses+1, ease-0.2 (min 1.3); 1 interval max(1, i*1.2), ease-0.15;
 2 interval i*ease (first rep 1, second 3); 3 interval i*ease*1.3, ease+0.15; due = D + interval.
+Each grade also appends `- YYYY-MM-DD grade G interval N` to the card's `## Reviews` section
+(added last when missing; never part of the answer), so a card carries its own history.
 --date defaults to today, local time. Exit 0 ok, 2 bad usage or grade, 1 missing card or error.
 Every write is a temp file renamed into place, so an error leaves the card untouched.
 """
@@ -33,6 +35,7 @@ import tempfile
 CARDS_DIR = os.path.expanduser(os.environ.get("CARDS_DIR") or "~/wiki/cards")
 HEAD_RE = re.compile(r"^## Question:[ \t]*(.*)$", re.M)
 ANS_RE = re.compile(r"^### Answer:[ \t]*", re.M)
+REVIEWS_RE = re.compile(r"^## Reviews[ \t]*$", re.M)
 
 
 class Fail(Exception):
@@ -100,8 +103,16 @@ def parse_front_back(body):
     front = m.group(1).strip() if m else ""
     rest = body[m.end():] if m else body
     a = ANS_RE.search(rest)
-    back = rest[a.end():].strip() if a else ""
-    return front, back
+    back = rest[a.end():] if a else ""
+    return front, REVIEWS_RE.split(back, 1)[0].strip()
+
+
+def with_review(body, line):
+    """body with `line` appended to its `## Reviews` section, which is added last when missing"""
+    body = body.rstrip("\n")
+    if REVIEWS_RE.search(body):
+        return f"{body}\n{line}\n"
+    return f"{body}\n\n## Reviews\n\n{line}\n"
 
 
 def load(slug):
@@ -270,8 +281,9 @@ def cmd_grade(a):
     due = today + datetime.timedelta(days=interval)
     lines = set_fm(c["lines"], {"due": due.isoformat(), "interval": interval,
                                 "ease": f"{ease:.2f}", "reps": reps + 1, "lapses": lapses})
-    write_atomic(c["path"], "---\n" + "\n".join(lines) + "\n---\n" + c["body"] if c["has_fm"]
-                 else "---\n" + "\n".join(lines) + "\n---\n\n" + c["body"].lstrip("\n"))
+    body = with_review(c["body"], f"- {today.isoformat()} grade {g} interval {interval}")
+    write_atomic(c["path"], "---\n" + "\n".join(lines) + "\n---\n" + body if c["has_fm"]
+                 else "---\n" + "\n".join(lines) + "\n---\n\n" + body.lstrip("\n"))
 
 
 def cmd_drop(a):

@@ -128,6 +128,20 @@ cards add --front "What does *x* mean?" --back "x." --set tags=oops >/dev/null; 
 assert_eq "2|0" "$RC|$(ls "$CARDS_DIR" | grep -c '^what-does-x')" "--set may not overwrite a scheduling key"
 cards add --front "What does *y* mean?" --back "y." --set novalue >/dev/null; assert_eq "2" "$?" "--set needs KEY=VALUE"
 
+# --- review history ----------------------------------------------------------
+reset
+mk hist 2026-10-10 3 2.5 2 0
+cards grade hist 2 --date 2026-10-15
+cards grade hist 0 --date 2026-10-16
+assert_eq "## Reviews|- 2026-10-15 grade 2 interval 8|- 2026-10-16 grade 0 interval 1" "$(sed -n '/^## Reviews/,$p' "$CARDS_DIR/hist.md" | sed '/^$/d' | paste -sd '|' -)" "each grade adds a dated line to the card's review history"
+assert_eq "### Answer: A." "$(grep '^### Answer' "$CARDS_DIR/hist.md")" "the answer is untouched"
+assert_eq "1" "$(grep -c '^## Reviews' "$CARDS_DIR/hist.md")" "one history section"
+printf -- '---\ndue: 2026-10-10\ninterval: 3\nease: 2.5\nreps: 2\nlapses: 0\ntags: [t]\n---\n\n## Question: Q?\n\n### Answer: A.\n\nA note I wrote by hand.\n' >"$CARDS_DIR/hand.md"
+cards grade hand 3 --date 2026-10-15
+assert_eq "A note I wrote by hand." "$(grep 'by hand' "$CARDS_DIR/hand.md")" "hand-written text after the answer is kept"
+assert_eq "## Reviews" "$(grep '^## ' "$CARDS_DIR/hand.md" | tail -1)" "and the history goes last"
+assert_eq "Q?|A. A note I wrote by hand." "$("$SCRIPT" due --date 2026-12-31 --json | jq -r '.[] | select(.slug == "hand") | "\(.front)|\(.back | gsub("\\s+"; " "))"')" "the history is not part of the answer"
+
 echo
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
