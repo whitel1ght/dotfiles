@@ -187,7 +187,7 @@ foreach inputs as $e ({f: null, tools: {}, lastq: false, atext: "", int: false, 
       ($e.message.content[] | select(.type == "tool_result" and .is_error == true) |
         ($st.tools[.tool_use_id] // {name: "tool", cmd: ""}) as $t
         | (.content | text) as $x
-        | if ($x | test("doesn.t want to proceed|requires approval|permission to use|was denied"; "i")) then rec("claude"; "denied"; "\($t.name) denied by user or permissions"; $key; $ev; "high")
+        | if ($x | test("doesn.t want to proceed|requires approval|permission to use|was denied"; "i")) then rec("claude"; "denied"; "\($t.name) denied: \(if ($x | test("Reason: \\[(Git Destructive|Irreversible Local Destruction)\\]")) then "destructive git or rm" elif ($x | test("Reason: \\[[^\\]]+\\]")) then ($x | capture("Reason: \\[(?<tag>[^\\]]+)\\]").tag | ascii_downcase) elif ($x | contains("judged this action dangerous (it gave no explanation)")) then "unexplained" elif ($x | contains("denied by a built-in Claude Code safety check")) then "safety check" else "by user" end)"; $key; $ev; "high")
           elif ($x | startswith("[Request interrupted")) then empty
           elif ($x | split("\n")[0] | test("^Exit code [0-9]+$")) and (($t.cmd | ourtool | not) or ($t.cmd | compound)) then empty
           else rec("claude"; "tool_error"; "\($t.name): \($x | split("\n")[0])"; $key; $ev; "high") + {file: input_filename, cmd: "\($t.name) \($t.cmd | flat | .[0:200])"} end),
