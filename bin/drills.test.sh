@@ -180,6 +180,37 @@ assert_has "select-window
 OUT="$(FAKE_PANE= topen)"; RC=$?
 assert_eq "0|drills need tmux" "$RC|$OUT" "no tmux: one line, exit 0, never a command to run"
 
+echo "drills candidates / skip"
+reset
+MAN="$SANDBOX/manual"; MB="$SANDBOX/mbin"; mkdir -p "$MAN" "$MB"
+for f in friction-cards wt handoff-open; do printf '#!/bin/sh\n' >"$MB/$f"; chmod +x "$MB/$f"; done
+cat >"$MAN/terminal.md" <<'EOF'
+# Terminal
+
+| Command | Does | Notes |
+|---|---|---|
+| ⭐ `w <word>` | define a word and save it | alias |
+| `friction-cards count` | how many friction cards wait | |
+| `wt add <repo> <name> [branch]` | a worktree | |
+| `Ctrl-R` | fuzzy history | fzf |
+| ⭐ `` ` `` `y` | the decisions deck | tmux |
+| `/daily:ideas` | review ideas | slash |
+| `<leader>ff` | find files | nvim |
+| `git status` | not ours | |
+| `friction-cards count` | listed twice | |
+EOF
+cand() { DRILLS_MANUAL="$MAN" DRILLS_BIN="$MB" drills candidates "$@"; }
+assert_eq "w	terminal.md|friction-cards count	terminal.md|wt add	terminal.md" "$(cand | paste -sd '|' -)" "commands and aliases we built, once each; keys, slash commands, nvim maps and other tools are not"
+assert_eq "w|terminal.md|define a word and save it" "$(cand --json | python3 -c 'import json,sys; d=json.load(sys.stdin)[0]; print(d["command"], d["page"], d["row"].split("|")[2].strip(), sep="|")')" "--json carries the page and the row"
+drills add --goal "Count the friction cards." --cmd "friction-cards count" --accept "friction-cards count" --run yes >/dev/null
+sed -i '' 's/how many friction cards wait/the friction queue size/' "$MAN/terminal.md"
+assert_eq "w|wt add" "$(cand | cut -f1 | paste -sd '|' -)" "a command that has a drill is not proposed again, however its row is worded"
+drills add --goal "Look up gordian knot." --cmd "words look" --accept "words look gordian knot" --run yes >/dev/null
+assert_eq "wt add" "$(cand | cut -f1 | paste -sd '|' -)" "an alias whose expansion has a drill is covered too"
+drills skip "wt add" --reason "needs a repo" --date $D
+assert_eq "" "$(cand | cut -f1 | paste -sd '|' -)" "a skipped command is not proposed again"
+assert_eq "wt add	$D	needs a repo" "$(cat "$CARDS_DIR/drills-skipped.txt")" "skips are kept beside the cards"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

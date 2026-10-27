@@ -33,6 +33,14 @@ reaches it. The user practises them by typing the real commands in a tmux window
         through a ZDOTDIR in $DRILLS_STATE/zdotdir that sources ~/.zshenv and ~/.zshrc first):
         each line goes through `drills step`; the window ends itself after the round. With no
         drills due it says so and exits after 3 s.
+  drills candidates [--json]
+        tools-manual rows ($DRILLS_MANUAL, default ~/wiki/tools) whose first cell starts with a
+        backticked command we built (a program in $DRILLS_BIN, default the dotfiles bin/, or an
+        alias): the command up to the first <, [ or …, once each, minus commands that have a
+        drill (its cmd, or an accept that starts with them) or are in drills-skipped.txt.
+        Plain: command<TAB>page; --json: [{command, page, row}].
+  drills skip COMMAND --reason R [--date D]
+        never propose COMMAND again ($CARDS_DIR/drills-skipped.txt: command, date, reason).
   drills open [--date D]
         open the drill window in the caller's tmux session (the pane `tmux-here` finds;
         $DRILLS_TMUX_HERE overrides), or focus a window named drills there. Prints
@@ -353,6 +361,79 @@ def cmd_window(a):
     os.execvpe(zsh, [zsh, "-i"], {**os.environ, "ZDOTDIR": zdot})
 
 
+ROW = re.compile(r"^\|\s*(?:⭐\s*)?`([^`]+)`")
+
+
+def skipped_path():
+    return os.path.join(CARDS_DIR, "drills-skipped.txt")
+
+
+def built_programs():
+    """names of the executables in $DRILLS_BIN (colon list; default the dotfiles bin/)"""
+    out = set()
+    for d in (os.environ.get("DRILLS_BIN") or HERE).split(":"):
+        try:
+            out.update(n for n in os.listdir(d) if os.access(os.path.join(d, n), os.X_OK)
+                       and not os.path.isdir(os.path.join(d, n)))
+        except OSError:
+            pass
+    return out
+
+
+def candidates():
+    """[{command, page, row}] of tools-manual rows for commands we built with no drill yet"""
+    manual = os.path.expanduser(os.environ.get("DRILLS_MANUAL") or "~/wiki/tools")
+    aliases, programs = load_aliases(), built_programs()
+    drills = drill_cards()
+    have = {one_line(c["fm"].get("cmd")) for c in drills}
+    accepts = [c["fm"].get("accept", "").split() for c in drills]
+    try:
+        with open(skipped_path(), encoding="utf-8") as f:
+            have |= {l.split("\t")[0] for l in f.read().splitlines() if l.strip()}
+    except OSError:
+        pass
+    try:
+        pages = sorted(n for n in os.listdir(manual) if n.endswith(".md"))
+    except OSError:
+        return []
+    out = []
+    for page in pages:
+        with open(os.path.join(manual, page), encoding="utf-8") as f:
+            lines = f.read().split("\n")
+        for line in lines:
+            m = ROW.match(line)
+            if not m:
+                continue
+            command = one_line(re.split(r"[<\[…]", m.group(1))[0])
+            words = command.split()
+            if not words or (words[0] not in programs and words[0] not in aliases):
+                continue
+            expanded = aliases.get(words[0], words[:1]) + words[1:]
+            if command in have or any(a[:len(expanded)] == expanded for a in accepts):
+                continue
+            have.add(command)
+            out.append({"command": command, "page": page, "row": one_line(line)})
+    return out
+
+
+def cmd_candidates(a):
+    rows = candidates()
+    if a.json:
+        print(json.dumps(rows, ensure_ascii=False))
+    else:
+        for r in rows:
+            print(f"{r['command']}\t{r['page']}")
+
+
+def cmd_skip(a):
+    command = one_line(a.command)
+    if not command:
+        raise Fail("a command is needed", 2)
+    os.makedirs(CARDS_DIR, exist_ok=True)
+    with open(skipped_path(), "a", encoding="utf-8") as f:
+        f.write(f"{command}\t{a.date or datetime.date.today().isoformat()}\t{one_line(a.reason)}\n")
+
+
 def tmux(*args):
     return subprocess.run(["tmux", *args], capture_output=True, text=True)
 
@@ -448,6 +529,14 @@ def main():
     s = sub.add_parser("open")
     s.add_argument("--date")
     s.set_defaults(fn=cmd_open)
+    s = sub.add_parser("candidates")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_candidates)
+    s = sub.add_parser("skip")
+    s.add_argument("command")
+    s.add_argument("--reason", required=True)
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_skip)
     a = p.parse_args()
     try:
         a.fn(a)
