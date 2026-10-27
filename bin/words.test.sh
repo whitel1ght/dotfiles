@@ -59,6 +59,25 @@ for w in "gordian knot" "it's" "well-being"; do
   assert_eq "$S" "$(words add "$(echo "$w" | tr a-z A-Z)")" "and \"$w\" in capitals matches it"
 done
 
+echo "words today"
+reset
+export WORDS_FEED="$TEST_DIR/words.fixture-feed.xml"
+S="$(words today --date 2026-10-26)"; RC=$?
+assert_eq "0|disparate|mw|2026-10-26" "$RC|$(fm "$S" word)|$(fm "$S" from)|$(fm "$S" captured)" "the day's word from the feed is saved"
+assert_has "The orchestral project joins disparate musical elements" "$(fm "$S" met_in)" "with the feed's example sentence"
+assert_eq "### Answer: different from each other" "$(grep '^### Answer' "$CARDS_DIR/$S.md")" "and its short definition as the back"
+assert_eq "" "$(words today --date 2026-10-26)" "a second run the same day prints nothing"
+assert_eq "1" "$(ncards)" "and saves nothing"
+S="$(words today --date 2030-01-01)"
+assert_eq "milieu" "$(fm "$S" word)" "a date the feed does not have takes the newest word"
+reset
+WORDS_FEED="$SANDBOX/nope.xml" words today >/dev/null; RC=$?
+assert_eq "0|0" "$RC|$(ncards)" "bad feed: a missing feed exits 0 and saves nothing"
+assert_has "words today:" "$(cat "$SANDBOX/stderr")" "with one line on stderr"
+printf '<html><body>Sign in to the wifi</body></html>' >"$SANDBOX/portal.xml"
+WORDS_FEED="$SANDBOX/portal.xml" words today >/dev/null; RC=$?
+assert_eq "0|0" "$RC|$(ncards)" "bad feed: an HTML page exits 0 and saves nothing"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

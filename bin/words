@@ -7,6 +7,11 @@
         $WORDS_MACDICT) unless --back; the front "What does *WORD* mean?" plus the sentence it
         was met in. Prints the slug; a word already saved prints its slug and writes nothing; a
         word the dictionary lacks, with no --back, exits 1 and writes nothing.
+  words today [--date D]
+        Merriam-Webster's word of the day ($WORDS_FEED, a URL or a file): the feed item dated D
+        (else the newest), its short definition as the back, its example sentence as met_in,
+        from mw. Prints the slug, or nothing when it is already saved. Offline, an HTML page or
+        a changed feed: one line on stderr, exit 0, nothing written (it runs in /start-day).
 
 A word card's extra front matter: word, met_in, from (mw|lookup|book|diary), captured (date),
 stage (learning|known). Cards are written through `cards` ($WORDS_CARDS, default the one next to
@@ -14,15 +19,22 @@ this script).
 """
 import argparse
 import datetime
+import email.utils
+import html
 import os
 import re
 import subprocess
 import sys
+import urllib.request
+import xml.etree.ElementTree as ET
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 CARDS = os.environ.get("WORDS_CARDS") or os.path.join(HERE, "cards")
 CARDS_DIR = os.path.expanduser(os.environ.get("CARDS_DIR") or "~/wiki/cards")
 MACDICT = os.environ.get("WORDS_MACDICT") or "macdict"
+FEED = os.environ.get("WORDS_FEED") or "https://www.merriam-webster.com/wotd/feed/rss2"
+MW_NS = "https://www.merriam-webster.com/word-of-the-day"
+ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 BACK_MAX = 300
 SECTIONS = re.compile(r"^(ORIGIN|DERIVATIVES|PHRASES|PHRASAL VERBS|USAGE|PRONUNCIATION|COMPARE|PLURAL|ABBREVIATION)\b")
 
@@ -125,6 +137,44 @@ def cmd_add(a):
     print(add(a.word, a.back, a.met_in, a.src, a.date))
 
 
+def read_feed(src):
+    if re.match(r"https?://", src):
+        with urllib.request.urlopen(src, timeout=15) as r:
+            return r.read()
+    with open(src, "rb") as f:
+        return f.read()
+
+
+def feed_items(data):
+    """[(date, word, shortdef, example)] from Merriam-Webster's word-of-the-day feed"""
+    items = []
+    for it in ET.fromstring(data).findall("./channel/item"):
+        word = one_line(it.findtext("title"))
+        day = email.utils.parsedate_to_datetime(it.findtext("pubDate") or "").date().isoformat()
+        short = one_line(html.unescape(it.findtext(f"{{{MW_NS}}}shortdef") or ""))
+        summary = it.findtext(f"{{{ITUNES_NS}}}summary") or ""
+        example = next((one_line(l.strip()[2:]) for l in summary.split("\n") if l.strip().startswith("//")), "")
+        if word and short:
+            items.append((day, word, short, example))
+    return items
+
+
+def cmd_today(a):
+    """never fails the morning: any problem is one line on stderr, exit 0"""
+    day = a.date or datetime.date.today().isoformat()
+    try:
+        items = feed_items(read_feed(FEED))
+        if not items:
+            raise ValueError("no words in the feed")
+    except Exception as e:  # noqa: BLE001 — offline, a captive portal, a changed feed
+        print(f"words today: no word of the day ({one_line(str(e))[:120]})", file=sys.stderr)
+        return
+    day_, word, short, example = next((i for i in items if i[0] == day), items[0])
+    if saved(word):
+        return
+    print(add(word, back=short, met_in=example, src="mw", day=day))
+
+
 class Parser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stderr)
@@ -142,6 +192,9 @@ def main():
     s.add_argument("--from", dest="src", default="lookup")
     s.add_argument("--date")
     s.set_defaults(fn=cmd_add)
+    s = sub.add_parser("today")
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_today)
     a = p.parse_args()
     try:
         a.fn(a)
