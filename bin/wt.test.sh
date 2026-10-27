@@ -43,6 +43,13 @@ run add app ABC-2 dmitry/ABC-2_pushed >/dev/null
 assert_eq "$(git -C "$PROJ/app" rev-parse origin/dmitry/ABC-2_pushed)" "$(git -C "$WT/app/ABC-2" rev-parse HEAD)" "checks out a branch that exists on origin"
 out="$(run add app ABC-1)"
 assert_contains "$out" "already exists" "refuses to overwrite a worktree"
+g -C "$PROJ/app" commit -q --allow-empty -m "local only, never pushed"
+run add app ABC-7 dmitry/ABC-7 >/dev/null
+assert_eq "$(git -C "$PROJ/app" rev-parse main)" "$(git -C "$WT/app/ABC-7" rev-parse HEAD)" "a local default branch with commits origin lacks is the base (dotfiles, never pushed)"
+g -C "$PROJ/app" reset -q --hard origin/main
+g -C "$SANDBOX/seed" commit -q --allow-empty -m "upstream" && g -C "$SANDBOX/seed" push -q "$SANDBOX/remote.git" main
+run add app ABC-8 dmitry/ABC-8 >/dev/null
+assert_eq "$(git -C "$PROJ/app" rev-parse origin/main)" "$(git -C "$WT/app/ABC-8" rev-parse HEAD)" "a local default branch only behind origin: origin's, just fetched"
 
 echo "wt move"
 g -C "$PROJ/app" worktree add -q -b dmitry/ABC-3_stray "$PROJ/app-3" origin/main 2>/dev/null
