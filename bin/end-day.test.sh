@@ -145,6 +145,12 @@ save 2026-02-01 "- report v3"
 assert_eq "1" "$(grep -c '^Words: 3 reviewed' "$SANDBOX/2026-02-01.md")" "re-saving the report leaves the words block alone"
 assert_eq "" "$(sed -n '/<!-- daily-report:start -->/,/<!-- daily-report:end -->/p' "$SANDBOX/2026-02-01.md" | grep 'Words:')" "the words line is never inside the report"
 
+echo "end-day drills"
+printf 'Drills: 4 right of 5 · streak 2 days\n' | "$SCRIPT" drills 2026-02-01 >/dev/null
+assert_eq "<!-- drills:start -->|Drills: 4 right of 5 · streak 2 days|<!-- drills:end -->" "$(tail -3 "$SANDBOX/2026-02-01.md" | paste -sd '|' -)" "the drills line goes at the end, between its own markers"
+printf 'Drills: 5 right of 5 · streak 2 days\n' | "$SCRIPT" drills 2026-02-01 >/dev/null
+assert_eq "1|1|1" "$(grep -c 'drills:start' "$SANDBOX/2026-02-01.md")|$(grep -c '^Drills: 5 right' "$SANDBOX/2026-02-01.md")|$(grep -c '^Words: 3 reviewed' "$SANDBOX/2026-02-01.md")" "a re-run replaces it and leaves the words block"
+
 echo "end-day collect — friction capture"
 # A private copy of the script, so HERE holds a failing ecfx-daily-commits; glab and curl fail too.
 CBIN="$SANDBOX/cbin"; CSTUBS="$SANDBOX/cstubs"; CLOG="$SANDBOX/friction.log"

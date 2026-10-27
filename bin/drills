@@ -24,6 +24,10 @@ reaches it. The user practises them by typing the real commands in a tmux window
         true after the last drill or once $DRILLS_ROUND_SECONDS (300) have passed.
   drills finish
         end the round (remove round.json) and print "Drills: R right of N".
+  drills stats [--date D] [--json|--line]
+        {right, total, streak} for D; streak = days in a row with a round, up to D (or D-1 when
+        D has none yet). --line: "Drills: R right of N · streak S days", nothing before the first
+        drill card. Writes stage: known on drills whose interval reached 21 days.
 
 A drill card's extra front matter: cmd, accept, run (yes|no), from (manual|hand), page, stage
 (learning|known). Cards are written through `cards` ($DRILLS_CARDS, default the one next to this
@@ -269,6 +273,45 @@ def cmd_finish(a):
     print(summary(day))
 
 
+def mark_known(cards):
+    """write stage: known on drill cards whose interval reached 21 days"""
+    for c in cards:
+        try:
+            interval = int(c["fm"].get("interval", "0"))
+        except ValueError:
+            continue
+        if interval >= 21 and c["fm"].get("stage") != "known":
+            text = re.sub(r"^stage:.*$", "stage: known", c["text"], count=1, flags=re.M)
+            if text != c["text"]:
+                path = os.path.join(CARDS_DIR, c["slug"] + ".md")
+                with open(f"{path}.tmp", "w", encoding="utf-8") as f:
+                    f.write(text)
+                os.replace(f"{path}.tmp", path)
+
+
+def stats(day):
+    d = datetime.date.fromisoformat(day)
+    today = read_json(results_path(day), {}) or {}
+    day_has = lambda x: (read_json(results_path(x.isoformat()), {}) or {}).get("total", 0) > 0
+    cur, streak = (d if day_has(d) else d - datetime.timedelta(days=1)), 0
+    while day_has(cur):
+        streak += 1
+        cur -= datetime.timedelta(days=1)
+    return {"right": today.get("right", 0), "total": today.get("total", 0), "streak": streak}
+
+
+def cmd_stats(a):
+    cards = drill_cards()
+    mark_known(cards)
+    s = stats(a.date or datetime.date.today().isoformat())
+    if a.line:
+        if cards:
+            unit = "day" if s["streak"] == 1 else "days"
+            print(f"Drills: {s['right']} right of {s['total']} · streak {s['streak']} {unit}")
+    else:
+        print(json.dumps(s))
+
+
 def cmd_add(a):
     goal, accept = one_line(a.goal), one_line(a.accept)
     if not goal or not accept or not one_line(a.cmd):
@@ -324,6 +367,12 @@ def main():
     s = sub.add_parser("finish")
     s.add_argument("--date")
     s.set_defaults(fn=cmd_finish)
+    s = sub.add_parser("stats")
+    s.add_argument("--date")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--json", action="store_true")
+    g.add_argument("--line", action="store_true")
+    s.set_defaults(fn=cmd_stats)
     a = p.parse_args()
     try:
         a.fn(a)

@@ -131,6 +131,23 @@ assert_eq "Goal: New one." "$(drills start --date 2026-12-31)" "new drills come 
 drills finish >/dev/null
 unset DRILLS_NOW
 
+echo "drills stats"
+reset
+assert_eq "" "$(drills stats --date $D --line)" "--line prints nothing before the first drill card"
+K="$(drills add --goal "Known." --cmd k --accept "k" --run yes)"
+L="$(drills add --goal "Learning." --cmd l --accept "l" --run yes)"
+sed -i '' 's/^interval: .*/interval: 25/' "$CARDS_DIR/$K.md"; sed -i '' 's/^interval: .*/interval: 3/' "$CARDS_DIR/$L.md"
+mkdir -p "$DRILLS_STATE"
+echo '{"right": 2, "total": 3}' >"$DRILLS_STATE/2026-10-25.json"
+echo '{"right": 1, "total": 2}' >"$DRILLS_STATE/2026-10-26.json"
+echo '{"right": 4, "total": 5}' >"$DRILLS_STATE/2026-10-27.json"
+echo '{"right": 0, "total": 0}' >"$DRILLS_STATE/2026-10-23.json"
+assert_eq '{"right": 4, "total": 5, "streak": 3}' "$(drills stats --date 2026-10-27 --json)" "the day's counts and the streak"
+assert_eq "3" "$(drills stats --date 2026-10-28 --json | jget streak)" "the streak holds on a day with no round yet"
+assert_eq "Drills: 4 right of 5 · streak 3 days" "$(drills stats --date 2026-10-27 --line)" "--line is one sentence for the diary"
+assert_eq "Drills: 0 right of 0 · streak 0 days" "$(drills stats --date 2026-10-30 --line)" "a missed day ends the streak"
+assert_eq "known|learning" "$(fm "$K" stage)|$(fm "$L" stage)" "a drill with an interval of 21 days or more is marked known"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

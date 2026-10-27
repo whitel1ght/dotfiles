@@ -7,6 +7,7 @@
 #   end-day save [DATE] --plan   same for /start-day's plan, at the top of ### ECFX
 #   end-day friction [DATE]  read the `## Friction` section on stdin into that day's diary
 #   end-day words [DATE]     read the words line (`words stats --line`) on stdin into its own block
+#   end-day drills [DATE]    read the drills line (`drills stats --line`) on stdin into its own block
 #   end-day touched [DATE]   list the wiki projects with a log entry or decision dated DATE
 #   end-day entries DATE PROJECT   print PROJECT's "## DATE <title>" log entries
 #
@@ -31,7 +32,7 @@
 # is created the way nvim's vimwiki autocmd does: the date, then template.md.
 # friction does the same for the reflect step's section, between <!-- friction:start/end -->
 # markers at the end of the file, outside the report block, so a re-run replaces it and a
-# report re-save never touches it. words does the same with its line, between <!-- words:start/end -->.
+# report re-save never touches it. words and drills do the same with their lines, between <!-- words:start/end --> and <!-- drills:start/end -->.
 set -euo pipefail
 
 JIRA_BASE="${JIRA_BASE:-https://ecfxdev.atlassian.net}"
@@ -274,8 +275,9 @@ case "$cmd" in
   save) save $save_opt ;;
   friction) save_block friction ;;
   words) save_block words ;;
+  drills) save_block drills ;;
   touched) touched ;;
   entries) entries "${2:-}" ;;
-  -h|--help|"") sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; [ -n "$cmd" ] ;;
+  -h|--help|"") sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; [ -n "$cmd" ] ;;
   *) echo "end-day: unknown command $cmd" >&2; exit 1 ;;
 esac
