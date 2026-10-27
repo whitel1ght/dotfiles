@@ -4,8 +4,10 @@
 // the Claude mod and pi's daily extension both use it.
 
 export const IDLE_MS = 15 * 60 * 1000
+// Claude runs the plugin command itself (it allows model invocation); pi cannot run a prompt
+// template, so its nudge points at the template file to follow.
 export const NUDGE_TEXT = '[ideas] idle review: run /daily:ideas'
-export const PI_NUDGE_TEXT = '[ideas] idle review: run /ideas'
+export const PI_NUDGE_TEXT = '[ideas] idle review: read ~/.pi/agent/prompts/ideas.md and follow it (the /ideas prompt)'
 
 const SYSTEM = new Set(['system', 'daily:system'])
 const SLASH = /^\s*\/(\S+)(?:\s+[\s\S]*)?$/
