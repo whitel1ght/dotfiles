@@ -42,6 +42,9 @@ answer '{"action": "show", "message": "Time is up.", "done": true}'
 assert_eq "clear-exit" "$(handle "nope" | head -1)" "time up on a wrong line ends the window"
 printf '#!/bin/sh\nexit 1\n' >"$STUB"
 assert_eq "clear" "$(handle "rm -rf x" | head -1)" "drills step failing: the line is not run"
+say() { DRILLS_CMD="$STUB" zsh -f -c 'source "$1"; _drill_say "$2" "$3"; print -- "-- command output --"; _drill_precmd' _ "$HOOK" "$1" "$2"; }
+assert_eq "✓|-- command output --|Goal: Next one." "$(say accept $'✓\nGoal: Next one.' | paste -sd '|' -)" "after a command that runs, the next goal prints below its output"
+assert_eq "✗ → x   (type it)|Goal: Same.|-- command output --" "$(say clear $'✗ → x   (type it)\nGoal: Same.' | paste -sd '|' -)" "a cleared line prints its whole message at once"
 
 echo "drills window"
 export CARDS_DIR="$SANDBOX/cards" DRILLS_STATE="$SANDBOX/state" DRILLS_WINDOW_WAIT=0
@@ -54,6 +57,7 @@ OUT="$(DRILLS_ZSH="$SANDBOX/fakezsh" "$TEST_DIR/drills" window --date 2026-10-27
 assert_has "args: -i" "$OUT" "it runs an interactive zsh"
 assert_has 'source "$HOME/.zshrc"' "$OUT" "that reads the user's own .zshrc"
 assert_has "zsh/drill.zsh" "$OUT" "then the drill hook"
+assert_has "POWERLEVEL9K_INSTANT_PROMPT=quiet" "$OUT" "p10k stays quiet about the banner in this window only"
 assert_has "Goal: Count the friction cards." "$OUT" "and shows the first goal"
 
 echo

@@ -331,6 +331,7 @@ def cmd_stats(a):
 
 ZSHRC = """[ -f "$HOME/.zshenv" ] && source "$HOME/.zshenv"
 [ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"
+typeset -g POWERLEVEL9K_INSTANT_PROMPT=quiet
 export DRILLS_CMD={cmd}
 source {hook}
 _drill_banner() {{

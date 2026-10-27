@@ -505,6 +505,11 @@ if [ -f "$DOTFILES_DIR/bin/words" ]; then
     create_symlink "$DOTFILES_DIR/bin/words" "$HOME/.local/bin/words"
 fi
 
+# drills turns the commands we built into drills typed in a tmux window (start-day, end-day line).
+if [ -f "$DOTFILES_DIR/bin/drills" ]; then
+    create_symlink "$DOTFILES_DIR/bin/drills" "$HOME/.local/bin/drills"
+fi
+
 # coach-fix queues the coach's approved fixes, builds each in a tmux job and lands them after /end-day.
 if [ -f "$DOTFILES_DIR/bin/coach-fix" ]; then
     create_symlink "$DOTFILES_DIR/bin/coach-fix" "$HOME/.local/bin/coach-fix"

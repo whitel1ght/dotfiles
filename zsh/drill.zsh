@@ -21,19 +21,30 @@ _drill_end() {
   exit
 }
 
+# verdict, message → print it now; for a line that runs, only the mark, the rest after its output
+_drill_say() {
+  if [[ $1 == accept* ]]; then
+    print -r -- "${2%%$'\n'*}"
+    [[ $2 == *$'\n'* ]] && _drill_after="${2#*$'\n'}"
+  else
+    print -r -- "$2"
+  fi
+}
+
 _drill_accept_line() {
   [[ -z ${BUFFER//[[:space:]]/} ]] && { zle .accept-line; return }
   local out verdict
   out="$(_drill_handle "$BUFFER")"
   verdict="${out%%$'\n'*}"
   zle -I
-  print -r -- "${out#*$'\n'}"
+  _drill_say "$verdict" "${out#*$'\n'}"
   [[ $verdict == *-exit ]] && _drill_exit_after=1
   [[ $verdict == accept* ]] || BUFFER=""
   zle .accept-line
 }
 
 _drill_precmd() {
+  [[ -n ${_drill_after:-} ]] && { print -r -- "$_drill_after"; _drill_after="" }
   (( ${_drill_exit_after:-0} )) && _drill_end
 }
 
