@@ -107,3 +107,6 @@ Global instructions applied across all projects. Keep this short — project-lev
   beside it. Create one with `wt add <repo> <name> [branch]` (name: the ticket key, e.g.
   `ECFX-17648`), move a stray one with `wt move <path>`, list them with `wt ls`.
 - This overrides a skill's own default location, such as `.worktrees/`.
+- In a worktree session the harness refuses a command whose option could be computed at
+  runtime. Double-quote every variable (`rg -n 'x' "$t"`), put `--` before operands, and
+  split `t=$(…); cmd $t` into plain, separate commands run from the worktree path.

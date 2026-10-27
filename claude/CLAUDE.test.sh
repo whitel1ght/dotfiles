@@ -28,6 +28,7 @@ has "$apis" 'Run `/mr-description` before any `glab mr create`' "F-015 /mr-descr
 replies=$(section "$MD" "Review replies")
 has "$replies" '`mr-review-response` skill, unasked' "F-051 replies through mr-review-response"
 has "$replies" '"post it" or "post both" posts exactly what was shown' "F-051 a yes posts what was shown"
+has "$(section "$MD" Worktrees)" "Double-quote every variable" "F-030 quoted variables in worktree sessions"
 
 echo "handle-ticket — draft MR step (Claude and pi copies)"
 for SKILL in "${SKILLS[@]}"; do
