@@ -60,6 +60,10 @@ assert_eq "refuse" "$(chk "$A" 'friction-cards count $(rm x)')" "compound: a com
 assert_eq "ok" "$(chk "cards due" 'cards due | head -3')" "pipe: into a reader"
 assert_eq "refuse" "$(chk "cards due" 'cards due | sh')" "pipe: into anything else"
 assert_eq "refuse" "$(chk "$A" 'friction-cards count "unclosed')" "a line the shell cannot parse"
+assert_eq "refuse" "$(chk "$A" $'friction-cards count\ntouch x')" "a second line (paste, Alt-Enter) is refused"
+assert_eq "refuse" "$(chk "$A" $'friction-cards count\rtouch x')" "a carriage return too"
+assert_eq "refuse" "$(chk "words look gordian x" 'words look gordian x#;touch f')" "a # does not hide the rest of the line from the check"
+assert_eq "ok" "$(chk "words look gordian knot" "w 'gordian knot'")" "a quoted phrase counts as its words"
 
 echo "drills round"
 D=2026-10-27

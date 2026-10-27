@@ -46,6 +46,30 @@ say() { DRILLS_CMD="$STUB" zsh -f -c 'source "$1"; _drill_say "$2" "$3"; print -
 assert_eq "✓|-- command output --|Goal: Next one." "$(say accept $'✓\nGoal: Next one.' | paste -sd '|' -)" "after a command that runs, the next goal prints below its output"
 assert_eq "✗ → x   (type it)|Goal: Same.|-- command output --" "$(say clear $'✗ → x   (type it)\nGoal: Same.' | paste -sd '|' -)" "a cleared line prints its whole message at once"
 
+echo "drill.zsh in a real interactive zsh (keys)"
+if command -v tmux >/dev/null 2>&1; then
+  ZD="$SANDBOX/zd"; mkdir -p "$ZD"
+  printf '#!/bin/sh\ncase "$3" in *OK*) echo "{\\"action\\": \\"run\\", \\"message\\": \\"ok\\", \\"done\\": false}" ;; *) echo "{\\"action\\": \\"wrong\\", \\"message\\": \\"no\\", \\"done\\": false}" ;; esac\n' >"$STUB"; chmod +x "$STUB"
+  printf 'bindkey -e\nexport DRILLS_CMD=%q\nsource %q\nPS1="> "\n' "$STUB" "$HOOK" >"$ZD/.zshrc"
+  S="drz$$"
+  tmux new-session -d -s "$S" -x 120 -y 30 "ZDOTDIR=$ZD zsh -i"
+  waitfor() { for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [ -e "$1" ] && return 0; sleep 0.2; done; return 1; }
+  waitfor "$SANDBOX/never" || true
+  tmux send-keys -t "$S" "touch $SANDBOX/k-enter" Enter
+  tmux send-keys -t "$S" "touch $SANDBOX/k-ctrl-o" C-o
+  tmux send-keys -t "$S" "touch $SANDBOX/k-esc-a" Escape a
+  tmux send-keys -t "$S" "touch $SANDBOX/k-ctrl-j" C-j
+  tmux send-keys -t "$S" "touch $SANDBOX/k-OK" Enter
+  waitfor "$SANDBOX/k-OK"; RAN=$?
+  tmux kill-session -t "$S" 2>/dev/null
+  assert_eq "0" "$RAN" "a right line still runs"
+  for k in enter ctrl-o esc-a ctrl-j; do
+    assert_eq "no" "$([ -e "$SANDBOX/k-$k" ] && echo yes || echo no)" "a wrong line sent with $k never runs"
+  done
+else
+  echo "  skip - no tmux"
+fi
+
 echo "drills window"
 export CARDS_DIR="$SANDBOX/cards" DRILLS_STATE="$SANDBOX/state" DRILLS_WINDOW_WAIT=0
 mkdir -p "$CARDS_DIR"

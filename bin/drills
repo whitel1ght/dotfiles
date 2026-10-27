@@ -10,8 +10,9 @@ reaches it. The user practises them by typing the real commands in a tmux window
   drills check --accept A LINE
         ok, wrong or refuse. ok: LINE is one command holding A's words in order, the same
         command first (an alias is expanded, a path cut to its name; extra flags are fine),
-        piped at most into head, tail, less, jq, rg or wc. refuse: ;, &&, ||, &, a redirect,
-        $(..) or backticks, sudo, env, a pipe into anything else, or a line the shell can't parse.
+        piped at most into head, tail, less, jq, rg or wc; a quoted phrase counts as its words.
+        refuse: ;, &&, ||, &, a redirect, $(..) or backticks, a second line, sudo, env, a pipe
+        into anything else, or a line the shell can't parse (# is not a comment here).
         Aliases come from $DRILLS_ALIASES, else the dotfiles zsh/ folder.
   drills start [--date D] [--limit 5]
         start a round ($DRILLS_STATE/round.json): the due drills, new ones first, then the
@@ -149,13 +150,14 @@ def load_aliases():
 def tokens(line):
     lex = shlex.shlex(line, posix=True, punctuation_chars=True)
     lex.whitespace_split = True
+    lex.commenters = ""
     return list(lex)
 
 
 def match(line, accept, aliases):
     """ok, wrong or refuse: is line one command (piped into readers at most) holding the accept
     words in order, with the same command first"""
-    if "`" in line or "$(" in line:
+    if "`" in line or "$(" in line or "\n" in line or "\r" in line:
         return "refuse"
     try:
         toks = tokens(line)
@@ -177,7 +179,7 @@ def match(line, accept, aliases):
     if words[0] in ("sudo", "env"):
         return "refuse"
     first = os.path.basename(words[0]) if "/" in words[0] else words[0]
-    words = (aliases.get(first) or [first]) + words[1:]
+    words = (aliases.get(first) or [first]) + [w for arg in words[1:] for w in arg.split()]
     want = accept.split()
     if not want or words[0] != want[0]:
         return "wrong"

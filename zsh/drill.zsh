@@ -51,7 +51,11 @@ _drill_precmd() {
 TRAPALRM() { print; print "Time's up."; _drill_end }
 
 if [[ -o zle ]]; then
-  zle -N accept-line _drill_accept_line
+  # every widget that runs the buffer goes through the check, not only Enter's
+  for w in accept-line accept-and-hold accept-line-and-down-history accept-and-infer-next-history; do
+    zle -N "$w" _drill_accept_line
+  done
+  unset w
   autoload -Uz add-zsh-hook
   add-zsh-hook precmd _drill_precmd
   TMOUT=${DRILLS_ROUND_SECONDS:-300}
