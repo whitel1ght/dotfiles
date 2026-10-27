@@ -55,7 +55,9 @@
 #          1, as is a `held` one; a secret, or a safety entry queued without approval, exit 3;
 #          a busy ledger exits 1 and changes nothing). When its built branch
 #          is still there (coach-F-NNN in an allowed repo at the recorded head or rebased head,
-#          its worktree present) it goes back to `built` and lands with the next land. Otherwise
+#          its worktree present) it goes back to `built` and lands with the next land; a branch
+#          behind main is rebased onto it first (`rebased_head` recorded, untested), and one whose
+#          rebase conflicts is aborted and treated as gone ("no longer rebases"). Otherwise
 #          every leftover coach-F-NNN worktree and branch in dotfiles, decisions and articles is
 #          removed (nothing else) and the entry is queued again for a fresh job. The ledger goes
 #          back to `landing` either way.
@@ -489,16 +491,30 @@ cmd_retry() {
 }
 
 # back to built when the earlier attempt's branch is intact (coach-F-NNN at the recorded or
-# rebased head, its worktree present), else leftovers removed and queued for a fresh job
+# rebased head, its worktree present) and rebases onto main, else leftovers removed and queued
+# for a fresh job
 requeue() { # id
-  local id="$1" repo branch wt head rebased cur
+  local id="$1" repo branch wt head rebased cur m log
   repo="$(qget "$id" repo)"; branch="$(qget "$id" branch)"; wt="$(qget "$id" worktree)"
   head="$(qget "$id" head)"; rebased="$(qget "$id" rebased_head)"
-  cur=""
-  if [ "$branch" = "coach-$id" ] && [[ "$LAND_REPOS" == *" $repo "* ]] && [ -d "$COACH_REPOS_DIR/$repo/.git" ]; then
-    cur="$(git -C "$COACH_REPOS_DIR/$repo" rev-parse -q --verify "refs/heads/$branch" 2>/dev/null || true)"
+  cur=""; m="$COACH_REPOS_DIR/$repo"
+  if [ "$branch" = "coach-$id" ] && [[ "$LAND_REPOS" == *" $repo "* ]] && [ -d "$m/.git" ]; then
+    cur="$(git -C "$m" rev-parse -q --verify "refs/heads/$branch" 2>/dev/null || true)"
   fi
-  if [ -n "$cur" ] && [ -n "$head" ] && [ -n "$wt" ] && [ -d "$wt" ] && { [ "$cur" = "$head" ] || [ "$cur" = "$rebased" ]; }; then
+  if [ -z "$cur" ] || [ -z "$head" ] || [ -z "$wt" ] || [ ! -d "$wt" ] || { [ "$cur" != "$head" ] && [ "$cur" != "$rebased" ]; }; then
+    cur=""
+  elif [ "$(git -C "$m" merge-base main "$branch" || true)" != "$(git -C "$m" rev-parse main)" ]; then
+    # a land that hit a conflict would hit it again: rebase now, and build afresh if it still conflicts
+    mkdir -p "$LOGS"; log="$LOGS/$id.land.log"
+    if git -C "$wt" rebase main >"$log" 2>&1; then
+      qset "$id" '.rebased_head = $c | .tested = null' --arg c "$(git -C "$m" rev-parse "refs/heads/$branch")"
+    else
+      git -C "$wt" rebase --abort >>"$log" 2>&1 || true
+      echo "$id: its branch no longer rebases onto main (log: $log); building it again"
+      cur=""
+    fi
+  fi
+  if [ -n "$cur" ]; then
     qset "$id" '.state = "built" | .reason = null'
     ledger "$id" --status landing
     echo "$id: back to built; it lands after the day"

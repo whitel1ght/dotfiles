@@ -879,6 +879,37 @@ assert_eq "" "$(fld F-001 reason)" "the old reason is cleared"
 cf land >/dev/null
 assert_eq "landed|four" "$(qget F-001 state)|$(tail -1 "$DOT/notes.txt")" "and the next land lands it"
 
+echo "retry: a built branch behind main is rebased first"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 notes.txt $'one\ntwo\nthree\nfour\n'
+built dotfiles F-001 >/dev/null
+on_main dotfiles README.md "readme 2" "docs: readme"
+jq '.state = "failed" | .reason = "rebase onto main hit a conflict"' "$Q/F-001.json" >"$SANDBOX/q.tmp" && mv "$SANDBOX/q.tmp" "$Q/F-001.json"
+OUT="$(cf retry F-001)"; RC=$?
+R="$(git -C "$DOT" rev-parse coach-F-001)"
+assert_eq "0|built|$R|" "$RC|$(qget F-001 state)|$(qget F-001 rebased_head)|$(qget F-001 tested)" "rebased onto main, back to built, the new head untested"
+assert_eq "yes" "$(git -C "$DOT" merge-base --is-ancestor main coach-F-001 && echo yes || echo no)" "the branch sits on top of main"
+: >"$SUITE_LOG"
+cf land >/dev/null
+assert_eq "landed|readme 2|four" "$(qget F-001 state)|$(cat "$DOT/README.md")|$(tail -1 "$DOT/notes.txt")" "the next land tests and lands it"
+assert_eq "ran $WT/dotfiles/coach-F-001" "$(cat "$SUITE_LOG" 2>/dev/null)" "the suite ran on the rebased head"
+
+echo "retry: a branch that no longer rebases is built again"
+setup
+cf enqueue F-001 >/dev/null
+branch dotfiles F-001 notes.txt "branch side"
+built dotfiles F-001 >/dev/null
+on_main dotfiles notes.txt "main side" "chore: notes"
+cf land >/dev/null
+assert_eq "failed" "$(qget F-001 state)" "the land hit the conflict"
+N0="$(ncalls)"
+OUT="$(cf retry F-001)"; RC=$?
+assert_eq "0|running|$((N0 + 1))" "$RC|$(qget F-001 state)|$(ncalls)" "a fresh job starts instead of a land that would fail again"
+assert_has "no longer rebases" "$OUT" "it says why"
+assert_eq "no|" "$([ -d "$WT/dotfiles/coach-F-001" ] && echo yes || echo no)|$(qget F-001 head)" "the old branch and worktree are gone, its fields cleared"
+assert_eq "main side" "$(cat "$DOT/notes.txt")" "main is untouched"
+
 echo "retry: no built branch, leftovers removed, queued again"
 setup
 cf enqueue F-001 >/dev/null
