@@ -530,6 +530,11 @@ if [ -f "$DOTFILES_DIR/bin/team-plugins-sync" ]; then
     create_symlink "$DOTFILES_DIR/bin/team-plugins-sync" "$HOME/.local/bin/team-plugins-sync"
 fi
 
+# pi-autoupdate updates pi and its extensions before an interactive pi starts (the zsh pi function).
+if [ -f "$DOTFILES_DIR/bin/pi-autoupdate" ]; then
+    create_symlink "$DOTFILES_DIR/bin/pi-autoupdate" "$HOME/.local/bin/pi-autoupdate"
+fi
+
 # tmux-here prints the caller's tmux pane even without $TMUX (day-plan, handoff-open).
 if [ -f "$DOTFILES_DIR/bin/tmux-here" ]; then
     create_symlink "$DOTFILES_DIR/bin/tmux-here" "$HOME/.local/bin/tmux-here"

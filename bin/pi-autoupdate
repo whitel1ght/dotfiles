@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Update pi and its extensions before an interactive pi starts, so it never opens on an
+# "update available" notice. The zsh `pi` function (zsh/.zshrc) runs it, so every pi alias gets it.
+#
+#   pi-autoupdate [pi arguments...]
+#
+# Runs `pi update --all` (stdin closed, output to ~/.local/state/pi-autoupdate/last.log) unless
+# the arguments are not an interactive session (a subcommand such as update, install or list;
+# -p/--print, -h/--help, -v/--version, --mode json|rpc) or an update succeeded in the last
+# $PI_UPDATE_EVERY seconds (600). An update past $PI_UPDATE_TIMEOUT seconds (120) is stopped.
+# Prints one line ("pi: pi and its extensions are up to date" / "pi: update failed …, starting
+# anyway" / "… timed out …"); a failure never stops pi from starting. Always exits 0.
+set -uo pipefail
+
+STATE="${PI_AUTOUPDATE_STATE:-$HOME/.local/state/pi-autoupdate}"
+EVERY="${PI_UPDATE_EVERY:-600}"
+TIMEOUT="${PI_UPDATE_TIMEOUT:-120}"
+PI_BIN="${PI_BIN:-pi}"
+
+prev=""
+for a in "$@"; do
+  case "$a" in
+    -p | --print | -h | --help | -v | --version) exit 0 ;;
+    json | rpc) [ "$prev" != --mode ] || exit 0 ;;
+  esac
+  prev="$a"
+done
+case "${1:-}" in install | remove | uninstall | update | list | config | auth | mcp) exit 0 ;; esac
+
+mkdir -p "$STATE"
+last="$(cat "$STATE/last-ok" 2>/dev/null || echo 0)"
+[ $(($(date +%s) - ${last:-0})) -ge "$EVERY" ] || exit 0
+
+printf 'pi: checking for updates…' >&2
+set -m
+"$PI_BIN" update --all </dev/null >"$STATE/last.log" 2>&1 &
+pid=$!
+set +m
+deadline=$(($(date +%s) + TIMEOUT))
+while kill -0 "$pid" 2>/dev/null && [ "$(date +%s)" -lt "$deadline" ]; do sleep 0.2; done
+if kill -0 "$pid" 2>/dev/null; then
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+  printf '\rpi: update timed out after %ss, starting anyway (log: %s)\n' "$TIMEOUT" "$STATE/last.log" >&2
+  exit 0
+fi
+if ! wait "$pid"; then
+  printf '\rpi: update failed (%s), starting anyway\n' "$(sed '/^[[:space:]]*$/d' "$STATE/last.log" | tail -1)" >&2
+  exit 0
+fi
+date +%s >"$STATE/last-ok"
+printf '\rpi: pi and its extensions are up to date\n' >&2
+exit 0

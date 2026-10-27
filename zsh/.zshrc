@@ -79,6 +79,11 @@ alias jtodo='jt -u'   # current Omni sprint, unassigned and To-Do
 # the VPS) every 15 minutes. `wiki-sync` forces a run, `wiki-sync status` explains.
 
 
+# Every interactive pi, plain or through an alias below, first updates pi and its extensions
+# (bin/pi-autoupdate: a few seconds, skipped for subcommands, -p and within 10 min of the last
+# update), so it never opens on an "update available" notice.
+pi() { (( $+commands[pi-autoupdate] )) && pi-autoupdate "$@"; command pi "$@"; }
+
 # Local Pi agent on Qwen2.5-Coder 14B in LM Studio (pi/models.json). Load it
 # with `lms load qwen/qwen2.5-coder-14b --context-length 16384`; the default 8k
 # is too small. It can use the built-in tools, but extensions, skills, MCP and
