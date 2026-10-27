@@ -545,6 +545,11 @@ if [ -f "$DOTFILES_DIR/bin/day-plan" ]; then
     create_symlink "$DOTFILES_DIR/bin/day-plan" "$HOME/.local/bin/day-plan"
 fi
 
+# day-status prints today's plan joined with live MR, Jira and run-day agent state (/status).
+if [ -f "$DOTFILES_DIR/bin/day-status" ]; then
+    create_symlink "$DOTFILES_DIR/bin/day-status" "$HOME/.local/bin/day-status"
+fi
+
 # repos-sync fetches every GitLab repo in ~/projects and fast-forwards its default branch (start-day collect).
 if [ -f "$DOTFILES_DIR/bin/repos-sync" ]; then
     create_symlink "$DOTFILES_DIR/bin/repos-sync" "$HOME/.local/bin/repos-sync"
