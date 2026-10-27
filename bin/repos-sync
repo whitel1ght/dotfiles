@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Bring every GitLab repo under ~/projects up to date with origin; /start-day runs it each morning.
+#
+#   repos-sync
+#
+# Each git repo directly under $REPOS_DIR (default ~/projects) whose origin URL is on gitlab.com,
+# all at once: `git fetch --prune origin`, then its default branch (origin/HEAD, else main, else
+# master) is fast-forwarded to origin's when that is safe:
+#   - checked out nowhere: the branch ref moves (update-ref, checked against its old value);
+#   - checked out in a worktree with no uncommitted changes to tracked files: `git merge
+#     --ff-only` there;
+#   - local commits not on origin, or uncommitted changes: left alone, with the reason.
+# Never a merge commit, rebase, reset, stash, checkout or push; other repos and branches are only
+# fetched. A repo whose fetch takes over $REPOS_SYNC_TIMEOUT seconds (60) is stopped. Prints one
+# line per repo that moved, was left alone or failed, then a summary line. Exits 0 whatever
+# happens to a repo.
+set -uo pipefail
+
+REPOS_DIR="${REPOS_DIR:-$HOME/projects}"
+TIMEOUT="${REPOS_SYNC_TIMEOUT:-60}"
+
+case "${1:-}" in -h|--help) sed -n '2,4p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+# one result line on stdout: "<moved|ok|left|failed><TAB><text>"
+sync_one() { # repo-dir
+  local r="$1" name err d c lref up old new behind ahead wt
+  name="$(basename "$r")"
+  if ! err="$(GIT_TERMINAL_PROMPT=0 git -C "$r" fetch -q --prune origin 2>&1)"; then
+    printf 'failed\t%s: fetch failed: %s\n' "$name" "$(printf '%s\n' "$err" | tail -1)"; return
+  fi
+  d="$(git -C "$r" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)"; d="${d#origin/}"
+  if [ -z "$d" ]; then
+    for c in main master; do git -C "$r" rev-parse -q --verify "refs/remotes/origin/$c" >/dev/null && { d="$c"; break; }; done
+  fi
+  [ -n "$d" ] || { printf 'ok\t%s\n' "$name"; return; }
+  lref="refs/heads/$d"; up="refs/remotes/origin/$d"
+  old="$(git -C "$r" rev-parse -q --verify "$lref")" || { printf 'ok\t%s\n' "$name"; return; }
+  new="$(git -C "$r" rev-parse "$up")"
+  behind="$(git -C "$r" rev-list --count "$lref..$up")"; ahead="$(git -C "$r" rev-list --count "$up..$lref")"
+  [ "$behind" -gt 0 ] || { printf 'ok\t%s\n' "$name"; return; }
+  if [ "$ahead" -gt 0 ]; then
+    printf 'left\t%s: %s is %s behind origin and has %s local commit(s) not on it, not moved\n' "$name" "$d" "$behind" "$ahead"; return
+  fi
+  wt="$(git -C "$r" worktree list --porcelain | awk -v b="branch $lref" '/^worktree / { w = substr($0, 10) } $0 == b { print w; exit }')"
+  if [ -z "$wt" ]; then
+    git -C "$r" update-ref -m "repos-sync: fast-forward to origin" "$lref" "$new" "$old" 2>/dev/null ||
+      { printf 'failed\t%s: could not move %s\n' "$name" "$d"; return; }
+  elif [ -n "$(git -C "$wt" status --porcelain --untracked-files=no)" ]; then
+    printf 'left\t%s: %s is %s behind origin, not moved: uncommitted changes in %s\n' "$name" "$d" "$behind" "$wt"; return
+  elif ! err="$(git -C "$wt" merge --ff-only -q "$up" 2>&1)"; then
+    printf 'failed\t%s: fast-forward of %s failed: %s\n' "$name" "$d" "$(printf '%s\n' "$err" | tail -1)"; return
+  fi
+  printf 'moved\t%s: %s fast-forwarded %s commit(s)\n' "$name" "$d" "$behind"
+}
+
+out="$(mktemp -d)"
+trap 'rm -rf "$out"' EXIT
+pids=() names=()
+set -m # each repo in its own process group, so a slow fetch and its ssh stop together
+for r in "$REPOS_DIR"/*/; do
+  r="${r%/}"
+  [ -d "$r/.git" ] || continue
+  case "$(git -C "$r" config --get remote.origin.url 2>/dev/null)" in *gitlab.com[:/]*) ;; *) continue ;; esac
+  sync_one "$r" >"$out/$(basename "$r")" 2>/dev/null &
+  pids+=("$!"); names+=("$(basename "$r")")
+done
+set +m
+[ "${#names[@]}" -gt 0 ] || { echo "no GitLab repos in $REPOS_DIR"; exit 0; }
+
+deadline=$(($(date +%s) + TIMEOUT))
+for i in "${!pids[@]}"; do
+  while kill -0 "${pids[$i]}" 2>/dev/null && [ "$(date +%s)" -lt "$deadline" ]; do sleep 0.2; done
+  if kill -0 "${pids[$i]}" 2>/dev/null; then
+    kill -TERM -- "-${pids[$i]}" 2>/dev/null || kill -TERM "${pids[$i]}" 2>/dev/null
+    printf 'failed\t%s: fetch timed out after %ss\n' "${names[$i]}" "$TIMEOUT" >"$out/${names[$i]}"
+  fi
+  wait "${pids[$i]}" 2>/dev/null
+done
+
+cat "$out"/* 2>/dev/null | awk -F'\t' '
+  { n[$1]++; if ($1 != "ok") line[$1] = line[$1] "- " $2 "\n" }
+  END {
+    printf "%s%s%s", line["moved"], line["left"], line["failed"]
+    printf "%d GitLab repos: %d fast-forwarded, %d up to date, %d left alone, %d failed\n",
+      NR, n["moved"], n["ok"], n["left"], n["failed"]
+  }'

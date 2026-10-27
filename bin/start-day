@@ -26,6 +26,10 @@
 #                 last review is unaddressed, leave out)"
 #   jira          tickets newly assigned to me, my tickets others touched, and
 #                 my To-Do backlog
+#   repos         `repos-sync` ($START_DAY_REPOS_SYNC overrides its path): every
+#                 GitLab repo in ~/projects fetched and its default branch
+#                 fast-forwarded where safe; started first, in the background,
+#                 and printed last
 # Slack and the calendar come through claude.ai connectors, which the command
 # reads itself; there's no script access to either.
 set -euo pipefail
@@ -380,7 +384,13 @@ case "${1:-}" in
     else SINCE=$(iso $((now - 86400 - 10#$(date +%H) * 3600 - 10#$(date +%M) * 60 - 10#$(date +%S) + 8 * 3600))); fi
     mkdir -p "$STATE_DIR"; iso "$now" > "$STATE_DIR/pending"
     printf '# Since %s (%s local)\n' "$SINCE" "$(date -r "$(epoch_of "$SINCE")" '+%a %H:%M' 2>/dev/null || echo ?)"
-    collect_carryover; collect_my_mrs; collect_ready_to_merge; collect_review_queue; collect_gitlab_todos; collect_jira ;;
+    repos_out="$(mktemp)"
+    "${START_DAY_REPOS_SYNC:-$HERE/repos-sync}" >"$repos_out" 2>&1 </dev/null & repos_pid=$!
+    collect_carryover; collect_my_mrs; collect_ready_to_merge; collect_review_queue; collect_gitlab_todos; collect_jira
+    section "Repos (fetched from GitLab)"
+    wait "$repos_pid" || true
+    if [ -s "$repos_out" ]; then cat "$repos_out"; else echo "(repos-sync printed nothing)"; fi
+    rm -f "$repos_out" ;;
   save)
     plan=$(cat)
     dups=$(printf '%s\n' "$plan" | sed -nE 's/^- \[.\] //p' | sed 's/ · .*//' \

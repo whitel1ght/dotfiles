@@ -21,6 +21,10 @@ SANDBOX="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$SANDBOX"' EXIT
 STUBS="$SANDBOX/stubs"; FIX="$SANDBOX/fixtures"; STATE="$SANDBOX/state"; DIARY="$SANDBOX/diary"
 mkdir -p "$STUBS" "$FIX" "$STATE" "$DIARY"
+# Never run the real repos-sync: it would fetch and fast-forward the repos in ~/projects.
+printf '#!/bin/bash\n[ -z "${REPOS_SYNC_SILENT:-}" ] || exit 0\necho "- ecfx-dashboard: main fast-forwarded 2 commit(s)"\necho "9 GitLab repos: 1 fast-forwarded, 8 up to date, 0 left alone, 0 failed"\n' >"$STUBS/repos-sync"
+chmod +x "$STUBS/repos-sync"
+export START_DAY_REPOS_SYNC="$STUBS/repos-sync"
 # A dummy, older diary entry: collect_carryover pipes ls through grep, and an
 # empty DIARY_DIR (grep matches nothing) trips set -o pipefail and aborts the
 # whole run. Real usage never hits this since ~/wiki/diary is never empty.
@@ -195,7 +199,20 @@ out=$(GLAB_DOWN=1 run collect --since 2026-09-20T00:00:00Z)
 assert_contains "$out" "## Ready to merge" "the section heading still prints"
 assert_contains "$(ready "$out")" "(GitLab unavailable)" "Ready to merge reports GitLab unavailable"
 assert_contains "$out" "## Review queue" "collect keeps running the rest of the digest"
-assert_contains "$out" "## Jira" "including the final section"
+assert_contains "$out" "## Repos (fetched from GitLab)" "including the final section"
+
+echo "start-day — repos"
+reset
+out=$(run collect --since 2026-09-20T00:00:00Z)
+repos=$(awk '/^## Repos/{f=1;next} /^## /{if(f)exit} f' <<<"$out" | sed '/./,$!d')
+assert_eq "## Repos (fetched from GitLab)" "$(grep '^## ' <<<"$out" | tail -1)" "a Repos section, printed last"
+assert_contains "$repos" "- ecfx-dashboard: main fast-forwarded 2 commit(s)" "with what repos-sync printed"
+assert_contains "$repos" "9 GitLab repos:" "and its summary"
+out=$(REPOS_SYNC_SILENT=1 run collect --since 2026-09-20T00:00:00Z)
+assert_contains "$out" "(repos-sync printed nothing)" "an empty run says so"
+out=$(START_DAY_REPOS_SYNC=/nonexistent/repos-sync run collect --since 2026-09-20T00:00:00Z)
+assert_contains "$out" "## Jira" "a missing repos-sync does not stop the digest"
+assert_contains "$out" "## Repos (fetched from GitLab)" "and the section still prints"
 
 todos() { awk '/^## GitLab to-dos/{f=1;next} /^## /{if(f)exit} f' <<<"$1" | sed '/./,$!d'; }
 
@@ -214,7 +231,7 @@ echo '[]' > "$FIX/todos.json"
 assert_eq "(none)" "$(todos "$(run collect --since 2026-09-20T00:00:00Z)")" "no to-dos prints (none)"
 out=$(GLAB_DOWN=1 run collect --since 2026-09-20T00:00:00Z)
 assert_eq "(GitLab unavailable)" "$(todos "$out")" "GitLab down is noted, and the digest keeps going"
-assert_contains "$out" "## Jira" "including the final section"
+assert_contains "$out" "## Repos (fetched from GitLab)" "including the final section"
 reset
 echo '{"message":"401 Unauthorized"}' > "$FIX/todos.json"
 assert_eq "(none)" "$(todos "$(run collect --since 2026-09-20T00:00:00Z)")" "an unexpected non-array body is treated as none, not a crash"

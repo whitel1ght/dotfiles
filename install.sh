@@ -520,6 +520,11 @@ if [ -f "$DOTFILES_DIR/bin/day-plan" ]; then
     create_symlink "$DOTFILES_DIR/bin/day-plan" "$HOME/.local/bin/day-plan"
 fi
 
+# repos-sync fetches every GitLab repo in ~/projects and fast-forwards its default branch (start-day collect).
+if [ -f "$DOTFILES_DIR/bin/repos-sync" ]; then
+    create_symlink "$DOTFILES_DIR/bin/repos-sync" "$HOME/.local/bin/repos-sync"
+fi
+
 # handoff-open opens a handed-off ticket's side session in a tmux window (/daily:handoff, /handoff).
 if [ -f "$DOTFILES_DIR/bin/handoff-open" ]; then
     create_symlink "$DOTFILES_DIR/bin/handoff-open" "$HOME/.local/bin/handoff-open"

@@ -10,6 +10,8 @@ for f in "$C" "$P"; do
   side="$(basename "$(dirname "$f")")"
   echo "== $side =="
   has "$f" "## 4. Coach" "$side: coach step exists"
+  has "$f" '`repos-sync` has fetched every GitLab repo' "$side: the digest's Repos section is explained"
+  has "$f" "Repos are setup, not work: keep them out of the plan" "$side: repos stay out of the plan"
   has "$f" "## 5. File it" "$side: File it is renumbered"
   lacks "$f" "## 4. File it" "$side: no stale File it number"
   awk '/^## 3\. Write the plan/{a=NR} /^## 4\. Coach/{b=NR} /^## 5\. File it/{c=NR} END{exit !(a&&b&&c&&a<b&&b<c)}' "$f" && pass "$side: coach sits between plan and File it" || fail "$side: order" "wrong order in $f"
