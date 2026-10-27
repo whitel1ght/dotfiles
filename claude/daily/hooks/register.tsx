@@ -13,6 +13,7 @@ import { agentRows, formatAgents, isFullWake, outstanding, parseGraphics, parseL
 import type { AgentRow } from '../mod/wake.ts'
 import type { InboxState, RunItem, ViewState } from '../mod/types.ts'
 import { joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts'
+import { NUDGE_TEXT, claimsSystem, claimsSystemPrompt, shouldNudge, systemMarkerPath } from '../mod/ideas.ts'
 
 const REFRESH_MS = 5_000
 const WATCH_MS = 180_000
@@ -25,6 +26,8 @@ const FRICTION = 'F="$(command -v friction || echo "$HOME/.local/bin/friction")"
 const LID = ['/usr/sbin/ioreg', '-r', '-k', 'AppleClamshellState', '-d', '1']
 const SYSTEM_STATE = ['/usr/bin/pmset', '-g', 'systemstate']
 const COLD_RELAY = 'daily: relayed past the cold-cache guard'
+const IDEAS_MS = 60_000
+const IDEAS_DUE = 'I="$(command -v ideas || echo "$HOME/.local/bin/ideas")"; [ -x "$I" ] && exec "$I" due --limit 3 || echo "[]"'
 const BLIND_PROBES = 3
 const EMPTY: ViewState = { active: false, status: '', groups: [] }
 const view = atom({ plugin: 'daily', key: 'view' } as const, EMPTY)
@@ -94,6 +97,48 @@ async function claimDay($: EngineInterface) {
     const why = `run-day owner not recorded: ${err instanceof Error ? err.message : String(err)}`
     $.ui.toast(`daily: ${why}`)
     friction($, 'tool_error', why, 'daily-owner')
+  }
+}
+
+// The system session (marked by /daily:system) reviews ideas when idle (mod/ideas.ts): one nudge
+// per idle stretch, then none until the user writes again.
+const idle = { lastUserAt: 0, lastTurnEndAt: 0, waiting: false, isChecking: false }
+
+async function markerPath($: EngineInterface): Promise<string | null> {
+  const home = await $.env.get('HOME')
+  return home ? systemMarkerPath(`${home}/.local/state`) : null
+}
+
+async function claimSystem($: EngineInterface) {
+  try {
+    const path = await markerPath($)
+    if (!path) return
+    await $.process.run(['mkdir', '-p', path.slice(0, path.lastIndexOf('/'))])
+    await $.fs.write(path, formatOwner(await $.session.id()))
+  } catch (err) {
+    const why = `system session not recorded: ${err instanceof Error ? err.message : String(err)}`
+    $.ui.toast(`daily: ${why}`)
+    friction($, 'tool_error', why, 'daily-ideas')
+  }
+}
+
+async function nudgeIdeas($: EngineInterface) {
+  if (idle.isChecking) return
+  idle.isChecking = true
+  try {
+    const path = await markerPath($)
+    const isSystem = path !== null && parseOwner(await readOr($, path)) === (await $.session.id())
+    const running = (await $.agent.list().catch(() => [])).filter(a => a.status === 'running').length
+    const now = await $.clock.now()
+    if (!shouldNudge({ isSystem, now, lastUserAt: idle.lastUserAt, lastTurnEndAt: idle.lastTurnEndAt, agentsRunning: running, waiting: idle.waiting })) return
+    const ran = await $.process.run(['/bin/sh', '-c', IDEAS_DUE], { timeoutMs: 30_000 })
+    if (ran.exitCode !== 0 || !/^\s*\[\s*\{/.test(ran.stdout)) return
+    idle.waiting = true
+    void $.prompt.submit({ text: NUDGE_TEXT }).catch(() => $.ui.toast('daily ideas: prompt submit failed'))
+  } catch (err) {
+    $.ui.log(`daily ideas: idle check failed: ${err instanceof Error ? err.message : String(err)}`)
+  } finally {
+    idle.isChecking = false
   }
 }
 
@@ -470,6 +515,10 @@ export const register: Register = on => {
     $.clock.every(INBOX_MS, () => {
       void watchInbox($)
     })
+    idle.lastUserAt = await $.clock.now()
+    $.clock.every(IDEAS_MS, () => {
+      void nudgeIdeas($)
+    })
     return next(e)
   })
 
@@ -492,6 +541,13 @@ export const register: Register = on => {
     })
   }
 
+  for (const command of ['system', 'daily:system'] as const) {
+    on('command.run', { command }, async ($, e, next) => {
+      if (claimsSystem(e.command)) await claimSystem($)
+      return next(e)
+    })
+  }
+
   // A cold task-notification is re-sent as this plugin's own prompt, past a cold-cache guard that
   // would hold it (cache-tax's, when it runs first); the Wake check covers the order not working.
   // The host refuses a submit from inside a prompt.submit hook, so it goes out on the next clock turn.
@@ -503,6 +559,11 @@ export const register: Register = on => {
       return { drop: COLD_RELAY }
     }
     if (e.origin?.kind !== 'plugin' && claimsDayPrompt(e.text)) await claimDay($)
+    if (e.origin?.kind !== 'plugin' && e.origin?.kind !== 'task-notification') {
+      idle.lastUserAt = await $.clock.now()
+      idle.waiting = false
+      if (claimsSystemPrompt(e.text)) await claimSystem($)
+    }
     return next(e)
   })
 
@@ -515,6 +576,7 @@ export const register: Register = on => {
     const r = await next(e)
     if (!e.agentId) {
       warm.lastRequestAt = await $.clock.now()
+      idle.lastTurnEndAt = warm.lastRequestAt
       void safeArmWarm($)
     }
     return r
