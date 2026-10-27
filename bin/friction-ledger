@@ -27,7 +27,8 @@
 # apply   folds one day of `friction-mine` output (FILE, else it runs the miner) into the
 #         ledger. A group whose signature is already there gets last/days/Evidence updated
 #         (one bullet per date, so a second run changes nothing); `fixed` seen again turns
-#         `regressed`. A new high-confidence group becomes the next F-NNN, status open, class
+#         `regressed`, unless the group's `last_seen` is at or before the entry's `fixed_at`
+#         (sightings from before the fix landed). A new high-confidence group becomes the next F-NNN, status open, class
 #         empty. Corrections (kind correction, low confidence) are never added. Nothing is
 #         ever set to `proposed` here. Prints JSON:
 #           {new: items first seen on D with no class yet,
@@ -39,7 +40,8 @@
 # set     writes the given front-matter fields and sections; a status change adds a dated
 #         History line. class: env|instruction|script|model|external; status:
 #         open|proposed|fixed|regressed|wontfix|offered|declined|landing|landed|failed;
-#         rung: script|config|prompt. --safety writes the `safety` field (ingest only ever sets
+#         rung: script|config|prompt. --status fixed stamps `fixed_at` (UTC): now for today's
+#         date, that day's local midnight for an earlier --date. --safety writes the `safety` field (ingest only ever sets
 #         it true); --queued-by records who queued the entry (`queued_by`). --reason writes
 #         `reason` on one line (why a coach fix failed, or a user step after it landed; "" clears
 #         it). --clear-result-reported clears `result_reported_on` so the result card is filed
@@ -183,6 +185,17 @@ CARDS_BIN="${CARDS_BIN:-$HERE/cards}"
 die() { echo "friction-ledger: $*" >&2; exit 1; }
 need() { [ $# -ge 2 ] || die "$1 needs a value"; }
 valid_date() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "--date must be YYYY-MM-DD, got $1"; }
+# UTC stamp for a fix on DATE: now when DATE is today, else that day's local midnight
+fixed_stamp() {
+  [ "$1" != "$(date +%F)" ] || { date -u +%Y-%m-%dT%H:%M:%SZ; return; }
+  local s; s="$(date -j -f '%Y-%m-%d %H:%M:%S' "$1 00:00:00" +%s 2>/dev/null || date -d "$1 00:00:00" +%s)"
+  date -u -r "$s" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$s" +%Y-%m-%dT%H:%M:%SZ
+}
+# the group (JSON) was last seen at or before the entry's fixed_at; false when either is missing
+seen_before_fix() {
+  local seen fixed_at; seen="$(jq -r '.last_seen // empty' <<<"$2")"; fixed_at="$(fm_get "$1" fixed_at)"
+  [ -n "$seen" ] && [ -n "$fixed_at" ] && [[ ! "$seen" > "$fixed_at" ]]
+}
 one_line() { tr '\n\r\t' '   ' <<<"$1" | sed 's/  */ /g; s/^ //; s/ $//'; }
 # a direction's scope: global, run-day, a repo, a skill or command, a repo:path
 SCOPE_RE='^[A-Za-z0-9][A-Za-z0-9:._/-]{0,59}$'
@@ -412,7 +425,7 @@ cmd_apply() {
       [[ "$date_" < "$first" ]] && fm_set "$f" first "$date_"
       [[ "$date_" > "$last" ]] && fm_set "$f" last "$date_"
       fm_set "$f" days "$days"
-      if [ "$(fm_get "$f" status)" = fixed ]; then
+      if [ "$(fm_get "$f" status)" = fixed ] && ! seen_before_fix "$f" "$g"; then
         fm_set "$f" status regressed
         section_edit "$f" History append "- $date_: regressed (seen again after fix $(fm_get "$f" fix))"
       fi
@@ -490,6 +503,7 @@ cmd_set() {
   [ -z "$class" ] || fm_set "$f" class "$class"
   [ -z "$rung" ] || fm_set "$f" rung "$rung"
   [ "$has_fix" = 0 ] || fm_set "$f" fix "$fix"
+  [ "$status" != fixed ] || fm_set "$f" fixed_at "$(fixed_stamp "$date_")"
   [ -z "$diag" ] || section_edit "$f" Diagnosis replace "$(one_line "$diag")"
   [ -z "$pfile" ] || section_edit "$f" Proposal replace "$(cat "$pfile")"
   if [ -n "$status" ]; then

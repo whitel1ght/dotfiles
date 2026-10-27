@@ -844,6 +844,36 @@ assert_eq "yes" "$(jq -r '[.file[].id] | index("F-002") | if . == null then "no"
 assert_eq "|" "$(fld F-002 offered_on)|$(fld F-002 answer)" "and its offered_on and answer are cleared"
 rm -rf "$FRICTION_WIKI"
 
+# --- fixed_at -----------------------------------------------------------------
+echo "fixed_at — a sighting before the fix landed is not a regression"
+# mine_seen FILE DATE LAST_SEEN: one group of $C, last seen at LAST_SEEN (UTC)
+mine_seen() { mine "$1" "$2" "$C|tool_error|high|2|jq missing"; jq --arg t "$3" '.groups[0].last_seen = $t' "$1" >"$1.tmp" && mv "$1.tmp" "$1"; }
+mine "$SANDBOX/f1.json" 2026-10-14 "$C|tool_error|high|2|jq missing"
+apply 2026-10-14 "$SANDBOX/f1.json" >/dev/null
+TZ=Etc/GMT-3 "$SCRIPT" set F-001 --status fixed --fix abc1234 --date 2026-10-16
+assert_eq "2026-10-15T21:00:00Z" "$(fld F-001 fixed_at)" "set --status fixed with a past --date stamps that local midnight, in UTC"
+mine_seen "$SANDBOX/f2.json" 2026-10-16 2026-10-15T20:59:59Z
+OUT="$(apply 2026-10-16 "$SANDBOX/f2.json")"
+assert_eq "fixed" "$(fld F-001 status)" "last seen before fixed_at: stays fixed"
+assert_eq "" "$(jq -r '[.regressed[].id] | join(" ")' <<<"$OUT")" "and is not reported as regressed"
+grep -q '^- 2026-10-16 (2×)' "$FRICTION_WIKI/F-001.md" && pass "the sighting is still recorded as evidence" || fail "the sighting is still recorded as evidence" "$(cat "$FRICTION_WIKI/F-001.md")"
+mine_seen "$SANDBOX/f3.json" 2026-10-17 2026-10-17T06:00:00Z
+OUT="$(apply 2026-10-17 "$SANDBOX/f3.json")"
+assert_eq "regressed" "$(fld F-001 status)" "last seen after fixed_at: regressed"
+assert_eq "F-001" "$(jq -r '[.regressed[].id] | join(" ")' <<<"$OUT")" "and reported"
+before="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+"$SCRIPT" set F-001 --status fixed --fix def5678
+after="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+stamp="$(fld F-001 fixed_at)"
+[[ ! "$stamp" < "$before" && ! "$stamp" > "$after" ]] && pass "set --status fixed for today stamps the current time" || fail "set --status fixed for today stamps the current time" "[$stamp] not in [$before, $after]"
+"$SCRIPT" set F-001 --status regressed --date 2026-10-18
+assert_eq "$stamp" "$(fld F-001 fixed_at)" "another status leaves fixed_at alone"
+"$SCRIPT" set F-001 --status fixed --fix def5678 --date 2026-10-18
+mine "$SANDBOX/f4.json" 2026-10-19 "$C|tool_error|high|1|jq missing"
+apply 2026-10-19 "$SANDBOX/f4.json" >/dev/null
+assert_eq "regressed" "$(fld F-001 status)" "a group without last_seen regresses as before"
+rm -rf "$FRICTION_WIKI"
+
 # --- misc ---------------------------------------------------------------------
 echo "misc"
 "$SCRIPT" apply 2>/dev/null; assert_eq "1" "$?" "apply without --date fails"

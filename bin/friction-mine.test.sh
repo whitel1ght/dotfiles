@@ -238,6 +238,13 @@ assert_eq "null" "$(f "$g" '.regression')" "proposed is not a regression"
 g=$(grp "wait-for:service_down:gitlab down <n>h")
 assert_eq "F-002|fixed|true" "$(f "$g" '[.known,.ledger_status,.regression]|join("|")')" "fixed + seen again -> regression:true"
 assert_eq "null|null" "$(f "$(grp 'diary:auth:google calendar not connected')" '[.known,.ledger_status]|map(tostring)|join("|")')" "unmatched group: known null, ledger_status null"
+
+echo "friction-mine — last_seen"
+assert_eq "2026-10-15T06:05:00Z" "$(f "$(grp 'changes-since:auth:outlook not connected')" .last_seen)" "friction log: the latest ts, offset converted to UTC"
+assert_eq "2026-10-15T07:31:30Z" "$(f "$(grp 'claude:tool_error:bash: exit code <n>')" .last_seen)" "Claude transcript: the latest entry timestamp"
+assert_eq "2026-10-15T07:01:10Z" "$(f "$(grp 'pi:tool_error:bash: <n> failing')" .last_seen)" "pi transcript: the entry timestamp"
+assert_eq "null" "$(f "$(grp 'run-state:retry:item retried: retries=<n>')" .last_seen)" "a source without times: null"
+assert_eq "null" "$(f "$(grp 'claude:retry:repeated failing command x<n>: bash glab mr view <n>')" .last_seen)" "retry records carry no time: null"
 OUT2=$(FRICTION_DIR="$FR" RUN_DAY_DIR="$RD" DIARY_DIR="$DY" PI_SUB_STATE_DIR="$PS" CLAUDE_PROJECTS_DIR="$CP" PI_SESSIONS_DIR="$PI" "$SCRIPT" --ledger "$SANDBOX/none.md" --date $D); assert_eq "0" "$?" "a missing ledger is fine"
 assert_eq "null" "$(jq -r '.groups[]|select(.sig=="changes-since:auth:outlook not connected")|.known' <<<"$OUT2")" "and nothing is known"
 
