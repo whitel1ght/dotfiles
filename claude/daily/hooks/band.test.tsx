@@ -11,7 +11,7 @@ const WARM_REPLY = { isAnswered: true, text: 'warm', usage: { input_tokens: 5, o
 
 type Run = { exitCode: number; stdout: string; stderr: string }
 
-type Opts = { day: Run | (() => Run); refuse?: boolean; frictionDenied?: boolean; owner?: string | null; writeFails?: boolean; inbox?: string; diary?: string; state?: string | null; fork?: () => unknown; files?: Record<string, string> }
+type Opts = { day: Run | (() => Run); rejectWith?: string; refuse?: boolean; frictionDenied?: boolean; owner?: string | null; writeFails?: boolean; inbox?: string; diary?: string; state?: string | null; fork?: () => unknown; files?: Record<string, string> }
 
 async function start($: any, on: any, opts: Opts) {
   // A closed lid stops the 5 s refresh tick: while asleep its next period waits for the wake.
@@ -43,6 +43,7 @@ async function start($: any, on: any, opts: Opts) {
   on('process.run', (_$: any, e: any) => {
     calls.push(e.argv)
     if (opts.frictionDenied && isFriction(e.argv)) return { deny: 'friction exploded' }
+    if (opts.rejectWith && isChangesSince(e.argv)) return { deny: opts.rejectWith }
     if (opts.inbox !== undefined && isInboxLs(e.argv)) return { value: { exitCode: 0, stdout: opts.inbox, stderr: '' } } as never
     if (e.argv[0].endsWith('/ioreg')) return { value: { exitCode: 0, stdout: world.lid === null ? '' : `| |   "AppleClamshellState" = ${world.lid === 'closed' ? 'Yes' : 'No'}\n`, stderr: '' } } as never
     if (e.argv[0].endsWith('/pmset')) return { value: { exitCode: 0, stdout: world.graphics === null ? '' : `Current System Capabilities are: CPU${world.graphics ? ' Graphics Audio' : ''} Network\n`, stderr: '' } } as never
@@ -164,6 +165,19 @@ test('three timed-out ticks in a row record one timeout, however long it goes on
   const events = frictionFor(s.calls, 'changes-since')
   expect(events.length).toBe(1)
   expect(events[0][8]).toBe('timeout')
+})
+
+test('a rejected changes-since run that is still running after the timeout is skipped like exit 75 (F-012)', async ($, on) => {
+  const s = await start($, on, { day: OK, rejectWith: 'daily: $.process.run(/bin/sh) aborted: still running after 60000ms' })
+  for (let i = 0; i < 2; i++) await s.clock.advance(180_000)
+  expect(s.toasts.filter(t => t.startsWith('daily watcher'))).toEqual([])
+  expect(frictionFor(s.calls, 'changes-since').length).toBe(0)
+  for (let i = 0; i < 4; i++) await s.clock.advance(180_000)
+  const events = frictionFor(s.calls, 'changes-since')
+  expect(events.length).toBe(1)
+  expect(events[0][8]).toBe('timeout')
+  expect(s.calls.filter(isFriction).some(a => a[8] === 'tool_error')).toBe(false)
+  expect(s.toasts.filter(t => t.startsWith('daily watcher'))).toEqual([])
 })
 
 test('a tick that answers resets the timeout count', async ($, on) => {

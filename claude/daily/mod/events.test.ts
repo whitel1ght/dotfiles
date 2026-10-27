@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { classify, eventMrKey, formatNote, formatPrompt, formatToast, parseEvents } from './events.ts'
+import { classify, eventMrKey, formatNote, formatPrompt, formatToast, isTimeout, parseEvents } from './events.ts'
 
 const ctx = { mrKeys: new Set(['dashboard!2231']), ticketKeys: new Set(['ecfx-18169']) }
 const review = { kind: 'review', ticket: 'ECFX-18169', mr: 2231, repo: 'ecfx/ecfx-dashboard', summary: 'bkeeling requested changes', url: 'https://x/2231' }
@@ -80,4 +80,11 @@ test('a malformed event does not throw in classify or the formatters', async () 
   expect(formatPrompt(bad)).toContain('[daily-event] review | dashboard!2231 | 42 |')
   expect(formatToast(bad)).toContain('review')
   expect(formatNote({ kind: 'assigned', ticket: 5, summary: 9 } as never)).toContain('[daily-event:info] assigned')
+})
+
+test('isTimeout matches the host\'s wrapped abort text and the script\'s own wording, not other failures', async () => {
+  expect(isTimeout('daily: $.process.run(/bin/sh) aborted: still running after 60000ms')).toBe(true)
+  expect(isTimeout('changes-since: timed out waiting for Jira or GitLab')).toBe(true)
+  expect(isTimeout('Request Timeout')).toBe(true)
+  expect(isTimeout('daily: $.process.run(/bin/sh) denied: EACCES')).toBe(false)
 })

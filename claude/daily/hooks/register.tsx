@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import { mrKeyFromRef, mrKeysOf, parseItems, ticketKey } from '../mod/diary.ts'
-import { classify, formatNote, formatPrompt, formatToast, parseEvents } from '../mod/events.ts'
+import { classify, formatNote, formatPrompt, formatToast, isTimeout, parseEvents } from '../mod/events.ts'
 import { EMPTY_INBOX, inboxPrompt, nextInbox, parseListing } from '../mod/inbox.ts'
 import { applyEdit, checkTicks, denyMessage, isTodaysDiary } from '../mod/guard.ts'
 import type { EditInput } from '../mod/guard.ts'
@@ -504,7 +504,7 @@ async function watch($: EngineInterface) {
     }
   } catch (err) {
     const why = err instanceof Error ? err.message : String(err)
-    if (/timed? ?out|still running after/i.test(why)) {
+    if (isTimeout(why)) {
       skipTick($, `daily watcher: ${why}`)
     } else {
       if (!flags.hasWatchFailed) {
