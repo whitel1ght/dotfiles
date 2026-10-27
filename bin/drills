@@ -33,6 +33,10 @@ reaches it. The user practises them by typing the real commands in a tmux window
         through a ZDOTDIR in $DRILLS_STATE/zdotdir that sources ~/.zshenv and ~/.zshrc first):
         each line goes through `drills step`; the window ends itself after the round. With no
         drills due it says so and exits after 3 s.
+  drills open [--date D]
+        open the drill window in the caller's tmux session (the pane `tmux-here` finds;
+        $DRILLS_TMUX_HERE overrides), or focus a window named drills there. Prints
+        "opened <session>:drills" or "focused <session>:drills"; with no tmux "drills need tmux".
 
 A drill card's extra front matter: cmd, accept, run (yes|no), from (manual|hand), page, stage
 (learning|known). Cards are written through `cards` ($DRILLS_CARDS, default the one next to this
@@ -349,6 +353,34 @@ def cmd_window(a):
     os.execvpe(zsh, [zsh, "-i"], {**os.environ, "ZDOTDIR": zdot})
 
 
+def tmux(*args):
+    return subprocess.run(["tmux", *args], capture_output=True, text=True)
+
+
+def cmd_open(a):
+    day = a.date or datetime.date.today().isoformat()
+    here = os.environ.get("DRILLS_TMUX_HERE") or os.path.join(HERE, "tmux-here")
+    session = ""
+    try:
+        pane = subprocess.run([here], capture_output=True, text=True)
+        if pane.returncode == 0 and pane.stdout.strip():
+            session = tmux("display-message", "-p", "-t", pane.stdout.strip(), "#{session_name}").stdout.strip()
+    except OSError:
+        pass
+    if not session:
+        print("drills need tmux")
+        return
+    for row in tmux("list-windows", "-t", f"={session}:", "-F", "#{window_index} #{window_name}").stdout.splitlines():
+        index, _, name = row.partition(" ")
+        if name == "drills":
+            tmux("select-window", "-t", f"={session}:{index}")
+            print(f"focused {session}:drills")
+            return
+    tmux("new-window", "-t", f"={session}:", "-n", "drills",
+         shlex.join([os.path.realpath(__file__), "window", "--date", day]))
+    print(f"opened {session}:drills")
+
+
 def cmd_add(a):
     goal, accept = one_line(a.goal), one_line(a.accept)
     if not goal or not accept or not one_line(a.cmd):
@@ -413,6 +445,9 @@ def main():
     s = sub.add_parser("window")
     s.add_argument("--date")
     s.set_defaults(fn=cmd_window)
+    s = sub.add_parser("open")
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_open)
     a = p.parse_args()
     try:
         a.fn(a)

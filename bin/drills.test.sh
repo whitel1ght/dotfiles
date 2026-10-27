@@ -148,6 +148,38 @@ assert_eq "Drills: 4 right of 5 · streak 3 days" "$(drills stats --date 2026-10
 assert_eq "Drills: 0 right of 0 · streak 0 days" "$(drills stats --date 2026-10-30 --line)" "a missed day ends the streak"
 assert_eq "known|learning" "$(fm "$K" stage)|$(fm "$L" stage)" "a drill with an interval of 21 days or more is marked known"
 
+echo "drills open"
+TB="$SANDBOX/tbin"; TLOG="$SANDBOX/tmux.log"; mkdir -p "$TB"
+cat >"$TB/tmux" <<'STUB'
+#!/bin/bash
+{ echo "--- tmux"; printf '%s\n' "$@"; } >>"$TMUX_LOG"
+case "$1" in
+  display-message) echo "main" ;;
+  list-windows) printf '%b' "${FAKE_WINDOWS:-}" ;;
+esac
+exit 0
+STUB
+printf '#!/bin/sh\n[ -n "$FAKE_PANE" ] || exit 1\necho "$FAKE_PANE"\n' >"$TB/tmux-here"
+chmod +x "$TB/tmux" "$TB/tmux-here"
+topen() { : >"$TLOG"; PATH="$TB:$PATH" TMUX_LOG="$TLOG" DRILLS_TMUX_HERE="$TB/tmux-here" drills open --date $D; }
+OUT="$(FAKE_PANE=%3 FAKE_WINDOWS='1 nvim\n2 claude\n' topen)"
+assert_eq "opened main:drills" "$OUT" "opened in the caller's session"
+assert_has "new-window
+-t
+=main:
+-n
+drills" "$(cat "$TLOG")" "as a window named drills"
+assert_has "/drills window --date $D" "$(cat "$TLOG")" "running drills window for the day"
+OUT="$(PATH="$TB:$PATH" TMUX_LOG="$TLOG" DRILLS_TMUX_HERE="$SANDBOX/missing" drills open --date $D)"; RC=$?
+assert_eq "0|drills need tmux" "$RC|$OUT" "no tmux-here at all: the same line"
+OUT="$(FAKE_PANE=%3 FAKE_WINDOWS='1 nvim\n4 drills\n' topen)"
+assert_eq "focused main:drills" "$OUT" "an open drills window is focused instead"
+assert_has "select-window
+-t
+=main:4" "$(cat "$TLOG")" "by its index"
+OUT="$(FAKE_PANE= topen)"; RC=$?
+assert_eq "0|drills need tmux" "$RC|$OUT" "no tmux: one line, exit 0, never a command to run"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
