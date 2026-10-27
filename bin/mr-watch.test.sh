@@ -57,6 +57,7 @@ cat > "$STUBS/glab" <<'EOF'
 #!/bin/bash
 echo "$*" >> "$FIX/glab.log"
 [ -n "${GLAB_DOWN:-}" ] && exit 1
+[ -n "${GLAB_FAIL:-}" ] && case "$*" in *"$GLAB_FAIL"*) exit 1 ;; esac
 if [ "$2" = --method ]; then
     body="${6#body=@}"; [ "$body" = - ] && body=/dev/stdin
     printf '%s %s\n' "$4" "$(tr '\n' ' ' < "$body")" >> "$FIX/posts.log"; echo '{}'; exit 0
@@ -195,6 +196,24 @@ rm -f "$FIX/sleeps"
 assert_eq 3 "$(cat "$FIX/sleeps")" "wait slept three times, so polled twice"
 assert_eq 1 "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "wait records one friction line over two down polls"
 [ -e "$FRICTION_DIR/gitlab-down" ]; assert_eq 0 "$?" "wait keeps the outage marker between down polls"
+echo "mr-watch — one MR failing is not an outage"
+OLD_STATE="$STATE"
+for what in approvals discussions; do
+    STATE="$SANDBOX/state-$what"
+    rm -rf "$FIX/friction.log" "$FIX/glab.log" "$FRICTION_DIR"
+    out=$(GLAB_FAIL="merge_requests/10/$what" run check --since 2026-09-20T00:00:00Z); rc=$?
+    assert_eq 0 "$rc" "a failing $what lookup on one MR still exits 0 when another has notes"
+    assert_contains "$out" "grp/api!50" "the other MRs are still processed ($what)"
+    assert_lacks "$out" "grp/api!10" "the failing MR yields no round ($what)"
+    [ ! -e "$FRICTION_DIR/gitlab-down" ]; assert_eq 0 "$?" "no outage marker for one MR ($what)"
+    assert_eq "--source mr-watch tool_error $what lookup failed for grp/api!10" "$(cat "$FIX/friction.log")" "exactly one tool_error line and no service_down ($what)"
+    [ ! -e "$STATE/seen/1-10" ]; assert_eq 0 "$?" "its seen floor is untouched, so the next poll retries it ($what)"
+    rm -f "$FIX/friction.log"
+    out=$(run check --since 2026-09-20T00:00:00Z); rc=$?
+    assert_contains "$out" "grp/api!10" "the next poll picks it up again ($what)"
+done
+STATE="$OLD_STATE"
+rm -rf "$FIX/friction.log" "$FRICTION_DIR"
 rm "$STUBS/friction"
 out=$(GLAB_DOWN=1 PATH="$STUBS:$(dirname "$(command -v jq)"):/usr/bin:/bin" FIX="$FIX" MR_WATCH_STATE="$STATE" PROJECTS_DIR="$PROJ" "$SCRIPT" check 2>&1); rc=$?
 assert_eq 2 "$rc" "a missing friction leaves exit 2"

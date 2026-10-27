@@ -3,39 +3,43 @@
 #
 #   glab-gate check                          exit 0 when GitLab may be called, 1 while
 #                                            a marker younger than the hold exists
-#   glab-gate down --source SRC MSG          GitLab failed: no fresh marker, log one
-#                                            `friction --source SRC service_down MSG`
-#                                            and write the marker; a fresh one, do nothing
+#   glab-gate down --source SRC MSG          GitLab failed: no marker, log one
+#                                            `friction --source SRC service_down MSG`;
+#                                            always (re)write the marker's timestamp
 #   glab-gate up                             GitLab answered: remove the marker
 #
 # The marker is $FRICTION_DIR/gitlab-down (default ~/.local/state/friction, the dir
 # `friction` writes <date>.jsonl into; friction-mine reads only those files) holding
-# the epoch of the failure. The hold is GLAB_GATE_HOLD seconds (900). Callers skip
+# the epoch of the last failure. The hold is GLAB_GATE_HOLD seconds (900). Callers skip
 # glab while `check` fails and print their usual "GitLab unavailable" line without
-# logging again (F-021). down and up always exit 0.
+# logging again (F-021). After the hold they probe again; a probe that still fails
+# renews the marker but logs nothing: one outage, one line, however long it lasts,
+# until `up` removes the marker. A marker older than GLAB_GATE_RELOG seconds (86400)
+# counts as absent, so a forgotten one cannot silence a new outage. down and up
+# always exit 0.
 set -uo pipefail
 
 FRICTION_DIR="${FRICTION_DIR:-$HOME/.local/state/friction}"
 MARKER="$FRICTION_DIR/gitlab-down"
 HOLD="${GLAB_GATE_HOLD:-900}"
+RELOG="${GLAB_GATE_RELOG:-86400}"
 
-fresh() {
+younger() { # seconds: the marker holds an epoch less than that many seconds old
   local at
   [ -s "$MARKER" ] || return 1
   at=$(cat "$MARKER" 2>/dev/null)
-  [[ "$at" =~ ^[0-9]+$ ]] && [ $(($(date +%s) - at)) -lt "$HOLD" ]
+  [[ "$at" =~ ^[0-9]+$ ]] && [ $(($(date +%s) - at)) -lt "$1" ]
 }
 
 case "${1:-}" in
-  check) fresh && exit 1; exit 0 ;;
+  check) younger "$HOLD" && exit 1; exit 0 ;;
   down)
     shift; source=unknown
     [ "${1:-}" = --source ] && { source="${2:-unknown}"; shift 2 || shift $#; }
-    fresh && exit 0
-    command -v friction >/dev/null 2>&1 && friction --source "$source" service_down "$*" >/dev/null 2>&1
+    younger "$RELOG" || { command -v friction >/dev/null 2>&1 && friction --source "$source" service_down "$*" >/dev/null 2>&1; }
     { mkdir -p "$FRICTION_DIR" && date +%s > "$MARKER"; } 2>/dev/null
     exit 0 ;;
   up) rm -f "$MARKER" 2>/dev/null; exit 0 ;;
-  -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) echo "usage: glab-gate check | down --source SRC MSG | up" >&2; exit 2 ;;
 esac

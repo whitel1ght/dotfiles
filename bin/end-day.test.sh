@@ -198,7 +198,8 @@ case "$out" in *"(GitLab unavailable)"*) pass "and still prints (GitLab unavaila
 printf '%s\n' "$(($(date +%s) - 901))" > "$FRICTION_DIR/gitlab-down"
 collect >/dev/null
 assert_eq "2" "$(wc -l < "$SANDBOX/glab.calls" | tr -d ' ')" "after 15 minutes glab is tried again"
-assert_eq "2" "$(grep -c 'GitLab unavailable' "$CLOG")" "and the outage is logged again"
+assert_eq "1" "$(grep -c 'GitLab unavailable' "$CLOG")" "and the still-running outage is not logged again"
+[ "$(cat "$FRICTION_DIR/gitlab-down")" -ge "$(($(date +%s) - 5))" ] && pass "but the marker is refreshed" || fail "but the marker is refreshed" "$(cat "$FRICTION_DIR/gitlab-down")"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

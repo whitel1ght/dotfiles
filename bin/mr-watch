@@ -25,6 +25,8 @@
 #   - it's newer than my last note on the MR and than the MR's last acked round
 #   - its discussion isn't resolved
 # Before an MR's first acked round, the floor is --since, or a week ago.
+# A failed per-MR lookup is logged as tool_error and skipped, not an outage: only
+# the probe and the MR list write the shared outage marker.
 # Nothing is marked seen until ack or reply, so a round that fails is found again.
 set -euo pipefail
 
@@ -35,6 +37,7 @@ HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
 
 friction_log() { command -v friction >/dev/null 2>&1 && friction "$@" >/dev/null 2>&1 || true; }
 down() { "$HERE/glab-gate" down --source mr-watch "GitLab unavailable" || true; return 2; }
+lookup_failed() { friction_log --source mr-watch tool_error "$1 lookup failed for $2"; }
 glab_held() { local rc=0; "$HERE/glab-gate" check || rc=$?; [ "$rc" -eq 1 ]; }
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 ignore_re() {
@@ -73,9 +76,9 @@ check() {
     floor=$(cat "$STATE_DIR/seen/$key" 2>/dev/null || echo "$default_floor")
     [[ "$updated" > "$floor" ]] || continue
     local approvals disc picked
-    approvals=$(glab api "projects/$pid/merge_requests/$iid/approvals") || { down; return 2; }
+    approvals=$(glab api "projects/$pid/merge_requests/$iid/approvals") || { lookup_failed approvals "$ref"; continue; }
     jq -e '.approved and (.approved_by | length > 0)' <<<"$approvals" >/dev/null && continue
-    disc=$(glab api --paginate "projects/$pid/merge_requests/$iid/discussions?per_page=100" | jq -s 'add') || { down; return 2; }
+    disc=$(glab api --paginate "projects/$pid/merge_requests/$iid/discussions?per_page=100" | jq -s 'add') || { lookup_failed discussions "$ref"; continue; }
     picked=$(jq --arg me "$me" --arg re "$re" --arg floor "$floor" '
       def human: (.system | not) and .author.username != $me and (.author.username | test($re) | not);
       ([.[].notes[] | select(.system | not) | select(.author.username == $me) | .created_at] | max // "") as $mine

@@ -278,20 +278,24 @@ base_mr
 out=$(GLAB_FAIL_EXACT='api projects/2/merge_requests/2231' run); rc=$?
 assert_eq "1" "$rc" "MR detail call fails: exit 1"
 assert_eq "" "$out" "nothing printed"
-assert_contains "$(errs)" "GitLab MRs unavailable" "stderr names the source"
+assert_contains "$(errs)" "MR lookup failed for 2!2231" "stderr names the MR"
 assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor unchanged"
+[ ! -e "$FRICTION_DIR/gitlab-down" ] && pass "no GitLab outage marker for one failing MR" || fail "no GitLab outage marker for one failing MR" "marker written"
+assert_eq "--source gitlab-mrs tool_error MR lookup failed for 2!2231" "$(cat "$FIX/friction.log" 2>/dev/null)" "one tool_error line and no service_down"
 
 base_mr
 out=$(GLAB_FAIL='/notes' run); rc=$?
 assert_eq "1" "$rc" "MR notes call fails: exit 1"
 assert_eq "" "$out" "nothing printed"
 assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor unchanged"
+[ ! -e "$FRICTION_DIR/gitlab-down" ] && pass "no outage marker for a failing notes call" || fail "no outage marker for a failing notes call" "marker written"
 
 base_mr
 out=$(GLAB_FAIL='/pipelines' run); rc=$?
 assert_eq "1" "$rc" "MR pipelines call fails: exit 1"
 assert_eq "" "$out" "nothing printed"
 assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor unchanged"
+[ ! -e "$FRICTION_DIR/gitlab-down" ] && pass "no outage marker for a failing pipelines call" || fail "no outage marker for a failing pipelines call" "marker written"
 
 base_mr
 out=$(GLAB_FAIL_EXACT='api projects/2/merge_requests/2231' run --peek); rc=$?

@@ -223,17 +223,23 @@ feed_gitlab_todos() {
     | if $mark then . + {approved_by_me: true} else . end' <<<"$todos" >> "$EVENTS"
 }
 
+# One MR's lookup failing says nothing about GitLab: fail the run (no cursor move) without the shared outage marker.
+mr_failed() {
+  [ ! -e "$TIMED_OUT" ] || down gitlab-mrs "GitLab MRs unavailable"
+  friction_log --source gitlab-mrs tool_error "MR lookup failed for $1!$2"; die "MR lookup failed for $1!$2"
+}
+
 feed_gitlab_mrs() {
   local mrs pid iid detail notes pipelines
   mrs=$(gitlab_json "merge_requests?scope=created_by_me&state=all&updated_after=$SINCE&per_page=100") || return 1
   jq -e 'type == "array"' <<<"$mrs" >/dev/null || return 1
   while IFS=$'\t' read -r pid iid; do
-    detail=$(bounded glab api "projects/$pid/merge_requests/$iid") || return 1
-    notes=$(bounded glab api "projects/$pid/merge_requests/$iid/notes?sort=desc&order_by=created_at&per_page=100") || return 1
+    detail=$(bounded glab api "projects/$pid/merge_requests/$iid") || mr_failed "$pid" "$iid"
+    notes=$(bounded glab api "projects/$pid/merge_requests/$iid/notes?sort=desc&order_by=created_at&per_page=100") || mr_failed "$pid" "$iid"
     pipelines='[]'
     # The previous pipeline only matters when the head one just went green.
     if jq -e --arg since "$SINCE" "$JQ_DEFS"'.state == "opened" and .head_pipeline.status == "success" and (.head_pipeline.updated_at | utc) >= $since' <<<"$detail" >/dev/null; then
-      pipelines=$(bounded glab api "projects/$pid/merge_requests/$iid/pipelines") || return 1
+      pipelines=$(bounded glab api "projects/$pid/merge_requests/$iid/pipelines") || mr_failed "$pid" "$iid"
     fi
     jq -c --arg since "$SINCE" --arg me "$ME" --arg jp "$JIRA_PROJECT" --argjson notes "$notes" --argjson pipelines "$pipelines" "$JQ_DEFS"'
       def latest: map(.created_at | utc) | max;
