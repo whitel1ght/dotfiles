@@ -83,6 +83,43 @@ assert_eq "1" "$(rg -l --fixed-strings 'text: a long idea that goes on over a se
 assert_eq "done" "$(fm "$(id_of 'lowercase tick')" status)" "a lowercase [x] counts as done"
 assert_eq "loose" "$(fm "$(id_of 'under a heading without a colon')" section)" "an unknown heading counts as loose"
 
+setfm() { sed -i '' "s|^$2:.*|$2: $3|" "$IDEAS_DIR/$1.md"; } # id key value (stands in for record/answer)
+start() { reset; printf '# ideas\n\n## review & implement:\n\n'"$1" >"$IDEAS_FILE"; ideas sync >/dev/null; }
+
+echo "ideas sync — edits"
+start '- [ ] learn more about nushell and if it is worth switching to it\n'
+E="$(id_of 'learn more about nushell')"
+setfm "$E" status reviewed; setfm "$E" answer no
+printf '# ideas\n\n## review & implement:\n\n- [ ] learn more about nushell and if it is worth swiching to it\n' >"$IDEAS_FILE"
+OUT="$(ideas sync)"
+assert_eq "$E|reviewed|no" "$(id_of 'learn more about nushell and if it is worth swiching')|$(fm "$E" status)|$(fm "$E" answer)" "a typo fix keeps the entry, its review and the answer"
+assert_eq "0|0" "$(jq -r '[.edited, .new] | map(length) | join("|")' <<<"$OUT")" "and is neither edited nor new"
+printf '# ideas\n\n## review & implement:\n\n- [ ] learn more about nushell and whether to switch my main shell to it\n' >"$IDEAS_FILE"
+OUT="$(ideas sync)"
+assert_eq "[\"$E\"]" "$(jq -c .edited <<<"$OUT")" "a substantive edit re-opens the same entry"
+assert_eq "edited|" "$(fm "$E" status)|$(fm "$E" answer)" "as edited, its answer cleared"
+printf '# ideas\n\n## review & implement:\n\n- [ ] a raspberry pi torrent media center\n' >"$IDEAS_FILE"
+OUT="$(ideas sync)"
+assert_eq "gone" "$(fm "$E" status)" "a rewrite leaves the old entry gone"
+assert_eq "1|1" "$(jq -r '[.new, .gone] | map(length) | join("|")' <<<"$OUT")" "and makes a new one"
+
+echo "ideas sync — ticks"
+start '- [ ] limiting claude access to certain files\n'
+L="$(id_of 'limiting claude access')"
+setfm "$L" status reviewed
+printf '# ideas\n\n## review & implement:\n\n- [X] limiting claude access to certain files\n' >"$IDEAS_FILE"
+OUT="$(ideas sync)"
+assert_eq "[\"$L\"]|[]" "$(jq -c .closed <<<"$OUT")|$(jq -c .edited <<<"$OUT")" "a tick closes, never edits"
+assert_eq "done" "$(fm "$L" status)" "recorded as done"
+
+echo "ideas sync — similar ideas and removed lines"
+start '- [ ] learn kubectl\n- [ ] learn kubectl basics\n- [ ] T1 schedule watcher\n'
+assert_eq "3" "$(ls "$IDEAS_DIR"/I-*.md | wc -l | tr -d ' ')" "similar ideas both present stay two"
+printf '# ideas\n\n## review & implement:\n\n- [ ] learn kubectl\n- [ ] learn kubectl basics\n' >"$IDEAS_FILE"
+OUT="$(ideas sync)"
+assert_eq "gone" "$(fm "$(id_of 'T1 schedule watcher')" status)" "a removed line is gone"
+assert_eq "new|new" "$(fm "$(id_of 'learn kubectl')" status)|$(fm "$(id_of 'learn kubectl basics')" status)" "its neighbours are untouched"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

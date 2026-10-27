@@ -9,8 +9,13 @@ IDEA.md is only ever read. Its top lines (before any `##` heading, or under a he
 the two below) are loose ideas; `## review & implement:` items are review ideas; `## implemented:`
 items are implemented. A bullet may carry a checkbox: `[ ]` open, `[X]`/`[x]` done, `[-]` dropped.
 An indented line under a bullet continues it. A done or dropped idea is recorded, never reviewed.
+A changed line keeps its entry: a small fix (similarity 0.9 and up) keeps the review and the
+user's answer; a bigger edit (0.6 to 0.9) re-opens it as `edited`, answer cleared; below 0.6 the
+line is a new idea and the old entry is `gone`, as is any entry whose line is no longer there. A
+tick alone closes an entry (done or dropped), never re-opens it.
 Entry ids (I-001 up) are never reused. A file is rewritten only when its content changes.
 """
+import difflib
 import json
 import os
 import re
@@ -21,6 +26,8 @@ IDEAS_FILE = os.environ.get("IDEAS_FILE", os.path.expanduser("~/wiki/IDEA.md"))
 IDEAS_DIR = os.environ.get("IDEAS_DIR", os.path.expanduser("~/wiki/work/ideas"))
 KEYS = ["id", "text", "section", "mark", "first_seen", "last_seen", "status", "verdict", "summary",
         "reviewed_on", "answer", "answered_on", "later_until"]
+# a changed line keeps its entry from EDITED_AT up; below SAME_AT it re-opens the entry's review
+SAME_AT, EDITED_AT = 0.9, 0.6
 BULLET = re.compile(r"^[-*]\s+(.*)$")
 BOX = re.compile(r"^\[( |x|X|-)\]\s*(.*)$")
 
@@ -130,18 +137,46 @@ def status_for(mark):
     return {"done": "done", "dropped": "dropped"}.get(mark)
 
 
+def match(ideas, entries):
+    """{line index: (entry, ratio)}: exact normalized text first, then the closest remaining
+    entry (difflib ratio, highest pairs first) at or above EDITED_AT."""
+    live = [e for e in entries.values() if e.get("status") != "gone"]
+    by_norm, found, used = {}, {}, set()
+    for e in live:
+        by_norm.setdefault(normalize(e["text"]), e)
+    for i, (text, _, _) in enumerate(ideas):
+        e = by_norm.get(normalize(text))
+        if e is not None and e["id"] not in used:
+            found[i] = (e, 1.0)
+            used.add(e["id"])
+    pairs = []
+    for i, (text, _, _) in enumerate(ideas):
+        if i in found:
+            continue
+        for e in live:
+            if e["id"] not in used:
+                r = difflib.SequenceMatcher(None, normalize(text), normalize(e["text"])).ratio()
+                if r >= EDITED_AT:
+                    pairs.append((r, i, e))
+    for r, i, e in sorted(pairs, key=lambda p: -p[0]):
+        if i not in found and e["id"] not in used:
+            found[i] = (e, r)
+            used.add(e["id"])
+    return found
+
+
 def cmd_sync():
     if not os.path.isfile(IDEAS_FILE):
         die(f"no ideas file at {IDEAS_FILE}")
     ideas = parse_ideas(IDEAS_FILE)
     entries = load_entries()
-    by_norm = {normalize(e["text"]): e for e in entries.values() if e.get("status") != "gone"}
+    found = match(ideas, entries)
     next_n = max([int(i[2:]) for i in entries] + [0]) + 1
     out = {"new": [], "edited": [], "closed": [], "gone": []}
     seen, day = set(), today()
-    for text, section, mark in ideas:
-        e = by_norm.get(normalize(text))
-        if e is None or e["id"] in seen:
+    for i, (text, section, mark) in enumerate(ideas):
+        e, ratio = found.get(i, (None, 0.0))
+        if e is None:
             e = {"id": f"I-{next_n:03d}", "text": text, "section": section, "mark": mark,
                  "first_seen": day, "last_seen": day, "status": status_for(mark) or "new"}
             next_n += 1
@@ -156,6 +191,9 @@ def cmd_sync():
             elif not closed and e.get("status") in ("done", "dropped"):
                 e["status"] = "new"
                 out["new"].append(e["id"])
+            elif not closed and ratio < SAME_AT and e.get("status") != "new":
+                e.update({"status": "edited", "answer": "", "answered_on": "", "later_until": ""})
+                out["edited"].append(e["id"])
             e.update({"text": text, "section": section, "mark": mark, "last_seen": day})
         seen.add(e["id"])
     for e in entries.values():
