@@ -114,6 +114,20 @@ assert_eq "0" "$(find "$CARDS_DIR" -name '*.tmp*' -o -name '.*.md*' | wc -l | tr
 cards drop keep; assert_eq "0 no" "$? $([ -f "$CARDS_DIR/keep.md" ] && echo yes || echo no)" "drop deletes the file"
 cards >/dev/null; assert_eq "2" "$?" "no command exits 2"
 
+# --- tags and extra front matter (words) ---------------------------------------
+reset
+mk aaa 2026-10-10 3 2.5 2 0
+printf -- '---\ndue: 2026-10-09\ninterval: 2\nease: 2.5\nreps: 1\nlapses: 0\ntags: [word]\nsource: s\n---\n\n## Question: What does *balmy* mean?\n\n### Answer: Mild.\n' >"$CARDS_DIR/balmy.md"
+printf -- '---\ndue: 2026-10-08\ninterval: 2\nease: 2.5\nreps: 1\nlapses: 0\ntags: [word, word-check]\nsource: s\n---\n\n## Question: What does *milieu* mean?\n\n### Answer: Setting.\n' >"$CARDS_DIR/milieu.md"
+assert_eq "milieu balmy" "$(cards due --date $D --tag word | cut -f1 | paste -sd ' ' -)" "due --tag lists only cards with that tag"
+assert_eq "aaa" "$(cards due --date $D --exclude-tag word | cut -f1 | paste -sd ' ' -)" "due --exclude-tag leaves them out"
+assert_eq "milieu" "$(cards due --date $D --tag word --limit 1 | cut -f1)" "the limit applies after the filter"
+slug=$(cards add --front "What does *imbroglio* mean?" --back "A muddle." --tags word --set word=imbroglio --set "met_in=the Watergate imbroglio" --date $D)
+assert_eq "imbroglio|the Watergate imbroglio" "$(fm "$slug" word)|$(fm "$slug" met_in)" "add --set writes extra front-matter keys"
+cards add --front "What does *x* mean?" --back "x." --set tags=oops >/dev/null; RC=$?
+assert_eq "2|0" "$RC|$(ls "$CARDS_DIR" | grep -c '^what-does-x')" "--set may not overwrite a scheduling key"
+cards add --front "What does *y* mean?" --back "y." --set novalue >/dev/null; assert_eq "2" "$?" "--set needs KEY=VALUE"
+
 echo
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
