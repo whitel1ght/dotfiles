@@ -28,6 +28,11 @@ reaches it. The user practises them by typing the real commands in a tmux window
         {right, total, streak} for D; streak = days in a row with a round, up to D (or D-1 when
         D has none yet). --line: "Drills: R right of N · streak S days", nothing before the first
         drill card. Writes stage: known on drills whose interval reached 21 days.
+  drills window [--date D]
+        start a round and become the user's interactive zsh with the drill hook (zsh/drill.zsh,
+        through a ZDOTDIR in $DRILLS_STATE/zdotdir that sources ~/.zshenv and ~/.zshrc first):
+        each line goes through `drills step`; the window ends itself after the round. With no
+        drills due it says so and exits after 3 s.
 
 A drill card's extra front matter: cmd, accept, run (yes|no), from (manual|hand), page, stage
 (learning|known). Cards are written through `cards` ($DRILLS_CARDS, default the one next to this
@@ -312,6 +317,38 @@ def cmd_stats(a):
         print(json.dumps(s))
 
 
+ZSHRC = """[ -f "$HOME/.zshenv" ] && source "$HOME/.zshenv"
+[ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"
+export DRILLS_CMD={cmd}
+source {hook}
+_drill_banner() {{
+  print "Drill: type the command for each goal (it runs for real, or is only checked). ? shows it."
+  print -r -- {goal}
+  add-zsh-hook -d precmd _drill_banner
+}}
+autoload -Uz add-zsh-hook
+add-zsh-hook precmd _drill_banner
+"""
+
+
+def cmd_window(a):
+    out = subprocess.run([os.path.realpath(__file__), "start", *(["--date", a.date] if a.date else [])],
+                         capture_output=True, text=True)
+    first = out.stdout.strip()
+    if out.returncode != 0 or not first.startswith("Goal:"):
+        print(first or "no drills due")
+        time.sleep(float(os.environ.get("DRILLS_WINDOW_WAIT") or 3))
+        return
+    zdot = os.path.join(STATE, "zdotdir")
+    os.makedirs(zdot, exist_ok=True)
+    hook = os.path.join(os.path.dirname(HERE), "zsh", "drill.zsh")
+    with open(os.path.join(zdot, ".zshrc"), "w", encoding="utf-8") as f:
+        f.write(ZSHRC.format(cmd=shlex.quote(os.path.realpath(__file__)), hook=shlex.quote(hook),
+                             goal=shlex.quote(first)))
+    zsh = os.environ.get("DRILLS_ZSH") or "zsh"
+    os.execvpe(zsh, [zsh, "-i"], {**os.environ, "ZDOTDIR": zdot})
+
+
 def cmd_add(a):
     goal, accept = one_line(a.goal), one_line(a.accept)
     if not goal or not accept or not one_line(a.cmd):
@@ -373,6 +410,9 @@ def main():
     g.add_argument("--json", action="store_true")
     g.add_argument("--line", action="store_true")
     s.set_defaults(fn=cmd_stats)
+    s = sub.add_parser("window")
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_window)
     a = p.parse_args()
     try:
         a.fn(a)
