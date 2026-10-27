@@ -118,6 +118,23 @@ assert_eq "3" "$(words stats --date 2026-10-28 --json | jq .streak)" "the streak
 assert_eq "0" "$(words stats --date 2026-10-30 --json | jq .streak)" "a missed day ends it"
 assert_eq "Words: 1 reviewed, 1 new, 1 known of 3 · streak 3 days" "$(words stats --date 2026-10-27 --line)" "--line is one sentence for the diary"
 
+echo "words pending / keep"
+reset
+mkdir -p "$WORDS_STATE"
+printf '2026-10-27T21:10 imbroglio\n2026-10-27T21:12 balmy\n2026-10-27T21:15 imbroglio\n' >"$WORDS_STATE/lookups.log"
+words add balmy >/dev/null
+assert_eq "imbroglio" "$(words pending)" "pending lists each looked-up word once, minus words already saved"
+words keep imbroglio >/dev/null; RC=$?
+assert_eq "0|book" "$RC|$(fm "$(words add imbroglio)" from)" "keep saves it, from the book"
+assert_eq "" "$(words pending)" "and nothing is pending after it"
+printf '2026-10-28T08:00 milieu\n2026-10-28T08:01 cordial\n' >>"$WORDS_STATE/lookups.log"
+assert_eq "milieu cordial" "$(words pending | paste -sd ' ' -)" "only lookups since the last keep are offered"
+words pending --clear
+assert_eq "" "$(words pending)" "--clear skips them without saving"
+assert_eq "" "$(rg -l 'word: milieu' "$CARDS_DIR" 2>/dev/null)" "nothing saved by --clear"
+rm -f "$WORDS_STATE/lookups.log" "$WORDS_STATE/pending.cursor"
+assert_eq "0|" "$(words pending >/dev/null; echo $?)|$(words pending)" "no log: nothing pending, exit 0"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

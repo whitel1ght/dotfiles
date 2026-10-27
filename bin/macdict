@@ -19,8 +19,10 @@ in Dictionary.app (New Oxford American Dictionary by default).
 
 import ctypes
 import ctypes.util
+import os
 import re
 import sys
+import time
 
 # NOAD runs an entry together on one line. text_win wraps each line but keeps
 # the breaks we give it, so splitting on these turns a dense block into a
@@ -124,6 +126,22 @@ def main():
         return
 
     print(format_entry(definition))
+    log_lookup(word)
+
+
+def log_lookup(word):
+    """Append a hit to $WORDS_STATE/lookups.log for `words pending` (the book reader's lookups
+    become words to keep). Off with MACDICT_LOG=0, which `words` sets for its own lookups. A log
+    that cannot be written is ignored: the lookup itself already worked."""
+    if os.environ.get("MACDICT_LOG") == "0":
+        return
+    state = os.environ.get("WORDS_STATE") or os.path.expanduser("~/.local/state/words")
+    try:
+        os.makedirs(state, exist_ok=True)
+        with open(os.path.join(state, "lookups.log"), "a", encoding="utf-8") as f:
+            f.write("%s %s\n" % (time.strftime("%Y-%m-%dT%H:%M"), " ".join(word.split())))
+    except OSError:
+        pass
 
 
 if __name__ == "__main__":

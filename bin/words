@@ -18,6 +18,11 @@
         back; a bare word gets the dictionary's; one the dictionary lacks gets "(look this one up
         again)" and tag word-check. Dated by the diary day, from diary; words already saved are
         skipped. Prints "imported N, already saved M, to check K".
+  words pending [--clear]
+        the words looked up in the book reader (macdict's log, $WORDS_STATE/lookups.log) since
+        the last keep or clear, once each, minus words already saved. --clear: skip them all.
+  words keep WORD ...
+        save those words (from book) and move past the logged lookups.
   words stats [--date D] [--json|--line]
         {total, new_today, reviewed_today, known, streak} over the word cards, from their
         `## Reviews` history (cards grade writes it): known = interval of 21 days or more (its
@@ -44,6 +49,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 CARDS = os.environ.get("WORDS_CARDS") or os.path.join(HERE, "cards")
 CARDS_DIR = os.path.expanduser(os.environ.get("CARDS_DIR") or "~/wiki/cards")
 MACDICT = os.environ.get("WORDS_MACDICT") or "macdict"
+STATE = os.path.expanduser(os.environ.get("WORDS_STATE") or "~/.local/state/words")
 FEED = os.environ.get("WORDS_FEED") or "https://www.merriam-webster.com/wotd/feed/rss2"
 MW_NS = "https://www.merriam-webster.com/word-of-the-day"
 ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
@@ -76,7 +82,8 @@ def clip(text, limit=BACK_MAX):
 def lookup(word):
     """macdict's text for word, or None on a miss"""
     try:
-        out = subprocess.run([MACDICT, word], capture_output=True, text=True, timeout=20).stdout
+        out = subprocess.run([MACDICT, word], capture_output=True, text=True, timeout=20,
+                             env={**os.environ, "MACDICT_LOG": "0"}).stdout
     except (OSError, subprocess.TimeoutExpired):
         return None
     out = out.strip()
@@ -148,6 +155,56 @@ def add(word, back=None, met_in="", src="lookup", day=None, tags=()):
 
 def cmd_add(a):
     print(add(a.word, a.back, a.met_in, a.src, a.date))
+
+
+def log_lines():
+    try:
+        with open(os.path.join(STATE, "lookups.log"), encoding="utf-8") as f:
+            return [l.rstrip("\n") for l in f if l.strip()]
+    except OSError:
+        return []
+
+
+def cursor(set_to=None):
+    path = os.path.join(STATE, "pending.cursor")
+    if set_to is None:
+        try:
+            with open(path) as f:
+                return int(f.read().strip() or 0)
+        except (OSError, ValueError):
+            return 0
+    os.makedirs(STATE, exist_ok=True)
+    with open(path, "w") as f:
+        f.write(f"{set_to}\n")
+
+
+def pending():
+    """words looked up (macdict's log) since the last keep or clear, once each, minus saved ones"""
+    lines, seen, out = log_lines(), set(), []
+    for line in lines[cursor():]:
+        word = one_line(line.partition(" ")[2])
+        if word and norm_word(word) not in seen and not saved(word):
+            seen.add(norm_word(word))
+            out.append(word)
+    return out
+
+
+def cmd_pending(a):
+    if a.clear:
+        cursor(len(log_lines()))
+        return
+    for w in pending():
+        print(w)
+
+
+def cmd_keep(a):
+    end = len(log_lines())
+    for w in a.words:
+        try:
+            print(add(w, src="book"))
+        except Fail as e:
+            print(f"words: {e}", file=sys.stderr)
+    cursor(end)
 
 
 REVIEW_LINE = re.compile(r"^- (\d{4}-\d{2}-\d{2}) grade [0-3] interval \d+", re.M)
@@ -319,6 +376,12 @@ def main():
     s = sub.add_parser("today")
     s.add_argument("--date")
     s.set_defaults(fn=cmd_today)
+    s = sub.add_parser("pending")
+    s.add_argument("--clear", action="store_true")
+    s.set_defaults(fn=cmd_pending)
+    s = sub.add_parser("keep")
+    s.add_argument("words", nargs="+")
+    s.set_defaults(fn=cmd_keep)
     s = sub.add_parser("stats")
     s.add_argument("--date")
     g = s.add_mutually_exclusive_group()
