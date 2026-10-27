@@ -11,6 +11,23 @@ import type { OnBlock } from "./mod/guard.ts";
 import { messageFiles } from "./mod/inbox.ts";
 import { parseRunState } from "./mod/runstate.ts";
 import { acquireLock, DayWatcher, INBOX_MS, releaseLock, WATCH_MS, type Exec } from "./watch.ts";
+import { IdeasNudger } from "./ideas.ts";
+
+const IDEAS_MS = 60_000;
+
+/** `ideas due --limit 3` has something; any failure counts as nothing due. */
+function ideasDue(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const bin = existsSync(join(homedir(), ".local/bin/ideas")) ? join(homedir(), ".local/bin/ideas") : "ideas";
+    execFile(bin, ["due", "--limit", "3"], { timeout: 30_000 }, (err, stdout) => {
+      try {
+        resolve(!err && (JSON.parse(String(stdout)) as unknown[]).length > 0);
+      } catch {
+        resolve(false);
+      }
+    });
+  });
+}
 
 const MAX_CHARS = 6000;
 const BLOCK_MAX = 3000;
@@ -361,7 +378,32 @@ export default function daily(pi: ExtensionAPI) {
     session = ctx?.sessionManager?.getSessionId?.() ?? session;
   });
   const stopWatch = registerWatch(pi, () => ui, () => session);
-  pi.on("session_shutdown", () => stopWatch());
+
+  // "the system" session reviews ideas when idle (ideas.ts, mod/ideas.ts)
+  const ideas = new IdeasNudger({
+    now: () => Date.now(),
+    stateHome: () => join(homedir(), ".local", "state"),
+    session: () => session,
+    due: ideasDue,
+    send: (content) =>
+      pi.sendMessage({ customType: "ideas", content, display: true }, { triggerTurn: true, deliverAs: "followUp" }),
+  });
+  pi.on("input", (event) => {
+    try {
+      ideas.onInput(event.text, event.source);
+    } catch {
+      // never lose the user's input because the ideas mark failed
+    }
+  });
+  pi.on("agent_start", () => ideas.onAgentStart());
+  pi.on("agent_end", () => ideas.onAgentEnd());
+  const ideasTimer = setInterval(() => void ideas.tick().catch(() => {}), IDEAS_MS);
+  ideasTimer.unref?.();
+
+  pi.on("session_shutdown", () => {
+    stopWatch();
+    clearInterval(ideasTimer);
+  });
 
   // before_agent_start, not context_with_system: measured on pi 1.2.0, a section added to the
   // system message there never reaches the provider request — pi rebuilds the system head from
