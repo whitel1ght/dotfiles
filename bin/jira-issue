@@ -32,7 +32,11 @@ fi
 jq -r --arg fields "$fields" '
 def adf:
     if type == "string" then .
-    elif .type == "text" then .text
+    elif .type == "text" then
+        ([.marks[]? | select(.type == "link") | .attrs.href][0]) as $h
+        | if $h == null or $h == .text then .text else "\(.text) (\($h))" end
+    elif .type == "inlineCard" then (.attrs.url // "")
+    elif (.type | IN("blockCard", "embedCard")) then (.attrs.url // "") + "\n"
     elif .type == "hardBreak" then "\n"
     elif .type == "mention" then (.attrs.text // "")
     elif (.type | IN("paragraph", "heading", "codeBlock")) then ([.content[]? | adf] | join("")) + "\n"

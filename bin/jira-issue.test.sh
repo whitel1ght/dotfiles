@@ -74,6 +74,20 @@ assert_contains "$out" "First line"$'\n'"second line" "hardBreak is a line break
 assert_contains "$out" "- item one"$'\n'"- item two" "list items on their own lines"
 assert_lacks "$out" '"type"' "no ADF nodes in the output"
 
+echo "jira-issue — links survive"
+cp "$FIX/issue.json" "$FIX/full.json"
+jq '.fields.description = {"type":"doc","version":1,"content":[
+  {"type":"paragraph","content":[{"type":"text","text":"Design: "},{"type":"inlineCard","attrs":{"url":"https://figma.com/file/abc"}},{"type":"text","text":" see "},{"type":"text","text":"MR","marks":[{"type":"link","attrs":{"href":"https://gitlab.com/x/-/merge_requests/1"}}]}]},
+  {"type":"blockCard","attrs":{"url":"https://gitlab.com/y"}},
+  {"type":"paragraph","content":[{"type":"text","text":"https://bare.example/z","marks":[{"type":"link","attrs":{"href":"https://bare.example/z"}}]}]}]}' "$FIX/full.json" > "$FIX/issue.json"
+out=$("$SCRIPT" ECFX-1 2>&1)
+assert_contains "$out" "https://figma.com/file/abc" "inlineCard url prints"
+assert_contains "$out" "https://gitlab.com/y" "blockCard url prints"
+assert_contains "$out" "MR (https://gitlab.com/x/-/merge_requests/1)" "link mark prints text and href"
+assert_lacks "$out" "https://bare.example/z (https://bare.example/z)" "link text equal to href prints once"
+assert_contains "$out" "https://bare.example/z" "bare link href prints"
+cp "$FIX/full.json" "$FIX/issue.json"
+
 echo "jira-issue — missing description"
 jq '.fields.description = null' "$FIX/issue.json" > "$FIX/null.json"
 cp "$FIX/issue.json" "$FIX/full.json"; cp "$FIX/null.json" "$FIX/issue.json"
