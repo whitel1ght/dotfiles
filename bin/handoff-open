@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Open the side session for a handed-off ticket in a tmux window and focus it.
+#
+#   handoff-open KEY WORKTREE [claude|pi]
+#
+# The window opens in the tmux session the caller runs in, found without relying on $TMUX
+# (a harness can start its shell without it): the session of $TMUX_PANE, else of the pane
+# whose process is an ancestor of this one, else of the most recently active client. A
+# window named KEY, or KEY:<anything> (tmux's automatic name), is focused instead of opening
+# a second one. It runs `claude -n KEY "/daily:pickup KEY"` (pi: `pi -n KEY "/pickup KEY"`)
+# in WORKTREE. Prints `opened <session>:KEY`, `focused <session>:<window>`, or, with no tmux
+# server or session, `run: cd WORKTREE && <command>` for a new terminal (exit 0 all three).
+# A bad KEY or a missing WORKTREE exits 1.
+set -euo pipefail
+
+die() { echo "handoff-open: $1" >&2; exit "${2:-1}"; }
+
+case "${1:-}" in -h|--help) sed -n '2p;4p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+[ $# -ge 2 ] && [ $# -le 3 ] || die "usage: handoff-open KEY WORKTREE [claude|pi]"
+key="$1"; wt="$2"; harness="${3:-claude}"
+[[ "$key" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]] || die "not a ticket key: $key"
+[ -d "$wt" ] || die "no worktree at $wt"
+case "$harness" in
+  claude) cmd="claude -n $key \"/daily:pickup $key\"" ;;
+  pi) cmd="pi -n $key \"/pickup $key\"" ;;
+  *) die "harness is claude or pi, not $harness" ;;
+esac
+
+find_session() {
+  local s panes pid
+  if [ -n "${TMUX_PANE:-}" ] && s="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null)" && [ -n "$s" ]; then
+    echo "$s"; return
+  fi
+  panes="$(tmux list-panes -a -F '#{pane_pid} #{session_name}' 2>/dev/null || true)"
+  pid=$$
+  while [ -n "$pid" ] && [ "$pid" -gt 1 ]; do
+    s="$(awk -v p="$pid" '$1 == p { sub(/^[^ ]+ /, ""); print; exit }' <<<"$panes")"
+    if [ -n "$s" ]; then echo "$s"; return; fi
+    pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+  done
+  tmux list-clients -F '#{client_activity} #{client_session}' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-
+}
+
+session=""
+command -v tmux >/dev/null 2>&1 && tmux list-sessions >/dev/null 2>&1 && session="$(find_session)"
+if [ -z "$session" ]; then
+  echo "run: cd $wt && $cmd"
+  exit 0
+fi
+
+# by index: tmux's automatic name holds a colon, which a session:window target cannot carry
+window="$(tmux list-windows -t "=$session:" -F '#{window_index} #{window_name}' |
+  awk -v k="$key" '{ n = $0; sub(/^[^ ]+ /, "", n) } n == k || index(n, k ":") == 1 { print; exit }')"
+if [ -n "$window" ]; then
+  tmux select-window -t "=$session:${window%% *}"
+  echo "focused $session:${window#* }"
+  exit 0
+fi
+tmux new-window -t "=$session:" -n "$key" -c "$wt" "$cmd"
+echo "opened $session:$key"

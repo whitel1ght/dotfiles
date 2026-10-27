@@ -1,7 +1,7 @@
 ---
 description: For the /run-day session — hand a tracked ticket over to a Claude session the user drives ("hand off 18384", "I'll take ECFX-18384 myself"); opens it in a tmux window. Only when the user explicitly asks to work this item themselves; never on your own initiative.
 argument-hint: KEY
-allowed-tools: Bash(diary-links:*), Bash(git -C:*), Bash(mkdir:*), Bash(date:*), Bash(ls:*), Bash(test -n:*), Bash(tmux list-windows:*), Bash(tmux select-window:*), Bash(tmux display-message:*), Bash(tmux new-window:*), Read, Edit, Write, TaskStop
+allowed-tools: Bash(diary-links:*), Bash(git -C:*), Bash(mkdir:*), Bash(date:*), Bash(ls:*), Bash(handoff-open:*), Read, Edit, Write, TaskStop
 ---
 
 # Hand off a ticket
@@ -55,29 +55,10 @@ MR: <url or none>
    done
    ```
 6. Diary: set the item's line to `[/]` and put `· with you: <KEY>` first in its evidence, keeping any MR evidence after it (for example `- [/] ecfx-18169 fix the 3 majors · with you: ECFX-18169 · draft MR dashboard!2231  [↗][dashboard!2231]`). Edit only that line, keep its trailing refs last, then run `diary-links ~/wiki/diary/$(date +%F).md`.
-7. Open the side session, and tell the user to run `/daily:report-back done` (or `handback`) in it when they stop. Inside tmux (`test -n "$TMUX"` succeeds) open a window in the current session and focus it, with the literal values in the commands (shell variables do not carry between Bash calls):
-
-   `<worktree>` is the absolute path from the run-state line (a leading `~` becomes `$HOME`).
+7. Open the side session, and tell the user to run `/daily:report-back done` (or `handback`) in it when they stop. Run, with the literal key and the absolute worktree path from the run-state line (a leading `~` becomes `$HOME`):
 
 ```bash
-tmux display-message -p -t "$TMUX_PANE" '#{session_name}'
-tmux list-windows -t "<session>:" -F '#{window_name}'
+handoff-open <KEY> "<worktree>"
 ```
 
-   If a window named `<KEY>` is listed, select it and open nothing else (no second window, no second claude session):
-
-```bash
-tmux select-window -t "<session>:<KEY>"
-```
-
-   Otherwise open and focus a new one:
-
-```bash
-tmux new-window -t "<session>:" -n <KEY> -c "<worktree>" 'claude -n <KEY> "/daily:pickup <KEY>"'
-```
-
-   Outside tmux, print the command instead, for the user to run in a new terminal:
-
-```
-cd <worktree> && claude -n <KEY> "/daily:pickup <KEY>"
-```
+   It finds this session's tmux session even when `$TMUX` is empty, focuses the ticket's window if one is open (never a second claude session), else opens one running `claude -n <KEY> "/daily:pickup <KEY>"`. Say which window it opened or focused (`opened …` / `focused …`). Only when it prints `run: …` (no tmux at all) give the user that command to run in a new terminal. Never tell the user to open the window themselves after it printed `opened` or `focused`.

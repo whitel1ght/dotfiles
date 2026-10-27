@@ -520,6 +520,11 @@ if [ -f "$DOTFILES_DIR/bin/day-plan" ]; then
     create_symlink "$DOTFILES_DIR/bin/day-plan" "$HOME/.local/bin/day-plan"
 fi
 
+# handoff-open opens a handed-off ticket's side session in a tmux window (/daily:handoff, /handoff).
+if [ -f "$DOTFILES_DIR/bin/handoff-open" ]; then
+    create_symlink "$DOTFILES_DIR/bin/handoff-open" "$HOME/.local/bin/handoff-open"
+fi
+
 # decide files the questions /run-day is waiting on; decisions is the deck that answers them
 # (tmux prefix+y). Both are a wrapper around the standalone decisions binary; answers reach
 # the session through run-day-inbox-answer, which writes the run-day inbox.

@@ -77,30 +77,15 @@ MR: <url or none>
    `~/.local/bin/diary-links ~/wiki/diary/$(date +%F).md`.
 
 6. Open the side session, and tell the user to run `/report-back done` (or `handback`) in it when
-   they stop. Inside tmux (`test -n "$TMUX"` succeeds) open a window in the current session and
-   focus it, with the literal values in the commands:
-
-   `<worktree>` is the absolute path from the run-state line (a leading `~` becomes `$HOME`).
+   they stop. Run, with the literal key and the absolute worktree path from the run-state line
+   (a leading `~` becomes `$HOME`):
 
 ```bash
-tmux display-message -p -t "$TMUX_PANE" '#{session_name}'
-tmux list-windows -t "<session>:" -F '#{window_name}'
+~/.local/bin/handoff-open <KEY> "<worktree>" pi
 ```
 
-   If a window named `<KEY>` is listed, select it and open nothing else (no second window, no second pi session):
-
-```bash
-tmux select-window -t "<session>:<KEY>"
-```
-
-   Otherwise open and focus a new one:
-
-```bash
-tmux new-window -t "<session>:" -n <KEY> -c "<worktree>" 'pi -n <KEY> "/pickup <KEY>"'
-```
-
-   Outside tmux, print the command instead, for the user to run in a new terminal:
-
-```
-cd <worktree> && pi -n <KEY> "/pickup <KEY>"
-```
+   It finds this session's tmux session even when `$TMUX` is empty, focuses the ticket's window if
+   one is open (never a second pi session), else opens one running `pi -n <KEY> "/pickup <KEY>"`.
+   Say which window it opened or focused (`opened …` / `focused …`). Only when it prints
+   `run: …` (no tmux at all) give the user that command to run in a new terminal. Never tell the
+   user to open the window themselves after it printed `opened` or `focused`.
