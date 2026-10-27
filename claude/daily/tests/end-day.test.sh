@@ -120,4 +120,22 @@ for f in "$F" "$P"; do
 done
 has "$F" "Bash(~/.local/bin/words:*)" "claude: allows words"
 
+echo "== drills: new drills and the day's line =="
+for f in "$F" "$P"; do
+  side="$(basename "$(dirname "$f")")"
+  has "$f" "## Drills" "$side: drills step exists"
+  has "$f" "~/.local/bin/drills candidates --json" "$side: lists commands with no drill yet"
+  has "$f" "at most 5" "$side: at most 5 new drills a day"
+  has "$f" "when unsure, \`no\`" "$side: unsure means checked, not run"
+  has "$f" "~/.local/bin/drills skip" "$side: rejected rows are skipped for good"
+  has "$f" '~/.local/bin/drills stats --date "$DAY" --line' "$side: reads the day's drills line"
+  has "$f" '~/.local/bin/end-day drills "$DAY"' "$side: files it in its own block"
+  awk '/^## Words/{a=NR} /^## Drills/{b=NR} /^## Check the system/{c=NR} END{exit !(a&&b&&c&&a<b&&b<c)}' "$f" && pass "$side: drills sits after words" || fail "$side: drills order" "wrong order in $f"
+  step="$(grep 'command -v ~/.local/bin/drills' "$f")"
+  home="$(mktemp -d)"
+  HOME="$home" DAY=2026-10-27 bash -c "$step" && pass "$side: no drills installed: the step exits 0" || fail "$side: skip exit" "exit $? with no drills"
+  rm -rf "$home"
+done
+has "$F" "Bash(~/.local/bin/drills:*)" "claude: allows drills"
+
 finish

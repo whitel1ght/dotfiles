@@ -15,7 +15,7 @@ for f in "$C" "$P"; do
   has "$f" "Looked up yesterday:" "$side: in one line"
   has "$f" "~/.local/bin/words keep" "$side: kept ones are saved"
   has "$f" "words pending --clear" "$side: the rest are skipped"
-  has "$f" "cards due --limit 5 --exclude-tag word --json" "$side: the other cards keep their 5"
+  has "$f" "cards due --limit 5 --exclude-tag word --exclude-tag drill --json" "$side: the other cards keep their 5"
   has "$f" "cards due --limit 3 --tag word --json" "$side: words get up to 3 of their own"
   has "$f" "the sentence it was met in" "$side: a word card shows its sentence"
   lacks "$f" "merriam-webster word of the day" "$side: the diary habit line is never written"
@@ -31,7 +31,7 @@ for f in "$C" "$P"; do
   has "$f" "friction queue: N waiting" "$side: prints the queue line"
   lacks "$f" "coach-offer" "$side: no coach offer"
   lacks "$f" "coach-answer" "$side: no coach answer"
-  has "$f" "cards due --limit 5 --exclude-tag word --json" "$side: quiz pulls due cards"
+  has "$f" "cards due --limit 5 --exclude-tag word --exclude-tag drill --json" "$side: quiz pulls due cards"
   has "$f" "cards grade" "$side: quiz grades"
   has "$f" "cards drop" "$side: drop is handled"
   has "$f" "\`skip\`" "$side: skip ends the quiz"
@@ -51,8 +51,13 @@ for f in "$C" "$P"; do
   has "$f" "never install" "$side: review never installs"
   has "$f" "do not wait" "$side: the session does not wait for the review"
   has "$f" "never blocks the plan" "$side: coach never blocks the plan"
+  has "$f" "~/.local/bin/drills open" "$side: the drill window opens after the quiz"
+  has "$f" "do not wait for the drill window" "$side: and the session does not wait for it"
+  awk '/^\*\*Quiz\.\*\*/{a=NR} /^\*\*Drills\.\*\*/{b=NR} /^### Monthly tool review/{c=NR} END{exit !(a&&b&&c&&a<b&&b<c)}' "$f" && pass "$side: drills come after the quiz" || fail "$side: drills order" "wrong order in $f"
 done
 
 has "$C" "Bash(~/.local/bin/words:*)" "claude: allows words"
+
+has "$C" "Bash(~/.local/bin/drills:*)" "claude: allows drills"
 
 finish

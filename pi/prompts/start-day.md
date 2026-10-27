@@ -170,7 +170,7 @@ card; it prints the slug, or nothing when already saved or offline). Then
 (all, some, or none: then `~/.local/bin/words pending --clear`). No answer: leave them, they are
 offered again tomorrow. Words never go into the diary here.
 
-**Quiz.** Run `~/.local/bin/cards due --limit 5 --exclude-tag word --json`, then
+**Quiz.** Run `~/.local/bin/cards due --limit 5 --exclude-tag word --exclude-tag drill --json`, then
 `~/.local/bin/cards due --limit 3 --tag word --json` (each an array of `{slug, front, back,
 tags, new}`; the word cards come after the others; nothing due means no quiz). A word card's
 front asks the meaning, with the sentence it was met in when there is one; show it as it is.
@@ -181,6 +181,12 @@ gaps, 1 = partly right, 0 = wrong or "don't know". Give one line of feedback, sh
 give no answer, or you cannot grade it, do not call `cards grade`; the card stays due.
 `skip` ends the quiz (the remaining cards stay due); `drop` runs
 `~/.local/bin/cards drop <slug>` and moves to the next card.
+
+**Drills.** After the quiz (or when nothing was due), run
+`~/.local/bin/drills open --date "$(date +%F)"` and print its one line (`opened …:drills`,
+`focused …:drills`, or `drills need tmux`). It opens a tmux window where I type the real commands
+for up to 5 goals or 5 minutes; the window grades each drill and closes itself. Go on at once:
+do not wait for the drill window. Nothing from it goes into the diary here.
 
 ### Monthly tool review
 

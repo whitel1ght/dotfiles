@@ -2,7 +2,7 @@
 description: Standup report of the day's work across commits, MRs, Jira and all Claude sessions, filed in the diary, then folded into the project memory in ~/wiki
 argument-hint: [yesterday | YYYY-MM-DD]
 model: sonnet
-allowed-tools: Bash(~/.local/bin/sync-tickets:*), Bash(~/.local/bin/end-day:*), Bash(~/.local/bin/diary-links:*), Bash(~/.local/bin/friction-mine:*), Bash(~/.local/bin/friction-ledger:*), Bash(~/.local/bin/coach-fix:*), Bash(~/.local/bin/words:*), Agent, Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Bash(fd:*), Bash(grep:*), Bash(glab api:*), Bash(jq:*), Bash(printf:*), Bash(cat:*), Bash(wc:*), Bash([:*), Bash(test:*), Bash(git -C * diff:*), Bash(wt add:*), Read, Edit, Write
+allowed-tools: Bash(~/.local/bin/sync-tickets:*), Bash(~/.local/bin/end-day:*), Bash(~/.local/bin/diary-links:*), Bash(~/.local/bin/friction-mine:*), Bash(~/.local/bin/friction-ledger:*), Bash(~/.local/bin/coach-fix:*), Bash(~/.local/bin/words:*), Bash(~/.local/bin/drills:*), Agent, Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Bash(fd:*), Bash(grep:*), Bash(glab api:*), Bash(jq:*), Bash(printf:*), Bash(cat:*), Bash(wc:*), Bash([:*), Bash(test:*), Bash(git -C * diff:*), Bash(wt add:*), Read, Edit, Write
 disable-model-invocation: true
 ---
 
@@ -206,6 +206,33 @@ L="$(command -v ~/.local/bin/words >/dev/null && ~/.local/bin/words stats --date
 ```
 
 The line reads `Words: R reviewed, N new, K known of T · streak S days`; `end-day words` keeps it between its own markers at the end of the diary, outside the report block. Never tick or write a habit line for words in the diary.
+
+## Drills
+
+Turn new commands into drills, then file the day's drill line. List the tools-manual rows for
+commands we built that have no drill yet with `~/.local/bin/drills candidates --json` (an array
+of `{command, page, row}`). Take at most 5, in order. For each, decide from its row:
+
+- not a shell command or alias we built (a hook, a library, a guard) or no sensible goal can be
+  written: `~/.local/bin/drills skip "<command>" --reason "<why>"`;
+- else write a goal in plain words that names what I want, not the command (for example "Show how
+  many friction cards are waiting."), the canonical command, and `accept`: the words a typed line
+  must hold, in order, the first being the command, with concrete example values when it takes
+  arguments ("handoff-open ECFX-123 ~/projects/worktrees/ecfx-dashboard/ECFX-123"); and `run`:
+  `yes` only when the command is safe to run at any time with no special arguments (it shows,
+  lists or looks something up), else `no` (it is then checked, never run); when unsure, `no`.
+  Then `~/.local/bin/drills add --goal "<goal>" --cmd "<command>" --accept "<accept>" --run <yes|no> --back "<the full command>" --page <page> --from manual`.
+
+Then file the day's line in its own diary block, skipped silently when `drills` is not installed
+or there are no drill cards yet:
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+L="$(command -v ~/.local/bin/drills >/dev/null && ~/.local/bin/drills stats --date "$DAY" --line)"; if [ -n "$L" ]; then printf '%s\n' "$L" | ~/.local/bin/end-day drills "$DAY"; fi
+```
+
+The line reads `Drills: R right of N · streak S days`. Mention the new drills in one line to me,
+never in the diary report.
 
 ## Check the system
 
