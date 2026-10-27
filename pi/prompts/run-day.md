@@ -115,7 +115,7 @@ planned pause in the day:
 - `wait` = blocked on others.
 
 Get what you need for each auto item from the plan line (ticket key; MR links name the repo) and
-`jira-api GET issue/<KEY>` (summary, description). If you cannot tell the repo, class it `me` and
+`jira-issue <KEY>` (summary, status, assignee, description). If you cannot tell the repo, class it `me` and
 say why. Anything spanning repos or changing a contract between services is **one** item on the
 heavy route (step 2, last paragraph), not two agents.
 

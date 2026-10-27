@@ -50,7 +50,7 @@ Classify every open item (`[ ]`, `[/]`, `[!]`; skip `[X]` and `[>]`):
 - **me**: syncs, meetings, merges, decisions, replies to people. A review is not a reply: it is `review`.
 - **wait**: blocked on others.
 
-Get what you need for each auto item from the plan line (ticket key, MR links name the repo) and `jira-api GET issue/<KEY>` (summary, description). Show one table: item, class, repo(s), model, depends on. A multi-repo ticket is one item on the heavy route. If you cannot tell the repo, class it `me` and say why. **Wait for approval or edits.**
+Get what you need for each auto item from the plan line (ticket key, MR links name the repo) and `jira-issue <KEY>` (summary, status, assignee, description). Show one table: item, class, repo(s), model, depends on. A multi-repo ticket is one item on the heavy route. If you cannot tell the repo, class it `me` and say why. **Wait for approval or edits.**
 
 With `--dry`: stop after printing the table (a merge-class `me` row says: merged in the UI by you, with the MR link, because the API merge returns 405), then print for each auto item the `wt add` command and the filled-in brief (step 2), and a closing line `dry run: nothing created`. Create no worktree, no agent, no run-state file, and edit nothing.
 

@@ -693,6 +693,11 @@ if [ -f "$DOTFILES_DIR/bin/jira-api" ]; then
     create_symlink "$DOTFILES_DIR/bin/jira-api" "$HOME/.local/bin/jira-api"
 fi
 
+# jira-issue prints one Jira issue as plain text, on top of jira-api.
+if [ -f "$DOTFILES_DIR/bin/jira-issue" ]; then
+    create_symlink "$DOTFILES_DIR/bin/jira-issue" "$HOME/.local/bin/jira-issue"
+fi
+
 # jt searches and previews Jira tickets with fzf, on top of jira-cli. jira-cli
 # keeps its own config; the token comes from JIRA_API_TOKEN, which jt (and the
 # jira-cli skill) pass from ~/.secrets, so the config only needs the site, login

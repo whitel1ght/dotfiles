@@ -23,7 +23,7 @@ git branch --show-current | rg -io '[a-z]+-[0-9]+' | head -1 | tr 'a-z' 'A-Z'
    No key either way: ask the user.
 
 2. Read `~/.local/state/run-day/handoff/<KEY>.md`. If it is missing, say so in one line, then fall
-   back to the ticket (`jira` CLI — see `~/.pi/agent/skills/jira-cli/SKILL.md`) and
+   back to the ticket (`jira-issue <KEY>`) and
    `git log --oneline -20`, and invent nothing.
 
 3. Warn if the current directory is not the note's `Worktree:` — then stop and ask before doing anything.

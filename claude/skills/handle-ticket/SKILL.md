@@ -90,26 +90,24 @@ them decide.
 
 ### P3. Fetch the ticket
 
-Jira lives at `https://ecfxdev.atlassian.net`, authenticated with `JIRA_USER` /
-`JIRA_TOKEN` from `~/.secrets/secrets.env`, passed inline as `$(secret NAME)`
-(never read that folder or run `secret` bare; both are blocked).
+Jira is read through `jira-issue` (on top of `jira-api`, which logs in with
+`JIRA_USER` / `JIRA_TOKEN` itself; never read the secrets folder or run
+`secret` bare).
 
 ```bash
-JIRA_BASE="https://ecfxdev.atlassian.net"
-curl -s -w '\n%{http_code}' -u "$(secret JIRA_USER):$(secret JIRA_TOKEN)" \
-  -H "Accept: application/json" \
-  "$JIRA_BASE/rest/api/3/issue/ECFX-15234?fields=summary,description,status,issuetype,priority,labels,components,assignee,reporter,comment,issuelinks,parent"
+jira-issue ECFX-15234 --fields summary,issuetype,status,priority,labels,components,assignee,reporter,parent,issuelinks,comment,description
 ```
 
-Walk the ADF `description` into plain text (`type: "text"` nodes; break on
-`paragraph`). Extract: summary, type, status, priority, labels, components,
-description, recent comments, linked issues, parent epic.
+`jira-issue` prints one `Field: value` line per field, with the description and
+comments already rendered as plain text, so nothing needs walking. Extract:
+summary, type, status, priority, labels, components, description, recent
+comments, linked issues, parent epic.
 
-**If the API returns 401/403/404** — the token expires periodically, and it was
-returning 401 when this skill was written — say so once, plainly, and continue
-from the user's pasted text. Do not retry-loop, do not hunt for other
-credentials, and do not stop: the paste is usually sufficient. Only stop if
-there is no paste *and* no API access.
+**If it exits non-zero** (Jira's message is on stderr: 401/403/404 — the token
+expires periodically, and it was returning 401 when this skill was written) — say
+so once, plainly, and continue from the user's pasted text. Do not retry-loop, do
+not hunt for other credentials, and do not stop: the paste is usually sufficient.
+Only stop if there is no paste *and* no API access.
 
 Note the issue type. A **Story/Task** is feature work — the flow below fits. A
 **Bug** with EMLs in `/workspace/shared/<TICKET>/` should go to
