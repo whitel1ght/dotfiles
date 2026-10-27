@@ -24,6 +24,7 @@ git config --global url."$REMOTES/gh/".insteadOf git@github.com:
 git config --global user.name t; git config --global user.email t@t
 git config --global init.defaultBranch main
 git config --global advice.detachedHead false
+git config --global protocol.file.allow always
 
 # remote NAME [host]: a bare remote with one commit on main, cloned to $P/NAME
 remote() {
@@ -76,11 +77,47 @@ assert_has "gone: fetch failed:" "$OUT" "a failed fetch is reported"
 assert_eq "$(head_of wtmain origin/main)" "$(head_of wtmain main)" "main checked out in another worktree, clean: fast-forwarded there"
 assert_eq "$(git -C "$P/wtmain" rev-parse main)" "$(git -C "$WT/wtmain" rev-parse HEAD)" "that worktree's files moved with it"
 assert_eq "other" "$(git -C "$P/wtmain" branch --show-current)" "the main checkout's own branch stays"
-assert_has "7 GitLab repos: 3 fast-forwarded, 1 up to date, 2 left alone, 1 failed" "$OUT" "a summary line"
+assert_has "7 GitLab repos: 3 updated, 1 up to date, 2 left alone, 1 failed" "$OUT" "a summary line"
 
 echo "repos-sync — second run"
 run
-assert_has "7 GitLab repos: 0 fast-forwarded, 4 up to date, 2 left alone, 1 failed" "$OUT" "nothing moves twice"
+assert_has "7 GitLab repos: 0 updated, 4 up to date, 2 left alone, 1 failed" "$OUT" "nothing moves twice"
+
+echo "repos-sync — submodules"
+rm -rf "${P:?}"/*
+remote proto; rm -rf "$P/proto"
+SD="$SANDBOX/src-dash"; mkdir -p "$REMOTES/ecfx"; git init -q --bare "$REMOTES/ecfx/dash.git"; git init -q "$SD"
+git -C "$SD" submodule -q add git@gitlab.com:ecfx/proto.git sub; git -C "$SD" commit -qm "add sub"
+git -C "$SD" push -q "$REMOTES/ecfx/dash.git" main; git -C "$REMOTES/ecfx/dash.git" symbolic-ref HEAD refs/heads/main
+git clone -q --recurse-submodules git@gitlab.com:ecfx/dash.git "$P/dash"
+bump() { # a new proto commit, recorded by dash on origin
+  echo "bump $RANDOM" >>"$SANDBOX/src-proto/f.txt"; git -C "$SANDBOX/src-proto" commit -qam bump
+  git -C "$SANDBOX/src-proto" push -q "$REMOTES/ecfx/proto.git" main
+  git -C "$SD/sub" pull -q origin main; git -C "$SD" commit -qam "bump sub"; git -C "$SD" push -q "$REMOTES/ecfx/dash.git" main
+}
+sub_head() { git -C "$P/dash/sub" rev-parse HEAD; }
+recorded() { git -C "$P/dash" rev-parse HEAD:sub; }
+
+bump; run
+assert_eq "$(head_of dash origin/main)" "$(head_of dash main)" "the parent is fast-forwarded"
+assert_eq "$(recorded)" "$(sub_head)" "and its submodule follows to the recorded commit"
+assert_has "dash: main fast-forwarded 1 commit(s), submodules updated (sub)" "$OUT" "the line names the submodule"
+assert_has "1 GitLab repos: 1 updated" "$OUT" "counted as updated"
+
+git -C "$P/dash/sub" checkout -q HEAD~1; run
+assert_eq "$(recorded)" "$(sub_head)" "a submodule left behind on an up-to-date branch is brought forward"
+assert_has "dash: submodules updated (sub)" "$OUT" "and reported"
+
+bump; echo "mine" >>"$P/dash/sub/f.txt"; run
+assert_eq "$(head_of dash origin/main)" "$(head_of dash main)" "a dirty submodule does not hold the parent back"
+assert_eq "mine" "$(tail -1 "$P/dash/sub/f.txt")" "its changes stay"
+assert_has "dash: main fast-forwarded 1 commit(s); submodule sub not updated: uncommitted changes in it" "$OUT" "and it is left alone, with the reason"
+assert_has "1 left alone" "$OUT" "counted as left alone"
+
+git -C "$P/dash/sub" checkout -q -- f.txt; echo "spike" >"$P/dash/sub/spike.txt"; git -C "$P/dash/sub" add spike.txt; git -C "$P/dash/sub" commit -qm spike
+SPIKE="$(sub_head)"; run
+assert_eq "$SPIKE" "$(sub_head)" "a submodule moved on purpose (not behind) stays where it is"
+assert_has "dash: submodule sub not updated: it is on a commit that is not behind the recorded one" "$OUT" "and says why"
 
 echo "repos-sync — a slow fetch"
 rm -rf "$P"/*; remote slow

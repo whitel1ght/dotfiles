@@ -22,7 +22,7 @@ trap 'rm -rf "$SANDBOX"' EXIT
 STUBS="$SANDBOX/stubs"; FIX="$SANDBOX/fixtures"; STATE="$SANDBOX/state"; DIARY="$SANDBOX/diary"
 mkdir -p "$STUBS" "$FIX" "$STATE" "$DIARY"
 # Never run the real repos-sync: it would fetch and fast-forward the repos in ~/projects.
-printf '#!/bin/bash\n[ -z "${REPOS_SYNC_SILENT:-}" ] || exit 0\necho "- ecfx-dashboard: main fast-forwarded 2 commit(s)"\necho "9 GitLab repos: 1 fast-forwarded, 8 up to date, 0 left alone, 0 failed"\n' >"$STUBS/repos-sync"
+printf '#!/bin/bash\n[ -z "${REPOS_SYNC_SILENT:-}" ] || exit 0\necho "- ecfx-dashboard: main fast-forwarded 2 commit(s)"\necho "9 GitLab repos: 1 updated, 8 up to date, 0 left alone, 0 failed"\n' >"$STUBS/repos-sync"
 chmod +x "$STUBS/repos-sync"
 export START_DAY_REPOS_SYNC="$STUBS/repos-sync"
 # A dummy, older diary entry: collect_carryover pipes ls through grep, and an

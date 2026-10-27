@@ -9,7 +9,11 @@
 #   - checked out nowhere: the branch ref moves (update-ref, checked against its old value);
 #   - checked out in a worktree with no uncommitted changes to tracked files: `git merge
 #     --ff-only` there;
-#   - local commits not on origin, or uncommitted changes: left alone, with the reason.
+#   - local commits not on origin, or uncommitted changes (submodules aside): left alone, with
+#     the reason.
+# Where the default branch is checked out, its submodules are then brought to the commits it
+# records (`submodule update --init --recursive`), each only when it is not set up yet or is
+# behind; one with uncommitted changes or moved on purpose (a commit not behind) is left alone.
 # Never a merge commit, rebase, reset, stash, checkout or push; other repos and branches are only
 # fetched. A repo whose fetch takes over $REPOS_SYNC_TIMEOUT seconds (60) is stopped. Prints one
 # line per repo that moved, was left alone or failed, then a summary line. Exits 0 whatever
@@ -37,20 +41,64 @@ sync_one() { # repo-dir
   old="$(git -C "$r" rev-parse -q --verify "$lref")" || { printf 'ok\t%s\n' "$name"; return; }
   new="$(git -C "$r" rev-parse "$up")"
   behind="$(git -C "$r" rev-list --count "$lref..$up")"; ahead="$(git -C "$r" rev-list --count "$up..$lref")"
-  [ "$behind" -gt 0 ] || { printf 'ok\t%s\n' "$name"; return; }
+  wt="$(git -C "$r" worktree list --porcelain | awk -v b="branch $lref" '/^worktree / { w = substr($0, 10) } $0 == b { print w; exit }')"
+  local moved="" subs
   if [ "$ahead" -gt 0 ]; then
+    [ "$behind" -gt 0 ] || { printf 'ok\t%s\n' "$name"; return; }
     printf 'left\t%s: %s is %s behind origin and has %s local commit(s) not on it, not moved\n' "$name" "$d" "$behind" "$ahead"; return
   fi
-  wt="$(git -C "$r" worktree list --porcelain | awk -v b="branch $lref" '/^worktree / { w = substr($0, 10) } $0 == b { print w; exit }')"
-  if [ -z "$wt" ]; then
-    git -C "$r" update-ref -m "repos-sync: fast-forward to origin" "$lref" "$new" "$old" 2>/dev/null ||
-      { printf 'failed\t%s: could not move %s\n' "$name" "$d"; return; }
-  elif [ -n "$(git -C "$wt" status --porcelain --untracked-files=no)" ]; then
-    printf 'left\t%s: %s is %s behind origin, not moved: uncommitted changes in %s\n' "$name" "$d" "$behind" "$wt"; return
-  elif ! err="$(git -C "$wt" merge --ff-only -q "$up" 2>&1)"; then
-    printf 'failed\t%s: fast-forward of %s failed: %s\n' "$name" "$d" "$(printf '%s\n' "$err" | tail -1)"; return
+  if [ "$behind" -gt 0 ]; then
+    # submodules are checked on their own below, so a stale one never blocks the branch
+    if [ -z "$wt" ]; then
+      git -C "$r" update-ref -m "repos-sync: fast-forward to origin" "$lref" "$new" "$old" 2>/dev/null ||
+        { printf 'failed\t%s: could not move %s\n' "$name" "$d"; return; }
+    elif [ -n "$(git -C "$wt" status --porcelain --untracked-files=no --ignore-submodules=all)" ]; then
+      printf 'left\t%s: %s is %s behind origin, not moved: uncommitted changes in %s\n' "$name" "$d" "$behind" "$wt"; return
+    elif ! err="$(git -C "$wt" merge --ff-only -q "$up" 2>&1)"; then
+      printf 'failed\t%s: fast-forward of %s failed: %s\n' "$name" "$d" "$(printf '%s\n' "$err" | tail -1)"; return
+    fi
+    moved="$d fast-forwarded $behind commit(s)"
   fi
-  printf 'moved\t%s: %s fast-forwarded %s commit(s)\n' "$name" "$d" "$behind"
+  [ -n "$wt" ] && subs="$(sub_sync "$wt")" || subs=""
+  local upd left
+  upd="$(sed -n 's/^updated //p' <<<"$subs")"; left="$(sed -n 's/^left //p' <<<"$subs")"
+  [ -z "$upd" ] || moved="${moved:+$moved, }submodules updated ($upd)"
+  if [ -n "$left" ]; then printf 'left\t%s: %s\n' "$name" "${moved:+$moved; }$left"
+  elif [ -n "$moved" ]; then printf 'moved\t%s: %s\n' "$name" "$moved"
+  else printf 'ok\t%s\n' "$name"; fi
+}
+
+# brings the submodules of a checked-out default branch to the commits it records: one that is
+# not set up yet, or whose commit is behind the recorded one, gets `submodule update --init
+# --recursive`; one with uncommitted changes, a conflict, or a commit not behind the recorded
+# one (moved on purpose) is left alone. Prints "updated <paths>" and "left <reasons>" lines.
+sub_sync() { # worktree
+  local wt="$1" st path rec cur upd="" left="" err
+  [ -f "$wt/.gitmodules" ] || return 0
+  while read -r st path _; do
+    [ -n "$path" ] || continue
+    case "$st" in
+      -*) ;;
+      +*)
+        if [ -n "$(git -C "$wt/$path" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+          left="$left; submodule $path not updated: uncommitted changes in it"; continue
+        fi
+        rec="$(git -C "$wt" rev-parse "HEAD:$path")"; cur="$(git -C "$wt/$path" rev-parse HEAD)"
+        git -C "$wt/$path" cat-file -e "$rec^{commit}" 2>/dev/null || GIT_TERMINAL_PROMPT=0 git -C "$wt/$path" fetch -q origin 2>/dev/null
+        if ! git -C "$wt/$path" merge-base --is-ancestor "$cur" "$rec" 2>/dev/null; then
+          left="$left; submodule $path not updated: it is on a commit that is not behind the recorded one"; continue
+        fi ;;
+      U*) left="$left; submodule $path not updated: it has a merge conflict"; continue ;;
+      *) continue ;;
+    esac
+    if err="$(GIT_TERMINAL_PROMPT=0 git -C "$wt" submodule update -q --init --recursive -- "$path" 2>&1)"; then
+      upd="${upd:+$upd, }$path"
+    else
+      left="$left; submodule $path update failed: $(printf '%s\n' "$err" | tail -1)"
+    fi
+  done < <(git -C "$wt" submodule status 2>/dev/null)
+  [ -z "$upd" ] || echo "updated $upd"
+  [ -z "$left" ] || echo "left ${left#; }"
 }
 
 out="$(mktemp -d)"
@@ -81,6 +129,6 @@ cat "$out"/* 2>/dev/null | awk -F'\t' '
   { n[$1]++; if ($1 != "ok") line[$1] = line[$1] "- " $2 "\n" }
   END {
     printf "%s%s%s", line["moved"], line["left"], line["failed"]
-    printf "%d GitLab repos: %d fast-forwarded, %d up to date, %d left alone, %d failed\n",
+    printf "%d GitLab repos: %d updated, %d up to date, %d left alone, %d failed\n",
       NR, n["moved"], n["ok"], n["left"], n["failed"]
   }'
