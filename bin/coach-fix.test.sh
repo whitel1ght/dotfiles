@@ -16,7 +16,7 @@ assert_has() { case "$2" in *"$1"*) pass "$3" ;; *) fail "$3" "[$1] not in [$2]"
 assert_lacks() { case "$2" in *"$1"*) fail "$3" "[$1] unexpectedly in [$2]" ;; *) pass "$3" ;; esac; }
 
 SANDBOX="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "${SANDBOX:?}"' EXIT
+trap 'stop_stubs; rm -rf "${SANDBOX:?}"' EXIT
 export HOME="$SANDBOX/home"
 export GIT_CONFIG_GLOBAL="$SANDBOX/gitconfig" GIT_CONFIG_NOSYSTEM=1
 git config --file "$GIT_CONFIG_GLOBAL" user.name "Test"
@@ -63,13 +63,15 @@ esac
 EOF
 chmod +x "$SANDBOX/fakebin/tmux"
 
-# stub harness (as claude and as pi): logs its argument; with $SANDBOX/job.sh it runs that as the job
+# stub harness (as claude and as pi): logs its arguments; with $SANDBOX/job.sh it runs that as
+# the job and exits, else it stays up like a job at work until end_job stops it
 mkdir -p "$SANDBOX/hbin"
 cat >"$COACH_HARNESS" <<EOF
 #!/bin/bash
+echo \$\$ >>"$SANDBOX/pids"
 printf '%s\n' "\$*" >>"$SANDBOX/harness.log"
-f="\$(sed -E 's#^/(daily:)?fix-friction (F-[0-9]+) --auto\$#\\2#' <<<"\$1")"
-[ ! -f "$SANDBOX/job.sh" ] || bash "$SANDBOX/job.sh" "\$f"
+f="\$(sed -E 's#^/(daily:)?fix-friction (F-[0-9]+) --auto\$#\\2#' <<<"\${@: -1}")"
+if [ -f "$SANDBOX/job.sh" ]; then bash "$SANDBOX/job.sh" "\$f"; else sleep 600; fi
 EOF
 chmod +x "$COACH_HARNESS"
 cp "$COACH_HARNESS" "$SANDBOX/hbin/pi"
@@ -77,9 +79,14 @@ cp "$COACH_HARNESS" "$SANDBOX/hbin/pi"
 cf() { "$SCRIPT" "$@" 2>"$SANDBOX/stderr"; }
 qget() { jq -r "if .$2 == null then \"\" else .$2 | tostring end" "$Q/$1.json" 2>/dev/null; }
 fld() { grep -m1 "^$2:" "$FRICTION_WIKI/$1.md" | sed "s/^$2: *//"; }
-ncalls() { [ -f "$FAKE_TMUX_DIR/log" ] && wc -l <"$FAKE_TMUX_DIR/log" | tr -d ' ' || echo 0; }
+ncalls() { [ -f "$COACH_STATE_DIR/logs/jobs.log" ] && wc -l <"$COACH_STATE_DIR/logs/jobs.log" | tr -d ' ' || echo 0; }
 yes_now() { "$FRICTION_LEDGER" coach-answer "$1" yes --date "$TODAY" >/dev/null; } # the user's yes in /start-day
-close_window() { grep -vx "coach-$1" "$FAKE_TMUX_DIR/windows" >"$SANDBOX/w.tmp" || true; mv "$SANDBOX/w.tmp" "$FAKE_TMUX_DIR/windows"; }
+wait_job() { # id: until its process has exited (10 s at most)
+  local p i=0; p="$(qget "$1" pid)"; [ -n "$p" ] || return 0
+  while kill -0 "$p" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+}
+end_job() { local p; p="$(qget "$1" pid)"; [ -z "$p" ] || kill -TERM -- "-$p" 2>/dev/null || true; wait_job "$1"; }
+stop_stubs() { local s; [ ! -f "$SANDBOX/pids" ] || while read -r s; do kill -TERM -- "-$s" "$s" 2>/dev/null; done <"$SANDBOX/pids"; rm -f "$SANDBOX/pids"; }
 
 mkentry() { # id signature safety [status] [proposal]
   cat >"$FRICTION_WIKI/$1.md" <<EOT
@@ -139,6 +146,7 @@ EOF
 }
 
 setup() {
+  stop_stubs
   rm -rf "$FRICTION_WIKI" "$SANDBOX/state" "$COACH_REPOS_DIR" "$WT" "$DIARY_DIR" "$FAKE_TMUX_DIR" "$HOME" \
     "$SANDBOX/job.sh" "$SANDBOX/harness.log" "$SUITE_LOG"
   mkdir -p "$FRICTION_WIKI" "$COACH_REPOS_DIR" "$WT" "$DIARY_DIR" "$FAKE_TMUX_DIR" "$HOME/.local/bin" "$RUN_DAY_STATE"
@@ -200,11 +208,16 @@ assert_eq "running" "$(qget F-001 state)" "enqueue starts the job at once"
 assert_eq "landing" "$(fld F-001 status)" "enqueue sets the ledger to landing"
 assert_eq "false" "$(qget F-001 approved_safety)" "approved_safety recorded"
 assert_eq "null" "$(jq -c .repo "$Q/F-001.json")" "repo is null until built"
-assert_eq "1" "$(ncalls)" "one tmux window started"
-LOG="$(cat "$FAKE_TMUX_DIR/log")"
-assert_has "new-window -d -n coach-F-001 -c $COACH_REPOS_DIR" "$LOG" "detached window coach-F-001 in the projects dir"
-assert_eq "$COACH_HARNESS '/daily:fix-friction F-001 --auto'" "$(cat "$FAKE_TMUX_DIR/cmds")" "claude gets the namespaced plugin command"
-for a in $STALE_ARGS; do assert_lacks " $a" "$(cat "$FAKE_TMUX_DIR/cmds")" "no permission flag $a"; done
+assert_eq "1" "$(ncalls)" "one job started"
+assert_eq "" "$(cat "$FAKE_TMUX_DIR/log" 2>/dev/null)" "no tmux window"
+P="$(qget F-001 pid)"
+assert_eq "yes" "$([ -n "$P" ] && kill -0 "$P" 2>/dev/null && echo yes || echo no)" "its pid is recorded and running"
+assert_has ": $COACH_HARNESS -p --permission-prompts none '/daily:fix-friction F-001 --auto'" "$(cat "$COACH_STATE_DIR/logs/jobs.log")" "claude runs headless with the namespaced plugin command, prompts denied"
+for a in --print --dangerously-skip-permissions --permission-mode --allow-dangerously-skip-permissions; do
+  assert_lacks " $a" "$(cat "$COACH_STATE_DIR/logs/jobs.log")" "no permission flag $a"
+done
+assert_eq "$(cd "$COACH_REPOS_DIR" && pwd -P)" "$(lsof -a -p "$P" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')" "it runs in the projects dir"
+assert_eq "$P" "$(ps -o pgid= -p "$P" | tr -d ' ')" "in its own process group"
 
 OUT="$(cf enqueue F-001)"; RC=$?
 assert_eq "0" "$RC" "enqueue of a queued entry exits 0"
@@ -268,16 +281,36 @@ echo "run: stale, safety, tmux"
 setup
 cf enqueue F-001 >/dev/null
 cf enqueue F-002 >/dev/null
-close_window F-001
+end_job F-001
 cf run >/dev/null
-assert_eq "failed|job ended without a result" "$(qget F-001 state)|$(qget F-001 reason)" "a running entry without its window fails"
-assert_eq "failed|job ended without a result" "$(fld F-001 status)|$(fld F-001 reason)" "the ledger says the job ended"
+assert_eq "failed|job ended without a result (log: $COACH_STATE_DIR/logs/F-001.job.log)" "$(qget F-001 state)|$(qget F-001 reason)" "a running entry whose process is gone fails, naming its log"
+assert_has "job ended without a result" "$(fld F-001 status)|$(fld F-001 reason)" "the ledger says the job ended"
 assert_eq "running" "$(qget F-002 state)" "and the next job starts"
 
 setup
 cf enqueue F-001 >/dev/null
+end_job F-001
+sleep 300 & SL=$!
+jq --arg p "$SL" '.pid = ($p | tonumber)' "$Q/F-001.json" >"$SANDBOX/q.tmp" && mv "$SANDBOX/q.tmp" "$Q/F-001.json"
+cf run >/dev/null
+kill "$SL" 2>/dev/null
+assert_eq "failed" "$(qget F-001 state)" "a reused pid running something else is not the job"
+
+echo "run: a job from before headless jobs is checked by its window"
+setup
+mkdir -p "$Q"; "$FRICTION_LEDGER" set F-001 --status landing >/dev/null
+jq -n '{id: "F-001", state: "running", queued_at: "2026-01-01T00:00:00Z", started_epoch: 1}' >"$Q/F-001.json"
+echo coach-F-001 >"$FAKE_TMUX_DIR/windows"
+COACH_JOB_MAX=999999999999 cf run >/dev/null
+assert_eq "running|0" "$(qget F-001 state)|$(ncalls)" "its window is open: still running, nothing new starts"
+: >"$FAKE_TMUX_DIR/windows"
+cf run >/dev/null
+assert_eq "failed" "$(qget F-001 state)" "its window gone: it ended without a result"
+
+setup
+cf enqueue F-001 >/dev/null
 jq -n '{id: "F-003", repo: null, approved_safety: false, queued_at: "2026-01-01T00:00:00Z", state: "queued"}' >"$Q/F-003.json"
-close_window F-001; cf fail F-001 --reason x >/dev/null
+end_job F-001; cf fail F-001 --reason x >/dev/null
 assert_eq "held|needs the user: safety entry queued without approval" "$(qget F-003 state)|$(qget F-003 reason)" "run re-checks the ledger's safety flag"
 assert_eq "proposed|true|needs the user: safety entry queued without approval" "$(fld F-003 status)|$(fld F-003 safety)|$(fld F-003 reason)" "the ledger puts it back to proposed, a safety item for the user"
 assert_eq "1" "$(ncalls)" "no job for it"
@@ -285,18 +318,15 @@ assert_eq "1" "$(ncalls)" "no job for it"
 setup
 touch "$FAKE_TMUX_DIR/noserver"
 cf enqueue F-001 >/dev/null; RC=$?
-assert_eq "0" "$RC" "enqueue without tmux still exits 0"
-assert_eq "failed|needs tmux" "$(qget F-001 state)|$(qget F-001 reason)" "no tmux server: the job fails"
-assert_eq "failed" "$(fld F-001 status)" "the ledger marks it failed"
+assert_eq "0|running|1" "$RC|$(qget F-001 state)|$(ncalls)" "no tmux server: the job starts all the same"
 
 setup
 COACH_HARNESS="$COACH_HARNESS --dangerously-skip-permissions" cf enqueue F-001 >/dev/null
 assert_eq "failed" "$(qget F-001 state)" "a harness command with a permission flag is never started"
-assert_eq "0" "$(ncalls)" "nothing reached tmux"
+assert_eq "0" "$(ncalls)" "nothing started"
 
 echo "run: end to end with the stub harness"
 setup
-touch "$FAKE_TMUX_DIR/run"
 cat >"$SANDBOX/job.sh" <<EOF
 f="\$1"; r="$DOT"; w="$WT/dotfiles/coach-\$f"
 git -C "\$r" branch "coach-\$f" main && git -C "\$r" worktree add -q "\$w" "coach-\$f"
@@ -304,7 +334,8 @@ echo "\$f" >"\$w/\$f.txt"; git -C "\$w" add -A && git -C "\$w" commit -qm "fix: 
 "$SCRIPT" built "\$f" --repo dotfiles --branch "coach-\$f" --worktree "\$w" --test-cmd "bash tests/ok.sh"
 EOF
 cf enqueue F-001 >/dev/null
-assert_eq "/daily:fix-friction F-001 --auto" "$(cat "$SANDBOX/harness.log")" "the harness gets the auto prompt"
+wait_job F-001
+assert_eq "-p --permission-prompts none /daily:fix-friction F-001 --auto" "$(cat "$SANDBOX/harness.log")" "the harness gets the auto prompt, headless"
 assert_eq "built" "$(qget F-001 state)" "the stub job built the branch"
 cf land --force-check >/dev/null
 assert_eq "landed" "$(qget F-001 state)" "the stub job's branch lands"
@@ -482,10 +513,10 @@ assert_eq "$BEFORE" "$(snap dotfiles)" "no repo is touched for an MR"
 echo "run: harness prompt"
 setup
 COACH_HARNESS="$SANDBOX/hbin/pi" cf enqueue F-001 >/dev/null
-assert_eq "$SANDBOX/hbin/pi '/fix-friction F-001 --auto'" "$(cat "$FAKE_TMUX_DIR/cmds")" "pi gets the bare prompt command"
+assert_has ": $SANDBOX/hbin/pi -p '/fix-friction F-001 --auto'" "$(cat "$COACH_STATE_DIR/logs/jobs.log")" "pi gets the bare prompt command, headless"
 setup
 COACH_PROMPT_CMD=/my:fix cf enqueue F-001 >/dev/null
-assert_eq "$COACH_HARNESS '/my:fix F-001 --auto'" "$(cat "$FAKE_TMUX_DIR/cmds")" "COACH_PROMPT_CMD overrides it"
+assert_has ": $COACH_HARNESS -p --permission-prompts none '/my:fix F-001 --auto'" "$(cat "$COACH_STATE_DIR/logs/jobs.log")" "COACH_PROMPT_CMD overrides it"
 setup
 COACH_PROMPT_CMD="/x'; rm -rf ~; '" cf enqueue F-001 >/dev/null
 assert_eq "failed|0" "$(qget F-001 state)|$(ncalls)" "a COACH_PROMPT_CMD that is not a plain command is never run"
@@ -495,10 +526,12 @@ setup
 cf enqueue F-001 >/dev/null
 cf enqueue F-002 >/dev/null
 jq '.started_epoch = 1000' "$Q/F-001.json" >"$SANDBOX/q.tmp" && mv "$SANDBOX/q.tmp" "$Q/F-001.json"
+P="$(qget F-001 pid)"
 cf run >/dev/null
-assert_eq "failed|job stalled in tmux window coach-F-001 (waiting on a prompt?)" "$(qget F-001 state)|$(qget F-001 reason)" "a job running past COACH_JOB_MAX fails as stalled"
+assert_eq "failed|job stalled: still running after 6 h, stopped (log: $COACH_STATE_DIR/logs/F-001.job.log)" "$(qget F-001 state)|$(qget F-001 reason)" "a job running past COACH_JOB_MAX fails as stalled"
 assert_eq "failed" "$(fld F-001 status)" "the ledger says so"
-assert_eq "yes" "$(grep -qx coach-F-001 "$FAKE_TMUX_DIR/windows" && echo yes || echo no)" "its window is left open"
+wait_job F-001
+assert_eq "no" "$(kill -0 "$P" 2>/dev/null && echo yes || echo no)" "its process is stopped"
 assert_eq "running" "$(qget F-002 state)" "the next job starts"
 
 echo "enqueue: the queue file cannot be written"
@@ -643,7 +676,7 @@ built dotfiles F-001 >/dev/null
 cf fail F-002 --reason "no" >/dev/null
 yes_now F-003
 cf enqueue F-003 --approved-safety >/dev/null
-close_window F-003
+end_job F-003
 jq '.state = "queued"' "$Q/F-003.json" >"$SANDBOX/q.tmp" && mv "$SANDBOX/q.tmp" "$Q/F-003.json"
 cf land >/dev/null
 assert_eq "running" "$(qget F-003 state)" "land starts the next queued job"
@@ -681,7 +714,7 @@ setup
 cf enqueue F-001 >/dev/null
 mkentry F-006 "claude:repeat:hooks" false landing "Drop the PreToolUse hook"
 jq -n '{id: "F-006", repo: null, approved_safety: false, queued_at: "2026-01-01T00:00:00Z", state: "queued"}' >"$Q/F-006.json"
-close_window F-001; cf fail F-001 --reason x >/dev/null
+end_job F-001; cf fail F-001 --reason x >/dev/null
 assert_eq "held|needs the user: safety entry queued without approval" "$(qget F-006 state)|$(qget F-006 reason)" "run applies the rule, not only the stored flag"
 assert_eq "true|proposed" "$(fld F-006 safety)|$(fld F-006 status)" "and writes safety: true back"
 
@@ -916,7 +949,7 @@ cf enqueue F-001 >/dev/null
 branch dotfiles F-001 notes.txt "half done"
 git -C "$COACH_REPOS_DIR/decisions" branch coach-F-002 main
 git -C "$DOT" branch coach-F-0010 main
-close_window F-001; cf fail F-001 --reason "tests stayed red" >/dev/null
+end_job F-001; cf fail F-001 --reason "tests stayed red" >/dev/null
 N0="$(ncalls)"
 OUT="$(cf retry F-001)"; RC=$?
 assert_eq "0" "$RC" "retry exits 0"
@@ -932,7 +965,7 @@ cf retry F-001 >/dev/null; RC=$?
 assert_eq "1|running" "$RC|$(qget F-001 state)" "a running entry is not retried"
 cf retry F-002 >/dev/null; RC=$?
 assert_eq "1" "$RC" "an entry never queued is not retried"
-close_window F-001; cf fail F-001 --reason "needs the user: rotate it" >/dev/null
+end_job F-001; cf fail F-001 --reason "needs the user: rotate it" >/dev/null
 cf retry F-001 >/dev/null; RC=$?
 assert_eq "1|failed" "$RC|$(qget F-001 state)" "a failure that needs the user is not retried"
 jq -n '{id: "F-003", repo: null, approved_safety: false, queued_at: "2026-01-01T00:00:00Z", state: "failed", reason: "x"}' >"$Q/F-003.json"

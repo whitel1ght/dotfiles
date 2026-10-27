@@ -27,21 +27,24 @@
 #          `landing` gets the ledger set to match (with its fix or reason); land does the same.
 #          A `held` entry whose ledger says `landing` from an answer given before today gets the
 #          hold written again (a yes given today is left for its enqueue).
-#          One job at a time. A `running` entry whose tmux window `coach-F-NNN` is gone (and
-#          that started over $COACH_STALE_GRACE seconds ago, default 30) fails "job ended without
-#          a result"; one whose window is still open after $COACH_JOB_MAX seconds (default 6 h)
-#          fails "job stalled in tmux window coach-F-NNN (waiting on a prompt?)", the window
-#          left open. With nothing running it takes the oldest `queued` entry, re-checks the
+#          One job at a time. A `running` entry whose process is gone (its `pid` no longer runs
+#          '<cmd> F-NNN --auto'; an entry from before headless jobs, with no pid, is checked by
+#          its tmux window coach-F-NNN) and that started over $COACH_STALE_GRACE seconds ago
+#          (default 30) fails "job ended without a result (log: ...)"; one still running after
+#          $COACH_JOB_MAX seconds (default 6 h) has its process group stopped and fails "job
+#          stalled: ...". With nothing running it takes the oldest `queued` entry, re-checks the
 #          ledger (a secret entry fails "needs the user: ..."; safety-check true without
 #          approval holds it, see "held" below; safety-check exit 75, the ledger busy, leaves it
-#          `queued` for the next run, with one line), marks it `running` and
-#          opens a detached window: tmux new-window -d -n coach-F-NNN -c $COACH_REPOS_DIR
-#          "$COACH_HARNESS '<cmd> F-NNN --auto'", <cmd> `/daily:fix-friction` (Claude Code knows
-#          a plugin command only namespaced) or `/fix-friction` when the harness is `pi`;
-#          $COACH_PROMPT_CMD overrides it. The harness (default `claude`) runs
-#          interactively under the user's own permission settings; a COACH_HARNESS carrying a
-#          permission flag (-p, --print, --dangerously-*, --permission-mode) is never started.
-#          No tmux server: the entry fails "needs tmux". Returns at once.
+#          `queued` for the next run, with one line), marks it `running` and starts the job
+#          headless, no window: `$COACH_HARNESS -p --permission-prompts none '<cmd> F-NNN
+#          --auto'` (pi: `-p` only) in $COACH_REPOS_DIR under nohup, in its own process group,
+#          stdin closed, output to $COACH_STATE_DIR/logs/F-NNN.job.log, one line per start in
+#          logs/jobs.log, its pid in the queue entry (recorded under the run lock). <cmd> is
+#          `/daily:fix-friction` (Claude Code knows a plugin command only namespaced) or
+#          `/fix-friction` when the harness is `pi`; $COACH_PROMPT_CMD overrides it. The job runs
+#          under the user's own permission settings, and anything that would prompt is denied;
+#          a COACH_HARNESS carrying a permission flag (-p, --print, --dangerously-*,
+#          --permission-mode) is never started. Returns at once.
 # built    the job reports a reviewed, green branch. --repo must be dotfiles, decisions or
 #          articles (main checkout $COACH_REPOS_DIR/<repo>), the branch coach-F-NNN, checked out
 #          in W, a worktree of that checkout, with commits over main; anything else fails the
@@ -117,7 +120,7 @@
 #
 # Queue: $COACH_STATE_DIR/queue/F-NNN.json (default ~/.local/state/coach) {id, repo,
 # approved_safety, queued_at, state: queued|running|built|held|landed|failed, branch, worktree,
-# test_cmd, mr, head, rebased_head, tested, fix, reason, started_at, started_epoch, updated_at}.
+# test_cmd, mr, head, rebased_head, tested, fix, reason, started_at, started_epoch, pid, updated_at}.
 # The ledger is written only
 # through friction-ledger set ($FRICTION_LEDGER, entries in $FRICTION_WIKI).
 set -euo pipefail
@@ -218,7 +221,6 @@ trap 'for d in $HELD; do rm -rf "$d"; done' EXIT
 # --- run -----------------------------------------------------------------------
 
 windows() { command -v tmux >/dev/null && tmux list-windows -a -F '#{window_name}' 2>/dev/null || true; }
-tmux_up() { command -v tmux >/dev/null && tmux list-sessions >/dev/null 2>&1; }
 harness_flag() { # prints the permission flag COACH_HARNESS carries, if any
   local w
   for w in $COACH_HARNESS; do
@@ -231,6 +233,34 @@ prompt_cmd() {
   if [ -n "${COACH_PROMPT_CMD:-}" ]; then echo "$COACH_PROMPT_CMD"; return; fi
   local h="${COACH_HARNESS%% *}"
   case "${h##*/}" in pi) echo /fix-friction ;; *) echo /daily:fix-friction ;; esac
+}
+
+# print mode; Claude Code also denies anything that would prompt, since nobody is there to
+# answer (the user's permission settings decide the rest, never a mode flag)
+headless_args() {
+  local h="${COACH_HARNESS%% *}"
+  case "${h##*/}" in pi) echo -p ;; *) echo -p --permission-prompts none ;; esac
+}
+
+# alive: its process (pid recorded at start, still running the job's prompt) or, for a job
+# started in a tmux window before jobs went headless, that window
+job_alive() { # id
+  local pid; pid="$(qget "$1" pid)"
+  if [ -z "$pid" ]; then grep -qxF "coach-$1" <<<"$(windows)"; return; fi
+  ps -o command= -p "$pid" 2>/dev/null | grep -qF -- "$1 --auto"
+}
+
+# detached in its own process group (nohup, set -m), stdin closed, output to logs/<id>.job.log
+start_job() { # id dir; prints the pid
+  local log="$LOGS/$1.job.log"
+  mkdir -p "$LOGS"
+  set -m
+  # shellcheck disable=SC2046,SC2086 # COACH_HARNESS may carry its own words (checked by harness_flag)
+  (cd "$2" && exec nohup $COACH_HARNESS $(headless_args) "$(prompt_cmd) $1 --auto") </dev/null >"$log" 2>&1 &
+  local pid=$!
+  set +m
+  printf '%s %s started (pid %s, log %s): %s %s %s\n' "$(now)" "$1" "$pid" "$log" "$COACH_HARNESS" "$(headless_args)" "'$(prompt_cmd) $1 --auto'" >>"$LOGS/jobs.log"
+  echo "$pid"
 }
 
 # a queue entry that ended (landed/failed) while its ledger entry still says landing: the
@@ -258,12 +288,19 @@ cmd_run() {
   mkdir -p "$QUEUE"
   lock run || { echo "another coach-fix run is busy; it starts the next job"; return 0; }
   reconcile
-  local wins id start="" flag t age safety; wins="$(windows)"; t="$(date +%s)"
+  local id start="" flag t age safety pid; t="$(date +%s)"
   for id in $(ids_in running); do
     age=$((t - $(qget "$id" started_epoch | sed 's/^$/0/')))
     [ "$age" -ge "$COACH_STALE_GRACE" ] || continue
-    if ! grep -qxF "coach-$id" <<<"$wins"; then mark_failed "$id" "job ended without a result"
-    elif [ "$age" -ge "$COACH_JOB_MAX" ]; then mark_failed "$id" "job stalled in tmux window coach-$id (waiting on a prompt?)"
+    if ! job_alive "$id"; then mark_failed "$id" "job ended without a result (log: $LOGS/$id.job.log)"
+    elif [ "$age" -ge "$COACH_JOB_MAX" ]; then
+      pid="$(qget "$id" pid)"
+      if [ -n "$pid" ]; then
+        kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+        mark_failed "$id" "job stalled: still running after $((COACH_JOB_MAX / 3600)) h, stopped (log: $LOGS/$id.job.log)"
+      else
+        mark_failed "$id" "job stalled in tmux window coach-$id (waiting on a prompt?)"
+      fi
     fi
   done
   id="$(ids_in running | head -1)"
@@ -278,19 +315,17 @@ cmd_run() {
     flag="$(harness_flag)"
     if [ -n "$flag" ]; then mark_failed "$id" "COACH_HARNESS carries the permission flag $flag; the job never starts with one"; continue; fi
     if ! [[ "$(prompt_cmd)" =~ ^/[A-Za-z0-9:_-]+$ ]]; then mark_failed "$id" "bad COACH_PROMPT_CMD: $(prompt_cmd)"; continue; fi
-    if ! tmux_up; then mark_failed "$id" "needs tmux"; continue; fi
-    qset "$id" '.state = "running" | .started_at = $now | .started_epoch = ($e | tonumber)' --arg e "$(date +%s)"
+    qset "$id" '.state = "running" | .pid = null | .started_at = $now | .started_epoch = ($e | tonumber)' --arg e "$(date +%s)"
     start="$id"; break
   done
-  unlock run
-  [ -n "$start" ] || return 0
+  if [ -z "$start" ]; then unlock run; return 0; fi
   local dir="$COACH_REPOS_DIR"; [ -d "$dir" ] || dir="$HOME"
-  if tmux new-window -d -n "coach-$start" -c "$dir" "$COACH_HARNESS '$(prompt_cmd) $start --auto'"; then
-    echo "$start: started in tmux window coach-$start"
-  else
-    mark_failed "$start" "could not open the tmux window"
-    cmd_run
-  fi
+  # started under the run lock and its pid recorded before release, so no other run sees it
+  # running without a pid and takes it for a window job
+  pid="$(start_job "$start" "$dir")"
+  qset "$start" '.pid = ($p | tonumber)' --arg p "$pid"
+  unlock run
+  echo "$start: started in the background (pid $pid, log $LOGS/$start.job.log)"
 }
 
 # --- enqueue / built / fail ------------------------------------------------------

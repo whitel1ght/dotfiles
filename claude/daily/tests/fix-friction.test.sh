@@ -48,4 +48,14 @@ has "$C" "/daily:fix-friction F-NNN --revise" "commands: names the namespaced re
 has "$P" "/fix-friction F-NNN --revise" "pi: names the revise command"
 has "$C" "/daily:fix-friction F-NNN --auto" "commands: names the namespaced command the job runs"
 
+echo "== headless jobs =="
+has "$C" '`claude -p --permission-prompts none`, no window' "commands: the job is headless, prompts denied"
+has "$C" '`run_in_background: false`' "commands: agents run in the foreground, so print mode waits for them"
+has "$C" "never end the turn before \`built\` or \`fail\` has run" "commands: the turn ends only after the job reports"
+has "$C" "never end it before \`revised\` or \`unrevised\` has run" "commands: a reply job reports before its turn ends"
+has "$P" '`pi -p`' "pi: the job is headless"
+has "$P" "never end the turn before \`built\` or \`fail\` has run" "pi: the turn ends only after the job reports"
+lacks "$C" "in a tmux window" "commands: no tmux window"
+lacks "$P" "in a tmux window" "pi: no tmux window"
+
 finish

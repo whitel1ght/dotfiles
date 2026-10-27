@@ -16,7 +16,7 @@ assert_eq() { [ "$1" = "$2" ] && pass "$3" || fail "$3" "expected [$1] got [$2]"
 assert_has() { case "$2" in *"$1"*) pass "$3" ;; *) fail "$3" "[$1] not in [$2]" ;; esac; }
 
 SANDBOX="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "${SANDBOX:?}"' EXIT
+trap '[ ! -f "$SANDBOX/harness.pids" ] || while read -r s; do kill -TERM -- "-$s" "$s" 2>/dev/null; done <"$SANDBOX/harness.pids"; rm -rf "${SANDBOX:?}"' EXIT
 export FRICTION_WIKI="$SANDBOX/friction" COACH_STATE_DIR="$SANDBOX/coach" FRICTION_LEDGER="$LEDGER"
 export SANDBOX FRICTIONS_BIN="$SANDBOX/frictions" DECK="$SANDBOX/deck.json" CALLS="$SANDBOX/calls.log" STDINS="$SANDBOX/stdins"
 mkdir -p "$STDINS" "$SANDBOX/bin"
@@ -80,6 +80,17 @@ case "$1" in
 esac
 STUB
 chmod +x "$SANDBOX/bin/tmux"
+# harness stub (COACH_HARNESS=claude finds it first on PATH): logs its arguments and stays up
+# like a reply job at work; the trap stops every one it started
+cat >"$SANDBOX/bin/claude" <<'STUB'
+#!/bin/bash
+echo $$ >>"$SANDBOX/harness.pids"
+printf '%s\n' "$*" >>"$SANDBOX/harness.log"
+sleep 120
+STUB
+chmod +x "$SANDBOX/bin/claude"
+[ "$(command -v claude)" = "$SANDBOX/bin/claude" ] || { echo "refusing to run: the claude stub is not first on PATH"; exit 1; }
+harness_lines() { local i=0; while [ "$(wc -l <"$SANDBOX/harness.log" 2>/dev/null || echo 0)" -lt "$1" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; cat "$SANDBOX/harness.log" 2>/dev/null; }
 
 fld() { grep -m1 "^$2:" "$FRICTION_WIKI/$1.md" | sed "s/^$2: *//"; }
 adds() { grep -c '^add ' "$CALLS"; }
@@ -279,15 +290,18 @@ sync >/dev/null # the killed coach-fix left F-017 proposed; settle its card now
 echo "reply: asked"
 D7="$(deck_id F-007)"
 hook asked F-007 "" "why not a config fix?"
-[ -f "$COACH_STATE_DIR/replies/F-007.json" ] && [ -n "$(windows_log)" ] && pass "a job file and a window" || fail "job" "$(windows_log)"
+[ -f "$COACH_STATE_DIR/replies/F-007.json" ] && pass "a job file" || fail "job" "no job file"
 assert_eq '["why not a config fix?"]' "$(jq -c .questions "$COACH_STATE_DIR/replies/F-007.json")" "the job file holds the question"
 assert_eq "$D7" "$(jq -r .card "$COACH_STATE_DIR/replies/F-007.json")" "and the card"
-assert_has "reply-F-007|" "$(windows_log)" "window reply-F-007"
-assert_has "claude '/daily:fix-friction F-007 --revise'" "$(windows_log)" "running the revise prompt"
+assert_eq "-p --permission-prompts none /daily:fix-friction F-007 --revise" "$(harness_lines 1)" "the revise prompt runs headless, prompts denied"
+P7="$(jq -r '.pid // empty' "$COACH_STATE_DIR/replies/F-007.json")"
+[ -n "$P7" ] && kill -0 "$P7" 2>/dev/null && pass "its pid is recorded and running" || fail "pid" "[$P7]"
+assert_eq "$P7" "$(ps -o pgid= -p "$P7" | tr -d ' ')" "in its own process group"
+assert_eq "" "$(windows_log)" "no tmux window"
 assert_eq "$D7" "$(deck_id F-007)" "the card stays open"
 hook told F-007 "" "and what about a hook?"
 assert_eq "2" "$(jq ".questions | length" "$COACH_STATE_DIR/replies/F-007.json")" "a second question is appended"
-assert_eq "1" "$(windows_log | wc -l | tr -d ' ')" "no second window"
+assert_eq "1" "$(harness_lines 2 | wc -l | tr -d ' ')" "no second job"
 
 echo "reply: a permission flag"
 groups "k:tool:t1|tool|2"
@@ -295,7 +309,7 @@ propose F-018 "$SANDBOX/p1.md"; sync >/dev/null
 COACH_HARNESS="claude -p" "$SCRIPT" reply F-018 --card "$(deck_id F-018)" <<<"why?" >/dev/null 2>&1
 assert_has "permission flag -p" "$(cat "$FRICTION_WIKI/F-018.md")" "unrevised with the permission-flag reason"
 [ ! -f "$COACH_STATE_DIR/replies/F-018.json" ] && pass "no job file" || fail "no job file" "left"
-assert_eq "1" "$(windows_log | wc -l | tr -d ' ')" "no window started"
+assert_eq "1" "$(harness_lines 2 | wc -l | tr -d ' ')" "no job started"
 assert_has "You asked" "$(last_stdin_for F-018 | head -1)" "the re-filed card shows the user's words"
 
 echo "revised"
@@ -313,17 +327,26 @@ echo "tick: the watchdog"
 groups "k:tool:u1|tool|2" "k:tool:u2|tool|2" "k:tool:u3|tool|2"
 propose F-019 "$SANDBOX/p1.md"; propose F-020 "$SANDBOX/p1.md"; propose F-021 "$SANDBOX/p1.md"; sync >/dev/null
 mkdir -p "$COACH_STATE_DIR/replies"
-job() { jq -nc --arg id "$1" --arg c "$(deck_id "$1")" --argjson e "$(( $(date +%s) - $2 ))" '{id: $id, card: $c, questions: ["q"], started_epoch: $e}' >"$COACH_STATE_DIR/replies/$1.json"; }
-job F-019 60; job F-020 2000; job F-021 10
+job() { # F age [pid]
+  jq -nc --arg id "$1" --arg c "$(deck_id "$1")" --argjson e "$(( $(date +%s) - $2 ))" --arg p "${3:-}" \
+    '{id: $id, card: $c, questions: ["q"], started_epoch: $e} + (if $p == "" then {} else {pid: ($p | tonumber)} end)' >"$COACH_STATE_DIR/replies/$1.json"
+}
+true & DEAD=$!; wait "$DEAD"
+job F-019 60 "$DEAD"; job F-020 2000; job F-021 10
 printf 'reply-F-020\n' >"$FAKE_TMUX_DIR/windows"
 "$SCRIPT" tick >/dev/null 2>&1
-assert_has "the reply job ended without an answer" "$(cat "$FRICTION_WIKI/F-019.md")" "no window, 60 s: the card is re-filed with the reason"
-assert_has "the reply job stalled in tmux window reply-F-020 (waiting on a prompt?)" "$(cat "$FRICTION_WIKI/F-020.md")" "window present, 2000 s: stalled"
-assert_has "reply-F-020" "$(cat "$FAKE_TMUX_DIR/windows")" "the stalled window is left open"
-[ -f "$COACH_STATE_DIR/replies/F-021.json" ] && pass "10 s old, no window: untouched" || fail "untouched" "job removed"
+assert_has "the reply job ended without an answer (log: $COACH_STATE_DIR/logs/reply-F-019.log)" "$(cat "$FRICTION_WIKI/F-019.md")" "its process gone, 60 s: the card is re-filed with the reason"
+assert_has "the reply job stalled in tmux window reply-F-020 (waiting on a prompt?)" "$(cat "$FRICTION_WIKI/F-020.md")" "a job from before headless replies: its window, 2000 s: stalled"
+[ -f "$COACH_STATE_DIR/replies/F-021.json" ] && pass "10 s old, no pid yet: untouched" || fail "untouched" "job removed"
 assert_eq "offered" "$(fld F-021 status)" "its entry is untouched"
 [ ! -f "$COACH_STATE_DIR/replies/F-019.json" ] && pass "handled job files are gone" || fail "job file" "left"
-rm -f "$COACH_STATE_DIR/replies/F-021.json" # it would age past the watchdog threshold while later tests run
+bash -c 'sleep 60; :' reply F-021 --revise & LIVE=$!
+job F-021 2000 "$LIVE"
+"$SCRIPT" tick >/dev/null 2>&1
+assert_has "the reply job stalled: still running after 30 min, stopped" "$(cat "$FRICTION_WIKI/F-021.md")" "its process running at 2000 s: stalled"
+i=0; while kill -0 "$LIVE" 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+kill -0 "$LIVE" 2>/dev/null && { fail "stopped" "still running"; kill "$LIVE"; } || pass "and its process is stopped"
+rm -f "$COACH_STATE_DIR/replies/F-021.json"
 
 echo "fix round: a late revision never undoes an answer"
 groups "k:tool:v1|tool|2" "k:tool:v2|tool|2"

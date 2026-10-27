@@ -87,9 +87,11 @@ what to change.
 
 ## Auto mode (`--auto`)
 
-`coach-fix` starts this (as `/fix-friction F-NNN --auto`) in a tmux window `coach-$F` after the user said yes to the coach's suggestion
-in /start-day. It runs unattended: it never asks the user anything (nobody is watching), never
-merges, and never pushes (the claude-components branch below is the one exception). It ends with
+`coach-fix` starts this (as `/fix-friction F-NNN --auto`) as a headless background process (`pi -p`,
+no window) after the user said yes to the coach's suggestion. It runs unattended: it never asks the
+user anything (nobody is watching), never merges, and never pushes (the claude-components branch
+below is the one exception). The process ends when your turn ends, so wait for every subagent's
+result before going on, and never end the turn before `built` or `fail` has run. It ends with
 exactly one of these, and only this session calls them:
 
 - built: `~/.local/bin/coach-fix built $F --repo <repo> --branch coach-$F --worktree $W --test-cmd "<cmd>"`,
@@ -167,7 +169,7 @@ rather than wait for an answer.
 
 ## Revise mode (--revise)
 
-`friction-cards` starts this (as `/fix-friction F-NNN --revise`) in a tmux window `reply-$F` when the user asks a question on the friction card. It runs unattended: it never asks the user anything (nobody is watching), never edits code, never merges or pushes, and never writes the ledger itself. `F` is the first argument.
+`friction-cards` starts this (as `/fix-friction F-NNN --revise`) as a headless background process (`pi -p`, no window) when the user asks a question on the friction card; the process ends when your turn ends, so never end it before `revised` or `unrevised` has run. It runs unattended: it never asks the user anything (nobody is watching), never edits code, never merges or pushes, and never writes the ledger itself. `F` is the first argument.
 
 1. Read `~/wiki/work/friction/$F.md` and the job file `~/.local/state/coach/replies/$F.json`; its `questions` array is what the user asked. You may read code, `~/wiki/work/system/` pages and `git log` to answer, read-only.
 2. Answer the questions in plain language, at most 8 lines. If the answer changes the fix (an alternative the user proposed, a better rung, a missing exact change), also write a revised `## Proposal` body in the same format as the original: the rung line and, for a safety change, a `### Change` block of before → after lines.

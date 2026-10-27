@@ -22,22 +22,25 @@
 #                                     text goes to `reply`, the card stays open.
 #   friction-cards reply F-NNN --card D-n    (question on stdin) start the reply job: a state file
 #                                     $COACH_STATE_DIR/replies/F-NNN.json {id, card, questions,
-#                                     started_epoch} and a tmux window reply-F-NNN running
-#                                     `$COACH_HARNESS '<cmd> F-NNN --revise'`, with coach-fix's
+#                                     started_epoch, pid} and a headless job, no window:
+#                                     `$COACH_HARNESS -p --permission-prompts none '<cmd> F-NNN
+#                                     --revise'` (pi: -p only) under nohup in its own process
+#                                     group, output to logs/reply-F-NNN.log, with coach-fix's
 #                                     refusals (a permission flag in COACH_HARNESS, a bad
-#                                     COACH_PROMPT_CMD, no tmux: `unrevised`). A job already
-#                                     running just gets the question appended.
+#                                     COACH_PROMPT_CMD: `unrevised`). A job already running just
+#                                     gets the question appended.
 #   friction-cards revised F-NNN --answer-file A [--proposal-file P]
 #                                     the job's answer: `friction-ledger revise`, the asked card
 #                                     withdrawn and closed, the job file deleted, sync (the revised
 #                                     card is filed). Holds the cards lock throughout.
 #   friction-cards unrevised F-NNN --reason R    the job could not answer: same, with the answer
 #                                     "could not revise: R" and no new proposal.
-#   friction-cards tick               sync, then the reply watchdog: a job whose window is gone and
-#                                     older than $COACH_STALE_GRACE s (30) ends "the reply job ended
-#                                     without an answer"; one older than $COACH_REPLY_MAX s (1800)
-#                                     ends "the reply job stalled in tmux window reply-F-NNN
-#                                     (waiting on a prompt?)", the window left open.
+#   friction-cards tick               sync, then the reply watchdog: a job whose process is gone
+#                                     (one from before headless replies, with no pid: its tmux
+#                                     window reply-F-NNN) and older than $COACH_STALE_GRACE s (30)
+#                                     ends "the reply job ended without an answer (log: ...)"; one
+#                                     older than $COACH_REPLY_MAX s (1800) has its process group
+#                                     stopped and ends "the reply job stalled: ...".
 #
 # sync keeps a result card (source coach:landed|failed) open while its entry is landed or
 # failed, and any other card open while its entry is offered; every other open card is
@@ -195,7 +198,6 @@ cmd_count() { exec "$FRICTIONS_BIN" count "$@"; }
 log() { mkdir -p "$COACH_STATE_DIR/logs"; echo "$(date +%FT%T) $*" >>"$LOG"; }
 today() { date +%F; }
 windows() { command -v tmux >/dev/null && tmux list-windows -a -F '#{window_name}' 2>/dev/null || true; }
-tmux_up() { command -v tmux >/dev/null && tmux list-sessions >/dev/null 2>&1; }
 harness_flag() { # prints the permission flag COACH_HARNESS carries, if any (as coach-fix does)
   local w
   for w in $COACH_HARNESS; do
@@ -206,6 +208,17 @@ prompt_cmd() { # Claude Code knows the daily plugin's command only namespaced; p
   if [ -n "${COACH_PROMPT_CMD:-}" ]; then echo "$COACH_PROMPT_CMD"; return; fi
   local h="${COACH_HARNESS%% *}"
   case "${h##*/}" in pi) echo /fix-friction ;; *) echo /daily:fix-friction ;; esac
+}
+headless_args() { # print mode; Claude Code also denies anything that would prompt (as coach-fix does)
+  local h="${COACH_HARNESS%% *}"
+  case "${h##*/}" in pi) echo -p ;; *) echo -p --permission-prompts none ;; esac
+}
+# alive: its process (pid in the job file, still running the reply prompt) or, for a job
+# started in a tmux window before replies went headless, that window
+reply_alive() { # F job-file
+  local pid; pid="$(jq -r '.pid // empty' "$2" 2>/dev/null)"
+  if [ -z "$pid" ]; then grep -qxF "reply-$1" <<<"$(windows)"; return; fi
+  ps -o command= -p "$pid" 2>/dev/null | grep -qF -- "$1 --revise"
 }
 valid_entry() { [[ "${1:-}" =~ ^F-[0-9]+$ ]] || die "needs an F-NNN id, got: ${1:-}"; }
 entry_field() { sed -n "s/^$2: *//p" "$FRICTION_WIKI/$1.md" 2>/dev/null | head -1; }
@@ -305,10 +318,19 @@ cmd_reply() {
   flag="$(harness_flag)"
   if [ -n "$flag" ]; then cmd_unrevised "$F" --reason "COACH_HARNESS carries the permission flag $flag; the reply job never starts with one"; return 0; fi
   if ! [[ "$(prompt_cmd)" =~ ^/[A-Za-z0-9:_-]+$ ]]; then cmd_unrevised "$F" --reason "bad COACH_PROMPT_CMD: $(prompt_cmd)"; return 0; fi
-  if ! tmux_up; then cmd_unrevised "$F" --reason "needs tmux"; return 0; fi
-  local dir="$COACH_REPOS_DIR"; [ -d "$dir" ] || dir="$HOME"
-  tmux new-window -d -n "reply-$F" -c "$dir" "$COACH_HARNESS '$(prompt_cmd) $F --revise'" ||
-    cmd_unrevised "$F" --reason "could not open the tmux window"
+  local dir="$COACH_REPOS_DIR" pid out="$COACH_STATE_DIR/logs/reply-$F.log"; [ -d "$dir" ] || dir="$HOME"
+  mkdir -p "$COACH_STATE_DIR/logs"
+  # headless: detached in its own process group (nohup, set -m), stdin closed, no window
+  set -m
+  # shellcheck disable=SC2046,SC2086 # COACH_HARNESS may carry its own words (checked by harness_flag)
+  (cd "$dir" && exec nohup $COACH_HARNESS $(headless_args) "$(prompt_cmd) $F --revise") </dev/null >"$out" 2>&1 &
+  pid=$!
+  set +m
+  if lock replies; then
+    [ ! -f "$job" ] || { jq --argjson p "$pid" '.pid = $p' "$job" >"$job.new" && mv "$job.new" "$job"; }
+    unlock replies
+  fi
+  log "reply: $F started (pid $pid, log $out): $COACH_HARNESS $(headless_args) '$(prompt_cmd) $F --revise'"
 }
 
 finish_job() { # F answer-file [proposal-file]: revise the entry, drop the asked card and the job file, sync
@@ -364,18 +386,24 @@ cmd_unrevised() {
 }
 
 cmd_tick() {
-  local job F age wins t; cmd_sync
+  local job F age t pid; cmd_sync
   [ -d "$REPLIES" ] || return 0
-  wins="$(windows)"; t="$(date +%s)"
+  t="$(date +%s)"
   for job in "$REPLIES"/F-*.json; do
     [ -f "$job" ] || continue
     F="$(basename "$job" .json)"
     age=$((t - $(jq -r '.started_epoch // 0' "$job")))
-    if ! grep -qxF "reply-$F" <<<"$wins"; then
+    if ! reply_alive "$F" "$job"; then
       [ "$age" -ge "$COACH_STALE_GRACE" ] || continue
-      cmd_unrevised "$F" --reason "the reply job ended without an answer" || log "tick: $F: could not close the reply job"
+      cmd_unrevised "$F" --reason "the reply job ended without an answer (log: $COACH_STATE_DIR/logs/reply-$F.log)" || log "tick: $F: could not close the reply job"
     elif [ "$age" -ge "$COACH_REPLY_MAX" ]; then
-      cmd_unrevised "$F" --reason "the reply job stalled in tmux window reply-$F (waiting on a prompt?)" || log "tick: $F: could not close the reply job"
+      pid="$(jq -r '.pid // empty' "$job")"
+      if [ -n "$pid" ]; then
+        kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+        cmd_unrevised "$F" --reason "the reply job stalled: still running after $((COACH_REPLY_MAX / 60)) min, stopped" || log "tick: $F: could not close the reply job"
+      else
+        cmd_unrevised "$F" --reason "the reply job stalled in tmux window reply-$F (waiting on a prompt?)" || log "tick: $F: could not close the reply job"
+      fi
     fi
   done
 }
