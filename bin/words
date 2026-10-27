@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Words: the first track of the learning system. A word is a quiz card in $CARDS_DIR
+(~/wiki/cards) with tag `word`, so the morning quiz and `cards` work on it as on any card.
+
+  words add WORD [--back TEXT] [--met-in S] [--from F] [--date D]
+        save WORD: the back is the first senses from macOS's dictionary (`macdict`, or
+        $WORDS_MACDICT) unless --back; the front "What does *WORD* mean?" plus the sentence it
+        was met in. Prints the slug; a word already saved prints its slug and writes nothing; a
+        word the dictionary lacks, with no --back, exits 1 and writes nothing.
+
+A word card's extra front matter: word, met_in, from (mw|lookup|book|diary), captured (date),
+stage (learning|known). Cards are written through `cards` ($WORDS_CARDS, default the one next to
+this script).
+"""
+import argparse
+import datetime
+import os
+import re
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+CARDS = os.environ.get("WORDS_CARDS") or os.path.join(HERE, "cards")
+CARDS_DIR = os.path.expanduser(os.environ.get("CARDS_DIR") or "~/wiki/cards")
+MACDICT = os.environ.get("WORDS_MACDICT") or "macdict"
+BACK_MAX = 300
+SECTIONS = re.compile(r"^(ORIGIN|DERIVATIVES|PHRASES|PHRASAL VERBS|USAGE|PRONUNCIATION|COMPARE|PLURAL|ABBREVIATION)\b")
+
+
+class Fail(Exception):
+    def __init__(self, msg, code=1):
+        super().__init__(msg)
+        self.code = code
+
+
+def one_line(s):
+    return " ".join((s or "").split())
+
+
+def norm_word(w):
+    return one_line(w).lower()
+
+
+def clip(text, limit=BACK_MAX):
+    text = one_line(text)
+    if len(text) <= limit:
+        return text
+    cut = text[:limit - 1].rsplit(" ", 1)[0].rstrip(",;:")
+    return cut + "…"
+
+
+def lookup(word):
+    """macdict's text for word, or None on a miss"""
+    try:
+        out = subprocess.run([MACDICT, word], capture_output=True, text=True, timeout=20).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    out = out.strip()
+    if not out or out.startswith(("No definition found", "Dictionary lookup failed", "Usage:")):
+        return None
+    return out
+
+
+def short_back(text):
+    """the first two senses of a macdict entry: no headword line, no ORIGIN and later sections"""
+    senses = []
+    for line in text.split("\n")[1:]:
+        if SECTIONS.match(line.strip()):
+            break
+        line = line.strip().lstrip("•").strip()
+        if line:
+            senses.append(line)
+        if len(senses) == 2:
+            break
+    return clip(" · ".join(senses))
+
+
+def saved(word):
+    """slug of the card already saved for word, or None"""
+    want = norm_word(word)
+    try:
+        names = sorted(n for n in os.listdir(CARDS_DIR) if n.endswith(".md"))
+    except OSError:
+        return None
+    for n in names:
+        try:
+            with open(os.path.join(CARDS_DIR, n), encoding="utf-8") as f:
+                head = f.read(2000)
+        except OSError:
+            continue
+        m = re.search(r"^word:[ \t]*(.*)$", head, re.M)
+        if m and norm_word(m.group(1)) == want:
+            return n[:-3]
+    return None
+
+
+def add(word, back=None, met_in="", src="lookup", day=None):
+    """slug of the saved card (new or existing); Fail when the dictionary lacks the word"""
+    word = one_line(word)
+    if not word:
+        raise Fail("a word is needed", 2)
+    slug = saved(word)
+    if slug:
+        return slug
+    if back is None:
+        text = lookup(word)
+        if text is None:
+            raise Fail(f"no definition for {word}")
+        back = short_back(text)
+    back = clip(back)
+    met_in = one_line(met_in)
+    front = f"What does *{word}* mean?" + (f' — "{met_in}"' if met_in else "")
+    day = day or datetime.date.today().isoformat()
+    args = [CARDS, "add", "--front", front, "--back", back, "--tags", "word", "--source", f"words: {src}",
+            "--date", day]
+    for k, v in (("word", word), ("met_in", met_in), ("from", src), ("captured", day), ("stage", "learning")):
+        args += ["--set", f"{k}={v}"]
+    ran = subprocess.run(args, capture_output=True, text=True, env={**os.environ, "CARDS_DIR": CARDS_DIR})
+    if ran.returncode != 0:
+        raise Fail(f"cards add failed: {ran.stderr.strip()}")
+    return ran.stdout.strip()
+
+
+def cmd_add(a):
+    print(add(a.word, a.back, a.met_in, a.src, a.date))
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print(f"words: {message}", file=sys.stderr)
+        sys.exit(2)
+
+
+def main():
+    p = Parser(prog="words", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("add")
+    s.add_argument("word")
+    s.add_argument("--back")
+    s.add_argument("--met-in", default="")
+    s.add_argument("--from", dest="src", default="lookup")
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_add)
+    a = p.parse_args()
+    try:
+        a.fn(a)
+    except Fail as e:
+        print(f"words: {e}", file=sys.stderr)
+        sys.exit(e.code)
+
+
+if __name__ == "__main__":
+    main()
