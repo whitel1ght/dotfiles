@@ -17,7 +17,8 @@ has() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3" "[$2] missing" ;; esac; }
 
 echo "CLAUDE.md — coach rules"
 prefs=$(section "$MD" Preferences)
-has "$prefs" "Read a file in this session before you Edit or Write it" "F-016/F-022 read before Edit or Write"
+has "$prefs" "Edit and Write accept only a file opened with the Read tool" "F-016/F-022 only the Read tool counts"
+has "$prefs" "since the last context summary" "F-016 Read again after a context summary"
 has "$prefs" "For an exact replacement in one file use the Edit tool" "F-045 Edit over python or sed"
 has "$prefs" "never reach for a destructive git or \`rm\` command" "F-004 no destructive step past a block"
 has "$prefs" "Ask clarifying questions in plain text" "F-014 questions in plain text"

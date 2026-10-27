@@ -9,8 +9,10 @@ Global instructions applied across all projects. Keep this short — project-lev
 - Match the surrounding code's style, naming, and comment density.
 - Don't add explanatory comments for self-evident code.
 - Long-term memory: `~/wiki` — read `~/wiki/AGENTS.md` before searching it.
-- Read a file in this session before you Edit or Write it, state files a background
-  session rewrites (the wiki's `state.md`, `index.md`) included.
+- Edit and Write accept only a file opened with the Read tool since the last context
+  summary. Seeing it through `cat`, `sed`, `rg` or a hook does not count. Before you edit a
+  file you saw only that way, or before you edit after a summary, Read the lines you will
+  change (offset/limit).
 - For an exact replacement in one file use the Edit tool, not a python heredoc or `sed -i`;
   keep python, jq or sed for bulk transforms (many files, JSON, CSV).
 - When a step is denied or blocked, never reach for a destructive git or `rm` command to
