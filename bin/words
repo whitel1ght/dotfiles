@@ -12,6 +12,12 @@
         (else the newest), its short definition as the back, its example sentence as met_in,
         from mw. Prints the slug, or nothing when it is already saved. Offline, an HTML page or
         a changed feed: one line on stderr, exit 0, nothing written (it runs in /start-day).
+  words import-diary [--diary-dir DIR]
+        the one-time backfill: every ticked "merriam-webster word of the day (...)" line in
+        DIR (~/wiki/diary). "word - meaning" (or "=" or ",") keeps the user's meaning as the
+        back; a bare word gets the dictionary's; one the dictionary lacks gets "(look this one up
+        again)" and tag word-check. Dated by the diary day, from diary; words already saved are
+        skipped. Prints "imported N, already saved M, to check K".
 
 A word card's extra front matter: word, met_in, from (mw|lookup|book|diary), captured (date),
 stage (learning|known). Cards are written through `cards` ($WORDS_CARDS, default the one next to
@@ -106,7 +112,7 @@ def saved(word):
     return None
 
 
-def add(word, back=None, met_in="", src="lookup", day=None):
+def add(word, back=None, met_in="", src="lookup", day=None, tags=()):
     """slug of the saved card (new or existing); Fail when the dictionary lacks the word"""
     word = one_line(word)
     if not word:
@@ -123,7 +129,8 @@ def add(word, back=None, met_in="", src="lookup", day=None):
     met_in = one_line(met_in)
     front = f"What does *{word}* mean?" + (f' — "{met_in}"' if met_in else "")
     day = day or datetime.date.today().isoformat()
-    args = [CARDS, "add", "--front", front, "--back", back, "--tags", "word", "--source", f"words: {src}",
+    args = [CARDS, "add", "--front", front, "--back", back, "--tags", ",".join(("word",) + tuple(tags)),
+            "--source", f"words: {src}",
             "--date", day]
     for k, v in (("word", word), ("met_in", met_in), ("from", src), ("captured", day), ("stage", "learning")):
         args += ["--set", f"{k}={v}"]
@@ -135,6 +142,49 @@ def add(word, back=None, met_in="", src="lookup", day=None):
 
 def cmd_add(a):
     print(add(a.word, a.back, a.met_in, a.src, a.date))
+
+
+DIARY_LINE = re.compile(r"^\s*-\s*\[[xX]\]\s*merriam-webster word of the day\s*\((.*)\)\s*$", re.I)
+SEPARATOR = re.compile(r"\s+-\s+|\s*=\s*|,\s*")
+CHECK_BACK = "(look this one up again)"
+
+
+def diary_words(diary_dir):
+    """[(date, word, meaning or "")] from ticked word-of-the-day lines, in date order"""
+    out = []
+    for name in sorted(os.listdir(diary_dir)):
+        m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})\.md", name)
+        if not m:
+            continue
+        with open(os.path.join(diary_dir, name), encoding="utf-8") as f:
+            for line in f:
+                hit = DIARY_LINE.match(line)
+                if not hit:
+                    continue
+                parts = SEPARATOR.split(hit.group(1).strip(), 1)
+                word = one_line(parts[0]).lower()
+                if word:
+                    out.append((m.group(1), word, one_line(parts[1]) if len(parts) > 1 else ""))
+    return out
+
+
+def cmd_import_diary(a):
+    imported = already = check = 0
+    for day, word, meaning in diary_words(os.path.expanduser(a.diary_dir)):
+        if saved(word):
+            already += 1
+            continue
+        if meaning:
+            add(word, back=meaning, src="diary", day=day)
+        else:
+            text = lookup(word)
+            if text is None:
+                add(word, back=CHECK_BACK, src="diary", day=day, tags=("word-check",))
+                check += 1
+            else:
+                add(word, back=short_back(text), src="diary", day=day)
+        imported += 1
+    print(f"imported {imported}, already saved {already}, to check {check}")
 
 
 def read_feed(src):
@@ -195,6 +245,9 @@ def main():
     s = sub.add_parser("today")
     s.add_argument("--date")
     s.set_defaults(fn=cmd_today)
+    s = sub.add_parser("import-diary")
+    s.add_argument("--diary-dir", default="~/wiki/diary")
+    s.set_defaults(fn=cmd_import_diary)
     a = p.parse_args()
     try:
         a.fn(a)

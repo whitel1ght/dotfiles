@@ -78,6 +78,33 @@ printf '<html><body>Sign in to the wifi</body></html>' >"$SANDBOX/portal.xml"
 WORDS_FEED="$SANDBOX/portal.xml" words today >/dev/null; RC=$?
 assert_eq "0|0" "$RC|$(ncards)" "bad feed: an HTML page exits 0 and saves nothing"
 
+echo "words import-diary"
+reset
+DIARY="$SANDBOX/diary"; mkdir -p "$DIARY"
+line() { printf '# %s\n\n- [X] reading any fiction book\n%s\n- [ ] drawing\n' "$1" "$2" >"$DIARY/$1.md"; }
+line 2026-08-19 '- [X] merriam-webster word of the day (balmy - warm, mild, pleasant for weather; foolish, irrational for an idea)'
+line 2026-08-20 '- [X] merriam-webster word of the day (cordial)'
+line 2026-08-21 '- [X] merriam-webster word of the day (sacrosant)'
+line 2026-08-22 '- [ ] merriam-webster word of the day (vindicate)'
+line 2026-08-23 '- [X] merriam-webster word of the day (tacit = unspoken)'
+line 2026-08-24 '- [x] merriam-webster word of the day (salvo, mostly in military context (artillery) - a volley)'
+line 2026-08-25 '- [X] merriam-webster word of the day (paTIna)'
+line 2026-08-26 '- [X] merriam-webster word of the day (milieu - setting)'
+line 2026-08-27 '- [ ] merriam-webster word of the day'
+words add milieu >/dev/null
+OUT="$(words import-diary --diary-dir "$DIARY")"; RC=$?
+assert_eq "0|imported 6, already saved 1, to check 2" "$RC|$OUT" "imports the ticked words and says how it went"
+B="$(words add balmy)"
+assert_eq "warm, mild, pleasant for weather; foolish, irrational for an idea|diary|2026-08-19" "$(sed -n 's/^### Answer: //p' "$CARDS_DIR/$B.md")|$(fm "$B" from)|$(fm "$B" captured)" "a meaning written in the diary is the back, dated by the diary day"
+assert_eq "unspoken" "$(sed -n 's/^### Answer: //p' "$CARDS_DIR/$(words add tacit).md")" "odd diary lines: an = separator"
+assert_eq "mostly in military context (artillery) - a volley" "$(sed -n 's/^### Answer: //p' "$CARDS_DIR/$(words add salvo).md")" "odd diary lines: a comma, nested parentheses and a later ' - ' stay in the meaning"
+assert_has "a sense of cordial" "$(sed -n 's/^### Answer: //p' "$CARDS_DIR/$(words add cordial).md")" "a bare word gets its back from the dictionary"
+SC="$(words add sacrosant)"
+assert_eq "(look this one up again)|[word, word-check]" "$(sed -n 's/^### Answer: //p' "$CARDS_DIR/$SC.md")|$(fm "$SC" tags)" "a word the dictionary lacks is kept, marked to check"
+assert_eq "patina" "$(fm "$(words add patina)" word)" "stress capitals become a plain lower-case word"
+assert_eq "" "$(rg -l 'vindicate' "$CARDS_DIR" 2>/dev/null)" "an unticked line is skipped"
+assert_eq "imported 0, already saved 7, to check 0" "$(words import-diary --diary-dir "$DIARY")" "a second run imports nothing"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
