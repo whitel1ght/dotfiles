@@ -39,15 +39,18 @@ file="$DIARY_DIR/$date_arg.md"
 grep -qF -- '<!-- start-day:start -->' "$file" || die "no plan block in $file"
 state="$RUN_DAY_STATE_DIR/$date_arg.md"
 
-mine=""   # my open MRs, fetched once and only when an item needs the key search
+mine=""   # my open MRs, fetched once in the main shell and only when an item needs the key search
 mine_loaded=0
-my_mrs() {
-  if [ "$mine_loaded" = 0 ]; then
-    mine=$("$GLAB" api "merge_requests?scope=created_by_me&state=opened&per_page=100" 2>/dev/null) || mine="unknown"
-    mine_loaded=1
-  fi
-  printf '%s' "$mine"
+load_mine() {
+  [ "$mine_loaded" = 0 ] || return 0
+  mine=$("$GLAB" api "merge_requests?scope=created_by_me&state=opened&per_page=100" 2>/dev/null) || mine="unknown"
+  mine_loaded=1
 }
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+mr_refs() { printf '%s\n%s\n' "$1" "$2" | grep -oE '[a-z][a-z-]*![0-9]+' || true; }
 
 repo_path() {
   case "$1" in
@@ -58,26 +61,28 @@ repo_path() {
 
 # mr_json <project-id-or-path> <iid> <display ref>
 mr_json() {
-  local proj="${1//\//%2F}" iid="$2" ref="$3" detail appr n
+  local proj="${1//\//%2F}" iid="$2" ref="$3" detail appr n disc u
   if ! detail=$("$GLAB" api "projects/$proj/merge_requests/$iid" 2>/dev/null) || ! jq -e . >/dev/null 2>&1 <<<"$detail"; then
     jq -n --arg ref "$ref" '{ref: $ref, state: "unknown", draft: "unknown", pipeline: "unknown", approvals: "unknown", unresolved: "unknown"}'
     return
   fi
   if appr=$("$GLAB" api "projects/$proj/merge_requests/$iid/approvals" 2>/dev/null) && n=$(jq -e '.approved_by | length' <<<"$appr" 2>/dev/null); then :; else n="\"unknown\""; fi
-  jq --arg ref "$ref" --argjson approvals "$n" '{
+  if disc=$("$GLAB" api --paginate "projects/$proj/merge_requests/$iid/discussions?per_page=100" 2>/dev/null) \
+    && u=$(jq -s 'add // [] | [.[] | select(any(.notes[]; .resolvable and (.resolved | not)))] | length' <<<"$disc" 2>/dev/null); then :; else u="\"unknown\""; fi
+  jq --arg ref "$ref" --argjson approvals "$n" --argjson unresolved "$u" '{
     ref: $ref,
     state: (.state // "unknown"),
     draft: (.draft // false),
     pipeline: (.head_pipeline.status // .pipeline.status // "none"),
     approvals: $approvals,
-    unresolved: (if .blocking_discussions_resolved == null then "unknown" else (.blocking_discussions_resolved | not) end)
+    unresolved: $unresolved
   }' <<<"$detail"
 }
 
-# mrs_for <key> <line text> <run-state mr=> -> JSON array
+# mrs_for <key> <line text> <run-state mr=> <my open MRs JSON or "unknown"> -> JSON array
 mrs_for() {
-  local key="$1" text="$2" runmr="$3" refs ref r iid out="" seen=" " found
-  refs=$(printf '%s\n%s\n' "$text" "$runmr" | grep -oE '[a-z][a-z-]*![0-9]+' || true)
+  local key="$1" text="$2" runmr="$3" found="$4" refs ref r iid out="" seen=" "
+  refs=$(mr_refs "$text" "$runmr")
   for ref in $refs; do
     r="${ref%!*}"; r="${r#ecfx-}"; iid="${ref#*!}"
     case "$seen" in *" $r!$iid "*) continue ;; esac
@@ -85,7 +90,6 @@ mrs_for() {
     out="$out$(mr_json "$(repo_path "$r")" "$iid" "$r!$iid")"$'\n'
   done
   if [ -z "$out" ] && [ -n "$key" ]; then
-    found=$(my_mrs)
     if [ "$found" = unknown ]; then
       out=$(jq -n '{ref: "?", state: "unknown", draft: "unknown", pipeline: "unknown", approvals: "unknown", unresolved: "unknown"}')
     else
@@ -105,7 +109,18 @@ jira_status() {
   jq -r '.fields.status.name // "unknown"' <<<"$resp" 2>/dev/null || echo unknown
 }
 
-items=""
+# item_json <group> <state> <key> <title> <run-state mr=> <agent> <round> <my open MRs> -> one JSON line
+item_json() {
+  local group="$1" st="$2" key="$3" title="$4" runmr="$5" agent="$6" round="$7" found="$8" jira="-" mrs
+  [ -z "$key" ] || jira=$(jira_status "$key")
+  mrs=$(mrs_for "$key" "$title" "$runmr" "$found")
+  jq -nc --arg group "$group" --arg state "$st" --arg key "$key" --arg text "$title" --arg jira "$jira" \
+    --arg agent "$agent" --arg round "$round" --argjson mrs "$mrs" \
+    '{group: $group, state: $state, key: $key, text: $text, jira: $jira, mrs: $mrs,
+      agent: (if $agent == "-" then null else $agent end), round: (if $round == "-" then null else $round end)}'
+}
+
+n=0
 group=""
 block=$(awk '/<!-- start-day:start -->/{on=1;next} /<!-- start-day:end -->/{on=0} on' "$file")
 while IFS= read -r line; do
@@ -129,16 +144,13 @@ while IFS= read -r line; do
     fi
   fi
   title="${text%% · *}"
-  jira="-"
-  [ -z "$key" ] || jira=$(jira_status "$key")
-  mrs=$(mrs_for "$key" "$title" "$runmr")
-  items="$items$(jq -nc --arg group "$group" --arg state "$st" --arg key "$key" --arg text "$title" --arg jira "$jira" \
-    --arg agent "$agent" --arg round "$round" --argjson mrs "$mrs" \
-    '{group: $group, state: $state, key: $key, text: $text, jira: $jira, mrs: $mrs,
-      agent: (if $agent == "-" then null else $agent end), round: (if $round == "-" then null else $round end)}')"$'\n'
+  if [ -n "$key" ] && [ -z "$(mr_refs "$title" "$runmr")" ]; then load_mine; fi
+  n=$((n + 1))
+  { item_json "$group" "$st" "$key" "$title" "$runmr" "$agent" "$round" "$mine" > "$tmp/$(printf '%05d' "$n")" 2>/dev/null || true; } </dev/null &
 done <<<"$block"
+wait
 
-all=$(printf '%s' "$items" | jq -s '.')
+all=$(for f in "$tmp"/[0-9]*; do if [ -f "$f" ]; then cat "$f"; fi; done | jq -s '.')
 if [ "$json" = 1 ]; then
   printf '%s\n' "$all"
   exit 0
@@ -147,7 +159,7 @@ fi
 echo "Plan $date_arg: $(jq -r 'length' <<<"$all") items"
 jq -r '
   def mrline: if .state == "unknown" then "MR unknown (\(.ref))"
-    else "\(.ref) \(.state)\(if .draft == true then " draft" else "" end), pipeline \(.pipeline), approvals \(.approvals)\(if .unresolved == true then ", unresolved threads" elif .unresolved == "unknown" then ", threads unknown" else "" end)" end;
+    else "\(.ref) \(.state)\(if .draft == true then " draft" else "" end), pipeline \(.pipeline), approvals \(.approvals)\(if .unresolved == "unknown" then ", threads unknown" elif .unresolved > 0 then ", \(.unresolved) unresolved threads" else "" end)" end;
   .[] | "[\(.state)] \(.key // "") \(.text | sub("^[A-Za-z]{2,10}-[0-9]+ "; "") | .[0:80])"
     + " | Jira: \(if .key == "" then "-" elif .jira == "unknown" then "Jira unknown" else .jira end)"
     + " | " + (if (.mrs | length) == 0 then "no MR" else (.mrs | map(mrline) | join("; ")) end)

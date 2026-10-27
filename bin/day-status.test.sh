@@ -21,11 +21,26 @@ mkdir -p "$STUBS" "$DIARY" "$STATE"
 
 cat > "$STUBS/glab" <<'STUB'
 #!/bin/bash
+[ -z "${GLAB_LOG:-}" ] || echo "$*" >> "$GLAB_LOG"
 case "$*" in
     *merge_requests/6716/approvals) echo '{"approved_by":[{"user":{"username":"adam"}}]}' ;;
+    *merge_requests/6716/discussions*) echo '[{"notes":[{"resolvable":true,"resolved":false}]},{"notes":[{"resolvable":true,"resolved":true}]},{"notes":[{"resolvable":false,"resolved":false}]}]' ;;
     *merge_requests/6716) echo '{"state":"opened","draft":false,"head_pipeline":{"status":"failed"},"blocking_discussions_resolved":true}' ;;
+    *merge_requests/6717/approvals) echo '{"approved_by":[]}' ;;
+    *merge_requests/6717/discussions*) exit 1 ;;
+    *merge_requests/6717) echo '{"state":"opened","draft":false,"head_pipeline":{"status":"success"},"blocking_discussions_resolved":true}' ;;
+    *merge_requests/6800/approvals) echo '{"approved_by":[]}' ;;
+    *merge_requests/6800/discussions*) echo '[]' ;;
+    *merge_requests/6800) sleep 1; echo '{"state":"opened","draft":false,"head_pipeline":{"status":"success"}}' ;;
+    *merge_requests/6801/approvals) echo '{"approved_by":[]}' ;;
+    *merge_requests/6801/discussions*) echo '[]' ;;
+    *merge_requests/6801) echo '{"state":"opened","draft":true,"head_pipeline":{"status":"running"}}' ;;
+    *merge_requests/7001/approvals) echo '{"approved_by":[]}' ;;
+    *merge_requests/7001/discussions*) echo '[]' ;;
+    *merge_requests/7001) echo '{"state":"opened","draft":false,"head_pipeline":{"status":"success"}}' ;;
     *merge_requests/9999*) exit 1 ;;
-    *"merge_requests?scope=created_by_me"*) echo '[]' ;;
+    *"merge_requests?scope=created_by_me"*)
+        if [ -n "${GLAB_MINE:-}" ]; then echo "$GLAB_MINE"; else echo '[]'; fi ;;
     *) exit 1 ;;
 esac
 STUB
@@ -54,6 +69,7 @@ cat > "$DIARY/2026-10-27.md" <<'FIXTURE'
   - [ ] nested line is not an item
 - [X] ecfx-17001 backend!9999: merged long ago
 - [!] ecfx-17002 Jira breaks for this one
+- [ ] ecfx-18400 backend!6717: threads call fails
 
 **Today**
 - [>] write the retro with no ticket
@@ -75,6 +91,10 @@ assert_contains "$l1" "In Code Review" "approved item: Jira status"
 assert_contains "$l1" "approvals 1" "approved item: approval shown"
 assert_contains "$l1" "pipeline failed" "approved item: failed pipeline shown"
 assert_contains "$l1" "agent123" "approved item: run-day agent shown"
+assert_contains "$l1" "1 unresolved threads" "unresolved discussion counted although blocking flag is true"
+l6=$(grep 'ECFX-18400' <<<"$out")
+assert_contains "$l6" "threads unknown" "failing discussions call: threads unknown"
+assert_contains "$l6" "pipeline success" "failing discussions call: rest of MR still shown"
 l2=$(grep 'ECFX-18384' <<<"$out")
 assert_contains "$l2" "In Progress" "no-MR item: Jira status"
 assert_contains "$l2" "no MR" "no-MR item: says no MR"
@@ -88,14 +108,41 @@ assert_contains "$out" "retro with no ticket" "item without a key still prints"
 
 echo "json output"
 js=$(run --date 2026-10-27 --json)
-assert_eq 5 "$(jq length <<<"$js")" "json: one entry per top-level item"
+assert_eq 6 "$(jq length <<<"$js")" "json: one entry per top-level item"
 assert_eq failed "$(jq -r '.[0].mrs[0].pipeline' <<<"$js")" "json: pipeline"
 assert_eq 1 "$(jq -r '.[0].mrs[0].approvals' <<<"$js")" "json: approvals"
 assert_eq "In Code Review" "$(jq -r '.[0].jira' <<<"$js")" "json: jira"
 assert_eq agent123 "$(jq -r '.[0].agent' <<<"$js")" "json: agent"
+assert_eq 1 "$(jq -r '.[0].mrs[0].unresolved' <<<"$js")" "json: unresolved count"
+assert_eq unknown "$(jq -r '.[4].mrs[0].unresolved' <<<"$js")" "json: unresolved unknown"
 assert_eq unknown "$(jq -r '.[3].jira' <<<"$js")" "json: unknown jira"
 assert_eq 0 "$(jq -r '.[1].mrs | length' <<<"$js")" "json: no MR is an empty list"
 assert_eq in-progress "$(jq -r '.[0].state' <<<"$js")" "json: marker state"
+
+echo "my open MRs list is fetched once"
+cat > "$DIARY/2026-10-28.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [ ] ecfx-20001 first keyed item, no MR ref
+- [ ] ecfx-20002 second keyed item, no MR ref
+<!-- start-day:end -->
+FIXTURE
+LOG="$SANDBOX/glab.log"; : > "$LOG"
+mine='[{"project_id":5,"iid":7001,"title":"x","source_branch":"ecfx-20001-feature","references":{"full":"ecfx/ecfx-backend!7001"}}]'
+out=$(GLAB_LOG="$LOG" GLAB_MINE="$mine" run --date 2026-10-28)
+assert_contains "$(grep 'ECFX-20001' <<<"$out")" "backend!7001 opened" "key search finds the MR by branch"
+assert_contains "$(grep 'ECFX-20002' <<<"$out")" "no MR" "key search: other item has no MR"
+assert_eq 1 "$(grep -c 'scope=created_by_me' "$LOG")" "list endpoint called exactly once"
+
+echo "plan order is kept when an earlier item is slower"
+cat > "$DIARY/2026-10-29.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [ ] ecfx-30001 backend!6800: slow one
+- [ ] ecfx-30002 backend!6801: fast one
+<!-- start-day:end -->
+FIXTURE
+out=$(run --date 2026-10-29)
+assert_eq "ECFX-30001 ECFX-30002" "$(grep -oE 'ECFX-3000[12]' <<<"$out" | tr '\n' ' ' | sed 's/ $//')" "text: plan order"
+assert_eq "ECFX-30001 ECFX-30002" "$(run --date 2026-10-29 --json | jq -r '[.[].key] | join(" ")')" "json: plan order"
 
 echo "errors"
 out=$(run --date 2020-01-01); rc=$?
