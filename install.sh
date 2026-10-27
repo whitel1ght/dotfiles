@@ -500,6 +500,11 @@ if [ -f "$DOTFILES_DIR/bin/cards" ]; then
     create_symlink "$DOTFILES_DIR/bin/cards" "$HOME/.local/bin/cards"
 fi
 
+# words turns looked-up and daily words into cards (start-day word, `w` alias, end-day line).
+if [ -f "$DOTFILES_DIR/bin/words" ]; then
+    create_symlink "$DOTFILES_DIR/bin/words" "$HOME/.local/bin/words"
+fi
+
 # coach-fix queues the coach's approved fixes, builds each in a tmux job and lands them after /end-day.
 if [ -f "$DOTFILES_DIR/bin/coach-fix" ]; then
     create_symlink "$DOTFILES_DIR/bin/coach-fix" "$HOME/.local/bin/coach-fix"

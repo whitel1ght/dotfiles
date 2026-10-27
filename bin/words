@@ -150,7 +150,8 @@ def add(word, back=None, met_in="", src="lookup", day=None, tags=()):
             "--source", f"words: {src}",
             "--date", day]
     for k, v in (("word", word), ("met_in", met_in), ("from", src), ("captured", day), ("stage", "learning")):
-        args += ["--set", f"{k}={v}"]
+        if v:
+            args += ["--set", f"{k}={v}"]
     ran = subprocess.run(args, capture_output=True, text=True, env={**os.environ, "CARDS_DIR": CARDS_DIR})
     if ran.returncode != 0:
         raise Fail(f"cards add failed: {ran.stderr.strip()}")

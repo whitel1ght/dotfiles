@@ -68,6 +68,11 @@ assert_eq "5" "$(cards due --date 2027-01-01 | wc -l | tr -d ' ')" "due: five ca
 mk x1 2026-10-01 3 2.5 2 0
 assert_eq "5" "$(cards due --date 2027-01-01 | wc -l | tr -d ' ')" "due: default limit caps at 5"
 cards due --date nope >/dev/null; assert_eq "2" "$?" "due with a bad date exits 2"
+reset
+mk zeta 2026-09-01 0 2.5 0 0
+mk alpha 2026-10-01 0 2.5 0 0
+mk beta 2026-10-01 0 2.5 0 0
+assert_eq "zeta alpha beta" "$(cards due --date $D | cut -f1 | tr '\n' ' ' | sed 's/ $//')" "due: new cards oldest first too, then by slug"
 
 # --- grade -------------------------------------------------------------------
 state() { echo "$(fm "$1" due) $(fm "$1" interval) $(fm "$1" ease) $(fm "$1" reps) $(fm "$1" lapses)"; }

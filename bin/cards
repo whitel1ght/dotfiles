@@ -14,7 +14,7 @@ with no `due` is due on any date. add with a front that already exists (case and
 ignored) prints the existing slug and writes nothing. --set adds extra front-matter keys (a
 scheduling key, tags or source is refused, exit 2). due --tag / --exclude-tag filter before the
 limit.
-due lists due cards, oldest due first, new ones last: `slug<TAB>front`, or --json
+due lists due cards, oldest due first, new ones last (oldest first too): `slug<TAB>front`, or --json
 [{slug, front, back, tags, new}]. grade (SM-2 style, rounded to whole days, min 1):
 0 interval 1, lapses+1, ease-0.2 (min 1.3); 1 interval max(1, i*1.2), ease-0.15;
 2 interval i*ease (first rep 1, second 3); 3 interval i*ease*1.3, ease+0.15; due = D + interval.
@@ -228,12 +228,12 @@ def cmd_due(a):
         if d is not None and d > today:
             continue
         if is_new(c):
-            new.append((c["slug"], c))
+            new.append(((d or datetime.date.min).isoformat(), c["slug"], c))
         else:
             reviewed.append(((d or datetime.date.min).isoformat(), c["slug"], c))
     reviewed.sort(key=lambda t: t[:2])
-    new.sort(key=lambda t: t[0])
-    picked = [t[-1] for t in reviewed] + [t[1] for t in new]
+    new.sort(key=lambda t: t[:2])
+    picked = [t[-1] for t in reviewed + new]
     picked = picked[:a.limit]
     if a.json:
         print(json.dumps([{"slug": c["slug"], "front": c["front"], "back": c["back"],

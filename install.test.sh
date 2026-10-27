@@ -279,6 +279,11 @@ rm -rf "$SANDBOX/projects/articles"
 out="$(run_install)"
 [ ! -e "$SANDBOX/projects/articles" ] && pass "a missing repo is skipped, not created" || fail "a missing repo is skipped, not created" "created"
 
+echo "words"
+run_install >/dev/null
+[ "$(readlink "$SANDBOX/.local/bin/words")" = "$TEST_DIR/bin/words" ] && pass "words is linked into ~/.local/bin" \
+    || fail "words is linked into ~/.local/bin" "$(ls -l "$SANDBOX/.local/bin/words" 2>&1)"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
