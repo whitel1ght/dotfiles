@@ -22,7 +22,11 @@ mkdir -p "$STUBS" "$DIARY" "$STATE"
 cat > "$STUBS/glab" <<'STUB'
 #!/bin/bash
 [ -z "${GLAB_LOG:-}" ] || echo "$*" >> "$GLAB_LOG"
+first_try() { local f; f="$FLAKY_DIR/$(printf '%s' "$*" | tr -c 'A-Za-z0-9' _)"; [ -e "$f" ] && return 1; : > "$f"; }
 case "$*" in
+    *merge_requests/7002/approvals) if first_try "$@"; then exit 1; fi; echo '{"approved_by":[{}]}' ;;
+    *merge_requests/7002/discussions*) if first_try "$@"; then printf '[{"notes":[{"resolvable":true,"resolved":false}]}]\n'; exit 1; fi; echo '[{"notes":[{"resolvable":true,"resolved":false}]}]' ;;
+    *merge_requests/7002) if first_try "$@"; then exit 1; fi; echo '{"state":"opened","draft":false,"head_pipeline":{"status":"success"}}' ;;
     *merge_requests/6716/approvals) echo '{"approved_by":[{"user":{"username":"adam"}}]}' ;;
     *merge_requests/6716/discussions*) echo '[{"notes":[{"resolvable":true,"resolved":false}]},{"notes":[{"resolvable":true,"resolved":true}]},{"notes":[{"resolvable":false,"resolved":false}]}]' ;;
     *merge_requests/6716) echo '{"state":"opened","draft":false,"head_pipeline":{"status":"failed"},"blocking_discussions_resolved":true}' ;;
@@ -40,6 +44,7 @@ case "$*" in
     *merge_requests/7001) echo '{"state":"opened","draft":false,"head_pipeline":{"status":"success"}}' ;;
     *merge_requests/9999*) exit 1 ;;
     *"merge_requests?scope=created_by_me"*)
+        if [ -n "${GLAB_MINE_FLAKY:-}" ] && first_try "$@"; then exit 1; fi
         if [ -n "${GLAB_MINE:-}" ]; then echo "$GLAB_MINE"; else echo '[]'; fi ;;
     *) exit 1 ;;
 esac
@@ -47,6 +52,7 @@ STUB
 cat > "$STUBS/jira-api" <<'STUB'
 #!/bin/bash
 case "$*" in
+    *ECFX-17100*) f="$FLAKY_DIR/jira"; if [ ! -e "$f" ]; then : > "$f"; exit 1; fi; echo '{"fields":{"status":{"name":"Flaky Ok"}}}' ;;
     *ECFX-18312*) echo '{"fields":{"status":{"name":"In Code Review"}}}' ;;
     *ECFX-18384*) echo '{"fields":{"status":{"name":"In Progress"}}}' ;;
     *ECFX-17001*) echo '{"fields":{"status":{"name":"Ready for QA"}}}' ;;
@@ -143,6 +149,29 @@ FIXTURE
 out=$(run --date 2026-10-29)
 assert_eq "ECFX-30001 ECFX-30002" "$(grep -oE 'ECFX-3000[12]' <<<"$out" | tr '\n' ' ' | sed 's/ $//')" "text: plan order"
 assert_eq "ECFX-30001 ECFX-30002" "$(run --date 2026-10-29 --json | jq -r '[.[].key] | join(" ")')" "json: plan order"
+
+echo "a failed call is retried once"
+cat > "$DIARY/2026-10-30.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [ ] ecfx-17100 backend!7002: every call fails on its first try
+<!-- start-day:end -->
+FIXTURE
+FLAKY_DIR="$SANDBOX/flaky1"; mkdir -p "$FLAKY_DIR"; export FLAKY_DIR
+out=$(DAY_STATUS_RETRY_SLEEP=0 run --date 2026-10-30)
+assert_lacks "$out" "unknown" "first-try failures: no field unknown"
+assert_contains "$out" "Flaky Ok" "jira-api retried"
+assert_contains "$out" "approvals 1" "approvals retried"
+assert_contains "$out" "1 unresolved threads" "discussions retried, partial first output dropped"
+assert_contains "$out" "backend!7002 opened" "MR detail retried"
+cat > "$DIARY/2026-10-31.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [ ] ecfx-20001 key search while the list call fails once
+<!-- start-day:end -->
+FIXTURE
+FLAKY_DIR="$SANDBOX/flaky2"; mkdir -p "$FLAKY_DIR"
+out=$(GLAB_MINE_FLAKY=1 GLAB_MINE="$mine" DAY_STATUS_RETRY_SLEEP=0 run --date 2026-10-31)
+assert_contains "$out" "backend!7001 opened" "created_by_me list retried"
+unset FLAKY_DIR
 
 echo "errors"
 out=$(run --date 2020-01-01); rc=$?

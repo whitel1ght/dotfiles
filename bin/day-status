@@ -11,13 +11,27 @@
 # refs on its plan line, else the mr= of its run-state line, else my open MRs whose branch or
 # title holds the ticket key. Each source is best effort: a failing call shows "unknown" for
 # that field and the rest still prints. Exit 1 when the diary or its plan block is missing.
-# Tests and stubs: DAY_STATUS_GLAB, DAY_STATUS_JIRA (commands, default glab and jira-api).
+# Every glab and jira-api call is retried once (gitlab.com drops ~2.5% of calls at random).
+# Tests and stubs: DAY_STATUS_GLAB, DAY_STATUS_JIRA (commands, default glab and jira-api),
+# DAY_STATUS_RETRY_SLEEP (seconds before the retry, default 1).
 set -euo pipefail
 
 DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
 RUN_DAY_STATE_DIR="${RUN_DAY_STATE_DIR:-$HOME/.local/state/run-day}"
 GLAB="${DAY_STATUS_GLAB:-glab}"
 JIRA="${DAY_STATUS_JIRA:-jira-api}"
+
+RETRY_SLEEP="${DAY_STATUS_RETRY_SLEEP:-1}"
+
+# retry <cmd...>: run it, and once more after a pause if it fails; only the output of the
+# successful attempt is printed, so a partial first attempt is never joined to the retry.
+retry() {
+  local out
+  if out=$("$@" 2>/dev/null); then printf '%s\n' "$out"; return 0; fi
+  sleep "$RETRY_SLEEP"
+  out=$("$@" 2>/dev/null) || return 1
+  printf '%s\n' "$out"
+}
 
 die() { echo "day-status: $1" >&2; exit "${2:-1}"; }
 
@@ -43,7 +57,7 @@ mine=""   # my open MRs, fetched once in the main shell and only when an item ne
 mine_loaded=0
 load_mine() {
   [ "$mine_loaded" = 0 ] || return 0
-  mine=$("$GLAB" api "merge_requests?scope=created_by_me&state=opened&per_page=100" 2>/dev/null) || mine="unknown"
+  mine=$(retry "$GLAB" api "merge_requests?scope=created_by_me&state=opened&per_page=100") || mine="unknown"
   mine_loaded=1
 }
 
@@ -62,12 +76,12 @@ repo_path() {
 # mr_json <project-id-or-path> <iid> <display ref>
 mr_json() {
   local proj="${1//\//%2F}" iid="$2" ref="$3" detail appr n disc u
-  if ! detail=$("$GLAB" api "projects/$proj/merge_requests/$iid" 2>/dev/null) || ! jq -e . >/dev/null 2>&1 <<<"$detail"; then
+  if ! detail=$(retry "$GLAB" api "projects/$proj/merge_requests/$iid") || ! jq -e . >/dev/null 2>&1 <<<"$detail"; then
     jq -n --arg ref "$ref" '{ref: $ref, state: "unknown", draft: "unknown", pipeline: "unknown", approvals: "unknown", unresolved: "unknown"}'
     return
   fi
-  if appr=$("$GLAB" api "projects/$proj/merge_requests/$iid/approvals" 2>/dev/null) && n=$(jq -e '.approved_by | length' <<<"$appr" 2>/dev/null); then :; else n="\"unknown\""; fi
-  if disc=$("$GLAB" api --paginate "projects/$proj/merge_requests/$iid/discussions?per_page=100" 2>/dev/null) \
+  if appr=$(retry "$GLAB" api "projects/$proj/merge_requests/$iid/approvals") && n=$(jq -e '.approved_by | length' <<<"$appr" 2>/dev/null); then :; else n="\"unknown\""; fi
+  if disc=$(retry "$GLAB" api --paginate "projects/$proj/merge_requests/$iid/discussions?per_page=100") \
     && u=$(jq -s 'add // [] | [.[] | select(any(.notes[]; .resolvable and (.resolved | not)))] | length' <<<"$disc" 2>/dev/null); then :; else u="\"unknown\""; fi
   jq --arg ref "$ref" --argjson approvals "$n" --argjson unresolved "$u" '{
     ref: $ref,
@@ -105,7 +119,7 @@ mrs_for() {
 
 jira_status() {
   local resp
-  resp=$("$JIRA" GET "issue/$1?fields=status" 2>/dev/null) || { echo unknown; return; }
+  resp=$(retry "$JIRA" GET "issue/$1?fields=status") || { echo unknown; return; }
   jq -r '.fields.status.name // "unknown"' <<<"$resp" 2>/dev/null || echo unknown
 }
 
