@@ -234,6 +234,17 @@ S="$(~/.local/bin/friction-ledger diary-section --date "$DAY" --mine-json "$M")"
 
 `end-day friction` puts it between its own markers at the end of the diary, so a re-run replaces it and the report is never touched. Mention the counts in one line.
 
+## Words
+
+File the day's word progress in its own diary block, skipped silently when `words` is not installed or there are no word cards yet:
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+command -v ~/.local/bin/words >/dev/null && L="$(~/.local/bin/words stats --date "$DAY" --line)" && [ -n "$L" ] && printf '%s\n' "$L" | ~/.local/bin/end-day words "$DAY"
+```
+
+The line reads `Words: R reviewed, N new, K known of T · streak S days`; `end-day words` keeps it between its own markers at the end of the diary, outside the report block. Never tick or write a habit line for words in the diary.
+
 ## Check the system
 
 Run `~/.local/bin/system-check --record`; it prints JSON with the findings that are new since its last recorded run, and records them as seen (without `--record` it only looks, so a run by hand leaves them for this step). For each `new` item, fix the page it names (`~/wiki/work/system/` or `~/wiki/tools/`), or ask me before moving a stray script into dotfiles or before adding a line to `known.txt`. An id containing `:failed` means a check itself is broken: report it as "check broken: <detail>" and do not edit a page for it. An `install` finding has no page to fix: list it under the **System** line and ask once, for all of them together, whether to add each to the Brewfile (or `pi/settings.json`, or `install.sh` for a Claude plugin or marketplace), uninstall it, or acknowledge it with an `install <glob>` line in `known.txt` (with a `# reason`); then do what I answer. Commit page fixes with `~/.local/bin/wiki-commit --by pi -m "<msg>" -- <paths>`; if it exits 2 only because there is no wiki, carry on. List what changed under a **System** line in the closing message to me, never in the diary report.

@@ -117,6 +117,8 @@ assert_eq "learning" "$(fm "$A" stage)" "the others stay learning"
 assert_eq "3" "$(words stats --date 2026-10-28 --json | jq .streak)" "the streak still counts on a day with no review yet"
 assert_eq "0" "$(words stats --date 2026-10-30 --json | jq .streak)" "a missed day ends it"
 assert_eq "Words: 1 reviewed, 1 new, 1 known of 3 · streak 3 days" "$(words stats --date 2026-10-27 --line)" "--line is one sentence for the diary"
+reset
+assert_eq "" "$(words stats --date 2026-10-27 --line)" "--line prints nothing before the first word card"
 
 echo "words pending / keep"
 reset

@@ -2,7 +2,7 @@
 description: Standup report of the day's work across commits, MRs, Jira and all Claude sessions, filed in the diary, then folded into the project memory in ~/wiki
 argument-hint: [yesterday | YYYY-MM-DD]
 model: sonnet
-allowed-tools: Bash(~/.local/bin/sync-tickets:*), Bash(~/.local/bin/end-day:*), Bash(~/.local/bin/diary-links:*), Bash(~/.local/bin/friction-mine:*), Bash(~/.local/bin/friction-ledger:*), Bash(~/.local/bin/coach-fix:*), Agent, Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Bash(fd:*), Bash(grep:*), Bash(glab api:*), Bash(jq:*), Bash(printf:*), Bash(cat:*), Bash(wc:*), Bash([:*), Bash(test:*), Bash(git -C * diff:*), Bash(wt add:*), Read, Edit, Write
+allowed-tools: Bash(~/.local/bin/sync-tickets:*), Bash(~/.local/bin/end-day:*), Bash(~/.local/bin/diary-links:*), Bash(~/.local/bin/friction-mine:*), Bash(~/.local/bin/friction-ledger:*), Bash(~/.local/bin/coach-fix:*), Bash(~/.local/bin/words:*), Agent, Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Bash(fd:*), Bash(grep:*), Bash(glab api:*), Bash(jq:*), Bash(printf:*), Bash(cat:*), Bash(wc:*), Bash([:*), Bash(test:*), Bash(git -C * diff:*), Bash(wt add:*), Read, Edit, Write
 disable-model-invocation: true
 ---
 
@@ -195,6 +195,17 @@ S="$(~/.local/bin/friction-ledger diary-section --date "$DAY" --mine-json "$M")"
 ```
 
 `end-day friction` puts it between its own markers at the end of the diary, so a re-run replaces it and the report is never touched. Mention the counts in one line.
+
+## Words
+
+File the day's word progress in its own diary block, skipped silently when `words` is not installed or there are no word cards yet:
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+command -v ~/.local/bin/words >/dev/null && L="$(~/.local/bin/words stats --date "$DAY" --line)" && [ -n "$L" ] && printf '%s\n' "$L" | ~/.local/bin/end-day words "$DAY"
+```
+
+The line reads `Words: R reviewed, N new, K known of T · streak S days`; `end-day words` keeps it between its own markers at the end of the diary, outside the report block. Never tick or write a habit line for words in the diary.
 
 ## Check the system
 

@@ -31,7 +31,7 @@
         {total, new_today, reviewed_today, known, streak} over the word cards, from their
         `## Reviews` history (cards grade writes it): known = interval of 21 days or more (its
         stage is written `known`); streak = days in a row with a word review, up to D (or D-1
-        when D has none yet). --line: "Words: R reviewed, N new, K known of T · streak S days".
+        when D has none yet). --line: "Words: R reviewed, N new, K known of T · streak S days", nothing before the first word card.
 
 A word card's extra front matter: word, met_in, from (mw|lookup|book|diary), captured (date),
 stage (learning|known). Cards are written through `cards` ($WORDS_CARDS, default the one next to
@@ -291,6 +291,8 @@ def stats(day):
 def cmd_stats(a):
     s = stats(a.date or datetime.date.today().isoformat())
     if a.line:
+        if not s["total"]:
+            return
         unit = "day" if s["streak"] == 1 else "days"
         print(f"Words: {s['reviewed_today']} reviewed, {s['new_today']} new, {s['known']} known of {s['total']}"
               f" · streak {s['streak']} {unit}")

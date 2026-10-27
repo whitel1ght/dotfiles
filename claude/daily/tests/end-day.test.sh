@@ -97,4 +97,16 @@ for f in "$F" "$P"; do
 done
 has "$F" "Bash(~/.local/bin/coach-fix:*)" "claude: allows coach-fix"
 
+echo "== words: the day's progress =="
+for f in "$F" "$P"; do
+  side="$(basename "$(dirname "$f")")"
+  has "$f" "## Words" "$side: words step exists"
+  has "$f" '~/.local/bin/words stats --date "$DAY" --line' "$side: reads the day's words line"
+  has "$f" '~/.local/bin/end-day words "$DAY"' "$side: files it in its own block"
+  has "$f" "command -v ~/.local/bin/words" "$side: skipped when words is missing"
+  lacks "$f" "merriam-webster word of the day" "$side: the diary habit line is never written"
+  awk '/^## Reflect on friction/{a=NR} /^## Words/{b=NR} /^## Check the system/{c=NR} END{exit !(a&&b&&c&&a<b&&b<c)}' "$f" && pass "$side: words sits after friction" || fail "$side: words order" "wrong order in $f"
+done
+has "$F" "Bash(~/.local/bin/words:*)" "claude: allows words"
+
 finish

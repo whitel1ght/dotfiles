@@ -135,6 +135,16 @@ assert_eq "yes" "$(grep -q '^2 new$' "$SANDBOX/2026-02-01.md" && grep -q -- '- r
 printf '' | "$SCRIPT" friction 2026-02-01 >/dev/null 2>&1; assert_eq "1" "$?" "empty stdin is refused"
 printf 'x\n' | "$SCRIPT" friction 2026-02-02 >/dev/null 2>&1; assert_eq "1" "$?" "no diary for the day is refused"
 
+echo "end-day words"
+printf 'Words: 2 reviewed, 1 new, 3 known of 40 · streak 4 days\n' | "$SCRIPT" words 2026-02-01 >/dev/null
+assert_eq "<!-- words:start -->|Words: 2 reviewed, 1 new, 3 known of 40 · streak 4 days|<!-- words:end -->" "$(tail -3 "$SANDBOX/2026-02-01.md" | paste -sd '|' -)" "the words line goes at the end, between its own markers"
+printf 'Words: 3 reviewed, 1 new, 3 known of 40 · streak 4 days\n' | "$SCRIPT" words 2026-02-01 >/dev/null
+assert_eq "1|1" "$(grep -c 'words:start' "$SANDBOX/2026-02-01.md")|$(grep -c '^Words: 3 reviewed' "$SANDBOX/2026-02-01.md")" "a re-run replaces it"
+assert_eq "yes" "$(grep -q '^2 new$' "$SANDBOX/2026-02-01.md" && grep -q -- '- report v2' "$SANDBOX/2026-02-01.md" && echo yes || echo no)" "the friction block and the report are untouched"
+save 2026-02-01 "- report v3"
+assert_eq "1" "$(grep -c '^Words: 3 reviewed' "$SANDBOX/2026-02-01.md")" "re-saving the report leaves the words block alone"
+assert_eq "" "$(sed -n '/<!-- daily-report:start -->/,/<!-- daily-report:end -->/p' "$SANDBOX/2026-02-01.md" | grep 'Words:')" "the words line is never inside the report"
+
 echo "end-day collect — friction capture"
 # A private copy of the script, so HERE holds a failing ecfx-daily-commits; glab and curl fail too.
 CBIN="$SANDBOX/cbin"; CSTUBS="$SANDBOX/cstubs"; CLOG="$SANDBOX/friction.log"
