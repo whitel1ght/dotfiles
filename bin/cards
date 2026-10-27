@@ -3,7 +3,7 @@
 
   cards add --front T --back T [--tags a,b] [--source S] [--set KEY=VALUE ...] [--date D]
                                                                        prints the slug
-  cards due [--date D] [--limit 5] [--tag T] [--exclude-tag T] [--json]
+  cards due [--date D] [--limit 5] [--tag T] [--exclude-tag T]... [--json]
   cards grade SLUG 0-3 [--date D]
   cards drop SLUG
 
@@ -12,7 +12,7 @@ interval days, ease, reps, lapses, tags [a, b], source, anything else kept as it
 "## Question: <front>" / "### Answer: <back>". A card without `reps` is new and due; a card
 with no `due` is due on any date. add with a front that already exists (case and whitespace
 ignored) prints the existing slug and writes nothing. --set adds extra front-matter keys (a
-scheduling key, tags or source is refused, exit 2). due --tag / --exclude-tag filter before the
+scheduling key, tags or source is refused, exit 2). due --tag / --exclude-tag (repeatable) filter before the
 limit.
 due lists due cards, oldest due first, new ones last (oldest first too): `slug<TAB>front`, or --json
 [{slug, front, back, tags, new}]. grade (SM-2 style, rounded to whole days, min 1):
@@ -222,7 +222,7 @@ def cmd_due(a):
     for c in all_cards():
         if a.tag and a.tag not in c["tags"]:
             continue
-        if a.exclude_tag and a.exclude_tag in c["tags"]:
+        if any(t in c["tags"] for t in a.exclude_tag):
             continue
         d = due_date(c)
         if d is not None and d > today:
@@ -315,7 +315,7 @@ def main():
     s.add_argument("--date")
     s.add_argument("--limit", type=int, default=5)
     s.add_argument("--tag")
-    s.add_argument("--exclude-tag")
+    s.add_argument("--exclude-tag", action="append", default=[])
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_due)
     s = sub.add_parser("grade")

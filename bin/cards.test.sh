@@ -127,6 +127,10 @@ printf -- '---\ndue: 2026-10-08\ninterval: 2\nease: 2.5\nreps: 1\nlapses: 0\ntag
 assert_eq "milieu balmy" "$(cards due --date $D --tag word | cut -f1 | paste -sd ' ' -)" "due --tag lists only cards with that tag"
 assert_eq "aaa" "$(cards due --date $D --exclude-tag word | cut -f1 | paste -sd ' ' -)" "due --exclude-tag leaves them out"
 assert_eq "milieu" "$(cards due --date $D --tag word --limit 1 | cut -f1)" "the limit applies after the filter"
+printf -- '---\ndue: 2026-10-07\ninterval: 2\nease: 2.5\nreps: 1\nlapses: 0\ntags: [drill]\nsource: s\n---\n\n## Question: Show the queue.\n\n### Answer: q.\n' >"$CARDS_DIR/drill-q.md"
+assert_eq "aaa" "$(cards due --date $D --exclude-tag word --exclude-tag drill | cut -f1 | paste -sd ' ' -)" "due --exclude-tag twice leaves out both"
+assert_eq "drill-q aaa" "$(cards due --date $D --exclude-tag word | cut -f1 | paste -sd ' ' -)" "one --exclude-tag still leaves the others in"
+rm "$CARDS_DIR/drill-q.md"
 slug=$(cards add --front "What does *imbroglio* mean?" --back "A muddle." --tags word --set word=imbroglio --set "met_in=the Watergate imbroglio" --date $D)
 assert_eq "imbroglio|the Watergate imbroglio" "$(fm "$slug" word)|$(fm "$slug" met_in)" "add --set writes extra front-matter keys"
 cards add --front "What does *x* mean?" --back "x." --set tags=oops >/dev/null; RC=$?
