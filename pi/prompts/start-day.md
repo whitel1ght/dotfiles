@@ -163,8 +163,18 @@ takes today's date inline, as `--date "$(date +%F)"`.
 When it prints a number N, print one line: friction queue: N waiting (`` ` f``). Otherwise
 print nothing. Count N in `offered`.
 
-**Quiz.** Run `~/.local/bin/cards due --limit 5 --json` (an array of `{slug, front, back,
-tags, new}`; nothing due means no quiz). One card at a time: show the `front` and wait for my
+**Words.** Run `~/.local/bin/words today` (Merriam-Webster's word of the day becomes a word
+card; it prints the slug, or nothing when already saved or offline). Then
+`~/.local/bin/words pending`: when it lists words I looked up in the book reader, print one line,
+"Looked up yesterday: a, b, c. Keep any?", and run `~/.local/bin/words keep <the ones I keep>`
+(all, some, or none: then `~/.local/bin/words pending --clear`). No answer: leave them, they are
+offered again tomorrow. Words never go into the diary here.
+
+**Quiz.** Run `~/.local/bin/cards due --limit 5 --exclude-tag word --json`, then
+`~/.local/bin/cards due --limit 3 --tag word --json` (each an array of `{slug, front, back,
+tags, new}`; the word cards come after the others; nothing due means no quiz). A word card's
+front asks the meaning, with the sentence it was met in when there is one; show it as it is.
+One card at a time: show the `front` and wait for my
 answer in my own words. Compare it to the `back`: 3 = complete and right, 2 = right with
 gaps, 1 = partly right, 0 = wrong or "don't know". Give one line of feedback, show the
 `back`, then run `~/.local/bin/cards grade <slug> <0-3>` and count the card in `cards`. If I
