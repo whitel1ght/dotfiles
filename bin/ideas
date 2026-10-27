@@ -4,6 +4,15 @@
   ideas sync      read $IDEAS_FILE (~/wiki/IDEA.md) into one entry per idea under $IDEAS_DIR
                   (~/wiki/work/ideas): I-NNN.md files and index.md. Prints
                   {"new": [ids], "edited": [ids], "closed": [ids], "gone": [ids]}.
+  ideas due [--limit N] [--id I-NNN ...]
+                  JSON [{id, text, section, status}] of ideas to review: new or edited, not
+                  answered no, "later" date passed; oldest first. --id: those ideas, whatever
+                  their state.
+  ideas record I-NNN --verdict stale|actionable|elaborate --summary TEXT --file F
+                  the review: F's text becomes the entry's `## Review`; status reviewed.
+  ideas answer I-NNN yes|no|later [--days N]
+                  the user's answer; later is due again after N days (7).
+sync, record and answer hold a lock (IDEAS_DIR/.lock, 30 s wait, a dead holder's taken over).
 
 IDEA.md is only ever read. Its top lines (before any `##` heading, or under a heading other than
 the two below) are loose ideas; `## review & implement:` items are review ideas; `## implemented:`
@@ -19,8 +28,11 @@ import difflib
 import json
 import os
 import re
+import shutil
 import sys
-from datetime import date
+import time
+from contextlib import contextmanager
+from datetime import date, timedelta
 
 IDEAS_FILE = os.environ.get("IDEAS_FILE", os.path.expanduser("~/wiki/IDEA.md"))
 IDEAS_DIR = os.environ.get("IDEAS_DIR", os.path.expanduser("~/wiki/work/ideas"))
@@ -204,13 +216,116 @@ def cmd_sync():
     print(json.dumps(out))
 
 
+def due(entries, day):
+    return [e for e in entries.values()
+            if e.get("status") in ("new", "edited") and e.get("answer") != "no"
+            and (not e.get("later_until") or e["later_until"] <= day)]
+
+
+def cmd_due(limit, ids):
+    entries = load_entries()
+    if ids:
+        picked = [entries[i] for i in ids if i in entries]
+    else:
+        picked = sorted(due(entries, today()), key=lambda e: (e.get("first_seen", ""), e["id"]))
+        picked = picked[:limit] if limit is not None else picked
+    print(json.dumps([{k: e.get(k, "") for k in ("id", "text", "section", "status")} for e in picked]))
+
+
+def entry_or_die(entries, eid):
+    if eid not in entries:
+        die(f"no idea {eid}")
+    return entries[eid]
+
+
+def cmd_record(eid, verdict, summary, file):
+    if verdict not in ("stale", "actionable", "elaborate"):
+        die(f"verdict is stale, actionable or elaborate, not {verdict}", 2)
+    with open(file, encoding="utf-8") as f:
+        review = f.read().strip()
+    entries = load_entries()
+    e = entry_or_die(entries, eid)
+    e.update({"status": "reviewed", "verdict": verdict, "summary": " ".join(summary.split()),
+              "reviewed_on": today(), "_body": f"## Review\n\n{review}"})
+    save(entries)
+
+
+def cmd_answer(eid, answer, days):
+    if answer not in ("yes", "no", "later"):
+        die(f"answer is yes, no or later, not {answer}", 2)
+    entries = load_entries()
+    e = entry_or_die(entries, eid)
+    later = (date.fromisoformat(today()) + timedelta(days=days)).isoformat() if answer == "later" else ""
+    e.update({"answer": answer, "answered_on": today(), "later_until": later})
+    save(entries)
+
+
+@contextmanager
+def lock():
+    """mkdir lock in IDEAS_DIR (pid inside); waits 30 s; a dead holder's lock is taken over."""
+    os.makedirs(IDEAS_DIR, exist_ok=True)
+    d = os.path.join(IDEAS_DIR, ".lock")
+    for _ in range(150):
+        try:
+            os.mkdir(d)
+            break
+        except FileExistsError:
+            try:
+                with open(os.path.join(d, "pid")) as f:
+                    pid = int(f.read().strip() or 0)
+                os.kill(pid, 0)
+            except (FileNotFoundError, ValueError, ProcessLookupError):
+                shutil.rmtree(d, ignore_errors=True)
+                continue
+            except PermissionError:
+                pass
+            time.sleep(0.2)
+    else:
+        die("another ideas run holds the lock")
+    with open(os.path.join(d, "pid"), "w") as f:
+        f.write(str(os.getpid()))
+    try:
+        yield
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def opts(args, spec):
+    """parse --flag value pairs; spec maps flag to 'one' or 'many'"""
+    out, i = {}, 0
+    while i < len(args):
+        flag = args[i]
+        if flag not in spec or i + 1 >= len(args):
+            die(f"bad option {flag}", 2)
+        if spec[flag] == "many":
+            out.setdefault(flag, []).append(args[i + 1])
+        else:
+            out[flag] = args[i + 1]
+        i += 2
+    return out
+
+
 def main(argv):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__.strip())
         return
     cmd, args = argv[0], argv[1:]
     if cmd == "sync" and not args:
-        cmd_sync()
+        with lock():
+            cmd_sync()
+    elif cmd == "due":
+        o = opts(args, {"--limit": "one", "--id": "many"})
+        cmd_due(int(o["--limit"]) if "--limit" in o else None, o.get("--id", []))
+    elif cmd == "record" and args:
+        o = opts(args[1:], {"--verdict": "one", "--summary": "one", "--file": "one"})
+        if not all(k in o for k in ("--verdict", "--summary", "--file")):
+            die("record needs --verdict, --summary and --file", 2)
+        with lock():
+            cmd_record(args[0], o["--verdict"], o["--summary"], o["--file"])
+    elif cmd == "answer" and len(args) >= 2:
+        o = opts(args[2:], {"--days": "one"})
+        with lock():
+            cmd_answer(args[0], args[1], int(o.get("--days", 7)))
     else:
         die(f"unknown command: {' '.join(argv)}", 2)
 

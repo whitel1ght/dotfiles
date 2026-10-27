@@ -120,6 +120,47 @@ OUT="$(ideas sync)"
 assert_eq "gone" "$(fm "$(id_of 'T1 schedule watcher')" status)" "a removed line is gone"
 assert_eq "new|new" "$(fm "$(id_of 'learn kubectl')" status)|$(fm "$(id_of 'learn kubectl basics')" status)" "its neighbours are untouched"
 
+echo "ideas due"
+start '- [ ] first\n- [ ] second\n- [ ] third\n- [ ] fourth\n- [ ] fifth\n- [ ] sixth\n- [X] seventh done\n'
+FIRST="$(id_of first)"; SECOND="$(id_of second)"; THIRD="$(id_of third)"; FOURTH="$(id_of fourth)"; FIFTH="$(id_of fifth)"; SIXTH="$(id_of sixth)"
+setfm "$FIRST" first_seen 2026-01-03; setfm "$SECOND" first_seen 2026-01-01
+assert_eq "[\"$SECOND\",\"$FIRST\",\"$THIRD\"]" "$(ideas due --limit 3 | jq -c 'map(.id)')" "oldest first, capped by --limit"
+assert_eq "id text section status" "$(ideas due | jq -r '.[0] | keys_unsorted | join(" ")')" "each item has id, text, section, status"
+setfm "$THIRD" status reviewed; setfm "$FOURTH" answer no; setfm "$FIFTH" later_until 2099-01-01
+assert_eq "[\"$SECOND\",\"$FIRST\",\"$SIXTH\"]" "$(ideas due | jq -c 'map(.id)')" "not reviewed, answered no, later in the future, or done"
+setfm "$FIFTH" later_until 2026-01-01
+assert_has "\"$FIFTH\"" "$(ideas due | jq -c 'map(.id)')" "a later date that has passed makes it due again"
+assert_eq "[\"$THIRD\",\"$FOURTH\"]" "$(ideas due --limit 1 --id "$THIRD" --id "$FOURTH" | jq -c 'map(.id)')" "--id returns those ideas whatever their state or the limit"
+
+echo "ideas record"
+printf 'It exists: atuin does this.\n' >"$SANDBOX/review.md"
+ideas record "$FIRST" --verdict stale --summary "atuin already does it" --file "$SANDBOX/review.md"; RC=$?
+assert_eq "0|reviewed|stale|atuin already does it|$(date +%F)" "$RC|$(fm "$FIRST" status)|$(fm "$FIRST" verdict)|$(fm "$FIRST" summary)|$(fm "$FIRST" reviewed_on)" "record writes status, verdict, summary and the date"
+assert_has "It exists: atuin does this." "$(cat "$IDEAS_DIR/$FIRST.md")" "and the review body"
+assert_has "| $FIRST | reviewed | stale |" "$(cat "$IDEAS_DIR/index.md")" "and the index row"
+cp "$IDEAS_DIR/$SECOND.md" "$SANDBOX/before.md"
+ideas record "$SECOND" --verdict maybe --summary x --file "$SANDBOX/review.md"; RC=$?
+assert_eq "2|same" "$RC|$(cmp -s "$SANDBOX/before.md" "$IDEAS_DIR/$SECOND.md" && echo same || echo changed)" "a bad verdict exits 2 and writes nothing"
+ideas record I-999 --verdict stale --summary x --file "$SANDBOX/review.md"; assert_eq "1" "$?" "an unknown id exits 1"
+ideas sync >/dev/null
+assert_eq "reviewed|stale" "$(fm "$FIRST" status)|$(fm "$FIRST" verdict)" "a later sync keeps the review"
+
+echo "ideas answer"
+ideas answer "$SECOND" later; assert_eq "later|$(date -v+7d +%F)" "$(fm "$SECOND" answer)|$(fm "$SECOND" later_until)" "later sets the date 7 days on"
+ideas answer "$SIXTH" later --days 2; assert_eq "$(date -v+2d +%F)" "$(fm "$SIXTH" later_until)" "--days changes it"
+assert_has "\"$SECOND\"" "$(IDEAS_TODAY=$(date -v+8d +%F) "$SCRIPT" due | jq -c 'map(.id)')" "and it is due again after that date"
+ideas answer "$FIRST" yes; assert_eq "yes|$(date +%F)" "$(fm "$FIRST" answer)|$(fm "$FIRST" answered_on)" "yes records the answer only"
+ideas answer "$FIRST" maybe; assert_eq "2" "$?" "a bad answer exits 2"
+
+echo "ideas — the lock"
+mkdir -p "$IDEAS_DIR/.lock"; sleep 30 & HOLDER=$!; echo "$HOLDER" >"$IDEAS_DIR/.lock/pid"
+( sleep 1; kill "$HOLDER" 2>/dev/null ) &
+ideas record "$SIXTH" --verdict elaborate --summary "which shell?" --file "$SANDBOX/review.md"; RC=$?
+assert_eq "0|elaborate" "$RC|$(fm "$SIXTH" verdict)" "concurrent record waits for the holder, then writes"
+assert_eq "no" "$([ -d "$IDEAS_DIR/.lock" ] && echo yes || echo no)" "and releases the lock"
+mkdir -p "$IDEAS_DIR/.lock"; echo 999999 >"$IDEAS_DIR/.lock/pid"
+ideas answer "$SIXTH" no; assert_eq "0|no" "$?|$(fm "$SIXTH" answer)" "a dead holder's lock is taken over"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
