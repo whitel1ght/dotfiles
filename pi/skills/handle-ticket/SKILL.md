@@ -503,6 +503,7 @@ Optionally transition the Jira ticket to *In MR* / *In Review* and attach the
 MR link, if the API credentials worked in P3:
 
 ```bash
+JIRA_BASE="https://ecfxdev.atlassian.net"
 curl -s -u "$(secret JIRA_USER):$(secret JIRA_TOKEN)" \
   "$JIRA_BASE/rest/api/3/issue/ECFX-15234/transitions?includeUnavailableTransitions=true"
 ```

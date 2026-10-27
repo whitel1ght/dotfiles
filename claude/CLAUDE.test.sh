@@ -41,6 +41,16 @@ for SKILL in "${SKILLS[@]}"; do
     fail "F-015 /mr-description comes before glab mr create in $name" "step line [$step], create line [$create]"
 done
 
+echo "handle-ticket — JIRA_BASE defined where used (Claude and pi copies)"
+for SKILL in "${SKILLS[@]}"; do
+  name="${SKILL#"$DIR/"}"
+  if ! grep -q '\$JIRA_BASE' "$SKILL" || grep -q '^[[:space:]]*JIRA_BASE=' "$SKILL"; then
+    pass "JIRA_BASE is defined wherever \$JIRA_BASE is used in $name"
+  else
+    fail "JIRA_BASE is defined wherever \$JIRA_BASE is used in $name" "\$JIRA_BASE used, no JIRA_BASE= line"
+  fi
+done
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
