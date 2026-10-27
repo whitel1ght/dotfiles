@@ -1,0 +1,39 @@
+cd /Users/dmitry/projects/worktrees/.plans/friction-queue && python3 - <<'PY'
+p='spec.md'
+s=open(p).read()
+add='''
+## 6a. Settled after the builder check (my calls, open to override)
+
+1. **Apply on a rule entry** (a `restated` entry whose proposal carries a `Direction:`): Apply does what the
+   morning step does today, `friction-ledger directions add` and the entry set `fixed --fix D-NNN`; it
+   never goes to `coach-fix`. The card says "Apply adds the standing rule: <rule>".
+2. **A guard-loosening card with no exact change written**: no Apply on it. The card says "no exact
+   change written yet" and offers Reply (pre-filled hint: "write the exact change"), Later and Ignore.
+   Apply only ever approves a change the user could read on the card.
+3. **Approval is same-moment, not same-day.** The hook records the yes and runs `coach-fix enqueue`
+   right away (detached, still the same date). If the enqueue is refused or fails, the card is re-filed
+   with the reason on top; nothing waits for a next morning. A held safety fix (it goes back to
+   `proposed`) is re-filed as a labelled card by the same card sync.
+4. **The badge counts open cards in the friction deck.** A card answered with Reply closes; while its
+   reply job runs, the deck shows nothing for it and the badge does not count it. The reply job runs
+   under `coach-fix`'s existing stall watch (`COACH_JOB_MAX`, the dead-window check); a job that ends
+   without a revision, crashes or stalls makes `coach-fix` re-file the card with "could not revise:
+   <why>" and the user's words quoted.
+5. **Reply is the app's own "type your own words" answer**: three options (Apply, Ignore, Later; for a
+   secret Done, Later, Ignore) plus free text. Free text closes the card with `option: null` and the
+   text, which the hook treats as Reply. The app's "tell" remark is not used. No app change is needed
+   for answering; a change is made only if the card text or title needs it.
+6. **A revision is a new ledger verb**, e.g. `friction-ledger revise F-NNN --proposal-file F --answer-file A`,
+   that replaces the `## Proposal` section, appends the answer and the user's words to the entry's
+   history, re-runs the safety check (so a revised proposal is re-labelled), and leaves the entry
+   `offered` without clearing its fields; then the card is re-filed.
+7. **No daily cap.** Every eligible entry is a card at once (today that is about eight: F-005, F-011,
+   F-032, F-047, F-048, F-049, F-056, F-012). The "no flood" guard is the existing eligibility rules
+   (a proposal exists; `repeat` entries need count ≥ 3 on ≥ 2 days; one card per entry), plus newest
+   first in the deck. `coach-offer`'s 3-per-day limit and `coach-log`'s offered count go with the
+   morning offer; `coach-log` keeps counting answers, landed, failed and cards.
+'''
+s=s.replace('\n## 7. Constraints', add+'\n## 7. Constraints')
+open(p,'w').write(s)
+PY
+rg -n '^## ' spec.md

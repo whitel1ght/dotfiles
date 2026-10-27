@@ -45,6 +45,28 @@ allows "a markdown mention" 'echo "edit them with `secrets`" >> notes.md'
 allows "inside a quoted pattern" "rg -n 'a|box/secrets|b' ."
 allows "inside a double-quoted message" 'die "missing; run: secrets"'
 
+echo "heredoc bodies"
+NL=$'\n'
+TAB=$'\t'
+allows "prose line in a cat body" "cat > f <<'EOF'${NL}   secret Done, Later${NL}EOF"
+allows "; secret in a python body" "python3 - <<'PY'${NL}x = 1; secret presentation${NL}PY"
+allows "unquoted and double-quoted words" "cat <<EOF${NL}secret Done${NL}EOF${NL}cat <<\"EOF\"${NL}secrets${NL}EOF"
+allows "<<- with a tab-indented terminator" "cat <<-EOF${NL}secret Done${NL}${TAB}EOF"
+allows "two heredocs on one line" "cat <<A <<B${NL}secret one${NL}A${NL}secret two${NL}B"
+allows "a here-string is not a heredoc" "cat <<< 'x'${NL}echo ok"
+allows "the 2026-10-26 command, replayed" "$(cat "$TEST_DIR/testdata/secrets-guard/heredoc-replay.test.txt")"
+blocks "bash heredoc still runs its lines" "bash <<EOF${NL}secret GITLAB_TOKEN${NL}EOF"
+blocks "sh -s heredoc" "sh -s <<'EOF'${NL}secret GITLAB_TOKEN${NL}EOF"
+blocks "/bin/bash heredoc" "/bin/bash <<'EOF'${NL}secret GITLAB_TOKEN${NL}EOF"
+blocks "ssh host heredoc" "ssh host <<'EOF'${NL}secret GITLAB_TOKEN${NL}EOF"
+blocks "zsh heredoc after a pipe" "echo x | zsh <<'EOF'${NL}secret GITLAB_TOKEN${NL}EOF"
+blocks "bare call after the heredoc ends" "cat <<'EOF'${NL}text${NL}EOF${NL}secret GITLAB_TOKEN"
+blocks "terminator must be the whole line" "cat <<'EOF'${NL}EOF x${NL}secret GITLAB_TOKEN"
+blocks "an unterminated heredoc stays checked" "cat <<'EOF'${NL}secret GITLAB_TOKEN"
+blocks "second heredoc after a skipped one" "cat <<A <<B${NL}x${NL}A${NL}y${NL}B${NL}secret T"
+blocks "the folder inside a body" "cat <<EOF${NL}~/.secrets/secrets.env${NL}EOF"
+blocks "jira.env read inside a body" "cat <<'EOF'${NL}source ~/.config/ecfx/jira.env${NL}EOF"
+
 echo "the team jira.env link"
 blocks "reading it" 'cat ~/.config/ecfx/jira.env'
 blocks "sourcing it" 'source ~/.config/ecfx/jira.env && echo $JIRA_TOKEN'
