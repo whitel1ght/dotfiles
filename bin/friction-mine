@@ -98,7 +98,7 @@ def errkind: if test("unavailable|overloaded|connection error|econn|enotfound|\\
   elif test("timed? ?out|timeout"; "i") then "timeout"
   elif test("abort"; "i") then "interrupt" else "other" end;
 # quoted strings blanked, so a ; & | or newline inside one is not a statement separator
-def unq: gsub("'"'"'[^'"'"']*'"'"'"; "Q") | gsub("\"[^\"]*\""; "Q");
+def unq: gsub("'"'"'[^'"'"']*'"'"'|\"([^\"\\\\]|\\\\.)*\""; "Q");
 def ourtool: any(unq | splits("[;&|\\n]+");
     gsub("^[\\s({]+"; "")
     | until(test("^[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+") | not; sub("^[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+"; ""))
