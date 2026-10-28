@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+#
+# img-preview — show a file in a preview pane: images as real pictures through
+# Ghostty's Kitty graphics, anything else as text (bat, else sed).
+#
+#   img-preview FILE           fzf preview: sized to FZF_PREVIEW_COLUMNS/LINES
+#   img-preview --text FILE    never draws; an image prints one info line
+#   img-preview --view FILE    whole window, a caption, waits for a key
+#
+# Inside tmux, images use Kitty's Unicode placeholders wrapped for passthrough
+# (`chafa -f kitty --passthrough tmux`), so they move with the text and survive
+# window switches; that needs `allow-passthrough on` (tmux/.tmux.conf). tmux
+# passes images only from panes, never from popups, hence --text. With `on`,
+# an image sent while its pane is hidden is lost, which a preview never is.
+set -uo pipefail
+
+mode=preview
+case "${1:-}" in
+    --text) mode=text; shift ;;
+    --view) mode=view; shift ;;
+esac
+file="${1:-}"
+if [ -z "$file" ]; then
+    echo "usage: img-preview [--text|--view] FILE" >&2
+    exit 2
+fi
+if [ ! -f "$file" ]; then
+    echo "img-preview: no such file: $file" >&2
+    exit 1
+fi
+
+is_image() {
+    local mime
+    mime="$(file -b --mime-type "$file" 2>/dev/null)"
+    case "$mime" in
+        image/svg*) return 1 ;;
+        image/*) return 0 ;;
+    esac
+    return 1
+}
+
+human_size() {
+    local bytes
+    bytes="$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file")"
+    if [ "$bytes" -ge 1048576 ]; then
+        awk -v b="$bytes" 'BEGIN { printf "%.1f MB", b / 1048576 }'
+    elif [ "$bytes" -ge 1024 ]; then
+        echo "$((bytes / 1024)) KB"
+    else
+        echo "$bytes B"
+    fi
+}
+
+info() {
+    printf '%s · %s\n' "$(file -b "$file")" "$(human_size)"
+}
+
+show_text() {
+    if command -v bat >/dev/null 2>&1; then
+        bat -n --color=always --line-range=:200 "$file"
+    else
+        sed -n 1,200p "$file"
+    fi
+}
+
+# kitty when the terminal outside tmux speaks it, else symbol art.
+chafa_format() {
+    local term
+    if [ -n "${TMUX:-}" ]; then
+        term="$(tmux display -p '#{client_termname}' 2>/dev/null)"
+        case "$term" in
+            *ghostty*|*kitty*) echo "-f kitty --passthrough tmux"; return ;;
+        esac
+    else
+        case "${TERM_PROGRAM:-}:${TERM:-}" in
+            ghostty:*|*:xterm-ghostty|*:xterm-kitty) echo "-f kitty"; return ;;
+        esac
+    fi
+    echo "-f symbols"
+}
+
+draw() {
+    local size="$1"
+    # shellcheck disable=SC2046
+    chafa $(chafa_format) --animate off --polite on -s "$size" "$file"
+}
+
+cols="${FZF_PREVIEW_COLUMNS:-${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}}"
+rows="${FZF_PREVIEW_LINES:-${LINES:-$(tput lines 2>/dev/null || echo 24)}}"
+
+if ! is_image; then
+    show_text
+    exit 0
+fi
+
+case "$mode" in
+    text)
+        info ;;
+    preview)
+        draw "${cols}x${rows}" || info ;;
+    view)
+        draw "${cols}x$((rows - 2))" || true
+        printf '\n%s · %s · any key closes' "$(basename "$file")" "$(info)"
+        read -rsn1 || true ;;
+esac

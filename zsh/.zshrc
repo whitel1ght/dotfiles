@@ -201,7 +201,8 @@ export BAT_THEME="base16"
 
 # Ctrl-T reuses the same walker so the two agree on what a file is.
 export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
-export FZF_CTRL_T_OPTS="--preview 'bat -n --color=always {}'"
+# img-preview draws images as pictures (Kitty graphics) and the rest with bat.
+export FZF_CTRL_T_OPTS="--preview 'img-preview {}'"
 
 # Ctrl-R: preview is hidden until ctrl-/ because most history lines fit on one
 # line; it earns its keep on the long ones. ctrl-y yanks without running.
@@ -242,7 +243,7 @@ compdef _dev dev
 
 zstyle ':fzf-tab:complete:cd:*' fzf-preview 'eza -1 --icons --color=always $realpath'
 zstyle ':fzf-tab:complete:__zoxide_z:*' fzf-preview 'eza -1 --icons --color=always $realpath'
-zstyle ':fzf-tab:complete:(nvim|vim|vi|bat|cat|less):*' fzf-preview 'bat -n --color=always $realpath'
+zstyle ':fzf-tab:complete:(nvim|vim|vi|bat|cat|less|open):*' fzf-preview 'img-preview $realpath'
 zstyle ':fzf-tab:complete:git-(checkout|switch|rebase|merge|log|show):*' \
   fzf-preview 'git log --oneline --graph --color=always $word | head -40'
 # `git add` mostly offers untracked paths, and `git diff` prints nothing for

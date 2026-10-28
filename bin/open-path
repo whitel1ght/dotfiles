@@ -206,7 +206,7 @@ picked="$(
               --border=rounded --border-label=" open in $editor_name " \
               --color='border:#bb9af7,label:#7aa2f7:bold' \
               --prompt="> " \
-              --preview='sed -n 1,200p {2}' \
+              --preview='img-preview --text {2}' \
               --preview-window='down,60%,border-top'
 )"
 
@@ -223,7 +223,17 @@ case "$(basename "${EDITOR_CMD%% *}")" in
     *) supports_line=0 ;;
 esac
 
-if [ -n "$line" ] && [ "$supports_line" = 1 ]; then
+# An image opens as a picture in a pane of its own: the popup above cannot draw
+# one (tmux passes images from panes only), so its preview is a line of text.
+case "$(file -b --mime-type "$file" 2>/dev/null)" in
+    image/svg*) is_image=0 ;;
+    image/*) is_image=1 ;;
+    *) is_image=0 ;;
+esac
+
+if [ "$is_image" = 1 ]; then
+    cmd="$(printf '%q ' img-preview --view "$file")"
+elif [ -n "$line" ] && [ "$supports_line" = 1 ]; then
     cmd="$(printf '%q ' $EDITOR_CMD "+$line" "$file")"
 else
     cmd="$(printf '%q ' $EDITOR_CMD "$file")"

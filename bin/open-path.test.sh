@@ -49,15 +49,18 @@ case "$1" in
     new-window)
         while [ $# -gt 0 ]; do
             [ "$1" = -t ] && printf '%s\n' "$2" > "$STUB_TARGET_LOG"
+            [ $# -eq 1 ] && printf '%s\n' "$1" > "$STUB_CMD_LOG"
             shift
         done ;;
 esac
 STUB
 chmod +x "$STUBS/tmux"
 export STUB_TARGET_LOG="$SANDBOX/new-window-target"
+export STUB_CMD_LOG="$SANDBOX/new-window-cmd"
+export STUB_FZF_ARGS="$SANDBOX/fzf-args"
 
-# fzf picks the first candidate (unused under --list).
-printf '#!/bin/bash\nhead -n 1\n' > "$STUBS/fzf"
+# fzf records its arguments and picks the first candidate (unused under --list).
+printf '#!/bin/bash\nprintf "%%s\\n" "$@" > "$STUB_FZF_ARGS"\nhead -n 1\n' > "$STUBS/fzf"
 chmod +x "$STUBS/fzf"
 
 # Transcripts: one pi, one claude, one decoy under a different slug. The pi
@@ -142,6 +145,23 @@ target="$(cat "$STUB_TARGET_LOG" 2>/dev/null)"
 [ "$target" = "test:" ] \
     && pass "targets the session, not a window that shares its name" \
     || fail "targets the session, not a window that shares its name" "new-window -t '$target'"
+grep -q -- '^--preview=img-preview --text {2}$' "$STUB_FZF_ARGS" \
+    && pass "the popup previews through img-preview --text (popups pass no images)" \
+    || fail "the popup previews through img-preview --text (popups pass no images)" "$(cat "$STUB_FZF_ARGS")"
+grep -q '^nvim ' "$STUB_CMD_LOG" \
+    && pass "a text file opens in the editor" \
+    || fail "a text file opens in the editor" "$(cat "$STUB_CMD_LOG")"
+
+echo "an image opens as a picture"
+mkdir -p "$HOME_DIR/pics"
+printf 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' \
+    | base64 -d > "$HOME_DIR/pics/shot.png"
+STUB_CWD="$HOME_DIR/pics" STUB_PANE="saved shot.png" \
+    HOME="$HOME_DIR" PATH="$STUBS:$PATH" bash "$SCRIPT" "$PANE" >/dev/null 2>&1
+cmd="$(cat "$STUB_CMD_LOG" 2>/dev/null)"
+[ "$cmd" = "img-preview --view $HOME_DIR/pics/shot.png " ] \
+    && pass "a picked image opens in img-preview --view, not the editor" \
+    || fail "a picked image opens in img-preview --view, not the editor" "$cmd"
 
 echo "missing tools"
 out="$(HOME="$HOME_DIR" PATH="$STUBS:/usr/bin:/bin" bash "$SCRIPT" --list "$PANE" 2>&1)"

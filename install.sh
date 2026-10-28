@@ -732,6 +732,11 @@ if [ -f "$DOTFILES_DIR/bin/open-path" ]; then
     create_symlink "$DOTFILES_DIR/bin/open-path" "$HOME/.local/bin/open-path"
 fi
 
+# img-preview draws images in fzf previews (Ctrl-T, fzf-tab) and open-path.
+if [ -f "$DOTFILES_DIR/bin/img-preview" ]; then
+    create_symlink "$DOTFILES_DIR/bin/img-preview" "$HOME/.local/bin/img-preview"
+fi
+
 # wiki-commit commits an agent's edits to wiki pages with an Agent-edit trailer.
 if [ -f "$DOTFILES_DIR/bin/wiki-commit" ]; then
     create_symlink "$DOTFILES_DIR/bin/wiki-commit" "$HOME/.local/bin/wiki-commit"

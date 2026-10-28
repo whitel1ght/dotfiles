@@ -285,6 +285,8 @@ run_install >/dev/null
     || fail "words is linked into ~/.local/bin" "$(ls -l "$SANDBOX/.local/bin/words" 2>&1)"
 [ "$(readlink "$SANDBOX/.local/bin/drills")" = "$TEST_DIR/bin/drills" ] && pass "drills is linked into ~/.local/bin" \
     || fail "drills is linked into ~/.local/bin" "$(ls -l "$SANDBOX/.local/bin/drills" 2>&1)"
+[ "$(readlink "$SANDBOX/.local/bin/img-preview")" = "$TEST_DIR/bin/img-preview" ] && pass "img-preview is linked into ~/.local/bin" \
+    || fail "img-preview is linked into ~/.local/bin" "$(ls -l "$SANDBOX/.local/bin/img-preview" 2>&1)"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

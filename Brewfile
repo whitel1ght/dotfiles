@@ -42,6 +42,8 @@ brew "awscli"
 brew "bash"
 # Clone of cat(1) with syntax highlighting and Git integration
 brew "bat"
+# Images in the terminal (Kitty graphics, symbols elsewhere); used by img-preview
+brew "chafa"
 # Console Matrix
 brew "cmatrix"
 # Apjanke's fork of the classic cowsay project
