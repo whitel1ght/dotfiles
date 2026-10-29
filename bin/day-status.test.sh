@@ -45,6 +45,12 @@ case "$*" in
     *ecfx%2Fecfx-observability/merge_requests/80/approvals) echo '{"approved_by":[]}' ;;
     *ecfx%2Fecfx-observability/merge_requests/80/discussions*) echo '[]' ;;
     *ecfx%2Fecfx-observability/merge_requests/80) echo '{"state":"opened","draft":false,"head_pipeline":{"status":"success"}}' ;;
+    *ecfx%2FECFX-Categorization/merge_requests/207/approvals) echo '{"approved_by":[]}' ;;
+    *ecfx%2FECFX-Categorization/merge_requests/207/discussions*) echo '[]' ;;
+    *ecfx%2FECFX-Categorization/merge_requests/207) echo '{"state":"opened","draft":false,"head_pipeline":{"status":"success"}}' ;;
+    *ecfx%2Fecfx-observability/merge_requests/81/approvals) echo '{"approved_by":[]}' ;;
+    *ecfx%2Fecfx-observability/merge_requests/81/discussions*) echo '[]' ;;
+    *ecfx%2Fecfx-observability/merge_requests/81) echo '{"state":"opened","draft":false,"head_pipeline":{"status":"success"}}' ;;
     *merge_requests/9999*) exit 1 ;;
     *"merge_requests?scope=created_by_me"*)
         if [ -n "${GLAB_MINE_FLAKY:-}" ] && first_try "$@"; then exit 1; fi
@@ -155,6 +161,51 @@ out=$(GLAB_LOG="$LOG" run --date 2026-11-01)
 assert_contains "$out" "observability!80 opened" "observability!80 shows its MR state"
 assert_lacks "$out" "MR unknown" "observability!80 is not unknown"
 assert_contains "$(cat "$LOG")" "projects/ecfx%2Fecfx-observability/merge_requests/80" "glab got the project path from the definition"
+
+echo "definitions match case-insensitively, and refs may be written in capitals"
+cat > "$DIARY/2026-11-02.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [ ] ecfx-20006 re-review categorization!207  [↗][categorization!207]
+
+[categorization!207]: https://gitlab.com/ecfx/ECFX-Categorization/-/merge_requests/207
+<!-- start-day:end -->
+FIXTURE
+: > "$LOG"
+out=$(GLAB_LOG="$LOG" run --date 2026-11-02)
+assert_contains "$out" "categorization!207 opened" "mixed-case definition: MR state shown"
+assert_lacks "$out" "MR unknown" "mixed-case definition: not unknown"
+assert_contains "$(cat "$LOG")" "projects/ecfx%2FECFX-Categorization/merge_requests/207" "glab got the definition's exact path"
+cat > "$DIARY/2026-11-03.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [ ] ecfx-20007 re-review ECFX-Categorization!207  [↗][categorization!207]
+
+[categorization!207]: https://gitlab.com/ecfx/ECFX-Categorization/-/merge_requests/207
+<!-- start-day:end -->
+FIXTURE
+: > "$LOG"
+out=$(GLAB_LOG="$LOG" run --date 2026-11-03)
+assert_contains "$out" "categorization!207 opened" "capitalised ref resolves through the definition"
+assert_lacks "$out" "MR unknown" "capitalised ref: not unknown"
+assert_lacks "$out" "ategorization!207 " "capitalised ref: display ref not truncated"
+assert_contains "$(cat "$LOG")" "projects/ecfx%2FECFX-Categorization/merge_requests/207" "capitalised ref: glab got the definition's path"
+
+echo "a run-state mr= with a full path is used as is"
+cat > "$DIARY/2026-11-04.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [/] ecfx-123 add the alert
+<!-- start-day:end -->
+FIXTURE
+cat > "$STATE/2026-11-04.md" <<'FIXTURE'
+# run-day 2026-11-04
+max_agents: 3
+- ecfx-123 | class=auto | agent=a1 | round=- | worktree=- | mr=ecfx/ecfx-observability!81 | retries=0 | needs_you=no | owner=main
+FIXTURE
+: > "$LOG"
+out=$(GLAB_LOG="$LOG" run --date 2026-11-04)
+assert_contains "$out" "observability!81 opened" "run-state full path: MR state shown"
+assert_lacks "$out" "MR unknown" "run-state full path: not unknown"
+assert_contains "$out" "a1" "run-state full path: agent shown"
+assert_contains "$(cat "$LOG")" "projects/ecfx%2Fecfx-observability/merge_requests/81" "glab got the run-state path"
 
 echo "plan order is kept when an earlier item is slower"
 cat > "$DIARY/2026-10-29.md" <<'FIXTURE'
