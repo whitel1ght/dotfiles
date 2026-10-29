@@ -6,14 +6,15 @@ window-padding-x = 10
 window-padding-y = 10, 0
 window-padding-balance = true
 
-keybind = super+p=text::Telescope find_files\n
-keybind = super+s=text::w\n
-keybind = super+w=text::Wiki\n
-keybind = super+f=text::Telescope live_grep\n
-keybind = super+/=text:gcc\x1b
+# Reserved Ctrl-Shift-F1..F9: tmux gates them; Neovim maps them as F37..F45.
+keybind = super+p=csi:1;6P
+keybind = super+s=csi:1;6Q
+keybind = super+w=csi:1;6R
+keybind = super+f=csi:1;6S
+keybind = super+/=csi:15;6~
 
-keybind = super+k=text::lua TopWin()\n
-keybind = super+l=text::lua RightWin()\n
-keybind = super+h=text::lua LeftWin()\n
-keybind = super+j=text::lua BottomWin()\n
+keybind = super+h=csi:17;6~
+keybind = super+j=csi:18;6~
+keybind = super+k=csi:19;6~
+keybind = super+l=csi:20;6~
 keybind = shift+enter=text:\n

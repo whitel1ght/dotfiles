@@ -1,6 +1,27 @@
 local keymap = vim.keymap
 vim.g.mapleader = " "
 
+-- Ghostty sends Ctrl-Shift-F1..F9; terminfo names them F37..F45.
+local editor_keys = {
+  {'<F37>', '<cmd>Telescope find_files<cr>', 'Find files'},
+  {'<F38>', '<cmd>write<cr>', 'Save buffer'},
+  {'<F39>', '<cmd>Wiki<cr>', 'Find wiki files'},
+  {'<F40>', '<cmd>Telescope live_grep<cr>', 'Search files'},
+  {'<F42>', '<cmd>lua LeftWin()<cr>', 'Window left'},
+  {'<F43>', '<cmd>lua BottomWin()<cr>', 'Window down'},
+  {'<F44>', '<cmd>lua TopWin()<cr>', 'Window up'},
+  {'<F45>', '<cmd>lua RightWin()<cr>', 'Window right'},
+}
+for _, binding in ipairs(editor_keys) do
+  keymap.set({'n', 'i', 'x'}, binding[1], binding[2], {desc = binding[3]})
+end
+keymap.set('n', '<F41>', 'gcc', {remap = true, desc = 'Toggle comment'})
+keymap.set('i', '<F41>', '<C-o>gcc', {remap = true, desc = 'Toggle comment'})
+keymap.set('x', '<F41>', 'gc', {remap = true, desc = 'Toggle comments'})
+for key = 37, 45 do
+  keymap.set({'c', 't', 'o'}, '<F' .. key .. '>', '<Nop>')
+end
+
 keymap.set('n', '<Esc>', ':noh<cr>') -- clear search highlights
 keymap.set('n', '<leader>p', 'cw<C-r>0')
 keymap.set('n', '<leader>s', ':%s///g<Left><Left>') -- replace pattern
@@ -19,7 +40,6 @@ keymap.set('n', '<C-p>', ':tabp<cr>')
 keymap.set('n', '<Tab>', '%')
 keymap.set('', '0', '^')
 keymap.set('', '<leader>4', '$')
-keymap.set('', '<leader>d', '<C-d>zz')
 keymap.set('', '<leader>u', '<C-u>zz')
 keymap.set('', '<C-d>', '<C-d>zz')
 keymap.set('', '<C-u>', '<C-u>zz')
