@@ -296,6 +296,11 @@ run_install >/dev/null
 [ "$(readlink "$SANDBOX/.local/bin/img-preview")" = "$TEST_DIR/bin/img-preview" ] && pass "img-preview is linked into ~/.local/bin" \
     || fail "img-preview is linked into ~/.local/bin" "$(ls -l "$SANDBOX/.local/bin/img-preview" 2>&1)"
 
+echo "mr-ship"
+run_install >/dev/null
+[ "$(readlink "$SANDBOX/.local/bin/mr-ship")" = "$TEST_DIR/bin/mr-ship" ] && pass "mr-ship is linked into ~/.local/bin" \
+    || fail "mr-ship is linked into ~/.local/bin" "$(ls -l "$SANDBOX/.local/bin/mr-ship" 2>&1)"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

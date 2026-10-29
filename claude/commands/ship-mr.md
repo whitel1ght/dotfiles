@@ -12,38 +12,44 @@ For each MR (your own, open, usually draft): review it, fix everything the revie
 push, and only then take it out of draft. Several URLs are separate MRs shipped one after
 another; if they are one feature, run the review for them together.
 
-## 1. Review
+## 1. Check the MR
 
-Run the `/review-local` procedure on the MR. It is read-only and writes `review.md`.
+For each MR first run `~/.local/bin/mr-ship <repo> <iid> -n`. If it exits non-zero (merged,
+closed or not yours), skip that MR entirely: no review, no commit, no push. Report it as
+"skipped: <mr-ship's message>".
+
+## 2. Review
+
+Read `~/.claude/commands/review-local.md` (fallback: `~/projects/dotfiles/claude/commands/review-local.md`) and follow it on the MR. It is read-only and writes `review.md`. Never use the posting `mr-review-multi-agent` skill instead.
 Keep its worktree rules: the review runs from a detached worktree, never your checkout.
 
-## 2. Fix
+## 3. Fix
 
 Fix **every** finding (blocker, major, minor; questions only if they point at a real gap)
 in the MR's own worktree (`wt ls`; create one with `wt add <repo> <name> <branch>` if
 missing), never in the main checkout. Commit as the project's convention says. A finding
-you decline to fix counts as unfixed, so say why and stop at step 4.
+you decline to fix counts as unfixed, so say why and stop at step 5.
 
 Run the project's checks (the commands in the project's `CLAUDE.md`: lint, unit tests,
 type check). Then push the branch.
 
-## 3. Ship
+## 4. Ship
 
 Only when no finding is left unfixed and all checks are green:
 
 ```bash
-mr-ship <repo> <iid>        # -n prints the calls only
+~/.local/bin/mr-ship <repo> <iid>        # -n prints the calls only
 ```
 
 `mr-ship` marks the MR ready, assigns you and requests the standing reviewers. It refuses
 an MR that is merged, closed or not yours. It is the only GitLab write this command makes.
 
-## 4. Stop conditions
+## 5. Stop conditions
 
 Do not run `mr-ship` and leave the MR in draft when a finding is unfixed or a check is red.
 Say which finding or check, and why, in the report.
 
-## 5. Report
+## 6. Report
 
 Per MR: link, findings fixed (count by severity), checks run and result, pushed head SHA,
 and either "shipped" or "left in draft: <reason>".

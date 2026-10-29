@@ -678,6 +678,11 @@ if [ -f "$DOTFILES_DIR/bin/mr-watch" ]; then
     create_symlink "$DOTFILES_DIR/bin/mr-watch" "$HOME/.local/bin/mr-watch"
 fi
 
+# mr-ship takes an MR out of draft, assigns me and requests the standing reviewers; driven by /ship-mr.
+if [ -f "$DOTFILES_DIR/bin/mr-ship" ]; then
+    create_symlink "$DOTFILES_DIR/bin/mr-ship" "$HOME/.local/bin/mr-ship"
+fi
+
 # jira-api is the Jira REST helper the daily system calls; it reads its login with `secret`.
 if [ -f "$DOTFILES_DIR/bin/jira-api" ]; then
     create_symlink "$DOTFILES_DIR/bin/jira-api" "$HOME/.local/bin/jira-api"
