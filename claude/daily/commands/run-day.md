@@ -38,7 +38,8 @@ awk '/<!-- start-day:start -->/{f=1;next} /<!-- start-day:end -->/{f=0} f' ~/wik
 
    Empty output: tell the user to run `/start-day` first, and stop.
 2. If `~/.local/state/run-day/$T.md` exists and the argument is not `--dry`, this is a resume: read it and skip triage. Background agents from before the resume may be gone: run the Wake check (section 10). Items whose run-state line says `owner=external:<KEY>` are in a side session: never re-dispatch them. Then continue at step 3.
-3. When the argument is `resume updated`, the plugin started this resume itself: a merge into dotfiles main changed this playbook or a brief template, the plugin folder reloaded, and the mod ran `/daily:run-day resume updated`. First say in one line what changed (`git -C ~/projects/dotfiles log --oneline -3 -- claude/daily`), then resume as in step 2, then run Keep busy (section 11). From now on follow this text, not the copy you read earlier in this session, wherever the two differ. Agents already running keep their briefs.
+
+   When the argument is `resume updated`, the plugin started this resume itself: a merge into dotfiles main changed this playbook or a brief template, the plugin folder reloaded, and the mod ran `/daily:run-day resume updated`. In that case, before the Wake check, say in one line what changed (`git -C ~/projects/dotfiles log --oneline -3 -- claude/daily`); after the resume, run Keep busy (section 11). From now on follow this text, not the copy you read earlier in this session, wherever the two differ. Agents already running keep their briefs.
 
 ## 1. Triage (the one planned pause)
 

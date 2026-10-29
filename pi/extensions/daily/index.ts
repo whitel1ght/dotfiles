@@ -12,7 +12,7 @@ import { messageFiles } from "./mod/inbox.ts";
 import { parseRunState } from "./mod/runstate.ts";
 import { acquireLock, DayWatcher, INBOX_MS, releaseLock, WATCH_MS, type Exec } from "./watch.ts";
 import { IdeasNudger } from "./ideas.ts";
-import { PI_PLAYBOOK, UPDATE_ARGS, fingerprint, playbookPath } from "./mod/update.ts";
+import { PI_PLAYBOOK, UPDATE_ARGS, fingerprint } from "./mod/update.ts";
 
 const IDEAS_MS = 60_000;
 
@@ -56,7 +56,8 @@ function paths(): Paths {
     runState: join(stateDir, `${today}.md`),
     diary: join(wiki, "diary", `${today}.md`),
     inbox: join(stateDir, "inbox"),
-    playbook: playbookPath(stateDir, today),
+    // pi's own record: it fingerprints other files than Claude's `<date>.playbook`
+    playbook: join(stateDir, `${today}.pi-playbook`),
     resumeMarker: join(stateDir, `${today}.pi-resume`),
   };
 }

@@ -393,11 +393,12 @@ fi
 # The daily plugin loads from its folder as a watched plugin dir, so a merge into
 # main reloads it in every running session (and the day session resumes with a
 # changed playbook, decision 0005). The marketplace copy is turned off so it does
-# not load twice. Other folders in CLAUDE_CODE_PLUGIN_DIRS are kept.
+# not load twice. Other folders in CLAUDE_CODE_PLUGIN_DIRS are kept; any other
+# daily folder (a ~ or trailing-slash spelling, a worktree's copy) is dropped.
 tmp="$(mktemp)"
 if jq --arg p "$DOTFILES_DIR/claude/daily" '
     .env.CLAUDE_CODE_PLUGIN_DIRS = (((.env.CLAUDE_CODE_PLUGIN_DIRS // "") | split(":")
-        | map(select(. != "" and . != $p))) + [$p] | join(":"))
+        | map(select(. != "" and (sub("/+$"; "") | endswith("/claude/daily") | not)))) + [$p] | join(":"))
     | .enabledPlugins["daily@dmitry-dotfiles"] = false' "$settings" > "$tmp"; then
     mv "$tmp" "$settings"
 else

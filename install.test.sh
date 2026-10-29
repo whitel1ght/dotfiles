@@ -146,7 +146,7 @@ echo "idempotence"
 echo "export NOTES_USER=real-value" >> "$SANDBOX/.zshrc.local"
 jq '.hooks.PreToolUse += [{matcher: "Bash", hooks: [{type: "command", command: "/other/pre-hook"}]}]
     | .hooks.PostToolUse += [{matcher: "Write", hooks: [{type: "command", command: "/other/post-hook"}]}]
-    | .env.CLAUDE_CODE_PLUGIN_DIRS = "/other/plugin:\(.env.CLAUDE_CODE_PLUGIN_DIRS)"' \
+    | .env.CLAUDE_CODE_PLUGIN_DIRS = "/other/plugin:~/elsewhere/claude/daily/:/x/worktrees/dotfiles/w/claude/daily:\(.env.CLAUDE_CODE_PLUGIN_DIRS)"' \
     "$SANDBOX/.claude/settings.json" > "$SANDBOX/s.json" && mv "$SANDBOX/s.json" "$SANDBOX/.claude/settings.json"
 before="$(shasum -a 256 < "$SANDBOX/.zshrc.local")"
 out2="$(run_install)"

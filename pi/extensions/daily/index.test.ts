@@ -400,7 +400,8 @@ test("run_day_watch start records the playbook the day runs with", async () => {
   fakeDotfiles(root);
   const { run } = fakePi();
   await run("start");
-  assert.match(readFileSync(join(stateDir, `${DAY}.playbook`), "utf8"), /^[0-9a-f]{8}\n$/);
+  assert.match(readFileSync(join(stateDir, `${DAY}.pi-playbook`), "utf8"), /^[0-9a-f]{8}\n$/);
+  assert.ok(!existsSync(join(stateDir, `${DAY}.playbook`)), "Claude's record is left alone: the prints differ by harness");
   await run("stop");
   delete process.env.DOTFILES_DIR;
   cleanup(root);

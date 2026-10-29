@@ -82,9 +82,9 @@ decisions still waiting: leave them; answers arrive through the inbox.
 
 When the argument is `resume updated`, the `daily` extension started this resume itself: a merge
 into dotfiles main changed this playbook, a brief template or the extension, and `/daily-update`
-reloaded it. First say in one line what changed
-(`git -C ~/projects/dotfiles log --oneline -3 -- pi/prompts/run-day.md pi/extensions/daily claude/daily`),
-then resume as above, which restarts the watcher.
+reloaded it. In that case, before the Wake check, say in one line what changed
+(`git -C ~/projects/dotfiles log --oneline -3 -- pi/prompts/run-day.md pi/extensions/daily claude/daily`);
+the resume above restarts the watcher; after it, run Keep busy (step 11).
 From now on follow this text, not the copy you read earlier in this session, wherever the two
 differ. Agents already running keep their briefs.
 
