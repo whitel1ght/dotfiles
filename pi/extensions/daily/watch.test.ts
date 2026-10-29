@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -43,7 +43,7 @@ function setup(
   const listings = [...(opts.inbox ?? [])];
   const probes = [...(opts.probes ?? [])];
   const deps: WatchDeps = {
-    paths: () => ({ runState: join(stateDir, `${DAY}.md`), diary: join(root, "diary", `${DAY}.md`) }),
+    paths: () => ({ runState: join(stateDir, `${DAY}.md`), diary: join(root, "diary", `${DAY}.md`), playbook: join(stateDir, `${DAY}.playbook`) }),
     changes: async () => {
       calls.runs += 1;
       return changes.shift() ?? { code: 0, stdout: "", stderr: "" };
@@ -319,4 +319,26 @@ test("an agent outstanding ends the stretch: idle again later gives a new prompt
   writeFileSync(join(stateDir, `${DAY}.md`), RUN_STATE);
   assert.equal(watcher.checkBusy(T0 + 40 * MIN, quiet({ lastActiveAt: T0 + 25 * MIN })), BUSY);
   rmSync(root, { recursive: true });
+});
+
+test("the playbook the day was started with is recorded, and a change is reported once", async () => {
+  const { root, stateDir, watcher } = setup();
+  assert.equal(watcher.checkUpdate("aaaa1111"), false, "nothing recorded yet");
+  watcher.recordPlaybook("aaaa1111");
+  assert.equal(readFileSync(join(stateDir, `${DAY}.playbook`), "utf8"), "aaaa1111\n");
+  assert.equal(watcher.checkUpdate("aaaa1111"), false, "unchanged");
+  assert.equal(watcher.checkUpdate("bbbb2222"), true);
+  assert.equal(watcher.checkUpdate("bbbb2222"), false, "once until the day is recorded again");
+  watcher.recordPlaybook("bbbb2222");
+  assert.equal(watcher.checkUpdate("cccc3333"), true);
+  rmSync(root, { recursive: true });
+});
+
+test("no update outside the watching session or after the daily report", async () => {
+  for (const opts of [{ held: false }, { report: true }, { runState: false }]) {
+    const { root, stateDir, watcher } = setup(opts);
+    writeFileSync(join(stateDir, `${DAY}.playbook`), "aaaa1111\n");
+    assert.equal(watcher.checkUpdate("bbbb2222"), false, JSON.stringify(opts));
+    rmSync(root, { recursive: true });
+  }
 });

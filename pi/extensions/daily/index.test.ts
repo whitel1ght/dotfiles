@@ -187,6 +187,7 @@ test("registers both handlers and blocks only on a bad tick", () => {
       handlers[event] = callback;
     },
     registerTool() {},
+    registerCommand() {},
   } as never);
   assert.ok(handlers.before_agent_start);
   assert.ok(handlers.tool_call);
@@ -277,7 +278,7 @@ test("directions: missing file, missing script or failing script inject nothing"
 test("directions: before_agent_start sets the section, and never throws without one", () => {
   const { root, file } = directionsSandbox("#!/bin/sh\necho '- never retry with the model'\n");
   const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
-  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb), registerTool: () => {} } as never);
+  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb), registerTool: () => {}, registerCommand: () => {} } as never);
   writeFileSync(file, "x");
   const options = { sections: {} as Record<string, string> };
   handlers.before_agent_start({ systemPromptOptions: options }, { ui: undefined });
@@ -305,7 +306,7 @@ async function waitFor(path: string) {
 
 function blockedTick(diary: string) {
   const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
-  daily({ on: (event: string, cb: (e: unknown, c: unknown) => unknown) => (handlers[event] = cb), registerTool: () => {} } as never);
+  daily({ on: (event: string, cb: (e: unknown, c: unknown) => unknown) => (handlers[event] = cb), registerTool: () => {}, registerCommand: () => {} } as never);
   return handlers.tool_call(
     { toolName: "edit", input: { path: diary, edits: [{ oldText: "- [ ] ecfx-1001 fix the export", newText: "- [x] ecfx-1001 fix the export" }] } },
     {},
@@ -366,16 +367,72 @@ function fakePi() {
   const tools: Record<string, { execute: (id: string, params: unknown) => Promise<{ content: { text: string }[] }> }> = {};
   const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
   const sent: { content: string; triggerTurn?: boolean }[] = [];
+  const commands: Record<string, { handler: (args: string, ctx: unknown) => Promise<void> }> = {};
+  const userMessages: { content: string; expand?: boolean }[] = [];
   const pi = {
     on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb),
     registerTool: (tool: { name: string }) => void (tools[tool.name] = tool as never),
+    registerCommand: (name: string, options: never) => void (commands[name] = options),
     sendMessage: (m: { content: string }, o?: { triggerTurn?: boolean }) => void sent.push({ content: m.content, triggerTurn: o?.triggerTurn }),
+    sendUserMessage: (content: string, o?: { expandPromptTemplates?: boolean }) => void userMessages.push({ content, expand: o?.expandPromptTemplates }),
   };
   daily(pi as never);
-  handlers.session_start?.({}, { sessionManager: { getSessionId: () => "sess-1" }, ui: { notify: () => {} } });
+  handlers.session_start?.({}, ctxFor("sess-1"));
   const run = async (action: string) => (await tools.run_day_watch.execute("t", { action })).content[0].text;
-  return { tools, handlers, sent, run };
+  return { tools, handlers, sent, run, commands, userMessages };
 }
+
+const ctxFor = (session: string) => ({ sessionManager: { getSessionId: () => session }, ui: { notify: () => {} } });
+
+/** A dotfiles checkout with the files the pi playbook print reads. */
+function fakeDotfiles(root: string, playbook = "# /run-day\n") {
+  const top = join(root, "dotfiles");
+  mkdirSync(join(top, "pi", "prompts"), { recursive: true });
+  mkdirSync(join(top, "claude", "daily", "templates"), { recursive: true });
+  writeFileSync(join(top, "pi", "prompts", "run-day.md"), playbook);
+  writeFileSync(join(top, "claude", "daily", "templates", "ticket-brief.md"), "brief\n");
+  process.env.DOTFILES_DIR = top;
+  return top;
+}
+
+test("run_day_watch start records the playbook the day runs with", async () => {
+  const { root, stateDir } = sandbox();
+  fakeDotfiles(root);
+  const { run } = fakePi();
+  await run("start");
+  assert.match(readFileSync(join(stateDir, `${DAY}.playbook`), "utf8"), /^[0-9a-f]{8}\n$/);
+  await run("stop");
+  delete process.env.DOTFILES_DIR;
+  cleanup(root);
+});
+
+test("/daily-update reloads, and the reloaded extension resumes the day in the same session", async () => {
+  const { root, stateDir } = sandbox();
+  const before = fakePi();
+  let reloaded = 0;
+  await before.commands["daily-update"].handler("", { ...ctxFor("sess-1"), reload: async () => void reloaded++ });
+  assert.equal(reloaded, 1);
+  assert.ok(existsSync(join(stateDir, `${DAY}.pi-resume`)), "marker left for the reloaded extension");
+  const after = fakePi();
+  await after.handlers.session_start({ type: "session_start", reason: "reload" }, ctxFor("sess-1"));
+  assert.deepEqual(after.userMessages, [{ content: "/run-day resume updated", expand: true }]);
+  assert.ok(!existsSync(join(stateDir, `${DAY}.pi-resume`)), "marker consumed");
+  await after.handlers.session_start({ type: "session_start", reason: "reload" }, ctxFor("sess-1"));
+  assert.equal(after.userMessages.length, 1, "resumes once");
+  cleanup(root);
+});
+
+test("no resume on a plain start, or for another session's marker", async () => {
+  const { root, stateDir } = sandbox();
+  writeFileSync(join(stateDir, `${DAY}.pi-resume`), "sess-1\n");
+  const a = fakePi();
+  await a.handlers.session_start({ type: "session_start", reason: "startup" }, ctxFor("sess-1"));
+  assert.deepEqual(a.userMessages, []);
+  const b = fakePi();
+  await b.handlers.session_start({ type: "session_start", reason: "reload" }, ctxFor("sess-2"));
+  assert.deepEqual(b.userMessages, []);
+  cleanup(root);
+});
 
 test("run_day_watch: starts with a run state, holds the lock, stops and releases it", async () => {
   const { root, stateDir } = sandbox();
@@ -516,7 +573,7 @@ test("total cap: before_agent_start keeps the three sections within 9000 charact
   process.env.FRICTION_WIKI = join(root, "friction");
   process.env.FRICTION_LEDGER_BIN = ledger;
   const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
-  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb), registerTool: () => {} } as never);
+  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb), registerTool: () => {}, registerCommand: () => {} } as never);
   const options = { sections: {} as Record<string, string> };
   handlers.before_agent_start({ systemPromptOptions: options }, { ui: undefined });
   const s = options.sections;
@@ -532,7 +589,7 @@ test("total cap: before_agent_start keeps the three sections within 9000 charact
 test("system map: before_agent_start sets the section, and never throws without one", () => {
   const { root, file } = mapSandbox();
   const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
-  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb), registerTool: () => {} } as never);
+  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb), registerTool: () => {}, registerCommand: () => {} } as never);
   writeFileSync(file, "- run-day: the daily plan\n");
   const options = { sections: {} as Record<string, string> };
   handlers.before_agent_start({ systemPromptOptions: options }, { ui: undefined });

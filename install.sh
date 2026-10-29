@@ -390,6 +390,20 @@ else
     rm -f "$tmp"; log_warn "Could not add the agent hooks to $settings"
 fi
 
+# The daily plugin loads from its folder as a watched plugin dir, so a merge into
+# main reloads it in every running session (and the day session resumes with a
+# changed playbook, decision 0005). The marketplace copy is turned off so it does
+# not load twice. Other folders in CLAUDE_CODE_PLUGIN_DIRS are kept.
+tmp="$(mktemp)"
+if jq --arg p "$DOTFILES_DIR/claude/daily" '
+    .env.CLAUDE_CODE_PLUGIN_DIRS = (((.env.CLAUDE_CODE_PLUGIN_DIRS // "") | split(":")
+        | map(select(. != "" and . != $p))) + [$p] | join(":"))
+    | .enabledPlugins["daily@dmitry-dotfiles"] = false' "$settings" > "$tmp"; then
+    mv "$tmp" "$settings"
+else
+    rm -f "$tmp"; log_warn "Could not point Claude at the daily plugin folder in $settings"
+fi
+
 # macdict backs repy's "Define Word"; reaches the macOS dictionaries via ctypes,
 # so it needs no venv or third-party package.
 if [ -f "$DOTFILES_DIR/bin/macdict" ]; then

@@ -15,6 +15,7 @@ import type { InboxState, RunItem, ViewState } from '../mod/types.ts'
 import { joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts'
 import { NUDGE_TEXT, claimsSystem, claimsSystemPrompt, shouldNudge, systemMarkerPath } from '../mod/ideas.ts'
 import { BUSY_PROMPT, nextNudged, shouldNudgeBusy } from '../mod/busy.ts'
+import { CLAUDE_PLAYBOOK, UPDATE_ARGS, fingerprint, parsePrint, playbookPath, shouldResume } from '../mod/update.ts'
 
 const REFRESH_MS = 5_000
 const WATCH_MS = 180_000
@@ -34,7 +35,7 @@ const EMPTY: ViewState = { active: false, status: '', groups: [] }
 const view = atom({ plugin: 'daily', key: 'view' } as const, EMPTY)
 const inbox = atom({ plugin: 'daily', key: 'inbox' } as const, EMPTY_INBOX as InboxState)
 
-type Day = { home: string; today: string; diaryPath: string; statePath: string; ownerPath: string; agentsPath: string }
+type Day = { home: string; today: string; diaryPath: string; statePath: string; ownerPath: string; agentsPath: string; playbookPath: string }
 
 async function today($: EngineInterface): Promise<Day | null> {
   const home = await $.env.get('HOME')
@@ -50,7 +51,14 @@ async function today($: EngineInterface): Promise<Day | null> {
     statePath: `${stateDir}/${day}.md`,
     ownerPath: ownerPath(stateDir, day),
     agentsPath: `${stateDir}/${day}.agents`,
+    playbookPath: playbookPath(stateDir, day),
   }
+}
+
+// The playbook and briefs as the plugin folder holds them now (mod/update.ts).
+async function currentPrint($: EngineInterface): Promise<string> {
+  const top = $.plugin.root.replace(/\/claude\/daily\/?$/, '')
+  return fingerprint(await Promise.all(CLAUDE_PLAYBOOK.map(async p => (await readOr($, `${top}/${p}`)) ?? '')))
 }
 
 async function readOr($: EngineInterface, path: string): Promise<string | null> {
@@ -88,6 +96,7 @@ async function claimDay($: EngineInterface) {
   try {
     const day = await today($)
     if (day) await $.fs.write(day.ownerPath, formatOwner(await $.session.id()))
+    if (day) await $.fs.write(day.playbookPath, `${await currentPrint($)}\n`)
     // Re-running /daily:run-day restarts a keepwarm that stopped (a failed ping, yesterday's report).
     warm.stopped = null
     warm.wasCold = false
@@ -98,6 +107,26 @@ async function claimDay($: EngineInterface) {
     const why = `run-day owner not recorded: ${err instanceof Error ? err.message : String(err)}`
     $.ui.toast(`daily: ${why}`)
     friction($, 'tool_error', why, 'daily-owner')
+  }
+}
+
+// A merge that changed the playbook or a brief reloads this mod (the plugin folder is watched,
+// CLAUDE_CODE_PLUGIN_DIRS) and so reaches session.start: the day session resumes the day once
+// with the new text (mod/update.ts). The new print is written first, so it resumes only once.
+async function resumeIfUpdated($: EngineInterface) {
+  try {
+    const day = await today($)
+    if (!day || !(await isOwner($, day))) return
+    const ctx = await runningDay($)
+    if (!ctx) return
+    const recorded = parsePrint(await readOr($, ctx.day.playbookPath))
+    const current = await currentPrint($)
+    if (!shouldResume({ isOwner: true, dayRunning: true, recorded, current })) return
+    await $.fs.write(ctx.day.playbookPath, `${current}\n`)
+    $.ui.log('daily: the run-day playbook changed; resuming the day with it')
+    $.clock.after(0, () => void $.command.run({ command: 'daily:run-day', args: UPDATE_ARGS }).catch(() => $.ui.toast('daily: resuming the day after a playbook change failed: run /daily:run-day')))
+  } catch (err) {
+    $.ui.log(`daily: playbook check failed: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
 
@@ -544,6 +573,7 @@ export const register: Register = on => {
     $.clock.every(IDEAS_MS, () => {
       void nudgeIdeas($)
     })
+    void resumeIfUpdated($)
     return next(e)
   })
 

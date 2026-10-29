@@ -80,6 +80,14 @@ never one with `owner=external:<KEY>` (a side session works it). Then start the 
 `run_day_watch` says when it is already running) and continue at step 3. `decide list` shows
 decisions still waiting: leave them; answers arrive through the inbox.
 
+When the argument is `resume updated`, the `daily` extension started this resume itself: a merge
+into dotfiles main changed this playbook, a brief template or the extension, and `/daily-update`
+reloaded it. First say in one line what changed
+(`git -C ~/projects/dotfiles log --oneline -3 -- pi/prompts/run-day.md pi/extensions/daily claude/daily`),
+then resume as above, which restarts the watcher.
+From now on follow this text, not the copy you read earlier in this session, wherever the two
+differ. Agents already running keep their briefs.
+
 `--dry`: stop after printing the triage table (step 1). A merge-class `me` row says it is merged in
 the UI by the user, with the MR link, because the API merge returns 405. Then print, for each auto
 item, the `wt add` command and the filled-in brief (step 2), and a closing line

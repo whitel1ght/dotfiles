@@ -11,7 +11,7 @@ const WARM_REPLY = { isAnswered: true, text: 'warm', usage: { input_tokens: 5, o
 
 type Run = { exitCode: number; stdout: string; stderr: string }
 
-type Opts = { day: Run | (() => Run); refuse?: boolean; frictionDenied?: boolean; owner?: string | null; writeFails?: boolean; inbox?: string; diary?: string; state?: string | null; fork?: () => unknown }
+type Opts = { day: Run | (() => Run); refuse?: boolean; frictionDenied?: boolean; owner?: string | null; writeFails?: boolean; inbox?: string; diary?: string; state?: string | null; fork?: () => unknown; files?: Record<string, string> }
 
 async function start($: any, on: any, opts: Opts) {
   // A closed lid stops the 5 s refresh tick: while asleep its next period waits for the wake.
@@ -29,7 +29,7 @@ async function start($: any, on: any, opts: Opts) {
   const agents: { id: string; status: string; description: string }[] = []
   const mtimes: Record<string, number> = {}
   const state = opts.state === undefined ? RUN_STATE : opts.state
-  const files: Record<string, string> = { [WIKI]: opts.diary ?? DIARY }
+  const files: Record<string, string> = { [WIKI]: opts.diary ?? DIARY, ...opts.files }
   if (state !== null) files[STATE] = state
   const owner = opts.owner === undefined ? ME : opts.owner
   if (owner !== null) files[OWNER] = `${owner}\n`
@@ -69,7 +69,11 @@ async function start($: any, on: any, opts: Opts) {
     return { value: undefined } as never
   })
   on('session.id', () => ({ value: ME }))
-  on('command.run', (_$: any, e: any) => ({ text: `ran ${e.command}` }))
+  const commands: string[] = []
+  on('command.run', (_$: any, e: any) => {
+    commands.push(`${e.command} ${e.args ?? ''}`.trim())
+    return { text: `ran ${e.command}` }
+  })
   on('prompt.submit', (_$: any, e: any) => {
     prompts.push(e.text)
     origins.push(e.origin)
@@ -97,7 +101,7 @@ async function start($: any, on: any, opts: Opts) {
   on('agent.list', () => (world.agentListFails ? { deny: 'agent list unavailable' } : { value: agents }) as never)
   on('fs.stat', (_$: any, e: any) => (e.path in mtimes ? { value: { kind: 'file', size: 1, mtimeMs: mtimes[e.path], isLink: false } } : { deny: 'ENOENT' }) as never)
   await $.session.start({ cwd: '/home/t', surface: 'terminal', source: 'startup' } as never)
-  return { clock, sleep, world, agents, mtimes, calls, toasts, logs, registered, statuses, files, prompts, origins, forks, reads }
+  return { clock, sleep, world, agents, mtimes, calls, toasts, logs, registered, statuses, files, prompts, origins, forks, reads, commands }
 }
 
 const isFriction = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('friction')
@@ -644,4 +648,43 @@ test('a full wake with no outstanding agents but inbox messages still nudges', a
   await sleepThenOpen(s, 95 * MIN)
   expect(wakes(s.prompts)).toHaveLength(1)
   expect(wakes(s.prompts)[0]).toContain('0 background agent(s) outstanding')
+})
+
+// A merge that changed the playbook reloads the mod: session.start resumes the day once (mod/update.ts).
+const PLAYBOOK = '/home/t/.local/state/run-day/2026-10-08.playbook'
+const resumes = (commands: string[]) => commands.filter(c => c === 'daily:run-day resume updated')
+
+test('a changed playbook resumes the running day once, in its owner session', async ($, on) => {
+  const s = await start($, on, { ...idleDay, files: { [PLAYBOOK]: '00000000\n' } })
+  await s.clock.settle()
+  expect(resumes(s.commands)).toHaveLength(1)
+  expect(s.logs).toContain('daily: the run-day playbook changed; resuming the day with it')
+  expect(s.files[PLAYBOOK]).not.toBe('00000000\n')
+  await $.session.start({ cwd: '/home/t', surface: 'terminal', source: 'startup' } as never)
+  await s.clock.settle()
+  expect(resumes(s.commands)).toHaveLength(1)
+})
+
+test('no record, or the playbook the day was claimed with: no resume', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await s.clock.settle()
+  expect(resumes(s.commands)).toHaveLength(0)
+  await $.command.run({ command: 'daily:run-day' })
+  expect(s.files[PLAYBOOK]).toMatch(/^[0-9a-f]{8}\n$/)
+  await $.session.start({ cwd: '/home/t', surface: 'terminal', source: 'startup' } as never)
+  await s.clock.settle()
+  expect(resumes(s.commands)).toHaveLength(0)
+})
+
+test('a session that does not own the day never resumes it', async ($, on) => {
+  const s = await start($, on, { ...idleDay, owner: 'sess-other', files: { [PLAYBOOK]: '00000000\n' } })
+  await s.clock.settle()
+  expect(resumes(s.commands)).toHaveLength(0)
+  expect(s.files[PLAYBOOK]).toBe('00000000\n')
+})
+
+test('after the daily report a changed playbook resumes nothing', async ($, on) => {
+  const s = await start($, on, { day: OK, files: { [PLAYBOOK]: '00000000\n' } })
+  await s.clock.settle()
+  expect(resumes(s.commands)).toHaveLength(0)
 })

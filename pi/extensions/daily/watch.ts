@@ -11,6 +11,7 @@ import { parseRunState } from "./mod/runstate.ts";
 import { isFullWake, outstanding, parseGraphics, parseLid, sleptBetween, WAKE_PREFIX } from "./mod/wake.ts";
 import { REPORT_MARK } from "./mod/warm.ts";
 import { PI_BUSY_PROMPT, nextNudged, shouldNudgeBusy } from "./mod/busy.ts";
+import { parsePrint, shouldResume } from "./mod/update.ts";
 
 export const WATCH_MS = 180_000;
 export const INBOX_MS = 30_000;
@@ -20,7 +21,7 @@ const BLIND_PROBES = 3;
 export type Exec = { code: number; stdout: string; stderr: string };
 
 export type WatchDeps = {
-  paths: () => { runState: string; diary: string };
+  paths: () => { runState: string; diary: string; playbook: string };
   /** changes-since --cursor run-day */
   changes: () => Promise<Exec>;
   listInbox: () => string[];
@@ -47,6 +48,7 @@ export class DayWatcher {
   private pendingSince: number | null = null;
   private blindProbes = 0;
   private busyNudged = false;
+  private updateSent = false;
   private deps: WatchDeps;
 
   constructor(deps: WatchDeps) {
@@ -166,6 +168,25 @@ export class DayWatcher {
     if (!shouldNudgeBusy(state)) return null;
     this.busyNudged = true;
     return PI_BUSY_PROMPT;
+  }
+
+  /** What the day runs with (mod/update.ts): written when the watcher starts. */
+  recordPlaybook(print: string): void {
+    writeFileSync(this.deps.paths().playbook, `${print}\n`);
+    this.updateSent = false;
+  }
+
+  /**
+   * Called on the 30 s tick with the playbook's print as it is on disk: true once when it differs
+   * from the recorded one, in the watching session while the day runs (the caller runs /daily-update).
+   */
+  checkUpdate(print: string): boolean {
+    const p = this.deps.paths();
+    const dayRunning = this.active() && !readOr(p.diary).includes(REPORT_MARK);
+    const recorded = parsePrint(existsSync(p.playbook) ? readFileSync(p.playbook, "utf8") : null);
+    if (this.updateSent || !shouldResume({ isOwner: this.deps.holdsLock(), dayRunning, recorded, current: print })) return false;
+    this.updateSent = true;
+    return true;
   }
 
   /** True when it sent an `inbox: N new` prompt. */

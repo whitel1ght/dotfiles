@@ -1,5 +1,5 @@
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -12,6 +12,7 @@ import { messageFiles } from "./mod/inbox.ts";
 import { parseRunState } from "./mod/runstate.ts";
 import { acquireLock, DayWatcher, INBOX_MS, releaseLock, WATCH_MS, type Exec } from "./watch.ts";
 import { IdeasNudger } from "./ideas.ts";
+import { PI_PLAYBOOK, UPDATE_ARGS, fingerprint, playbookPath } from "./mod/update.ts";
 
 const IDEAS_MS = 60_000;
 
@@ -38,6 +39,8 @@ type Paths = {
   diary: string;
   inbox: string;
   today: string;
+  playbook: string;
+  resumeMarker: string;
 };
 
 function paths(): Paths {
@@ -53,7 +56,33 @@ function paths(): Paths {
     runState: join(stateDir, `${today}.md`),
     diary: join(wiki, "diary", `${today}.md`),
     inbox: join(stateDir, "inbox"),
+    playbook: playbookPath(stateDir, today),
+    resumeMarker: join(stateDir, `${today}.pi-resume`),
   };
+}
+
+// The pi playbook, the briefs and this extension's code as the dotfiles checkout holds them now
+// (mod/update.ts): a change to any of them means the day should reload and resume.
+function piPrint(): string {
+  const top = process.env.DOTFILES_DIR ?? join(homedir(), "projects", "dotfiles");
+  const code = ["pi/extensions/daily", "claude/daily/mod"].flatMap((dir) => {
+    try {
+      return readdirSync(join(top, dir))
+        .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
+        .sort()
+        .map((f) => `${dir}/${f}`);
+    } catch {
+      return [];
+    }
+  });
+  const read = (p: string) => {
+    try {
+      return readFileSync(join(top, p), "utf8");
+    } catch {
+      return "";
+    }
+  };
+  return fingerprint([...PI_PLAYBOOK, ...code].map(read));
 }
 
 /** Fire-and-forget: a missing or failing friction must never slow or change the caller. */
@@ -338,6 +367,11 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
     if (timers.length > 0) return "Already watching this day in this session.";
     const refused = acquireLock(lockPath(), { pid: process.pid, session: getSession() });
     if (refused) return `Not started: ${refused}. Only one pi session watches a day.`;
+    try {
+      watcher.recordPlaybook(piPrint());
+    } catch {
+      // without a record no update is ever detected; the day itself runs on
+    }
     const every = (ms: number, fn: () => unknown) => {
       const t = setInterval(tick(fn), ms);
       t.unref?.();
@@ -351,6 +385,8 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
       const busy = told ? null : watcher.checkBusy(Date.now(), activity);
       if (!told) activity.userWrote = false;
       if (busy) send(busy, true);
+      // a merge changed the playbook or this extension: reload and resume the day with it
+      if (watcher.checkUpdate(piPrint())) void pi.sendUserMessage("/daily-update", { expandPromptTemplates: true, deliverAs: "followUp" });
     });
     every(WATCH_MS, () => watcher.checkEvents());
     return (
@@ -391,9 +427,28 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
 export default function daily(pi: ExtensionAPI) {
   let ui: Ui;
   let session = "unknown";
-  pi.on("session_start", (_event, ctx) => {
+  pi.on("session_start", (event, ctx) => {
     ui = ctx?.ui as Ui;
     session = ctx?.sessionManager?.getSessionId?.() ?? session;
+    // The fresh copy after /daily-update's reload resumes the day with the new playbook, once.
+    if ((event as { reason?: string })?.reason !== "reload") return;
+    const marker = paths().resumeMarker;
+    try {
+      if (readFileSync(marker, "utf8").trim() !== session) return;
+      rmSync(marker, { force: true });
+    } catch {
+      return;
+    }
+    void pi.sendUserMessage(`/run-day ${UPDATE_ARGS}`, { expandPromptTemplates: true, deliverAs: "followUp" });
+  });
+
+  // Sent by the watcher when a merge changed the playbook, the briefs or this extension.
+  pi.registerCommand("daily-update", {
+    description: "Reload the daily extension and resume today's run with the new playbook",
+    handler: async (_args, ctx) => {
+      writeFileSync(paths().resumeMarker, `${session}\n`);
+      await ctx.reload();
+    },
   });
   const stopWatch = registerWatch(pi, () => ui, () => session);
 

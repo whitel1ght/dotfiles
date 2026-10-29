@@ -118,6 +118,10 @@ jq -e --arg c "$TEST_DIR/bin/dashboard-check" \
     && pass "Claude runs dashboard-check after edits" || fail "Claude runs dashboard-check after edits" "$(jq -c .hooks.PostToolUse "$settings" 2>&1)"
 jq -e '.permissions.deny | index("Read(~/.secrets/**)") != null and index("Edit(~/.secrets/**)") != null and index("Read(~/.config/ecfx/jira.env)") != null' "$settings" >/dev/null \
     && pass "Claude file tools are denied ~/.secrets" || fail "Claude file tools are denied ~/.secrets" "$(jq -c .permissions.deny "$settings" 2>&1)"
+jq -e --arg p "$TEST_DIR/claude/daily" '.env.CLAUDE_CODE_PLUGIN_DIRS | split(":") | index($p) != null' "$settings" >/dev/null \
+    && pass "Claude watches the daily plugin folder" || fail "Claude watches the daily plugin folder" "$(jq -c .env "$settings" 2>&1)"
+jq -e '.enabledPlugins["daily@dmitry-dotfiles"] == false' "$settings" >/dev/null \
+    && pass "the marketplace copy of daily is off" || fail "the marketplace copy of daily is off" "$(jq -c .enabledPlugins "$settings" 2>&1)"
 
 # An empty trailing PATH element means "current directory" — a real hazard.
 pathv="$( . "$SANDBOX/.zshrc.local" 2>/dev/null; echo "${PATH:-}" )"
@@ -141,7 +145,8 @@ fi
 echo "idempotence"
 echo "export NOTES_USER=real-value" >> "$SANDBOX/.zshrc.local"
 jq '.hooks.PreToolUse += [{matcher: "Bash", hooks: [{type: "command", command: "/other/pre-hook"}]}]
-    | .hooks.PostToolUse += [{matcher: "Write", hooks: [{type: "command", command: "/other/post-hook"}]}]' \
+    | .hooks.PostToolUse += [{matcher: "Write", hooks: [{type: "command", command: "/other/post-hook"}]}]
+    | .env.CLAUDE_CODE_PLUGIN_DIRS = "/other/plugin:\(.env.CLAUDE_CODE_PLUGIN_DIRS)"' \
     "$SANDBOX/.claude/settings.json" > "$SANDBOX/s.json" && mv "$SANDBOX/s.json" "$SANDBOX/.claude/settings.json"
 before="$(shasum -a 256 < "$SANDBOX/.zshrc.local")"
 out2="$(run_install)"
@@ -162,6 +167,9 @@ n="$(jq '[.hooks.PreToolUse[]?.hooks[]?, .hooks.PostToolUse[]?.hooks[]? | select
 [ "$n" = "2" ] && pass "re-run keeps other tools' hooks" || fail "re-run keeps other tools' hooks" "found $n"
 n="$(jq '[.permissions.deny[] | select(. == "Read(~/.secrets/**)")] | length' "$SANDBOX/.claude/settings.json")"
 [ "$n" = "1" ] && pass "re-run adds each deny rule once" || fail "re-run adds each deny rule once" "found $n"
+dirs="$(jq -r '.env.CLAUDE_CODE_PLUGIN_DIRS' "$SANDBOX/.claude/settings.json")"
+[ "$dirs" = "/other/plugin:$TEST_DIR/claude/daily" ] && pass "re-run keeps other plugin folders and lists daily once" \
+    || fail "re-run keeps other plugin folders and lists daily once" "got $dirs"
 
 # --- a missing template must warn, not crash ------------------------------
 echo "missing template"
