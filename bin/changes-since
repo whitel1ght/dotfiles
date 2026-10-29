@@ -143,14 +143,14 @@ approvals_call() {
 feed_jira() {
   local jql_since assigned updated tz
   # JQL reads dates in the Jira profile's time zone, not this machine's.
-  tz=$(bounded "$JIRA_API" GET myself | jq -er .timeZone) || return 1
+  JIRA_REPLY=$(bounded "$JIRA_API" GET myself) || return 1
+  tz=$(jq -er .timeZone <<<"$JIRA_REPLY") || return 1
   jql_since=$(TZ="$tz" date -r "$(epoch_of "$SINCE")" '+%Y/%m/%d %H:%M' 2>/dev/null || TZ="$tz" date -d "$SINCE" '+%Y/%m/%d %H:%M')
   jira_issues() {
-    local resp
-    resp=$(bounded "$JIRA_API" POST search/jql "$(jq -cn --arg jql "$1" \
+    JIRA_REPLY=$(bounded "$JIRA_API" POST search/jql "$(jq -cn --arg jql "$1" \
       '{jql: $jql, fields: ["summary", "status", "updated"], maxResults: 100}')") || return 1
-    jq -e '.issues | type == "array"' <<<"$resp" >/dev/null || return 1
-    jq -c .issues <<<"$resp"
+    jq -e '.issues | type == "array"' <<<"$JIRA_REPLY" >/dev/null || return 1
+    jq -c .issues <<<"$JIRA_REPLY"
   }
   # The JQL window is minute-granular and the cursor is not, so jq filters exactly.
   assigned=$(jira_issues "assignee = currentUser() AND assignee CHANGED TO currentUser() AFTER \"$jql_since\"") || return 1
@@ -276,7 +276,14 @@ gitlab_down() { [ ! -e "$TIMED_OUT" ] || down "$@"; "$HERE/glab-gate" down --sou
 gate_rc=0; "$HERE/glab-gate" check || gate_rc=$?
 [ "$gate_rc" -ne 1 ] || die "GitLab unavailable (holding off until the 15-minute window since the last failure passes)"
 
-feed_jira || down jira "Jira unavailable (are JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env still valid?)"
+# jira-api exits 0 on a 401/403 and prints Jira's error body, so the last reply tells an auth failure from an outage.
+jira_down() {
+  if grep -Eiq 'must be authenticated|unauthori[sz]ed|"status(Code)?" *: *40[13]' <<<"${JIRA_REPLY:-}"; then
+    down jira "Jira unavailable (are JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env still valid?)"
+  fi
+  down jira "Jira unavailable, retry in a few minutes"
+}
+feed_jira || jira_down
 ME=$(bounded glab api user | jq -er .username) || gitlab_down gitlab "GitLab unavailable"
 "$HERE/glab-gate" up || true
 feed_gitlab_todos || gitlab_down gitlab-todos "GitLab to-dos unavailable"

@@ -15,6 +15,7 @@ pass() { PASS=$((PASS + 1)); echo "  ok   - $1"; }
 fail() { FAIL=$((FAIL + 1)); echo "  FAIL - $1"; echo "         $2"; }
 assert_eq() { [ "$1" = "$2" ] && pass "$3" || fail "$3" "expected [$1] got [$2]"; }
 assert_contains() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3" "[$2] not in [$1]" ;; esac; }
+assert_not_contains() { case "$1" in *"$2"*) fail "$3" "[$2] found in [$1]" ;; *) pass "$3" ;; esac; }
 
 SANDBOX="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$SANDBOX"' EXIT
@@ -24,14 +25,15 @@ export FRICTION_DIR="$SANDBOX/friction-state"
 mkdir -p "$STUBS"
 
 # jira-api <METHOD> <path> [body]: GET myself answers the profile zone (JIRA_TZ,
-# default UTC; JIRA_MYSELF_FAIL=1 fails it); otherwise picks the fixture by what
+# default UTC; JIRA_MYSELF_FAIL=1 fails it; JIRA_MYSELF_BODY replies with that
+# body instead, like Jira's error bodies); otherwise picks the fixture by what
 # the JQL asks for.
 cat > "$STUBS/jira-api" <<'STUB'
 #!/bin/bash
 echo "$*" >> "${FIX:?}/jira.log"
 [ -e "$FIX/jira-hang-once" ] && { rm -f "$FIX/jira-hang-once"; sleep 30; }
 [ -n "${JIRA_SLEEP:-}" ] && sleep "$JIRA_SLEEP"
-[ "$1 $2" = "GET myself" ] && { [ -n "${JIRA_MYSELF_FAIL:-}" ] && exit 1; printf '{"timeZone":"%s"}\n' "${JIRA_TZ:-UTC}"; exit 0; }
+[ "$1 $2" = "GET myself" ] && { [ -n "${JIRA_MYSELF_BODY:-}" ] && { echo "$JIRA_MYSELF_BODY"; exit 0; }; [ -n "${JIRA_MYSELF_FAIL:-}" ] && exit 1; printf '{"timeZone":"%s"}\n' "${JIRA_TZ:-UTC}"; exit 0; }
 [ -n "${JIRA_DOWN:-}" ] && { echo '{"errorMessages":["Unauthorized"]}'; exit 0; }
 case "$3" in
     *"CHANGED TO currentUser()"*) cat "$FIX/jira-assigned.json" ;;
@@ -382,7 +384,17 @@ assert_contains "$(errs)" "GitLab to-dos unavailable" "stderr names the source"
 echo "changes-since — friction capture"
 reset; cursor 2026-10-08T07:00:00Z
 out=$(JIRA_MYSELF_FAIL=1 run); rc=$?
-assert_eq "--source jira service_down Jira unavailable (are JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env still valid?)" "$(cat "$FIX/friction.log")" "a failing Jira records service_down with source jira"
+assert_eq "--source jira service_down Jira unavailable, retry in a few minutes" "$(cat "$FIX/friction.log")" "a failing Jira records service_down with source jira"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(CHANGES_SINCE_BACKOFF=0 JIRA_MYSELF_BODY='{"errorMessages":["Service unavailable"]}' run); rc=$?
+assert_eq "1" "$rc" "a Jira error body that is not an auth failure: exit 1"
+assert_not_contains "$(errs)$(cat "$FIX/friction.log")" "JIRA_USER" "stderr and the friction log do not mention the credentials"
+assert_eq "--source jira service_down Jira unavailable, retry in a few minutes" "$(cat "$FIX/friction.log")" "one service_down record, with the retry message"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(CHANGES_SINCE_BACKOFF=0 JIRA_MYSELF_BODY='{"errorMessages":["Client must be authenticated to access this resource."]}' run); rc=$?
+assert_eq "1" "$rc" "a Jira auth failure: exit 1"
+assert_contains "$(errs)" "JIRA_USER/JIRA_TOKEN" "stderr gets the credentials hint"
+assert_eq "--source jira service_down Jira unavailable (are JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env still valid?)" "$(cat "$FIX/friction.log")" "and so does the service_down record"
 reset; cursor 2026-10-08T07:00:00Z
 PATH="$STUBS:$PATH" FIX="$FIX" "$TEST_DIR/glab-gate" down --source end-day "GitLab unavailable"
 out=$(run); rc=$?
