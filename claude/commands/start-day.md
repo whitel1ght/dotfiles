@@ -31,7 +31,9 @@ Run sync-tickets first, so the Jira statuses gathered next are already true.
 The first line gives the start of the window ("Since ..."). Use the same window for
 Slack. The digest has: carry-over from my last diary entry, my open MRs (reviews
 received, approvals, pipelines), which of my MRs are ready to merge (and in what order,
-when they depend on each other), MRs waiting on my review, Jira, and last `## Repos`:
+when they depend on each other), MRs waiting on my review, Jira, `## QA candidates`
+(other people's tickets in Ready for QA, each with its QA ledger state from the
+claude-components QA skills), and last `## Repos`:
 `repos-sync` has fetched every GitLab repo in `~/projects` and fast-forwarded its default
 branch where that was safe, then `## Team plugins`: `team-plugins-sync` has updated the
 team's Claude plugins to that clone and regenerated pi's team skills (`plink`). Repos are
@@ -93,8 +95,15 @@ Group the items by what they unblock, in this order:
   someone else moved, for example sent back by QA.
 - **If time**: reviews I owe on other people's backend MRs (ecfx-backend and backend
   services such as data-grpc-service), however long they've waited: they come after
-  my own work. Then new pickups from the To-Do backlog, highest priority first, at most
-  three.
+  my own work. Then QA candidates from `## QA candidates`, at most two, as
+  `- [ ] ecfx-NNNN QA (claude-components qa flow): <the check in a few words>`: only those marked `QA: unclaimed`
+  (or a stage `ABANDONED`); one someone holds (`live`), finished (`done`) or dropped
+  stays out. Rank them by how testable they are for us on dev01: a clear user scenario in
+  the dashboard or admin, or an API answer to check, first; a backend-only change that needs
+  logs, a provider or a simulator after; one that needs paid PACER calls or is a refactor
+  with nothing to observe last, and out. When none fits, say so in one line at the end with
+  how many were in Ready for QA. Then new pickups from the To-Do backlog, highest priority
+  first, at most three.
 
 Separately, **Merge**: one item per ticket whose MRs are ready to merge now, naming each
 MR in merge order ("merge backend !6390, then admin !273"). A ticket that still has review
@@ -104,7 +113,8 @@ already in First or Today, in which case say so in one short line.
 
 Before writing, check that every one of these made it in or was dropped on purpose: each
 review note on my MRs awaiting my reply, each review_now or re_review MR, each newly
-assigned ticket, each unticked carry-over item and each Slack request. Then check that no
+assigned ticket, each unticked carry-over item, each Slack request and
+each unclaimed QA candidate. Then check that no
 ticket starts two top-level lines: several review notes, MRs or carry-over lines on one
 ticket are one item.
 
@@ -142,6 +152,7 @@ write must come from what you gathered:
 - [ ] ecfx-1008 new: storage policy not saved on practice groups — investigate
 
 **If time**
+- [ ] ecfx-1012 QA (claude-components qa flow): Roles page read-only for built-in roles, API write refused
 - [ ] ecfx-1015 pick up: keep filters after selecting documents
 ```
 

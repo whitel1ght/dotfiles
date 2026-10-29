@@ -386,6 +386,32 @@ collect_jira() {
     || echo "(none, or Jira unavailable — token may have expired)"
 }
 
+# Tickets someone else finished that we could test with the claude-components QA skills: Ready for
+# QA, not mine, with each one's QA ledger state (unclaimed = nobody has started QA on it). The
+# ledger tool reads its own Jira credentials; any failure there is shown, never read as unclaimed.
+collect_qa_candidates() {
+  section "QA candidates (Ready for QA, not mine)"
+  [ -n "${JIRA_EMAIL:-}" ] && [ -n "${JIRA_API_TOKEN:-}" ] || { echo "(Jira credentials missing: JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env)"; return; }
+  local issues ledger rows key prio type who summary state
+  issues=$(curl -sf -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -G "$JIRA_BASE/rest/api/3/search/jql" \
+    --data-urlencode 'jql=project = ECFX AND status = "Ready for QA" AND (assignee != currentUser() OR assignee is EMPTY) ORDER BY priority DESC, updated DESC' \
+    --data-urlencode fields=summary,priority,issuetype,assignee --data-urlencode maxResults=15) || { echo "(Jira unavailable)"; return; }
+  rows=$(jq -r '.issues[]? | [.key, (.fields.priority.name // "-"), (.fields.issuetype.name // "-"), (.fields.assignee.displayName // "unassigned"), .fields.summary] | @tsv' <<<"$issues")
+  [ -n "$rows" ] || { echo "(none)"; return; }
+  ledger="${START_DAY_QA_LEDGER:-${CLAUDE_COMPONENTS_DIR:-$HOME/projects/claude-components}/plugins/ops/lib/qa_ledger.py}"
+  while IFS=$'\t' read -r key prio type who summary; do
+    if [ ! -f "$ledger" ]; then
+      state="ledger unknown (no claude-components checkout)"
+    else
+      state=$(python3 "$ledger" --json status "$key" </dev/null 2>/dev/null | jq -r '
+        .stages | if length == 0 then "unclaimed"
+        else to_entries | map("\(.key) \(.value.state)\(if .value.holder then " (\(.value.holder.holder // "?"))" else "" end)") | join(", ") end' 2>/dev/null || true)
+      [ -n "$state" ] || state="ledger unavailable"
+    fi
+    echo "- $key [$prio] $type, $who: $summary — QA: $state"
+  done <<<"$rows"
+}
+
 case "${1:-}" in
   collect)
     shift
@@ -399,7 +425,7 @@ case "${1:-}" in
     # team plugins after repos-sync, so they update from the clone it just fast-forwarded
     ( "${START_DAY_REPOS_SYNC:-$HERE/repos-sync}" >"$repos_out" 2>&1
       "${START_DAY_TEAM_PLUGINS_SYNC:-$HERE/team-plugins-sync}" >"$plugins_out" 2>&1 ) </dev/null & repos_pid=$!
-    collect_carryover; collect_my_mrs; collect_ready_to_merge; collect_review_queue; collect_gitlab_todos; collect_jira
+    collect_carryover; collect_my_mrs; collect_ready_to_merge; collect_review_queue; collect_gitlab_todos; collect_jira; collect_qa_candidates
     wait "$repos_pid" || true
     section "Repos (fetched from GitLab)"
     if [ -s "$repos_out" ]; then cat "$repos_out"; else echo "(repos-sync printed nothing)"; fi

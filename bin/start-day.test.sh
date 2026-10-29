@@ -305,6 +305,60 @@ assert_contains "$out" "- [waiting_on_author] ecfx/ecfx-backend!6611 Other — @
 out=$(START_DAY_TRIAGE=/nonexistent/triage.py run collect --since 2026-09-20T00:00:00Z)
 assert_eq "- [review requested] ecfx/ecfx-backend!6611 Other — @carol — w6611" "$(todos "$out" | head -1)" "without triage the to-do is listed, unmarked"
 
+echo "start-day — QA candidates (Ready for QA, not mine)"
+reset
+# curl answers only the Ready for QA search; the ledger stub answers per key.
+cat > "$STUBS/curl" <<'EOF'
+#!/bin/bash
+for a in "$@"; do case "$a" in jql=*) jql="${a#jql=}" ;; esac; done
+echo "${jql:-}" >> "$FIX/jql.log"
+case "${jql:-}" in
+  *"Ready for QA"*) [ -n "${QA_JIRA_DOWN:-}" ] && exit 22; cat "$FIX/qa.json" ;;
+  *) echo '{"issues":[]}' ;;
+esac
+EOF
+cat > "$STUBS/qa-ledger.py" <<'EOF'
+import json, sys
+stages = {
+    "ECFX-1": {},
+    "ECFX-2": {"review": {"state": "done", "holder": None}},
+    "ECFX-3": {"review": {"state": "live", "holder": {"holder": "Ann@mac/qa-review", "stage": "review"}}},
+}
+key = sys.argv[-1]
+if key not in stages:
+    sys.exit(3)
+print(json.dumps({"key": key, "stages": stages[key]}))
+EOF
+chmod +x "$STUBS/curl"
+qa_issue() { printf '{"key":"%s","fields":{"summary":"%s","priority":{"name":"%s"},"issuetype":{"name":"%s"},"assignee":%s}}' "$1" "$2" "$3" "$4" "$5"; }
+cat > "$FIX/qa.json" <<EOF
+{"issues":[$(qa_issue ECFX-1 "Roles page read-only" Highest Bug '{"displayName":"Bill"}'),
+$(qa_issue ECFX-2 "Paging parameter" High Task '{"displayName":"Adam"}'),
+$(qa_issue ECFX-3 "Decrypt stream" Medium Task null),
+$(qa_issue ECFX-4 "Title provider refactor" Low Task '{"displayName":"EJ"}')]}
+EOF
+run_qa() {
+    (PATH="$STUBS:$PATH" FIX="$FIX" DIARY_DIR="$DIARY" START_DAY_STATE="$STATE" START_DAY_POLL_DELAY=0 \
+     JIRA_EMAIL=me@x JIRA_API_TOKEN=t START_DAY_QA_LEDGER="${QA_LEDGER:-$STUBS/qa-ledger.py}" START_DAY_TRIAGE=/nonexistent \
+     REPOS_SYNC_SILENT=1 "$SCRIPT" collect --since 2026-09-20T00:00:00Z 2>&1)
+}
+qa() { printf '%s\n' "$1" | awk '/^## QA candidates/{f=1;next} /^## /{if(f)exit} f'; }
+out=$(qa "$(run_qa)")
+assert_contains "$(cat "$FIX/jql.log")" 'status = "Ready for QA" AND (assignee != currentUser() OR assignee is EMPTY)' "searches Ready for QA tickets that are not mine"
+assert_contains "$out" "- ECFX-1 [Highest] Bug, Bill: Roles page read-only — QA: unclaimed" "an untouched ticket reads unclaimed"
+assert_contains "$out" "- ECFX-2 [High] Task, Adam: Paging parameter — QA: review done" "a reviewed ticket shows its stages"
+assert_contains "$out" "- ECFX-3 [Medium] Task, unassigned: Decrypt stream — QA: review live (Ann@mac/qa-review)" "a live claim names who holds it"
+assert_contains "$out" "- ECFX-4 [Low] Task, EJ: Title provider refactor — QA: ledger unavailable" "a ledger failure is shown, not read as unclaimed"
+out=$(qa "$(QA_LEDGER=/nonexistent/qa_ledger.py run_qa)")
+assert_contains "$out" "QA: ledger unknown (no claude-components checkout)" "without the ledger tool each ticket says so"
+cat > "$FIX/qa.json" <<<'{"issues":[]}'
+assert_eq "(none)" "$(qa "$(run_qa)" | sed '/^$/d')" "no Ready for QA tickets prints (none)"
+out=$(qa "$(QA_JIRA_DOWN=1 run_qa)")
+assert_contains "$out" "(Jira unavailable)" "a failed search says so"
+out=$(run collect --since 2026-09-20T00:00:00Z)
+assert_contains "$(qa "$out")" "(Jira credentials missing" "without credentials the section says so"
+rm -f "$STUBS/curl" "$STUBS/qa-ledger.py"
+
 echo "start-day save — trailing diary refs"
 reset
 printf '%s\n' '- [ ] ECFX-1 thing [dashboard!1](https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/1)' \
