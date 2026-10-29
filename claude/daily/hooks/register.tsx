@@ -16,6 +16,7 @@ import { joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts
 import { NUDGE_TEXT, claimsSystem, claimsSystemPrompt, shouldNudge, systemMarkerPath } from '../mod/ideas.ts'
 import { BUSY_PROMPT, nextNudged, shouldNudgeBusy } from '../mod/busy.ts'
 import { CLAUDE_PLAYBOOK, UPDATE_ARGS, fingerprint, parsePrint, playbookPath, shouldResume } from '../mod/update.ts'
+import { ASK_NUDGE, BUSY_NOTE, FORM_DENY, FORM_TOOLS, isBusyPrompt, nextAsk, shouldNudgeAsk } from '../mod/ask.ts'
 
 const REFRESH_MS = 5_000
 const WATCH_MS = 180_000
@@ -180,6 +181,13 @@ async function nudgeIdeas($: EngineInterface) {
 // requests); a turn that never completes stops counting after TURN_STALE_MS.
 const TURN_STALE_MS = 30 * 60 * 1000
 const busy = { nudged: false, inTurn: false }
+
+// Every session, not only the day's: questions go to the decisions deck (mod/ask.ts).
+let ask = { asked: false, nudged: false }
+
+async function runningAgents($: EngineInterface): Promise<number> {
+  return (await $.agent.list().catch(() => [])).filter(a => a.status === 'running').length
+}
 
 async function nudgeBusy($: EngineInterface, ctx: DayCtx) {
   const out = outstanding(ctx.runs).length
@@ -619,6 +627,10 @@ export const register: Register = on => {
       idle.waiting = false
       busy.nudged = false
       if (claimsSystemPrompt(e.text)) await claimSystem($)
+      ask = nextAsk(ask, 'user')
+      if (isBusyPrompt({ inTurn: e.turnId !== undefined, agentsRunning: await runningAgents($) })) {
+        return next({ ...e, context: [...(e.context ?? []), BUSY_NOTE] })
+      }
     }
     return next(e)
   })
@@ -638,8 +650,18 @@ export const register: Register = on => {
       idle.lastTurnEndAt = warm.lastRequestAt
       busy.inTurn = false
       void safeArmWarm($)
+      if (shouldNudgeAsk({ isMain: true, reason: e.reason, text: r.text, ...ask })) {
+        ask = nextAsk(ask, 'nudged')
+        $.clock.after(0, () => void $.prompt.submit({ text: ASK_NUDGE }).catch(() => $.ui.toast('daily: the ask_user nudge failed')))
+      }
     }
     return r
+  })
+
+  on('tool.call', async ($, e, next) => {
+    if ((FORM_TOOLS as readonly string[]).includes(e.tool)) return { deny: FORM_DENY }
+    ask = nextAsk(ask, 'tool', e.tool)
+    return next(e)
   })
 
   // cache-tax's pings are forks too: a warm one moves the clock the hand-over at 6 h starts from.

@@ -21,7 +21,11 @@ has "$prefs" "Edit and Write accept only a file opened with the Read tool" "F-01
 has "$prefs" "since the last context summary" "F-016 Read again after a context summary"
 has "$prefs" "For an exact replacement in one file use the Edit tool" "F-045 Edit over python or sed"
 has "$prefs" "never reach for a destructive git or \`rm\` command" "F-004 no destructive step past a block"
-has "$prefs" "Ask clarifying questions in plain text" "F-014 questions in plain text"
+questions=$(section "$MD" Questions)
+has "$questions" "goes to the decisions deck through \`ask_user\`, in every session" "every question goes to the decisions deck"
+has "$questions" "Never use the question form (AskUserQuestion)" "F-014 no question form"
+has "$questions" "when I answer in the chat, \`withdraw\` the card" "an answer in the chat withdraws the card"
+has "$questions" "also file it with \`tell_user\`" "a late answer also goes to the deck"
 has "$(section "$MD" Secrets)" 'right: `curl -H "PRIVATE-TOKEN: $(secret NAME)" …`; wrong: `secret NAME`' "F-013 secret example"
 has "$(section "$MD" Artifacts)" "never resend the refused content unchanged" "F-028 merge onto the live version"
 has "$(section "$MD" Artifacts)" "Before publishing to an existing artifact this session has not read or published, read it first" "F-054 read an artifact before publishing over it"

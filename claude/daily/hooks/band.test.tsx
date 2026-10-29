@@ -1,6 +1,7 @@
 import { test, expect, mock } from 'claude-code/testing'
 
 import { DIARY, RUN_STATE } from '../mod/fixtures.ts'
+import { ASK_NUDGE, BUSY_NOTE, FORM_DENY } from '../mod/ask.ts'
 
 const WIKI = '/home/t/wiki/diary/2026-10-08.md'
 const STATE = '/home/t/.local/state/run-day/2026-10-08.md'
@@ -35,6 +36,7 @@ async function start($: any, on: any, opts: Opts) {
   if (owner !== null) files[OWNER] = `${owner}\n`
   const prompts: string[] = []
   const origins: unknown[] = []
+  const contexts: unknown[] = []
   const calls: string[][] = []
   const toasts: string[] = []
   const logs: string[] = []
@@ -78,6 +80,7 @@ async function start($: any, on: any, opts: Opts) {
   on('prompt.submit', (_$: any, e: any) => {
     prompts.push(e.text)
     origins.push(e.origin)
+    contexts.push(e.context)
     return { text: e.text }
   })
   on('command.register', (_$: any, e: any) => {
@@ -99,10 +102,15 @@ async function start($: any, on: any, opts: Opts) {
     return { value: undefined } as never
   })
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
+  const tools: string[] = []
+  on('tool.call', (_$: any, e: any) => {
+    tools.push(e.tool)
+    return { result: 'ran', text: 'ran' } as never
+  })
   on('agent.list', () => (world.agentListFails ? { deny: 'agent list unavailable' } : { value: agents }) as never)
   on('fs.stat', (_$: any, e: any) => (e.path in mtimes ? { value: { kind: 'file', size: 1, mtimeMs: mtimes[e.path], isLink: false } } : { deny: 'ENOENT' }) as never)
   await $.session.start({ cwd: '/home/t', surface: 'terminal', source: 'startup' } as never)
-  return { clock, sleep, world, agents, mtimes, calls, toasts, logs, registered, statuses, files, prompts, origins, forks, reads, commands }
+  return { clock, sleep, world, agents, mtimes, calls, toasts, logs, registered, statuses, files, prompts, origins, contexts, tools, forks, reads, commands }
 }
 
 const isFriction = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('friction')
@@ -703,4 +711,59 @@ test('after the daily report a changed playbook resumes nothing', async ($, on) 
   const s = await start($, on, { day: OK, files: { [PLAYBOOK]: '00000000\n' } })
   await s.clock.settle()
   expect(resumes(s.commands)).toHaveLength(0)
+})
+
+// Every session's questions go to the decisions deck (mod/ask.ts).
+const answer = ($: any, text: string, extra: object = {}) =>
+  $.turn.complete({ answer: text, reason: 'answer', durationMs: 1000, isAborted: false, turnId: 't', ...extra } as never)
+const typed = ($: any, text: string, extra: object = {}) => $.prompt.submit({ text, origin: { kind: 'composer' }, ...extra } as never)
+
+test('the question form is refused and points to the deck, in any session', async ($, on) => {
+  const s = await start($, on, { ...idleDay, state: null })
+  for (const tool of ['AskUserQuestion', 'ask_user_question']) {
+    expect(await $.tool.call({ tool, questions: [] } as never)).toEqual({ deny: FORM_DENY })
+  }
+  expect(s.tools).toEqual([])
+})
+
+test('a prompt typed into a running turn carries the tell_user note', async ($, on) => {
+  const s = await start($, on, { ...idleDay, state: null })
+  await typed($, 'why is CI red?', { turnId: 't' })
+  expect(s.contexts).toEqual([[BUSY_NOTE]])
+})
+
+test('a prompt typed while agents run carries it too; an idle one does not', async ($, on) => {
+  const s = await start($, on, { ...idleDay, state: null })
+  await typed($, 'first')
+  s.agents.push({ id: 'a1', status: 'running', description: 'review' })
+  await typed($, 'and the second?')
+  expect(s.contexts).toEqual([undefined, [BUSY_NOTE]])
+})
+
+test('a turn that ends asking with no card filed is nudged once', async ($, on) => {
+  const s = await start($, on, { ...idleDay, state: null })
+  await typed($, 'go')
+  await answer($, 'Built. Shall I merge it?')
+  await s.clock.settle()
+  expect(s.prompts.filter(p => p === ASK_NUDGE).length).toBe(1)
+  expect((s.origins[s.prompts.indexOf(ASK_NUDGE)] as { kind: string }).kind).toBe('plugin')
+  await answer($, 'Still: shall I merge it?')
+  await s.clock.settle()
+  expect(s.prompts.filter(p => p === ASK_NUDGE).length).toBe(1)
+  await typed($, 'hm')
+  await answer($, 'Merge now?')
+  await s.clock.settle()
+  expect(s.prompts.filter(p => p === ASK_NUDGE).length).toBe(2)
+})
+
+test('no nudge when the turn filed a card, ended without asking, or was a subagent', async ($, on) => {
+  const s = await start($, on, { ...idleDay, state: null })
+  await typed($, 'go')
+  await answer($, 'Merged.')
+  await answer($, 'Which one?', { agentId: 'a1' })
+  await $.tool.call({ tool: 'mcp__decisions__ask_user', question: 'Merge?', options: ['yes', 'no'] } as never)
+  await answer($, 'Asked in decisions: D-7. Merge it?')
+  await s.clock.settle()
+  expect(s.prompts).not.toContain(ASK_NUDGE)
+  expect(s.tools).toEqual(['mcp__decisions__ask_user'])
 })

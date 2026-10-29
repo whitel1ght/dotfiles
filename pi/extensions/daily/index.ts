@@ -12,6 +12,7 @@ import { messageFiles } from "./mod/inbox.ts";
 import { parseRunState } from "./mod/runstate.ts";
 import { acquireLock, DayWatcher, INBOX_MS, releaseLock, WATCH_MS, type Exec } from "./watch.ts";
 import { IdeasNudger } from "./ideas.ts";
+import { AskBackstop, piSubRunning } from "./ask.ts";
 import { PI_PLAYBOOK, UPDATE_ARGS, fingerprint } from "./mod/update.ts";
 
 const IDEAS_MS = 60_000;
@@ -473,6 +474,32 @@ export default function daily(pi: ExtensionAPI) {
   pi.on("agent_end", () => ideas.onAgentEnd());
   const ideasTimer = setInterval(() => void ideas.tick().catch(() => {}), IDEAS_MS);
   ideasTimer.unref?.();
+
+  // Every session's questions go to the decisions deck (ask.ts, mod/ask.ts); subagents ask nobody.
+  if (!process.env.PI_SUBAGENT) {
+    let deliverAs: "steer" | "followUp" | "nextTurn" = "nextTurn";
+    const ask = new AskBackstop({
+      agentsRunning: () => piSubRunning(session),
+      note: (content) => pi.sendMessage({ customType: "decisions", content, display: false }, { deliverAs }),
+      nudge: (content) => pi.sendMessage({ customType: "decisions", content, display: true }, { triggerTurn: true, deliverAs: "followUp" }),
+    });
+    pi.on("input", (event) => {
+      try {
+        deliverAs = event.streamingBehavior ?? "nextTurn";
+        ask.onInput(event.source, event.streamingBehavior);
+      } catch {
+        // never lose the user's input because the note failed
+      }
+    });
+    pi.on("agent_end", (event) => {
+      try {
+        ask.onAgentEnd(event.messages as never);
+      } catch {
+        // a failed check only skips the nudge
+      }
+    });
+    pi.on("tool_call", (event) => ask.onToolCall(event.toolName));
+  }
 
   pi.on("session_shutdown", () => {
     stopWatch();

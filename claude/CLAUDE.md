@@ -17,8 +17,17 @@ Global instructions applied across all projects. Keep this short — project-lev
   keep python, jq or sed for bulk transforms (many files, JSON, CSV).
 - When a step is denied or blocked, never reach for a destructive git or `rm` command to
   get past it; stop and ask me.
-- Ask clarifying questions in plain text. Keep the question form for picking among fixed
-  options, and never send again one I turned down.
+
+## Questions
+
+- Anything you wait on me for (a decision, an approval, a clarification) goes to the decisions
+  deck through `ask_user`, in every session, not only the day session. It is a deferred tool in
+  Claude Code: load it with `ToolSearch` `select:mcp__decisions__ask_user,mcp__decisions__wait_for_answer`.
+  In the chat say one line, "asked in decisions: D-<n>", and keep working on what does not
+  depend on it. I may answer in either place; when I answer in the chat, `withdraw` the card.
+  Never use the question form (AskUserQuestion), and never ask again a question I turned down.
+- When you answer a question I sent while you were busy (mid-task, agents running), give the
+  answer in the chat and also file it with `tell_user`, so it waits for me in the deck.
 
 ## Shell
 
