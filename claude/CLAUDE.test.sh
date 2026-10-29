@@ -24,6 +24,7 @@ has "$prefs" "never reach for a destructive git or \`rm\` command" "F-004 no des
 has "$prefs" "Ask clarifying questions in plain text" "F-014 questions in plain text"
 has "$(section "$MD" Secrets)" 'right: `curl -H "PRIVATE-TOKEN: $(secret NAME)" …`; wrong: `secret NAME`' "F-013 secret example"
 has "$(section "$MD" Artifacts)" "never resend the refused content unchanged" "F-028 merge onto the live version"
+has "$(section "$MD" Artifacts)" "Before publishing to an existing artifact this session has not read or published, read it first" "F-054 read an artifact before publishing over it"
 apis=$(section "$MD" "GitLab and Jira APIs")
 has "$apis" 'Run `/mr-description` before any `glab mr create`' "F-015 /mr-description before MR writes"
 replies=$(section "$MD" "Review replies")

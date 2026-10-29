@@ -76,6 +76,9 @@ Global instructions applied across all projects. Keep this short — project-lev
   the page as `<name>.html` and its link in a `url` file (see the README there).
   Write new pages there, not in /tmp or a repo. To change one, edit that file
   and publish it with the link from `url`, so the same page updates.
+- Before publishing to an existing artifact this session has not read or published, read it first
+  (`Artifact` `read` with its `url`) and build on the version that comes back: someone may have
+  changed it since the local copy was saved.
 - When a publish is refused and hands back a newer live version, merge your change onto
   that version and publish again; never resend the refused content unchanged.
 
