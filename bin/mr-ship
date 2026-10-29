@@ -32,7 +32,9 @@ author="$(jq -r .author.username <<<"$view")"
 [ "$state" = opened ] || { echo "mr-ship: $repo!$iid is $state, not open" >&2; exit 1; }
 [ "$author" = "$me" ] || { echo "mr-ship: $repo!$iid belongs to $author, not $me" >&2; exit 1; }
 
-cmd=(glab mr update "$iid" -R "$repo" --ready --assignee "$me" --reviewer "$REVIEWERS")
+# a "+" prefix adds to the existing assignees/reviewers instead of replacing them
+add_reviewers="+${REVIEWERS//,/,+}"
+cmd=(glab mr update "$iid" -R "$repo" --ready --assignee "+$me" --reviewer "$add_reviewers")
 if [ "$dry" -eq 1 ]; then
     echo "${cmd[*]}"
     exit 0

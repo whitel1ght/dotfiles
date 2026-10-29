@@ -27,11 +27,17 @@ STUB
 chmod +x "$STUBS/glab"
 export MR_LOG="$LOG"
 ship() { : > "$LOG"; PATH="$STUBS:$PATH" "$SCRIPT" "$@" 2>"$SANDBOX/err"; }
-EXPECT="mr update 7 -R ecfx/ecfx-dashboard --ready --assignee whitel1ght --reviewer adam.warbington,bkeeling,smtsuchi,ejjung,levisiebensecfx"
+EXPECT="mr update 7 -R ecfx/ecfx-dashboard --ready --assignee +whitel1ght --reviewer +adam.warbington,+bkeeling,+smtsuchi,+ejjung,+levisiebensecfx"
 
 echo "mr-ship"
 ship ecfx/ecfx-dashboard 7; assert_eq 0 "$?" "an open draft of the user's: exits 0"
 assert_eq "$EXPECT" "$(cat "$LOG")" "marks ready, assigns the user, requests the D-008 reviewers"
+ship ecfx/ecfx-dashboard 7
+call="$(cat "$LOG")"
+for n in adam.warbington bkeeling smtsuchi ejjung levisiebensecfx; do
+    case ",${call##*--reviewer }," in *",+$n,"*) pass "reviewer $n is added with +" ;; *) fail "reviewer $n is added with +" "$call" ;; esac
+done
+case "$call" in *"--assignee +whitel1ght "*) pass "the assignee is added with +" ;; *) fail "the assignee is added with +" "$call" ;; esac
 ship dashboard 7; assert_eq "$EXPECT" "$(cat "$LOG")" "a short name maps to ecfx/ecfx-<name>"
 ship ecfx-dashboard 7; assert_eq "$EXPECT" "$(cat "$LOG")" "so does ecfx-<name>"
 for s in merged closed; do
@@ -43,7 +49,7 @@ assert_eq 0 "$(wc -c < "$LOG" | tr -d ' ')" "and no update call is made"
 grep -q someone.else "$SANDBOX/err" && pass "and the refusal names the author" || fail "and the refusal names the author" "$(cat "$SANDBOX/err")"
 out="$(ship ecfx/ecfx-dashboard 7 -n)"; assert_eq 0 "$?" "-n exits 0"
 assert_eq 0 "$(wc -c < "$LOG" | tr -d ' ')" "-n makes no update call"
-case "$out" in *"--ready"*"--assignee whitel1ght"*"--reviewer adam.warbington,"*) pass "-n prints the calls" ;; *) fail "-n prints the calls" "$out" ;; esac
+case "$out" in *"--ready"*"--assignee +whitel1ght"*"--reviewer +adam.warbington,"*) pass "-n prints the calls" ;; *) fail "-n prints the calls" "$out" ;; esac
 MR_STATE=merged ship ecfx/ecfx-dashboard 7 -n; assert_eq 1 "$?" "-n still refuses a merged MR"
 ship ecfx/ecfx-dashboard; assert_eq 2 "$?" "a missing MR number is a usage error"
 
