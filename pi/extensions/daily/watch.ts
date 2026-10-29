@@ -168,11 +168,13 @@ export class DayWatcher {
     return PI_BUSY_PROMPT;
   }
 
-  checkInbox(): void {
-    if (!this.active()) return;
+  /** True when it sent an `inbox: N new` prompt. */
+  checkInbox(): boolean {
+    if (!this.active()) return false;
     const { fresh, state } = nextInbox(this.deps.listInbox(), this.seen);
     this.seen = state.seen;
     if (fresh.length > 0) this.deps.wake(inboxPrompt(fresh.length));
+    return fresh.length > 0;
   }
 }
 

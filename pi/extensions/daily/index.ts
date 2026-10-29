@@ -347,9 +347,9 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
       // the wake check first: it records the tick gap, and an inbox failure must not lose it
       const nudge = await watcher.checkWake(Date.now()).catch(() => null);
       if (nudge) send(nudge, true);
-      watcher.checkInbox();
-      const busy = watcher.checkBusy(Date.now(), activity);
-      activity.userWrote = false;
+      const told = watcher.checkInbox();
+      const busy = told ? null : watcher.checkBusy(Date.now(), activity);
+      if (!told) activity.userWrote = false;
       if (busy) send(busy, true);
     });
     every(WATCH_MS, () => watcher.checkEvents());

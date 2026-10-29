@@ -153,7 +153,9 @@ For each `auto` item:
 ```
 
    The key is the lowercase ticket key from the plan line; items without a ticket key are not
-   tracked here, except a `review` item: its key is `review-<repo>-<iid>` (repo without `ecfx-`). Fields in this order, `-` for empty, no ` | ` inside a value, `mr` comma-separated
+   tracked here, except a `review` item: its key is `<repo letters>-<iid>` (the repo name without
+   `ecfx-` and without dashes, e.g. `claudecomponents-55`), so decision answers pass the inbox key
+   check (step 7). Fields in this order, `-` for empty, no ` | ` inside a value, `mr` comma-separated
    as `<group>/<repo>!<iid>`. Only lines starting with `- ` are items; `notes:` and the indented
    lines under it carry `state_change` lines for `/end-day`. `owner` is `main` (this session
    dispatches and checks the item) or `external:<KEY>` (a side session works it after `/handoff`:
@@ -182,7 +184,9 @@ decision (step 9): `--blocks post`, question `Post the review of <repo>!<iid>?`,
 verdict line, counts and the whole review file, options `Post it` (`Post it and approve` when the
 verdict is approve; recommended), `Change it first (add a note with n)`, `Post nothing`. On post:
 `glab api --method POST "projects/<urlencoded path>/merge_requests/<iid>/notes" -F "body=@<review file>"`,
-and for approve `glab mr approve <iid> -R <group>/<repo>`; tick `[X]` with `· review posted`
+and for approve
+`glab api --method POST "projects/<urlencoded path>/merge_requests/<iid>/approve" -f sha=<reviewed sha>`
+(GitLab refuses when the author pushed since the review: the item goes back as a re-review); tick `[X]` with `· review posted`
 (`· review posted, approved`), `needs_you=no`, apply the `memory:` block. On change: apply the note
 or send a fresh worker with the note, then a new decision. On post nothing:
 `[X] · note: review not posted, user's call`. Then Keep busy (step 11).
@@ -557,6 +561,10 @@ jt --list -u
      `jira-api PUT "issue/<KEY>/assignee" '{"accountId":"<id>"}'`, and start a fresh `worker` in its
      worktree to push and open the Draft MR. On `Leave it`: stop the agent and mark the line
      `[>] · note: left in the sprint`.
+     Its report before `Take it` (also from the Wake check): run step 3's diff and test checks
+     without the MR and pipeline parts, since there is none yet. Passing: `agent=-` and the line
+     `[/] · ready locally, waiting on Take it` (no tick, no retry); the fresh worker after
+     `Take it` pushes and opens the Draft MR, and its report gets the full step 3.
    - `jt` fails: say so in one line and try again at the next Keep busy.
 4. Nothing in steps 1-3: Finish (step 8), naming what each step found empty.
 

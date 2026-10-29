@@ -147,14 +147,19 @@ async function nudgeIdeas($: EngineInterface) {
 }
 
 // The day session idle with no agent gets one Keep busy prompt per idle stretch (mod/busy.ts).
-const busy = { nudged: false }
+// A turn counts as running between its first step and turn.complete (a long tool call makes no
+// requests); a turn that never completes stops counting after TURN_STALE_MS.
+const TURN_STALE_MS = 30 * 60 * 1000
+const busy = { nudged: false, inTurn: false }
 
 async function nudgeBusy($: EngineInterface, ctx: DayCtx) {
   const out = outstanding(ctx.runs).length
   busy.nudged = nextNudged(busy.nudged, { outstanding: out, userWrote: false })
-  const running = (await $.agent.list().catch(() => [])).filter(a => a.status === 'running').length
+  const now = await $.clock.now()
   const lastActiveAt = Math.max(idle.lastUserAt, idle.lastTurnEndAt, warm.lastRequestAt ?? 0)
-  const state = { isOwner: true, dayRunning: !ctx.dayEnded, now: await $.clock.now(), lastActiveAt, outstanding: out, agentsRunning: running, nudged: busy.nudged }
+  const turnRunning = busy.inTurn && now - lastActiveAt < TURN_STALE_MS
+  const running = (await $.agent.list().catch(() => [])).filter(a => a.status === 'running').length + (turnRunning ? 1 : 0)
+  const state = { isOwner: true, dayRunning: !ctx.dayEnded, now, lastActiveAt, outstanding: out, agentsRunning: running, nudged: busy.nudged }
   if (!shouldNudgeBusy(state)) return
   busy.nudged = true
   void $.prompt.submit({ text: BUSY_PROMPT }).catch(() => $.ui.toast('daily idle: prompt submit failed'))
@@ -589,7 +594,10 @@ export const register: Register = on => {
   })
 
   on('turn.step', async function* ($, e, next) {
-    if (!e.agentId) warm.lastRequestAt = await $.clock.now()
+    if (!e.agentId) {
+      warm.lastRequestAt = await $.clock.now()
+      busy.inTurn = true
+    }
     yield* next(e)
   })
 
@@ -598,6 +606,7 @@ export const register: Register = on => {
     if (!e.agentId) {
       warm.lastRequestAt = await $.clock.now()
       idle.lastTurnEndAt = warm.lastRequestAt
+      busy.inTurn = false
       void safeArmWarm($)
     }
     return r

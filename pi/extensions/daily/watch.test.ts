@@ -283,6 +283,13 @@ test("an idle day with no agent gets one Keep busy prompt per idle stretch", asy
   rmSync(root, { recursive: true });
 });
 
+test("checkInbox says whether it sent a prompt, so the tick sends one turn at most", async () => {
+  const { root, watcher } = setup({ inbox: [["20260101T090000-ECFX-1-abcd.md"], ["20260101T090000-ECFX-1-abcd.md"]] });
+  assert.equal(watcher.checkInbox(), true);
+  assert.equal(watcher.checkInbox(), false);
+  rmSync(root, { recursive: true });
+});
+
 test("the user writing starts a new idle stretch", async () => {
   const { root, watcher } = setup();
   assert.equal(watcher.checkBusy(T0 + 10 * MIN, quiet()), BUSY);
