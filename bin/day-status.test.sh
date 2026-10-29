@@ -42,6 +42,9 @@ case "$*" in
     *merge_requests/7001/approvals) echo '{"approved_by":[]}' ;;
     *merge_requests/7001/discussions*) echo '[]' ;;
     *merge_requests/7001) echo '{"state":"opened","draft":false,"head_pipeline":{"status":"success"}}' ;;
+    *ecfx%2Fecfx-observability/merge_requests/80/approvals) echo '{"approved_by":[]}' ;;
+    *ecfx%2Fecfx-observability/merge_requests/80/discussions*) echo '[]' ;;
+    *ecfx%2Fecfx-observability/merge_requests/80) echo '{"state":"opened","draft":false,"head_pipeline":{"status":"success"}}' ;;
     *merge_requests/9999*) exit 1 ;;
     *"merge_requests?scope=created_by_me"*)
         if [ -n "${GLAB_MINE_FLAKY:-}" ] && first_try "$@"; then exit 1; fi
@@ -138,6 +141,20 @@ out=$(GLAB_LOG="$LOG" GLAB_MINE="$mine" run --date 2026-10-28)
 assert_contains "$(grep 'ECFX-20001' <<<"$out")" "backend!7001 opened" "key search finds the MR by branch"
 assert_contains "$(grep 'ECFX-20002' <<<"$out")" "no MR" "key search: other item has no MR"
 assert_eq 1 "$(grep -c 'scope=created_by_me' "$LOG")" "list endpoint called exactly once"
+
+echo "a repo outside the known names resolves through the block's link definitions"
+cat > "$DIARY/2026-11-01.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [ ] ecfx-20005 review observability!80  [↗][observability!80]
+
+[observability!80]: https://gitlab.com/ecfx/ecfx-observability/-/merge_requests/80
+<!-- start-day:end -->
+FIXTURE
+: > "$LOG"
+out=$(GLAB_LOG="$LOG" run --date 2026-11-01)
+assert_contains "$out" "observability!80 opened" "observability!80 shows its MR state"
+assert_lacks "$out" "MR unknown" "observability!80 is not unknown"
+assert_contains "$(cat "$LOG")" "projects/ecfx%2Fecfx-observability/merge_requests/80" "glab got the project path from the definition"
 
 echo "plan order is kept when an earlier item is slower"
 cat > "$DIARY/2026-10-29.md" <<'FIXTURE'
