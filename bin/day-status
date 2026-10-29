@@ -65,7 +65,7 @@ load_mine() {
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-mr_refs() { printf '%s\n%s\n' "$1" "$2" | grep -oE '[a-z][a-z-]*![0-9]+' || true; }
+mr_refs() { printf '%s\n%s\n' "$1" "$2" | grep -oE '[A-Za-z][A-Za-z-]*![0-9]+' || true; }
 
 repo_path() {
   case "$1" in
@@ -78,7 +78,7 @@ repo_path() {
 # definition (bin/diary-links) whose last path segment is the repo or ecfx-<repo>; empty when none.
 def_path() {
   sed -nE "s#^\\[[^]]*\\]:[[:space:]]*https://gitlab\\.com/(.+)/-/merge_requests/$2[[:space:]]*\$#\\1#p" <<<"$block" \
-    | awk -v r="$1" -F/ '$NF == r || $NF == "ecfx-" r { print; exit }'
+    | awk -v r="$1" -F/ '{ l = tolower($NF) } l == r || l == "ecfx-" r { print; exit }'
 }
 
 # mr_json <project-id-or-path> <iid> <display ref>
@@ -104,9 +104,15 @@ mr_json() {
 # mrs_for <key> <line text> <run-state mr=> <my open MRs JSON or "unknown"> -> JSON array
 mrs_for() {
   local key="$1" text="$2" runmr="$3" found="$4" refs ref r iid p out="" seen=" "
+  if [[ $runmr =~ ^([^[:space:]!]+/[^[:space:]!]+)!([0-9]+)$ ]]; then
+    p="${BASH_REMATCH[1]}"; iid="${BASH_REMATCH[2]}"
+    r=$(printf '%s' "${p##*/}" | tr 'A-Z' 'a-z'); r="${r#ecfx-}"
+    seen="$seen$r!$iid "
+    out="$out$(mr_json "$p" "$iid" "$r!$iid")"$'\n'
+  fi
   refs=$(mr_refs "$text" "$runmr")
   for ref in $refs; do
-    r="${ref%!*}"; r="${r#ecfx-}"; iid="${ref#*!}"
+    r=$(printf '%s' "${ref%!*}" | tr 'A-Z' 'a-z'); r="${r#ecfx-}"; iid="${ref#*!}"
     case "$seen" in *" $r!$iid "*) continue ;; esac
     seen="$seen$r!$iid "
     p=$(def_path "$r" "$iid"); [ -n "$p" ] || p=$(repo_path "$r")

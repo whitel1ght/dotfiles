@@ -186,7 +186,7 @@ FIXTURE
 out=$(GLAB_LOG="$LOG" run --date 2026-11-03)
 assert_contains "$out" "categorization!207 opened" "capitalised ref resolves through the definition"
 assert_lacks "$out" "MR unknown" "capitalised ref: not unknown"
-assert_lacks "$out" "ategorization!207 " "capitalised ref: display ref not truncated"
+assert_lacks "$out" " ategorization!207" "capitalised ref: display ref not truncated"
 assert_contains "$(cat "$LOG")" "projects/ecfx%2FECFX-Categorization/merge_requests/207" "capitalised ref: glab got the definition's path"
 
 echo "a run-state mr= with a full path is used as is"
