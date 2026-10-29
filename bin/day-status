@@ -11,7 +11,8 @@
 # refs on its plan line, else the mr= of its run-state line, else my open MRs whose branch or
 # title holds the ticket key. Each source is best effort: a failing call shows "unknown" for
 # that field and the rest still prints. Exit 1 when the diary or its plan block is missing.
-# Every glab and jira-api call is retried once (gitlab.com drops ~2.5% of calls at random).
+# Every glab and jira-api call that exits non-zero is retried once (gitlab.com drops ~2.5% of
+# calls at random); jira-api exits 0 on an HTTP error status (429/5xx), so those are not retried.
 # Tests and stubs: DAY_STATUS_GLAB, DAY_STATUS_JIRA (commands, default glab and jira-api),
 # DAY_STATUS_RETRY_SLEEP (seconds before the retry, default 1).
 set -euo pipefail
@@ -73,6 +74,13 @@ repo_path() {
   esac
 }
 
+# def_path <repo> <iid>: project path from the block's `[label]: https://gitlab.com/<path>/-/merge_requests/<iid>`
+# definition (bin/diary-links) whose last path segment is the repo or ecfx-<repo>; empty when none.
+def_path() {
+  sed -nE "s#^\\[[^]]*\\]:[[:space:]]*https://gitlab\\.com/(.+)/-/merge_requests/$2[[:space:]]*\$#\\1#p" <<<"$block" \
+    | awk -v r="$1" -F/ '$NF == r || $NF == "ecfx-" r { print; exit }'
+}
+
 # mr_json <project-id-or-path> <iid> <display ref>
 mr_json() {
   local proj="${1//\//%2F}" iid="$2" ref="$3" detail appr n disc u
@@ -95,13 +103,14 @@ mr_json() {
 
 # mrs_for <key> <line text> <run-state mr=> <my open MRs JSON or "unknown"> -> JSON array
 mrs_for() {
-  local key="$1" text="$2" runmr="$3" found="$4" refs ref r iid out="" seen=" "
+  local key="$1" text="$2" runmr="$3" found="$4" refs ref r iid p out="" seen=" "
   refs=$(mr_refs "$text" "$runmr")
   for ref in $refs; do
     r="${ref%!*}"; r="${r#ecfx-}"; iid="${ref#*!}"
     case "$seen" in *" $r!$iid "*) continue ;; esac
     seen="$seen$r!$iid "
-    out="$out$(mr_json "$(repo_path "$r")" "$iid" "$r!$iid")"$'\n'
+    p=$(def_path "$r" "$iid"); [ -n "$p" ] || p=$(repo_path "$r")
+    out="$out$(mr_json "$p" "$iid" "$r!$iid")"$'\n'
   done
   if [ -z "$out" ] && [ -n "$key" ]; then
     if [ "$found" = unknown ]; then
