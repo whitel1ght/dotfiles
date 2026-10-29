@@ -26,13 +26,15 @@ mkdir -p "$STUBS"
 
 # jira-api <METHOD> <path> [body]: GET myself answers the profile zone (JIRA_TZ,
 # default UTC; JIRA_MYSELF_FAIL=1 fails it; JIRA_MYSELF_BODY replies with that
-# body instead, like Jira's error bodies); otherwise picks the fixture by what
-# the JQL asks for.
+# body instead, like Jira's error bodies; JIRA_MISSING=<text> prints it to stderr
+# and exits 1 with no stdout, like a missing secret); otherwise picks the fixture
+# by what the JQL asks for.
 cat > "$STUBS/jira-api" <<'STUB'
 #!/bin/bash
 echo "$*" >> "${FIX:?}/jira.log"
 [ -e "$FIX/jira-hang-once" ] && { rm -f "$FIX/jira-hang-once"; sleep 30; }
 [ -n "${JIRA_SLEEP:-}" ] && sleep "$JIRA_SLEEP"
+[ -n "${JIRA_MISSING:-}" ] && { echo "$JIRA_MISSING" >&2; exit 1; }
 [ "$1 $2" = "GET myself" ] && { [ -n "${JIRA_MYSELF_BODY:-}" ] && { echo "$JIRA_MYSELF_BODY"; exit 0; }; [ -n "${JIRA_MYSELF_FAIL:-}" ] && exit 1; printf '{"timeZone":"%s"}\n' "${JIRA_TZ:-UTC}"; exit 0; }
 [ -n "${JIRA_DOWN:-}" ] && { echo '{"errorMessages":["Unauthorized"]}'; exit 0; }
 case "$3" in
@@ -172,6 +174,7 @@ out=$(JIRA_DOWN=1 run); rc=$?
 assert_eq "1" "$rc" "Jira error body: exit 1"
 assert_eq "" "$out" "nothing on stdout"
 assert_contains "$(errs)" "Jira unavailable" "stderr names the failing source"
+assert_contains "$(errs)" "JIRA_USER/JIRA_TOKEN" "an auth failure on search/jql still gets the credentials hint"
 assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor unchanged"
 
 echo "changes-since — arguments"
@@ -395,6 +398,11 @@ out=$(CHANGES_SINCE_BACKOFF=0 JIRA_MYSELF_BODY='{"errorMessages":["Client must b
 assert_eq "1" "$rc" "a Jira auth failure: exit 1"
 assert_contains "$(errs)" "JIRA_USER/JIRA_TOKEN" "stderr gets the credentials hint"
 assert_eq "--source jira service_down Jira unavailable (are JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env still valid?)" "$(cat "$FIX/friction.log")" "and so does the service_down record"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(CHANGES_SINCE_BACKOFF=0 JIRA_MISSING='JIRA_TOKEN missing in /x/secrets.env' run); rc=$?
+assert_eq "1" "$rc" "a missing Jira secret: exit 1"
+assert_contains "$(errs)" "JIRA_USER/JIRA_TOKEN" "stderr gets the credentials hint"
+assert_contains "$(cat "$FIX/friction.log")" "JIRA_USER/JIRA_TOKEN" "and so does the service_down record"
 reset; cursor 2026-10-08T07:00:00Z
 PATH="$STUBS:$PATH" FIX="$FIX" "$TEST_DIR/glab-gate" down --source end-day "GitLab unavailable"
 out=$(run); rc=$?
