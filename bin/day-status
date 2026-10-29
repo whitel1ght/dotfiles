@@ -39,7 +39,7 @@ date_arg="$(date +%F)"
 json=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "$0"; exit 0 ;;
     --json) json=1 ;;
     --date) [ $# -ge 2 ] || die "--date needs a value" 2; date_arg="$2"; shift ;;
     *) die "unknown option $1" 2 ;;

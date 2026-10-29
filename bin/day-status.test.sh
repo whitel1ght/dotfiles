@@ -182,6 +182,12 @@ out=$(run --date 2020-01-02); rc=$?
 [ "$rc" -ne 0 ] && pass "no plan block: non-zero" || fail "no plan block: non-zero" "rc=$rc"
 assert_contains "$out" "no plan block" "no plan block: clear message"
 
+echo "help"
+out=$("$SCRIPT" --help); rc=$?
+assert_eq 0 "$rc" "--help exits 0"
+assert_contains "$out" "DAY_STATUS_RETRY_SLEEP" "--help prints the whole header"
+assert_lacks "$out" "set -euo" "--help stops at the end of the header"
+
 echo
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
