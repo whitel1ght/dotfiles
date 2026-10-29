@@ -178,9 +178,20 @@ eval "$(zoxide init zsh)"
 # -----------------------------------------------------------------------------
 # FZF
 # -----------------------------------------------------------------------------
-# Ctrl-R fuzzy history, Ctrl-T insert a file path at the cursor, Alt-C cd into
-# a subdirectory. Needs fzf >= 0.48 for `fzf --zsh`.
+# Ctrl-R fuzzy history, Ctrl-T insert a file path, Ctrl-X then c cd into a
+# subdirectory (AeroSpace owns Alt-C). Needs fzf >= 0.48 for `fzf --zsh`.
 source <(fzf --zsh)
+
+# A real widget consumes the whole sequence; undefined-key can leak its suffix.
+ignore-editor-key() { :; }
+zle -N ignore-editor-key
+for keymap in emacs viins vicmd; do
+  bindkey -M "$keymap" '^Xc' fzf-cd-widget
+  for sequence in '\e[1;6P' '\e[1;6Q' '\e[1;6R' '\e[1;6S' '\e[15;6~' '\e[17;6~' '\e[18;6~' '\e[19;6~' '\e[20;6~'; do
+    bindkey -M "$keymap" "$sequence" ignore-editor-key
+  done
+done
+unset keymap sequence
 
 # fd honours .gitignore, so generated trees stay out without being listed here.
 # The explicit excludes are for directories git tracks or ignores per-repo but
@@ -210,9 +221,9 @@ export FZF_CTRL_R_OPTS="--preview 'echo {}' --preview-window up:3:hidden:wrap
   --bind 'ctrl-y:execute-silent(echo -n {2..} | pbcopy)+abort'
   --header 'ctrl-y copy | ctrl-/ preview'"
 
-# Alt-C descends into a subdirectory of the current one. zoxide is the
-# complement, not a duplicate: `z` jumps to directories already visited, from
-# anywhere; Alt-C walks into ones you have never been to.
+# Ctrl-X then c descends into a subdirectory. zoxide is the complement, not
+# a duplicate: `z` jumps to directories already visited, from anywhere;
+# the picker walks into ones you have never been to.
 export FZF_ALT_C_COMMAND='fd --type d --hidden --follow --exclude .git --exclude node_modules'
 export FZF_ALT_C_OPTS="--preview 'eza -1 --icons --color=always {}'"
 
