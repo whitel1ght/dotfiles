@@ -44,7 +44,8 @@ awk '/<!-- start-day:start -->/{f=1;next} /<!-- start-day:end -->/{f=0} f' ~/wik
 Classify every open item (`[ ]`, `[/]`, `[!]`; skip `[X]` and `[>]`):
 
 - **auto**: ticket work an agent can do (fix, implement, address review, write tests).
-- **me**: syncs, meetings, merges, decisions, replies to people.
+- **review**: someone else's MR to review or re-review. An agent drafts the review (section 2 step 4); posting it is one decision. Never for an MR we already approved (D-011): when `glab api "projects/<urlencoded path>/merge_requests/<iid>/approvals" | jq -r '.approved_by[].user.username'` lists `whitel1ght`, class it `me` with `already approved`.
+- **me**: syncs, meetings, merges, decisions, replies to people. A review is not a reply: it is `review`.
 - **wait**: blocked on others.
 
 Get what you need for each auto item from the plan line (ticket key, MR links name the repo) and `jira-api GET issue/<KEY>` (summary, description). Show one table: item, class, repo(s), model, depends on. A multi-repo ticket is one item on the heavy route. If you cannot tell the repo, class it `me` and say why. **Wait for approval or edits.**
@@ -79,9 +80,12 @@ changes-since --cursor run-day >/dev/null
 
    If it exits non-zero, tell the user in one line and carry on: the watcher reports the failure itself once.
 
-   The key is the lowercase ticket key from the plan line. Items without a ticket key are not tracked in this file.
+   The key is the lowercase ticket key from the plan line. Items without a ticket key are not tracked in this file, except a `review` item: its key is `review-<repo>-<iid>` (repo without `ecfx-`, e.g. `review-claude-components-55`).
 2. For each auto item, in plan order, while fewer than **3** ticket agents are running (review-round agents count): `wt add <repo> <KEY> <branch>` with the branch from `glab mr view` when the item already has an MR or branch, else `wt add <repo> <KEY>` (KEY uppercase, e.g. `ECFX-18169`), fill `${CLAUDE_PLUGIN_ROOT}/templates/ticket-brief.md` (replace every `{{...}}` placeholder; `grep -c '{{'` on the filled brief must print 0), save it in the scratchpad as `brief-<key>.md`, and spawn a background `sonnet` subagent: `Agent` with `run_in_background: true`, `model: "sonnet"`, `description: "<KEY> <three words>"`, the repo's specialist `subagent_type` when one exists, and a prompt that points at the brief file. Skip items whose run state says `owner=external:<KEY>`. Queue the rest in plan order; start the next as one finishes.
 3. Record the agent id the `Agent` call returned, the worktree and `needs_you=no` in the run-state line (`agent=` keeps the id until its report is processed, section 3). Set the diary line to `[/]`.
+4. Each `review` item, in plan order, under the same cap of 3 (ticket, review and round agents all count): read `source_branch`, `sha`, `title` and `author.username` from `glab api "projects/<urlencoded path>/merge_requests/<iid>"`; `wt add <repo> review-<iid> <source branch>` (reuse the worktree when it exists), then `git -C <worktree> fetch -q origin` and `git -C <worktree> checkout -q --detach <sha>`. Fill `${CLAUDE_PLUGIN_ROOT}/templates/review-brief.md` (`{{KIND}}`: `first review`, or `re-review: replies or commits since my review of <date>`; `{{REVIEW_FILE}}`: `<scratchpad>/review-<repo>-<iid>.md`; `grep -c '{{'` must print 0) and spawn a background `sonnet` subagent as in step 2. Run-state line: `class=review`, `agent=<id>`, `worktree=<path>`, `mr=<group>/<repo>!<iid>`. Set the diary line to `[/]`.
+
+   When a review agent reports (and its id is still the item's `agent=`; otherwise ignore it, section 3): check the review file exists and spot-check two `file:line` claims in the worktree. Set `agent=-` and `needs_you=yes` and file a decision (section 9): `--blocks post`, question `Post the review of <repo>!<iid>?`, context the agent's verdict line and counts and the whole review file (`cat` it), options `Post it` (`Post it and approve` when the verdict is approve; recommended), `Change it first (add a note with n)`, `Post nothing`. On post: `glab api --method POST "projects/<urlencoded path>/merge_requests/<iid>/notes" -F "body=@<review file>"`, and for approve `glab mr approve <iid> -R <group>/<repo>`; tick `[X]` with `· review posted` (`· review posted, approved`), set `needs_you=no`, apply the `memory:` block. On change: apply the note to the file, or send the agent back with `SendMessage`, then file a new decision. On post nothing: `[X] · note: review not posted, user's call`. Then Keep busy (section 11).
 
 ## 3. Diary markers and check-before-tick
 
@@ -92,8 +96,8 @@ Once a report is handled, whatever the outcome (ticked, retried, blocked, parked
 When a ticket agent reports:
 1. Read its report. Run `git -C <worktree> diff --stat` and check it matches what the report claims.
 2. Confirm it ran the tests it names, by running the same command yourself, and that the MR pipeline status is known (`glab api "projects/<urlencoded path>/merge_requests/<iid>" | jq -r .head_pipeline.status`).
-3. All good: tick `[X]` with `· draft MR <repo>!<iid>  [↗][<repo>!<iid>]`, then apply the `memory:` block (step 4), update the run-state line (`mr=`, `agent=-`), and dispatch the next queued item.
-4. A check fails: **one retry** with the next model tier (`sonnet` then `opus`), the failure quoted in the brief, `retries=1`, `agent=<new id>`. A second failure: mark `[!]` with `· blocked: <reason>`, set `needs_you=yes` and `agent=-`, call `PushNotification` with the ticket key and the reason.
+3. All good: tick `[X]` with `· draft MR <repo>!<iid>  [↗][<repo>!<iid>]`, then apply the `memory:` block (step 4), update the run-state line (`mr=`, `agent=-`), and run Keep busy (section 11).
+4. A check fails: **one retry** with the next model tier (`sonnet` then `opus`), the failure quoted in the brief, `retries=1`, `agent=<new id>`. A second failure: mark `[!]` with `· blocked: <reason>`, set `needs_you=yes` and `agent=-`, call `PushNotification` with the ticket key and the reason, and run Keep busy (section 11).
 
 ## 4. Applying a `memory:` block
 
@@ -156,6 +160,7 @@ glab api --method POST "projects/<urlencoded path>/merge_requests/<iid>/discussi
 - A tool call fails because GitLab or Jira is unavailable (5xx, timeout, connection refused; not a 401/403 or a 404): do not retry it. Set `waiting=<service>` on the item's run-state line, run `wait-for <service> --detach --key <KEY>` (a no-op when one is already waiting) and move on to the next item. A background agent that hits it reports back instead of retrying; park its item the same way and set its `agent=` or `round=` to `-` (section 3). An item with `waiting=<service>` and no live `wait-for` lock (`~/.local/state/wait-for/<service>.lock` holding the pid of a running `wait-for`) was given up on: treat it as `gave up` below (`needs_you=yes`, `· blocked: <service> down`).
 - `[daily-event:info] ...` lines: no action. Mention them only if the user asks what changed.
 - `inbox: <N> new` (from the mod): process the inbox, section 7.
+- `[daily-idle] no agent running: run Keep busy of /daily:run-day (section 11).` (from the mod, once per idle stretch after 10 minutes with no agent outstanding): run section 11.
 - Before handling any other event or agent report, list the inbox (section 7) and process what is waiting. Then re-read the plan block: the user edits the diary too. An item they ticked or removed is theirs; do not touch it.
 - No mod (the status line stays empty): there is no watcher and no inbox listing. Start `/loop 5m` with the prompt `check the run-day inbox (section 7), then run changes-since --cursor run-day and handle each line it prints as an event`, and keep the rule above.
 
@@ -239,7 +244,7 @@ When the queue is empty, print one line per message: file name, what changed. MR
 
 ## 8. Finish
 
-When no item is `[ ]` or `[/]` any more (or the user says so; a `[/] · with you: <KEY>` line is still open), process the inbox once more, then print a summary: done, blocked, deferred, what needs the user. Suggest `/end-day`. The same session runs `/end-day`; do not delete the run-state file, `/end-day` does.
+When no item is `[ ]` or `[/]` any more, or every open item is the user's (`me`, `wait`, a `[/] · with you: <KEY>` line) and Keep busy (section 11) found nothing, or the user says so: process the inbox once more, then print a summary: done, blocked, deferred, what needs the user. Suggest `/end-day`. The same session runs `/end-day`; do not delete the run-state file, `/end-day` does.
 
 ## 9. Decisions (questions for the user)
 
@@ -272,8 +277,28 @@ cat ~/.local/state/run-day/$(date +%F).agents 2>/dev/null || echo 'no agents fil
    Header `# agents <ISO time>`, then one row per agent: `<key> | ticket|round | <id> | <status> | quiet=<minutes|-> | <transcript|->`. The file is stale when it is missing or its header is more than 2 minutes older than the time printed first: then every id in an `agent=` or `round=` field of an `owner=main` run-state line counts as one row with status `unknown` (transcript `-`).
 2. Per row:
    - `running`, `pending` or `waiting`: leave it. Never dispatch a second agent for that item.
-   - `completed` or `idle`, and the id is still the item's `agent=` or `round=` (otherwise it was processed already: skip it): `agent-report <transcript>` prints its report. Process it exactly as section 3 ("When a ticket agent reports") for a `ticket` row, or section 5 step 3 for a `round` row; that sets `agent=-` or `round=-`, so its late completion notification is ignored. No reply (exit 1 or 2, or transcript `-`): treat the row as `failed`.
+   - `completed` or `idle`, and the id is still the item's `agent=` or `round=` (otherwise it was processed already: skip it): `agent-report <transcript>` prints its report. Process it exactly as section 3 ("When a ticket agent reports") for a `ticket` row (a `class=review` item: section 2 step 4, "When a review agent reports"), or section 5 step 3 for a `round` row; that sets `agent=-` or `round=-`, so its late completion notification is ignored. No reply (exit 1 or 2, or transcript `-`): treat the row as `failed`.
    - `failed`, `killed` or `unknown`: first `agent-report <transcript>`. A complete final report (it failed, or names what blocks it) is a real failure: process it as section 3 or section 5 step 3, so a failed check takes the normal retry. No reply, or a reply cut off mid-work, means it was interrupted: `SendMessage` to the id: it was interrupted by sleep or a restart; check `git -C <worktree> status` and its last step, then carry on and report as its brief says. If `SendMessage` errors, dispatch a fresh agent into the same worktree (section 2.2 without `wt add`; a `round` row gets the review-round brief, section 5 step 2) with its last reply (`agent-report <transcript>`, or `none`) and `git -C <worktree> log --oneline -5` appended to the brief under `## Resume note`, and record the new id in `agent=` or `round=`. It counts as the same attempt, not a retry: `retries` stays. A worktree that is gone is recreated as for a `handback` (section 7); worktree and branch both gone is the blocker there (`[!]`, `needs_you=yes`).
 3. On a `[daily-wake] stuck: <KEY> <id>, …` prompt the named agents are `running` but silent for 15 minutes or more: `SendMessage` each once: the machine slept; check its background commands and carry on, or report what blocks it. If a later stuck prompt names the same id again, say in your reply that it is stuck: no decision, no kill, no second agent.
 4. Then process the inbox (section 7) and any `[daily-event]` prompts still unanswered, and redo the event you were handling if your last reply was cut off.
 5. End with one line per row: `<KEY>: left running | report processed | continued | re-dispatched` (a stuck agent: `messaged` the first time, `stuck` after).
+
+## 11. Keep busy
+
+Run this after every processed agent report, finished or blocked item and answered decision, at the end of the dispatch in section 2, and on a `[daily-idle] no agent running: …` prompt. While fewer than **3** agents run (ticket, review and round agents all count), fill the free slots in this order:
+
+1. Queued `auto` and `review` items, in plan order (section 2).
+2. Open `wait` and `me` items whose state moved: a `wait` item whose blocker cleared (the pipeline, the other person's push or reply) is dispatched; for a merge item with a green pipeline and approvals and no decision open, file the merge decision with the MR link.
+3. The sprint: the user's tickets first, then the team's unassigned To-Do tickets, highest rank first. Each line is `KEY<TAB>status<TAB>summary`:
+
+```bash
+jt --list -m
+jt --list -u
+```
+
+   Skip keys already on the plan or in the run state, the user's tickets whose status is not `To-Do` or `In Progress` (in review, QA or done), epics, and tickets an agent cannot finish alone: read each candidate with `jira-issue <KEY>`; it needs a description that says what done looks like, and one repo you can name. Take as many as there are free slots. For each: add `- [ ] <key> <summary> (sprint: yours|unassigned)` under a `**From the sprint**` group (create it after the last group, above the link definitions), track it `class=auto`, and dispatch it as section 2 step 2.
+   - An unassigned ticket is not the user's yet: add `## Not yours yet` to its brief with `Commit locally; do not push and do not open an MR.`, and file a decision (section 9): `Take <KEY> from the sprint?`, context its summary, its rank and what the agent is doing; options `Take it` (assigns it to you in Jira; the agent pushes and opens the Draft MR) and `Leave it`. On `Take it`: `jira-api GET myself | jq -r .accountId`, then `jira-api PUT "issue/<KEY>/assignee" '{"accountId":"<id>"}'`, and tell the agent with `SendMessage` (if it already reported, a fresh agent in its worktree) to push and open the Draft MR. On `Leave it`: stop the agent and mark the line `[>] · note: left in the sprint`.
+   - `jt` fails (Jira down, a missing secret): say so in one line and try again at the next Keep busy.
+4. Nothing in steps 1-3: Finish (section 8), naming what each step found empty.
+
+Never end a turn saying the rest is the user's while a slot is free and one of steps 1-3 has something. A review, a merge check or a sprint ticket is not the user's work because what comes out of it is posted under their name: an agent drafts it, and a decision asks before anything is posted.

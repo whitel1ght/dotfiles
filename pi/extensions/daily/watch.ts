@@ -10,6 +10,7 @@ import { inboxPrompt, messageFiles, nextInbox } from "./mod/inbox.ts";
 import { parseRunState } from "./mod/runstate.ts";
 import { isFullWake, outstanding, parseGraphics, parseLid, sleptBetween, WAKE_PREFIX } from "./mod/wake.ts";
 import { REPORT_MARK } from "./mod/warm.ts";
+import { PI_BUSY_PROMPT, nextNudged, shouldNudgeBusy } from "./mod/busy.ts";
 
 export const WATCH_MS = 180_000;
 export const INBOX_MS = 30_000;
@@ -45,6 +46,7 @@ export class DayWatcher {
   private prevTickAt: number | null = null;
   private pendingSince: number | null = null;
   private blindProbes = 0;
+  private busyNudged = false;
   private deps: WatchDeps;
 
   constructor(deps: WatchDeps) {
@@ -141,6 +143,29 @@ export class DayWatcher {
     const hasInbox = messageFiles(this.deps.listInbox()).length > 0;
     if (outstanding(parseRunState(readOr(this.deps.paths().runState))).length === 0 && !hasInbox) return null;
     return `${WAKE_PREFIX} woke after ${Math.round((now - since) / 60_000)} min: run the Wake check of /run-day (section 10).`;
+  }
+
+  /**
+   * Called on the 30 s tick: the Keep busy prompt when the watching session has sat idle with no
+   * agent outstanding (mod/busy.ts), once per idle stretch.
+   */
+  checkBusy(now: number, a: { lastActiveAt: number; turnRunning: boolean; userWrote: boolean }): string | null {
+    const p = this.deps.paths();
+    const out = this.active() ? outstanding(parseRunState(readOr(p.runState))).length : 0;
+    this.busyNudged = nextNudged(this.busyNudged, { outstanding: out, userWrote: a.userWrote });
+    const dayRunning = this.active() && !readOr(p.diary).includes(REPORT_MARK);
+    const state = {
+      isOwner: this.deps.holdsLock(),
+      dayRunning,
+      now,
+      lastActiveAt: a.lastActiveAt,
+      outstanding: out,
+      agentsRunning: a.turnRunning ? 1 : 0,
+      nudged: this.busyNudged,
+    };
+    if (!shouldNudgeBusy(state)) return null;
+    this.busyNudged = true;
+    return PI_BUSY_PROMPT;
   }
 
   checkInbox(): void {

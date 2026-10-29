@@ -14,6 +14,7 @@ import type { AgentRow } from '../mod/wake.ts'
 import type { InboxState, RunItem, ViewState } from '../mod/types.ts'
 import { joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts'
 import { NUDGE_TEXT, claimsSystem, claimsSystemPrompt, shouldNudge, systemMarkerPath } from '../mod/ideas.ts'
+import { BUSY_PROMPT, nextNudged, shouldNudgeBusy } from '../mod/busy.ts'
 
 const REFRESH_MS = 5_000
 const WATCH_MS = 180_000
@@ -143,6 +144,20 @@ async function nudgeIdeas($: EngineInterface) {
   } finally {
     idle.isChecking = false
   }
+}
+
+// The day session idle with no agent gets one Keep busy prompt per idle stretch (mod/busy.ts).
+const busy = { nudged: false }
+
+async function nudgeBusy($: EngineInterface, ctx: DayCtx) {
+  const out = outstanding(ctx.runs).length
+  busy.nudged = nextNudged(busy.nudged, { outstanding: out, userWrote: false })
+  const running = (await $.agent.list().catch(() => [])).filter(a => a.status === 'running').length
+  const lastActiveAt = Math.max(idle.lastUserAt, idle.lastTurnEndAt, warm.lastRequestAt ?? 0)
+  const state = { isOwner: true, dayRunning: !ctx.dayEnded, now: await $.clock.now(), lastActiveAt, outstanding: out, agentsRunning: running, nudged: busy.nudged }
+  if (!shouldNudgeBusy(state)) return
+  busy.nudged = true
+  void $.prompt.submit({ text: BUSY_PROMPT }).catch(() => $.ui.toast('daily idle: prompt submit failed'))
 }
 
 // Keepwarm for the day session after cache-tax's 6 h window (mod/warm.ts). One timer at a time,
@@ -491,6 +506,8 @@ async function watchInbox($: EngineInterface) {
     if (owns && fresh.length > 0) {
       $.ui.toast(`inbox: ${fresh.length} new`)
       void $.prompt.submit({ text: inboxPrompt(fresh.length) }).catch(() => $.ui.toast('daily inbox: prompt submit failed'))
+    } else if (owns) {
+      await nudgeBusy($, ctx)
     }
   } catch (err) {
     if (!flags.hasInboxFailed) friction($, 'tool_error', `inbox read failed: ${err instanceof Error ? err.message : String(err)}`, 'daily-inbox')
@@ -565,6 +582,7 @@ export const register: Register = on => {
     if (e.origin?.kind !== 'plugin' && e.origin?.kind !== 'task-notification') {
       idle.lastUserAt = await $.clock.now()
       idle.waiting = false
+      busy.nudged = false
       if (claimsSystemPrompt(e.text)) await claimSystem($)
     }
     return next(e)

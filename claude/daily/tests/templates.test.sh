@@ -48,6 +48,19 @@ has "$f" "never write to \`~/wiki\`" "forbids vault writes"
 has "$f" "except \`~/wiki/work/system/\` and \`~/wiki/tools/\`" "allows the system and tools pages"
 has "$f" "no Slack, no Jira transition" "forbids Slack posts and Jira transitions"
 
+echo "== review-brief =="
+f="$T/review-brief.md"
+REVIEW_KEYS="KEY TITLE AUTHOR REPO MR_IID MR_URL PROJECT_PATH BRANCH HEAD WORKTREE KIND REVIEW_FILE PROJECT"
+for k in $REVIEW_KEYS; do has "$f" "{{$k}}" "has {{$k}}"; done
+[ -z "$(unknown "$f" "$REVIEW_KEYS")" ] && pass "no unknown placeholders" || fail "unknown placeholders" "$(unknown "$f" "$REVIEW_KEYS")"
+has "$f" "shared:mr-review" "names the review skill"
+has "$f" "**Draft only.**" "drafts, never posts"
+has "$f" "You never run \`glab mr note\`, \`glab mr approve\`" "forbids posting and approving"
+has "$f" "verdict:" "reports the verdict"
+has "$f" "review_file:" "reports the review file"
+has "$f" "memory:" "ends with the memory block"
+has "$f" "never write to \`~/wiki\`" "forbids vault writes"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

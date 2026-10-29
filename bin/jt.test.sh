@@ -108,6 +108,19 @@ assert_eq "0" "$rc" "esc exits quietly"
 run 17612 >/dev/null
 assert_eq "jira issue view ECFX-17612 --comments 10" "$(cat "$LOG")" "no search for a single ticket"
 
+echo "list"
+out="$(run --list -m)"; rc=$?
+assert_eq "search project = ECFX AND (sprint in openSprints() AND assignee = currentUser()) ORDER BY status, updated DESC" "$(head -1 "$LOG")" "--list -m runs the -m query"
+assert_eq "0" "$(grep -c '^fzf' "$LOG")" "--list opens no picker"
+assert_eq "$(printf 'ECFX-10\tIn MR        \tFix the thing\nECFX-17612\tTo-Do        \tA 403 on a write: "forbidden" returns null')" "$out" "--list prints key, status and summary per line"
+assert_eq "0" "$rc" "--list exits 0"
+run --list -u >/dev/null
+assert_contains "$(head -1 "$LOG")" 'assignee is EMPTY AND status = "To-Do") ORDER BY Rank' "--list -u runs the -u query"
+out="$(JIRA_ROWS="" run --list -u)"; rc=$?
+assert_eq "0 " "$rc $out" "--list with no result prints nothing and exits 0"
+out="$(JIRA_ROWS=error run --list -m)"; rc=$?
+assert_contains "$rc $out" "1 Field sprnt does not exist" "--list fails on a Jira error"
+
 echo "worktree"
 g() { git -c user.name=t -c user.email=t@t "$@"; }
 g init -q -b main "$PROJ/app" && g -C "$PROJ/app" commit -q --allow-empty -m init

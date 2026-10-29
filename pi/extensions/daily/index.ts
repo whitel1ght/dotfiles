@@ -305,6 +305,21 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
     friction: (kind, msg, source) => friction(kind, msg, source),
   });
 
+  // for the Keep busy prompt (watch.ts checkBusy, mod/busy.ts)
+  const activity = { lastActiveAt: Date.now(), turnRunning: false, userWrote: false };
+  pi.on("input", (event) => {
+    if (event.source === "extension") return;
+    activity.lastActiveAt = Date.now();
+    activity.userWrote = true;
+  });
+  pi.on("agent_start", () => {
+    activity.turnRunning = true;
+  });
+  pi.on("agent_end", () => {
+    activity.turnRunning = false;
+    activity.lastActiveAt = Date.now();
+  });
+
   const stop = () => {
     for (const t of timers) clearInterval(t);
     timers = [];
@@ -333,6 +348,9 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
       const nudge = await watcher.checkWake(Date.now()).catch(() => null);
       if (nudge) send(nudge, true);
       watcher.checkInbox();
+      const busy = watcher.checkBusy(Date.now(), activity);
+      activity.userWrote = false;
+      if (busy) send(busy, true);
     });
     every(WATCH_MS, () => watcher.checkEvents());
     return (

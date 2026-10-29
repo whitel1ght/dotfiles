@@ -7,6 +7,8 @@
 #   jt -q '<jql>'       any JQL, within the project
 #   jt -m               current sprint: everything assigned to me (alias jmine)
 #   jt -u               current Omni sprint: unassigned and To-Do (alias jtodo)
+#   jt --list <...>     any search above as plain key/status/summary lines, no picker;
+#                       nothing matching prints nothing (how /run-day reads the sprint)
 #
 # In the picker: enter opens the ticket in the browser (or prints its key when
 # the output is piped), ctrl-o opens it without leaving, ctrl-y copies the key,
@@ -92,8 +94,10 @@ worktree() {
 }
 
 query=""
+list=0
+if [ "${1:-}" = --list ]; then list=1; shift; fi
 case "${1:-}" in
-  -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   -q) [ -n "${2:-}" ] || die "-q needs a JQL query"; query="$2" ;;
   -m) query="sprint in openSprints() AND assignee = currentUser() ORDER BY status, updated DESC" ;;
   -u) query="filter = $TEAM_FILTER AND sprint in openSprints() AND assignee is EMPTY AND status = \"To-Do\" ORDER BY Rank" ;;
@@ -109,6 +113,10 @@ case "${1:-}" in
 esac
 
 rows="$(search "$query")" || die "jira search failed"
+if [ "$list" = 1 ]; then
+  [ -z "$rows" ] || printf '%s\n' "$rows"
+  exit 0
+fi
 [ -n "$rows" ] || { echo "jt: nothing found" >&2; exit 1; }
 
 out="$(printf '%s\n' "$rows" | fzf --height 100% --delimiter '\t' --tabstop 1 --prompt 'jira> ' \
