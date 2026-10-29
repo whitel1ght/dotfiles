@@ -1,0 +1,40 @@
+#!/bin/bash
+# mr-ship <repo> <iid> [-n] - take the user's own open MR out of draft, assign
+# it to the user (D-007) and request the standing reviewers (D-008).
+# <repo> is a GitLab path (ecfx/ecfx-dashboard) or a short name (dashboard,
+# ecfx-dashboard). -n prints the calls and makes none. Refuses an MR that is
+# not open or not the user's.
+set -uo pipefail
+
+REVIEWERS="adam.warbington,bkeeling,smtsuchi,ejjung,levisiebensecfx"
+
+dry=0; args=()
+for a in "$@"; do
+    case "$a" in
+        -n) dry=1 ;;
+        *) args+=("$a") ;;
+    esac
+done
+[ "${#args[@]}" -eq 2 ] || { echo "usage: mr-ship <repo> <iid> [-n]" >&2; exit 2; }
+repo="${args[0]}"; iid="${args[1]}"
+case "$repo" in
+    */*) ;;
+    ecfx-*) repo="ecfx/$repo" ;;
+    *) repo="ecfx/ecfx-$repo" ;;
+esac
+case "$iid" in ''|*[!0-9]*) echo "mr-ship: bad MR number: $iid" >&2; exit 2 ;; esac
+
+me="$(glab api user | jq -r .username)" || me=""
+[ -n "$me" ] && [ "$me" != null ] || { echo "mr-ship: cannot resolve the current GitLab user" >&2; exit 1; }
+view="$(glab mr view "$iid" -R "$repo" -F json)" || { echo "mr-ship: cannot read $repo!$iid" >&2; exit 1; }
+state="$(jq -r .state <<<"$view")"
+author="$(jq -r .author.username <<<"$view")"
+[ "$state" = opened ] || { echo "mr-ship: $repo!$iid is $state, not open" >&2; exit 1; }
+[ "$author" = "$me" ] || { echo "mr-ship: $repo!$iid belongs to $author, not $me" >&2; exit 1; }
+
+cmd=(glab mr update "$iid" -R "$repo" --ready --assignee "$me" --reviewer "$REVIEWERS")
+if [ "$dry" -eq 1 ]; then
+    echo "${cmd[*]}"
+    exit 0
+fi
+"${cmd[@]}"
