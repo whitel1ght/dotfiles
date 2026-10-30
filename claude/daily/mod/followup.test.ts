@@ -17,6 +17,13 @@ test("this session's open answer card with a follow-up is pending", async () => 
   expect(pendingFollowups([card], 'sess-me', none)).toEqual([card])
 })
 
+// Captured from `decide list --json` (2026-10-30): it lists open cards only and prints no status.
+const LISTED = '[{"age":"0m","asked":"2026-10-30T10:48:04+03:00","blocks":"","context":"Test card.","discussion":[{"at":"10:48","text":"reply ok","who":"you"}],"discussion_count":1,"followup":"reply ok","id":"D-194","key":"","kind":"answer","mr":"","mr_short":"","options":[],"question":"Delivery test","question_back":true,"recommended":null,"session":"5ac23663","source":"claude-code · dotfiles"}]'
+
+test('a card as decide list --json prints it, with no status, is pending', async () => {
+  expect(pendingFollowups(parseCards(LISTED), '5ac23663', none).map(c => c.id)).toEqual(['D-194'])
+})
+
 test("another session's card, a question card, a closed card or no follow-up is not", async () => {
   const cards = [
     { ...card, session: 'sess-other' },

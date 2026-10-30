@@ -41,11 +41,12 @@ export function parseCards(stdout: string): Card[] {
 }
 
 // This session's open answer cards with a follow-up it has not been given yet (delivered: card
-// id to the discussion_count it was delivered at).
+// id to the discussion_count it was delivered at). `decide list --json` lists open cards only and
+// prints no status, so a missing one is open.
 export function pendingFollowups(cards: readonly Card[], sessionId: string, delivered: ReadonlyMap<string, number>): Card[] {
   if (!sessionId) return []
   return cards.filter(
-    c => c.kind === 'answer' && c.status === 'open' && c.session === sessionId && c.followup !== '' && c.discussion_count > (delivered.get(c.id) ?? 0),
+    c => c.kind === 'answer' && (c.status === '' || c.status === 'open') && c.session === sessionId && c.followup !== '' && c.discussion_count > (delivered.get(c.id) ?? 0),
   )
 }
 
