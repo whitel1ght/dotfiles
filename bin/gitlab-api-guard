@@ -5,6 +5,8 @@ Two mistakes kept costing retries: a request body piped in through stdin
 (`glab api ... --input -`, `curl --data @-`, fed by a pipe, heredoc or `<`),
 and a `curl` write to gitlab.com/api without `Content-Type: application/json`
 (curl then sends form encoding and GitLab misreads the body). This blocks both.
+It also blocks `glab mr update --ready` (`-r`) without `--reviewer`: undrafting
+the user's MR goes through `mr-ship`, which requests the team's reviewers.
 
 A curl write is `-X POST|PUT|PATCH` or a `-d`/`--data*` body without `-G`;
 `--json` and `-F`/`--form` set their own content type and pass. Reads, other
@@ -40,6 +42,9 @@ STDIN_WHY = ("GitLab API body from stdin is refused: write the JSON to a file an
              "(`glab api ... --input body.json` or `curl ... --data @body.json`).")
 TYPE_WHY = ("GitLab API write without `Content-Type: application/json`: add "
             "`-H 'Content-Type: application/json'` and send the body from a file (`--data @body.json`).")
+READY_WHY = ("Undrafting an MR without reviewers is refused: for the user's own MR run "
+             "`~/.local/bin/mr-ship <repo> <iid>` (marks it ready, assigns the user, requests the team: "
+             "Levi, Bill, Shoha, EJ, Adam); for someone else's MR pass `--reviewer` explicitly.")
 
 
 def strip_heredocs(command: str) -> str:
@@ -136,6 +141,10 @@ def curl_reason(args: list[str]) -> str | None:
 
 def glab_reason(args: list[str]) -> str | None:
     rest = [a for a in args if a not in ("<", "<<<")]
+    if rest[:2] == ["mr", "update"]:
+        ready = "--ready" in rest or "-r" in rest
+        reviewers = any(a == "--reviewer" or a.startswith("--reviewer=") for a in rest)
+        return READY_WHY if ready and not reviewers else None
     if not rest or rest[0] != "api":
         return None
     for i, a in enumerate(rest):

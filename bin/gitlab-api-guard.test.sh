@@ -93,6 +93,13 @@ allows "echo of a curl line" "echo curl -X POST -d @b.json $API"
 allows "unbalanced quote passes" "curl -X POST -d '{ $API"
 allows "ordinary command" "git status"
 
+echo "undrafting an MR"
+says "--ready without reviewers points at mr-ship" "glab mr update 23 -R ecfx/ecfx-dashboard --ready" "mr-ship"
+blocks "-r without reviewers" "glab mr update 23 -r"
+allows "--ready with reviewers" "glab mr update 23 --ready --reviewer +bkeeling"
+allows "--reviewer= form" "glab mr update 23 --ready --reviewer=+bkeeling"
+allows "--draft" "glab mr update 23 --draft"
+
 echo "other calls"
 printf '{"tool_name":"Read","tool_input":{"file_path":"/x"}}' | "$SCRIPT" >/dev/null 2>&1
 [ $? -eq 0 ] && pass "non-Bash tools pass" || fail "non-Bash tools pass" "blocked"

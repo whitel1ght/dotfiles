@@ -106,6 +106,10 @@ Global instructions applied across all projects. Keep this short — project-lev
   file`). `gitlab-api-guard` blocks both mistakes.
 - Run `/mr-description` before any `glab mr create`, `glab mr update --description` or MR
   description write through `glab api`; the MR-description gate blocks them otherwise.
+- To undraft one of my MRs ("undraft", "mark ready", "ship it"), run `~/.local/bin/mr-ship
+  <repo> <iid>`: it marks it ready, assigns me and requests the Omni engineers team (Levi,
+  Bill, Shoha, EJ, Adam) as reviewers. Never a bare `glab mr update --ready`;
+  `gitlab-api-guard` blocks it without `--reviewer`.
 - When an API merge fails, report it and leave the merge to me; no retries with other flags.
 - Never move a Jira ticket backwards (e.g. Done → In QA) without asking.
 

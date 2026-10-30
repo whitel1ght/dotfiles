@@ -487,7 +487,7 @@ git commit -m "ECFX-15234: address review findings
 
 <one line per fix — what changed and which finding it answers>"
 git push
-glab mr update <iid> --ready
+~/.local/bin/mr-ship <repo> <iid>   # ready, assigned to me, the team requested as reviewers
 ```
 
 Update the MR description with anything the review changed materially — a
