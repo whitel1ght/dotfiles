@@ -13,6 +13,8 @@ import { parseRunState } from "./mod/runstate.ts";
 import { acquireLock, DayWatcher, INBOX_MS, releaseLock, WATCH_MS, type Exec } from "./watch.ts";
 import { IdeasNudger } from "./ideas.ts";
 import { AskBackstop, piSubRunning } from "./ask.ts";
+import { FollowupDelivery, decideList, decisionsSession } from "./followup.ts";
+import { FOLLOWUP_MS } from "./mod/followup.ts";
 import { PI_PLAYBOOK, UPDATE_ARGS, fingerprint } from "./mod/update.ts";
 
 const IDEAS_MS = 60_000;
@@ -476,6 +478,7 @@ export default function daily(pi: ExtensionAPI) {
   ideasTimer.unref?.();
 
   // Every session's questions go to the decisions deck (ask.ts, mod/ask.ts); subagents ask nobody.
+  let followupTimer: ReturnType<typeof setInterval> | undefined;
   if (!process.env.PI_SUBAGENT) {
     let deliverAs: "steer" | "followUp" | "nextTurn" = "nextTurn";
     const ask = new AskBackstop({
@@ -499,11 +502,21 @@ export default function daily(pi: ExtensionAPI) {
       }
     });
     pi.on("tool_call", (event) => ask.onToolCall(event.toolName));
+
+    // and the user's follow-ups on its answer cards come back to it (followup.ts, mod/followup.ts)
+    const followups = new FollowupDelivery({
+      list: decideList,
+      session: decisionsSession(),
+      send: (content) => pi.sendMessage({ customType: "decisions", content, display: true }, { triggerTurn: true, deliverAs: "followUp" }),
+    });
+    followupTimer = setInterval(() => void followups.tick().catch(() => {}), FOLLOWUP_MS);
+    followupTimer.unref?.();
   }
 
   pi.on("session_shutdown", () => {
     stopWatch();
     clearInterval(ideasTimer);
+    clearInterval(followupTimer);
   });
 
   // before_agent_start, not context_with_system: measured on pi 1.2.0, a section added to the
