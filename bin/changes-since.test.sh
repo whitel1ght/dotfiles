@@ -23,6 +23,15 @@ STUBS="$SANDBOX/stubs"; FIX="$SANDBOX/fixtures"; STATE="$SANDBOX/state"
 # The outage marker (glab-gate) lives in the friction dir: keep it out of the real one.
 export FRICTION_DIR="$SANDBOX/friction-state"
 mkdir -p "$STUBS"
+# No test may start the real wait-for: it records its argv here (WAITER_FAIL=1 exits 1).
+cat > "$STUBS/wait-for" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FIX:?}/wait-for.log"
+echo 12345
+[ -z "${WAITER_FAIL:-}" ]
+STUB
+chmod +x "$STUBS/wait-for"
+export CHANGES_SINCE_WAIT_FOR="$STUBS/wait-for"
 
 # jira-api <METHOD> <path> [body]: GET myself answers the profile zone (JIRA_TZ,
 # default UTC; JIRA_MYSELF_FAIL=1 fails it; JIRA_MYSELF_BODY replies with that
@@ -482,6 +491,22 @@ assert_eq "1" "$rc" "a failing to-dos feed also holds off the next runs"
 assert_eq "1" "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "to-dos: still one friction line"
 assert_eq "$glab_calls" "$(wc -l < "$FIX/glab.log")" "to-dos: no glab call inside the window"
 
+echo "changes-since — background waiter"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(JIRA_MYSELF_FAIL=1 run); rc=$?
+assert_eq "jira --detach" "$(cat "$FIX/wait-for.log" 2>/dev/null)" "a failing Jira starts wait-for jira --detach"
+assert_eq "1|" "$rc|$out" "exit 1 and no pid on stdout"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(WAITER_FAIL=1 JIRA_MYSELF_FAIL=1 run); rc=$?
+assert_eq "1|" "$rc|$out" "a failing waiter leaves exit 1 and stdout empty"
+assert_eq "changes-since: Jira unavailable, retry in a few minutes" "$(errs)" "and the same stderr"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(CHANGES_SINCE_WAIT_FOR=/nonexistent/wait-for JIRA_MYSELF_FAIL=1 run); rc=$?
+assert_eq "1" "$rc" "a missing waiter leaves exit 1"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(run); rc=$?
+[ ! -e "$FIX/wait-for.log" ] && pass "a healthy run starts no waiter" || fail "a healthy run starts no waiter" "$(cat "$FIX/wait-for.log")"
+
 echo "changes-since — bounded calls"
 export CHANGES_SINCE_CALL_TIMEOUT=1 CHANGES_SINCE_BACKOFF=0 CHANGES_SINCE_BUDGET=20
 reset; cursor 2026-10-08T07:00:00Z
@@ -494,6 +519,7 @@ assert_eq "" "$out" "nothing on stdout"
 assert_eq "2" "$(wc -l < "$FIX/jira.log" | tr -d ' ')" "the hung call was retried once"
 assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "cursor unchanged"
 assert_contains "$(errs)" "timed out" "stderr says it timed out"
+[ ! -e "$FIX/wait-for.log" ] && pass "and starts no waiter" || fail "and starts no waiter" "$(cat "$FIX/wait-for.log")"
 [ ! -e "$FIX/friction.log" ] && pass "a timeout logs no service_down" || fail "a timeout logs no service_down" "$(cat "$FIX/friction.log")"
 [ ! -e "$FRICTION_DIR/gitlab-down" ] && pass "and sets no GitLab outage marker" || fail "and sets no GitLab outage marker" "marker written"
 
