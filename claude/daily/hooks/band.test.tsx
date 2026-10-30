@@ -2,6 +2,7 @@ import { test, expect, mock } from 'claude-code/testing'
 
 import { DIARY, RUN_STATE } from '../mod/fixtures.ts'
 import { ASK_NUDGE, BUSY_NOTE, FORM_DENY } from '../mod/ask.ts'
+import { FOLLOWUP_MS, followupPrompt } from '../mod/followup.ts'
 
 const WIKI = '/home/t/wiki/diary/2026-10-08.md'
 const STATE = '/home/t/.local/state/run-day/2026-10-08.md'
@@ -12,7 +13,7 @@ const WARM_REPLY = { isAnswered: true, text: 'warm', usage: { input_tokens: 5, o
 
 type Run = { exitCode: number; stdout: string; stderr: string }
 
-type Opts = { day: Run | (() => Run); rejectWith?: string; refuse?: boolean; frictionDenied?: boolean; owner?: string | null; writeFails?: boolean; inbox?: string; diary?: string; state?: string | null; fork?: () => unknown; files?: Record<string, string> }
+type Opts = { day: Run | (() => Run); rejectWith?: string; refuse?: boolean; frictionDenied?: boolean; owner?: string | null; writeFails?: boolean; inbox?: string; diary?: string; state?: string | null; fork?: () => unknown; files?: Record<string, string>; decide?: Run }
 
 async function start($: any, on: any, opts: Opts) {
   // A closed lid stops the 5 s refresh tick: while asleep its next period waits for the wake.
@@ -26,7 +27,7 @@ async function start($: any, on: any, opts: Opts) {
     sleepUntil = clock.now() + ms
     return clock.advance(ms)
   }
-  const world = { lid: 'open' as 'open' | 'closed' | null, graphics: true as boolean | null, agentListFails: false }
+  const world = { lid: 'open' as 'open' | 'closed' | null, graphics: true as boolean | null, agentListFails: false, decide: opts.decide ?? null }
   const agents: { id: string; status: string; description: string }[] = []
   const mtimes: Record<string, number> = {}
   const state = opts.state === undefined ? RUN_STATE : opts.state
@@ -46,6 +47,7 @@ async function start($: any, on: any, opts: Opts) {
     calls.push(e.argv)
     if (opts.frictionDenied && isFriction(e.argv)) return { deny: 'friction exploded' }
     if (opts.rejectWith && isChangesSince(e.argv)) return { deny: opts.rejectWith }
+    if (world.decide !== null && isDecideList(e.argv)) return { value: world.decide } as never
     if (opts.inbox !== undefined && isInboxLs(e.argv)) return { value: { exitCode: 0, stdout: opts.inbox, stderr: '' } } as never
     if (e.argv[0].endsWith('/ioreg')) return { value: { exitCode: 0, stdout: world.lid === null ? '' : `| |   "AppleClamshellState" = ${world.lid === 'closed' ? 'Yes' : 'No'}\n`, stderr: '' } } as never
     if (e.argv[0].endsWith('/pmset')) return { value: { exitCode: 0, stdout: world.graphics === null ? '' : `Current System Capabilities are: CPU${world.graphics ? ' Graphics Audio' : ''} Network\n`, stderr: '' } } as never
@@ -123,6 +125,7 @@ const INBOX_MSG = '20261008T154200-ECFX-18169-ab12.md'
 const EVENT = JSON.stringify({ kind: 'review', repo: 'ecfx/ecfx-backend', mr: 6576, ticket: 'ECFX-9190', summary: 'please fix', url: 'u' })
 const isDayPlan = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('day-plan')
 const SUBAGENTS = `/home/t/.claude/projects/-home-t/${ME}/subagents`
+const isDecideList = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('list --json')
 const isSubagentsLs = (argv: string[]) => argv[0] === '/bin/sh' && argv[2].includes('/subagents')
 
 test('/day-plan runs day-plan without blocking and reports it opened', async ($, on) => {
@@ -766,4 +769,36 @@ test('no nudge when the turn filed a card, ended without asking, or was a subage
   await s.clock.settle()
   expect(s.prompts).not.toContain(ASK_NUDGE)
   expect(s.tools).toEqual(['mcp__decisions__ask_user'])
+})
+
+// Every session gets the user's follow-ups on its own answer cards (mod/followup.ts).
+const CARD = { id: 'D-180', kind: 'answer', status: 'open', question: 'Why is CI red?', session: ME, followup: 'and the flaky one?', discussion_count: 1 }
+const listed = (...cards: object[]): Run => ({ exitCode: 0, stdout: JSON.stringify(cards), stderr: '' })
+
+test('a follow-up on this session’s answer card arrives as one prompt, once', async ($, on) => {
+  const s = await start($, on, { ...idleDay, state: null, owner: 'sess-other', decide: listed(CARD) })
+  await s.clock.advance(FOLLOWUP_MS)
+  await s.clock.settle()
+  expect(s.prompts).toEqual([followupPrompt([CARD])])
+  await s.clock.advance(FOLLOWUP_MS * 3)
+  await s.clock.settle()
+  expect(s.prompts).toHaveLength(1)
+  const next = { ...CARD, followup: 'and the other test?', discussion_count: 3 }
+  s.world.decide = listed(next)
+  await s.clock.advance(FOLLOWUP_MS)
+  await s.clock.settle()
+  expect(s.prompts).toEqual([followupPrompt([CARD]), followupPrompt([next])])
+})
+
+test('another session’s card, a failing decide or an empty list prompt nothing and toast nothing', async ($, on) => {
+  const s = await start($, on, { ...idleDay, state: null, decide: listed({ ...CARD, session: 'sess-other' }) })
+  await s.clock.advance(FOLLOWUP_MS)
+  s.world.decide = { exitCode: 1, stdout: '', stderr: 'decide: no queue' }
+  await s.clock.advance(FOLLOWUP_MS)
+  s.world.decide = { exitCode: 0, stdout: '', stderr: '' }
+  await s.clock.advance(FOLLOWUP_MS)
+  await s.clock.settle()
+  expect(s.calls.filter(isDecideList)).toHaveLength(3)
+  expect(s.prompts).toEqual([])
+  expect(s.toasts).toEqual([])
 })

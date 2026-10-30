@@ -17,6 +17,7 @@ import { NUDGE_TEXT, claimsSystem, claimsSystemPrompt, shouldNudge, systemMarker
 import { BUSY_PROMPT, nextNudged, shouldNudgeBusy } from '../mod/busy.ts'
 import { CLAUDE_PLAYBOOK, UPDATE_ARGS, fingerprint, parsePrint, playbookPath, shouldResume } from '../mod/update.ts'
 import { ASK_NUDGE, BUSY_NOTE, FORM_DENY, FORM_TOOLS, isBusyPrompt, nextAsk, shouldNudgeAsk } from '../mod/ask.ts'
+import { FOLLOWUP_MS, followupPrompt, parseCards, pendingFollowups } from '../mod/followup.ts'
 
 const REFRESH_MS = 5_000
 const WATCH_MS = 180_000
@@ -32,6 +33,7 @@ const COLD_RELAY = 'daily: relayed past the cold-cache guard'
 const IDEAS_MS = 60_000
 const IDEAS_DUE = 'I="$(command -v ideas || echo "$HOME/.local/bin/ideas")"; [ -x "$I" ] && exec "$I" due --sync --limit 3 || echo "[]"'
 const BLIND_PROBES = 3
+const DECIDE_LIST = 'D="$(command -v decide || echo "$HOME/.local/bin/decide")"; [ -x "$D" ] && exec "$D" list --json || true'
 const EMPTY: ViewState = { active: false, status: '', groups: [] }
 const view = atom({ plugin: 'daily', key: 'view' } as const, EMPTY)
 const inbox = atom({ plugin: 'daily', key: 'inbox' } as const, EMPTY_INBOX as InboxState)
@@ -184,6 +186,27 @@ const busy = { nudged: false, inTurn: false }
 
 // Every session, not only the day's: questions go to the decisions deck (mod/ask.ts).
 let ask = { asked: false, nudged: false }
+
+// Every session: the user's follow-ups on its answer cards come back as a prompt, once each
+// (mod/followup.ts). A failing or missing decide is no follow-ups.
+const followups = { delivered: new Map<string, number>(), isChecking: false }
+
+async function deliverFollowups($: EngineInterface) {
+  if (followups.isChecking) return
+  followups.isChecking = true
+  try {
+    const ran = await $.process.run(['/bin/sh', '-c', DECIDE_LIST], { timeoutMs: 10_000 })
+    if (ran.exitCode !== 0) return
+    const due = pendingFollowups(parseCards(ran.stdout), await $.session.id(), followups.delivered)
+    if (due.length === 0) return
+    for (const c of due) followups.delivered.set(c.id, c.discussion_count)
+    void $.prompt.submit({ text: followupPrompt(due) }).catch(() => $.ui.toast('daily: delivering a decisions follow-up failed'))
+  } catch {
+    // the next tick tries again
+  } finally {
+    followups.isChecking = false
+  }
+}
 
 async function runningAgents($: EngineInterface): Promise<number> {
   return (await $.agent.list().catch(() => [])).filter(a => a.status === 'running').length
@@ -580,6 +603,9 @@ export const register: Register = on => {
     idle.lastUserAt = await $.clock.now()
     $.clock.every(IDEAS_MS, () => {
       void nudgeIdeas($)
+    })
+    $.clock.every(FOLLOWUP_MS, () => {
+      void deliverFollowups($)
     })
     void resumeIfUpdated($)
     return next(e)
