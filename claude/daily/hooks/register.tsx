@@ -199,8 +199,12 @@ async function deliverFollowups($: EngineInterface) {
     if (ran.exitCode !== 0) return
     const due = pendingFollowups(parseCards(ran.stdout), await $.session.id(), followups.delivered)
     if (due.length === 0) return
-    for (const c of due) followups.delivered.set(c.id, c.discussion_count)
-    void $.prompt.submit({ text: followupPrompt(due) }).catch(() => $.ui.toast('daily: delivering a decisions follow-up failed'))
+    const sent = await $.prompt.submit({ text: followupPrompt(due) }).then(
+      () => true,
+      () => false,
+    )
+    if (sent) for (const c of due) followups.delivered.set(c.id, c.discussion_count)
+    else $.ui.toast('daily: delivering a decisions follow-up failed; the next check retries')
   } catch {
     // the next tick tries again
   } finally {

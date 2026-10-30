@@ -25,7 +25,7 @@ export function decideList(): Promise<string> {
 export type FollowupDeps = {
   list: () => Promise<string>;
   session: string;
-  send: (text: string) => void;
+  send: (text: string) => unknown;
 };
 
 export class FollowupDelivery {
@@ -43,8 +43,8 @@ export class FollowupDelivery {
     try {
       const due = pendingFollowups(parseCards(await this.deps.list()), this.deps.session, this.delivered);
       if (due.length === 0) return;
+      await this.deps.send(followupPrompt(due));
       for (const c of due) this.delivered.set(c.id, c.discussion_count);
-      this.deps.send(followupPrompt(due));
     } finally {
       this.isChecking = false;
     }

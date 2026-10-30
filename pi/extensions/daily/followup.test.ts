@@ -30,6 +30,23 @@ test("a follow-up on this session's answer card is sent once, a newer one again"
   assert.deepEqual(sent, [followupPrompt([CARD]), followupPrompt([next])]);
 });
 
+test("a follow-up whose send failed is sent again on the next tick", async () => {
+  const sent: string[] = [];
+  let fail = true;
+  const f = new FollowupDelivery({
+    list: async () => JSON.stringify([CARD]),
+    session: "pid:42",
+    send: (text) => {
+      if (fail) throw new Error("busy");
+      sent.push(text);
+    },
+  });
+  await assert.rejects(f.tick());
+  fail = false;
+  await f.tick();
+  assert.deepEqual(sent, [followupPrompt([CARD])]);
+});
+
 test("another session's card or a failed list sends nothing", async () => {
   for (const stdout of [JSON.stringify([{ ...CARD, session: "pid:7" }]), ""]) {
     const { f, sent } = setup(() => stdout);
