@@ -46,7 +46,7 @@
 # times out or the budget is spent, that MR's events go out unmarked, with a
 # note on stderr and a gitlab-approvals friction line, and the run carries on.
 #
-# When Jira or GitLab is down (not on a timeout), `wait-for <source> --detach`
+# When Jira is down (not on a timeout), `wait-for <source> --detach`
 # starts in the background (CHANGES_SINCE_WAIT_FOR names another command), so
 # the recovery is noted; its output is dropped and a failing waiter changes nothing.
 #
@@ -63,7 +63,7 @@ friction_log() { command -v friction >/dev/null 2>&1 && friction "$@" >/dev/null
 down() {
   [ ! -e "$TIMED_OUT" ] || { echo "changes-since: timed out waiting for Jira or GitLab" >&2; exit 75; }
   friction_log --source "$1" service_down "$2"
-  case "$1" in jira|gitlab) "${CHANGES_SINCE_WAIT_FOR:-wait-for}" "$1" --detach </dev/null >/dev/null 2>&1 || true ;; esac
+  case "$1" in jira) "${CHANGES_SINCE_WAIT_FOR:-wait-for}" "$1" --detach </dev/null >/dev/null 2>&1 || true ;; esac
   die "$2"
 }
 HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
