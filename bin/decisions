@@ -13,6 +13,7 @@ BIN="${DECISIONS_BIN:-$HOME/.local/share/decisions/bin/decisions}"
 STATE="${RUN_DAY_STATE_DIR:-$HOME/.local/state/run-day}"
 export DECISIONS_DIR="${DECISIONS_DIR:-$STATE/decisions}"
 export DECISIONS_MR_STRIP="${DECISIONS_MR_STRIP-ecfx-}"
+export DECISIONS_ICONS="${DECISIONS_ICONS-nerd}"
 export DECISIONS_ON_ANSWER="${DECISIONS_ON_ANSWER-$(printf %q "$HERE/run-day-inbox-answer")}"
 export DECISIONS_TELEGRAM_TOKEN_CMD="${DECISIONS_TELEGRAM_TOKEN_CMD-$(printf %q "$HOME/.local/bin/secret") DECISIONS_TELEGRAM_BOT}"
 

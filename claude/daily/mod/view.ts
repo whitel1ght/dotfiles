@@ -3,6 +3,8 @@ import type { AgentLite, Item, PanelGroup, Row, RunItem } from './types.ts'
 
 const LIVE = new Set(['pending', 'running', 'waiting'])
 const ORDER = ['Merge', 'First', 'Today', 'If time', UNPLANNED]
+// Nerd Font (Font Awesome) glyphs, written as escapes: private-use characters are invisible in most editors.
+const ICON = { running: '\u{f013}', needsYou: '\u{f256}', inbox: '\u{f01c}', withYou: '\u{f08e}' }
 
 function byKey(agents: AgentLite[], key: string): AgentLite | null {
   const re = new RegExp(`(?<![a-z0-9-])${key.replace(/[^a-z0-9-]/g, '\\$&')}(?![a-z0-9-])`)
@@ -33,9 +35,9 @@ export function statusLine(rows: Row[], inbox = 0): string {
   const running = rows.filter(r => r.running).length
   const needs = rows.filter(r => r.needsYou).length
   let line = `day ${done}/${rows.length}`
-  if (running > 0) line += ` · ⚙ ${running} running`
-  if (needs > 0) line += ` · ✋ ${needs} needs you`
-  if (inbox > 0) line += ` · 📥 ${inbox}`
+  if (running > 0) line += ` · ${ICON.running} ${running} running`
+  if (needs > 0) line += ` · ${ICON.needsYou} ${needs} needs you`
+  if (inbox > 0) line += ` · ${ICON.inbox} ${inbox}`
   return line
 }
 
@@ -55,9 +57,9 @@ export function panelGroups(rows: Row[]): PanelGroup[] {
         text: r.item.text,
         needsYou: r.needsYou,
         badges: [
-          ...(r.running ? ['⚙ running'] : []),
-          ...(r.needsYou ? ['✋ needs you'] : []),
-          ...(r.run && r.run.owner.startsWith('external:') ? ['↗ with you'] : []),
+          ...(r.running ? [`${ICON.running} running`] : []),
+          ...(r.needsYou ? [`${ICON.needsYou} needs you`] : []),
+          ...(r.run && r.run.owner.startsWith('external:') ? [`${ICON.withYou} with you`] : []),
           ...(r.run && r.run.mrs.length > 0 ? [r.run.mrs[0]] : []),
         ],
       })),

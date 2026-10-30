@@ -239,7 +239,7 @@ test('another session counts the inbox for its status line but runs no changes-s
   expect(s.calls.filter(isChangesSince).length).toBe(0)
   expect(s.prompts).toEqual([])
   expect(s.toasts).toEqual([])
-  expect(s.statuses.at(-1)).toContain('📥 1 · day runs elsewhere')
+  expect(s.statuses.at(-1)).toContain('\u{f01c} 1 · day runs elsewhere')
 })
 
 test('the status line says when the day has no owner, and says nothing extra in the owner', async ($, on) => {

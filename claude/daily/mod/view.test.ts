@@ -27,7 +27,7 @@ test('needsYou drops once the item is ticked', async () => {
 
 test('statusLine shows day done/total and only non-zero segments', async () => {
   const rows = joinRows(items, runs, [{ id: 'a1b2c3', description: '', status: 'running' }])
-  expect(statusLine(rows)).toBe('day 1/7 · ⚙ 1 running · ✋ 1 needs you')
+  expect(statusLine(rows)).toBe('day 1/7 · \u{f013} 1 running · \u{f256} 1 needs you')
   expect(statusLine(joinRows(items, [], []))).toBe('day 1/7')
   expect(statusLine([])).toBe('day 0/0')
 })
@@ -37,7 +37,7 @@ test('panelGroups orders Merge, First, Today, If time and badges rows', async ()
   expect(groups.map(g => g.group).join(',')).toBe('Merge,First,Today,If time')
   const today = groups[2].rows[0]
   expect(today.needsYou).toBe(true)
-  expect(today.badges.join('|')).toBe('⚙ running|✋ needs you|ecfx/ecfx-dashboard!2231')
+  expect(today.badges.join('|')).toBe('\u{f013} running|\u{f256} needs you|ecfx/ecfx-dashboard!2231')
 })
 
 test('items outside the known groups sort last', async () => {
@@ -53,9 +53,9 @@ test('newlyNeedsYou reports only keys that were not already flagged', async () =
 
 test('statusLine appends the inbox count only when it is above zero', async () => {
   const rows = joinRows(items, runs, [])
-  expect(statusLine(rows, 2)).toBe('day 1/7 · ✋ 1 needs you · 📥 2')
-  expect(statusLine(rows, 0)).toBe('day 1/7 · ✋ 1 needs you')
-  expect(statusLine([], 1)).toBe('day 0/0 · 📥 1')
+  expect(statusLine(rows, 2)).toBe('day 1/7 · \u{f256} 1 needs you · \u{f01c} 2')
+  expect(statusLine(rows, 0)).toBe('day 1/7 · \u{f256} 1 needs you')
+  expect(statusLine([], 1)).toBe('day 0/0 · \u{f01c} 1')
 })
 
 test('the Unplanned group comes after the known groups and its rows count in the day total', async () => {
@@ -67,7 +67,7 @@ test('the Unplanned group comes after the known groups and its rows count in the
 test('an item handed to a side session carries an external badge and is not running', async () => {
   const handed = runs.map(r => (r.key === 'ecfx-18171' ? { ...r, owner: 'external:ECFX-18171' } : r))
   const rows = joinRows(items, handed, [])
-  expect(panelGroups(rows).find(g => g.group === 'If time')?.rows[0].badges.join('|')).toBe('↗ with you')
+  expect(panelGroups(rows).find(g => g.group === 'If time')?.rows[0].badges.join('|')).toBe('\u{f08e} with you')
   expect(rows.find(r => r.key === 'ecfx-18171')?.running).toBe(false)
 })
 

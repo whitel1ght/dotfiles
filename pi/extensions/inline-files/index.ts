@@ -26,7 +26,7 @@ export default function (pi: ExtensionAPI) {
       ...attached.map((a) => `${a.mention} (${kb(a.bytes)})`),
       ...skipped.map((s) => theme.fg("warning", `${s.mention}: ${s.reason}`)),
     ];
-    let text = theme.fg("muted", `📎 ${parts.join(", ")}`);
+    let text = theme.fg("muted", `\u{f0c6} ${parts.join(", ")}`);
     if (options.expanded && typeof message.content === "string") text += `\n${theme.fg("dim", message.content)}`;
     else if (attached.length) text += theme.fg("dim", "  (ctrl+o to show)");
     return new Text(text, options.outputPad, 0);
