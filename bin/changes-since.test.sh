@@ -28,6 +28,7 @@ cat > "$STUBS/wait-for" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${FIX:?}/wait-for.log"
 echo 12345
+echo "waiter stderr noise" >&2
 [ -z "${WAITER_FAIL:-}" ]
 STUB
 chmod +x "$STUBS/wait-for"
@@ -402,16 +403,19 @@ out=$(CHANGES_SINCE_BACKOFF=0 JIRA_MYSELF_BODY='{"errorMessages":["Service unava
 assert_eq "1" "$rc" "a Jira error body that is not an auth failure: exit 1"
 assert_not_contains "$(errs)$(cat "$FIX/friction.log")" "JIRA_USER" "stderr and the friction log do not mention the credentials"
 assert_eq "--source jira service_down Jira unavailable, retry in a few minutes" "$(cat "$FIX/friction.log")" "one service_down record, with the retry message"
+assert_eq "jira --detach" "$(cat "$FIX/wait-for.log" 2>/dev/null)" "and a non-auth error body still starts the waiter"
 reset; cursor 2026-10-08T07:00:00Z
 out=$(CHANGES_SINCE_BACKOFF=0 JIRA_MYSELF_BODY='{"errorMessages":["Client must be authenticated to access this resource."]}' run); rc=$?
 assert_eq "1" "$rc" "a Jira auth failure: exit 1"
 assert_contains "$(errs)" "JIRA_USER/JIRA_TOKEN" "stderr gets the credentials hint"
 assert_eq "--source jira service_down Jira unavailable (are JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env still valid?)" "$(cat "$FIX/friction.log")" "and so does the service_down record"
+[ ! -e "$FIX/wait-for.log" ] && pass "and starts no waiter on a credentials failure" || fail "and starts no waiter on a credentials failure" "$(cat "$FIX/wait-for.log")"
 reset; cursor 2026-10-08T07:00:00Z
 out=$(CHANGES_SINCE_BACKOFF=0 JIRA_MISSING='JIRA_TOKEN missing in /x/secrets.env' run); rc=$?
 assert_eq "1" "$rc" "a missing Jira secret: exit 1"
 assert_contains "$(errs)" "JIRA_USER/JIRA_TOKEN" "stderr gets the credentials hint"
 assert_contains "$(cat "$FIX/friction.log")" "JIRA_USER/JIRA_TOKEN" "and so does the service_down record"
+[ ! -e "$FIX/wait-for.log" ] && pass "and starts no waiter for a missing secret" || fail "and starts no waiter for a missing secret" "$(cat "$FIX/wait-for.log")"
 reset; cursor 2026-10-08T07:00:00Z
 PATH="$STUBS:$PATH" FIX="$FIX" "$TEST_DIR/glab-gate" down --source end-day "GitLab unavailable"
 out=$(run); rc=$?
@@ -503,6 +507,7 @@ assert_eq "changes-since: Jira unavailable, retry in a few minutes" "$(errs)" "a
 reset; cursor 2026-10-08T07:00:00Z
 out=$(CHANGES_SINCE_WAIT_FOR=/nonexistent/wait-for JIRA_MYSELF_FAIL=1 run); rc=$?
 assert_eq "1" "$rc" "a missing waiter leaves exit 1"
+assert_eq "changes-since: Jira unavailable, retry in a few minutes" "$(errs)" "and stderr has only the usual line"
 reset; cursor 2026-10-08T07:00:00Z
 out=$(run); rc=$?
 [ ! -e "$FIX/wait-for.log" ] && pass "a healthy run starts no waiter" || fail "a healthy run starts no waiter" "$(cat "$FIX/wait-for.log")"
