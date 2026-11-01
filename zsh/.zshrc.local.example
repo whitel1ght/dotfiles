@@ -4,10 +4,13 @@
 # Server configurations
 export CLOUD=your.server.ip.here
 
-# Proxy settings (if needed)
-export HTTP_PROXY=http://127.0.0.1:2080
-export HTTPS_PROXY=http://127.0.0.1:2080
-export http_proxy=http://127.0.0.1:2080
+# No proxy environment variables here on purpose.
+#
+# Routing is done below the application layer by the sing-box TUN setup in
+# proxy/ (see proxy/README.md), so HTTP_PROXY and friends must stay unset.
+# An empty value is NOT "no proxy": tools that test only whether the variable
+# is set will treat "" as a real proxy and fail. If a tool needs to bypass the
+# tunnel, add its apex domain to proxy/direct-domains.txt instead.
 
 # Personal server aliases
 alias pull_notes="rsync -chavzP -e 'ssh -p 10001' username@server.ip:/path/to/notes $HOME"

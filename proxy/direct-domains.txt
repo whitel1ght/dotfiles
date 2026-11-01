@@ -1,0 +1,41 @@
+# Domains that stay OFF the VPS. Everything else goes through it.
+#
+# One apex domain per line. The renderer matches the apex exactly AND all of
+# its subdomains, so "apple.com" covers "captive.apple.com" and "push.apple.com"
+# but does not accidentally match "notapple.com".
+#
+# A single-label entry is a TLD: "ru" becomes the suffix ".ru" and sends the
+# whole TLD direct. That is deliberate here — see the RU/BY group below — but
+# it is a wide brush, so do not add one casually.
+#
+# Edit this file, then run: proxyctl reload
+
+# --- Apple ------------------------------------------------------------------
+# macOS software update, the App Store, iCloud and push all work better from
+# the home IP: downloads are faster, and the App Store and iCloud keychain
+# behave oddly when the account's country and the egress country disagree.
+# captive.apple.com is what macOS asks before it shows a public-wifi login
+# page; if that answer comes from the VPS, the portal never appears.
+apple.com
+icloud.com
+mzstatic.com
+aaplimg.com
+cdn-apple.com
+apple-cloudkit.com
+itunes.com
+appstore.com
+me.com
+mac.com
+
+# --- Russia and Belarus -----------------------------------------------------
+# The VPS is not in either country, and plenty of RU/BY services refuse or
+# misbehave for a foreign datacenter IP: banks, government services,
+# marketplaces, and the local CDNs the big sites fall back to. Listing the
+# TLDs keeps every current and future .ru/.by host on the home IP without
+# naming them one by one.
+ru
+by
+# .su is the Soviet-era TLD still used by RU sites.
+su
+# .рф, the Cyrillic TLD. Happens to be the same suffix in punycode.
+# xn--p1ai

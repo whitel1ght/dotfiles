@@ -1,98 +1,36 @@
-# ============================================================================
-# ZSH CONFIGURATION
-# ============================================================================
+#wiki If you come from bash you might have to change your $PATH.
+# export PATH=$HOME/bin:$HOME/.local/bin:/usr/local/bin:$PATH
 
-# -----------------------------------------------------------------------------
-# POWERLEVEL10K INSTANT PROMPT
-# -----------------------------------------------------------------------------
-if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
-  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
-fi
-
-# -----------------------------------------------------------------------------
-# OH-MY-ZSH CONFIGURATION
-# -----------------------------------------------------------------------------
+# Path to your Oh My Zsh installation.
 export ZSH="$HOME/.oh-my-zsh"
-ZSH_THEME="powerlevel10k/powerlevel10k"
 
-# Zsh options
-setopt autocd autopushd
-ENABLE_CORRECTION="true"
+# See https://github.com/ohmyzsh/ohmyzsh/wiki/Themes
+ZSH_THEME="robbyrussell"
 
-# Plugins
-plugins=(git zsh-autosuggestions brew sudo)
+# Which plugins would you like to load?
+plugins=(git zsh-autosuggestions zsh-syntax-highlighting)
 
 source $ZSH/oh-my-zsh.sh
 
-# -----------------------------------------------------------------------------
-# ALIASES
-# -----------------------------------------------------------------------------
-# Editor shortcuts
+alias zshconfig="nvim ~/.zshrc"
+alias ohmyzsh="nvim ~/.oh-my-zsh"
 alias vim="nvim"
-alias vi="nvim"
-alias vimconfig="vim ~/.config/nvim/init.vim"
-alias zshconfig="vim ~/.zshrc"
+alias ls="eza --icons='always' -1"
 
-# Terminal config shortcuts
-alias ohmyzsh="vim ~/.oh-my-zsh"
-
-# Git productivity
-alias today='git log --all --pretty=format:"*%h - %s" --after="$(date +%Y-%m-%d) 00:00" --until="$(date +%Y-%m-%d) 23:59" --author="`git config user.name`" | pbcopy'
-alias yesterday='git log --all --pretty=format:"*%h - %s" --after="$(date -v -1d +%Y-%m-%d) 00:00" --until="$(date -v -1d +%Y-%m-%d) 23:59" --author="`git config user.name`" | pbcopy'
-
-# File listing
-alias eza='eza -1 --icons'
-
-# Better grep
-grep='grep --color=auto --exclude-dir={.bzr,CVS,.git,.hg,.svn}'
-
-# Architecture-specific
-alias io="arch -x86_64 io"
-
-# -----------------------------------------------------------------------------
-# PATH CONFIGURATION
-# -----------------------------------------------------------------------------
-# Homebrew paths
-export PATH="/opt/homebrew/opt/jpeg/bin:$PATH"
-export PATH="/opt/homebrew/opt/ruby/bin:$PATH"
-
-# User binaries
-export PATH="$HOME/.codeium/windsurf/bin:$PATH"
-export PATH="$HOME/.cargo/bin:$PATH"
-export PATH="$HOME/.local/bin:$PATH"
-
-# -----------------------------------------------------------------------------
-# DEVELOPMENT TOOLS
-# -----------------------------------------------------------------------------
-# Perl
-if (command -v perl && command -v cpanm) >/dev/null 2>&1; then
-  test -d "$HOME/perl5/lib/perl5" && eval $(perl -I "$HOME/perl5/lib/perl5" -Mlocal::lib)
-fi
-
-# Node Version Manager
+# nvm
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
 
-# SDKMAN (must be at end for proper initialization)
-export SDKMAN_DIR="$HOME/.sdkman"
-[[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]] && source "$HOME/.sdkman/bin/sdkman-init.sh"
+export PATH="$PATH:/opt/nvim-linux64/bin"
 
-# -----------------------------------------------------------------------------
-# ADDITIONAL TOOLS
-# -----------------------------------------------------------------------------
-# Zoxide (better cd)
 eval "$(zoxide init zsh)"
 
-# Syntax highlighting
-source "$HOME/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+# Install Ruby Gems to ~/gems
+export GEM_HOME="$HOME/gems"
+export PATH="$HOME/gems/bin:$PATH"
+source "/etc/profile.d/rvm.sh"
+export PATH="$HOME/.local/bin:$PATH"
 
-# Powerlevel10k configuration
-[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
-
-# -----------------------------------------------------------------------------
-# PRIVATE CONFIGURATION
-# -----------------------------------------------------------------------------
 # Load private/local configurations (API keys, server configs, etc.)
 [[ -f ~/.zshrc.local ]] && source ~/.zshrc.local
-

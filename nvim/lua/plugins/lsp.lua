@@ -6,6 +6,16 @@ return {
       "williamboman/mason-lspconfig.nvim",
     },
     config = function()
+      -- vim.fs.root replaces lspconfig.util.root_pattern. Touching
+      -- `require('lspconfig')` at all -- even for the .util submodule --
+      -- triggers the deprecation warning and a full traceback on startup.
+      local function root_pattern(...)
+        local patterns = { ... }
+        return function(bufnr)
+          return vim.fs.root(bufnr, patterns)
+        end
+      end
+
       local border = {
         {"🭽", "FloatBorder"},
         {"▔", "FloatBorder"},
@@ -33,7 +43,7 @@ return {
         capabilities = require('cmp_nvim_lsp').default_capabilities()
       end
 
-      -- Common on_attach function for LSP clients
+      -- Common on_attach for every LSP client
       local lsp_attach = function(client, bufnr)
         local opts = {buffer = bufnr}
         vim.keymap.set('n', 'K', '<cmd>lua vim.lsp.buf.hover()<cr>', opts)
@@ -46,6 +56,13 @@ return {
         vim.keymap.set({'n', 'x'}, '<F3>', '<cmd>lua vim.lsp.buf.format({async = true})<cr>', opts)
         vim.keymap.set('n', '<F4>', '<cmd>lua vim.lsp.buf.code_action()<cr>', opts)
       end
+
+      -- Defaults applied to every server, so the per-server setup() calls below
+      -- no longer have to repeat capabilities and on_attach.
+      vim.lsp.config('*', {
+        capabilities = capabilities,
+        on_attach = lsp_attach,
+      })
 
       -- Directly set global LSP handlers with border options
       local default_hover_handler = vim.lsp.handlers.hover
@@ -62,23 +79,24 @@ return {
         return default_signature_help_handler(err, result, ctx, config)
       end
 
+      local tsdk = vim.fn.stdpath("data") .. "/mason/packages/typescript-language-server/node_modules/typescript/lib"
+      local js_root = root_pattern('tsconfig.json', 'jsconfig.json', 'package.json', '.git')
+
       -- ts_ls (TypeScript Language Server) configuration
-      require('lspconfig').ts_ls.setup({
-        capabilities = capabilities,
+      vim.lsp.config('ts_ls', {
         filetypes = { 'javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'vue' },
-        tsdk = vim.fn.stdpath("data") .. "/mason/packages/typescript-language-server/node_modules/typescript/lib",
+        tsdk = tsdk,
         init_options = {
           plugins = {
             vue_typescript_plugin,
           },
         },
-        on_attach = lsp_attach,
-        root_dir = require('lspconfig.util').root_pattern('tsconfig.json', 'jsconfig.json', 'package.json', '.git'),
+        root_dir = js_root,
       })
 
-      -- volar (Vue Language Server) configuration
-      require('lspconfig').volar.setup({
-        capabilities = capabilities,
+      -- vue_ls is the current name for the server the old config enabled as
+      -- `volar`; the two are the same package.
+      vim.lsp.config('vue_ls', {
         filetypes = { 'vue' },
         settings = {
           vue = {
@@ -90,39 +108,23 @@ return {
             },
           },
           typescript = {
-            tsdk = vim.fn.stdpath("data") .. "/mason/packages/typescript-language-server/node_modules/typescript/lib",
+            tsdk = tsdk,
           },
           javascript = {
             validate = true,
           },
         },
-        on_attach = function(client, bufnr)
-          lsp_attach(client, bufnr)
-        end,
-        root_dir = require('lspconfig.util').root_pattern('tsconfig.json', 'jsconfig.json', 'package.json', '.git'),
+        root_dir = js_root,
       })
 
       -- Other server configurations
-      require('lspconfig').eslint.setup({
-        capabilities = capabilities,
-        on_attach = lsp_attach,
-      })
-      require('lspconfig').jsonls.setup({
-        capabilities = capabilities,
-        on_attach = lsp_attach,
-      })
-      require('lspconfig').cssls.setup({
-        capabilities = capabilities,
-        on_attach = lsp_attach,
-      })
-      require('lspconfig').html.setup({
-        capabilities = capabilities,
-        on_attach = lsp_attach,
-      })
+      vim.lsp.config('eslint', {})
+      vim.lsp.config('jsonls', {})
+      vim.lsp.config('cssls', {})
+      vim.lsp.config('html', {})
 
       -- lua_ls configuration
-      require('lspconfig').lua_ls.setup({
-        capabilities = capabilities,
+      vim.lsp.config('lua_ls', {
         settings = {
           Lua = {
             runtime = {
@@ -153,41 +155,19 @@ return {
             },
           },
         },
-        on_attach = function(client, bufnr)
-          lsp_attach(client, bufnr)
-        end,
       })
 
-      require('lspconfig').ruby_lsp.setup({
-        capabilities = capabilities,
-        on_attach = lsp_attach,
+      -- mason-lspconfig runs with automatic_enable = false, so this is the
+      -- single place that actually starts servers.
+      vim.lsp.enable({
+        'ts_ls',
+        'vue_ls',
+        'eslint',
+        'jsonls',
+        'cssls',
+        'html',
+        'lua_ls',
       })
-
-      -- Elixir LS configuration
-      require('lspconfig').elixirls.setup({
-        capabilities = capabilities,
-        cmd = { vim.fn.stdpath("data") .. "/mason/packages/elixir-ls/language_server.sh" },
-        settings = {
-          elixirLS = {
-            -- I choose to disable dialyzer for now, I can enable it as needed
-            dialyzerEnabled = false,
-            -- I also choose to turn off the auto dep fetching feature.
-            -- It often get things wrong and I'd rather do it manually
-            fetchDeps = false,
-            enableTestLenses = false,
-            suggestSpecs = false,
-          }
-        },
-        on_attach = function(client, bufnr)
-          lsp_attach(client, bufnr)
-
-          -- Optional: Disable formatting if you prefer to use a dedicated formatter
-          -- client.server_capabilities.documentFormattingProvider = false
-          -- client.server_capabilities.documentRangeFormattingProvider = false
-        end,
-        root_dir = require('lspconfig.util').root_pattern('mix.exs', '.git'),
-      })
-
     end
   },
   {
@@ -203,9 +183,7 @@ return {
           'html',
           'jsonls',
           'eslint',
-          'vue_ls',
-          'ruby_lsp',
-          'elixirls'
+          'vue_ls'
         },
         automatic_enable = false,
         automatic_installation = true,

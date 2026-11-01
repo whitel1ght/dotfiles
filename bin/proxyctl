@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# Control the sing-box TUN proxy.
+#
+# Routing lives in dotfiles/proxy/. Edit direct-domains.txt (kept off the VPS),
+# block-domains.txt (rejected) or reader-domains.txt (blocked except for the
+# feed reader), then `proxyctl reload`. Everything not listed goes through the
+# VPS; there is no runtime switch that overrides the policy.
+# Secrets live in ~/.config/sing-box/secrets.env and never enter git.
+#
+# This one script drives both macOS (launchd) and Linux (systemd); it picks the
+# service backend from uname. The render pipeline is identical either way.
+#
+# The iPhone runs Happ with the same split and blocks nothing. `proxyctl
+# happ` shows its routing profile as a QR code to scan with the camera, rendered
+# from direct-domains.txt, so re-run it after editing that list. `proxyctl happ
+# server` shows the VPS itself, for a first-time setup; that QR carries the
+# credentials, so show it only to the phone.
+# The QR opens as an image in the desktop viewer; add --terminal to print it in
+# the shell instead.
+set -euo pipefail
+
+DOTFILES="${DOTFILES:-$HOME/projects/dotfiles}"
+PROXY_DIR="$DOTFILES/proxy"
+SECRETS="$HOME/.config/sing-box/secrets.env"
+
+# --- Platform -----------------------------------------------------------------
+# Paths and the service manager differ; the policy (domain lists, render pipeline,
+# proxyctl verbs) does not. Keep the branch here so it is obvious what is
+# platform-specific and what is shared.
+case "$(uname -s)" in
+  Darwin)
+    OS=darwin
+    RUNTIME_DIR="/usr/local/etc/sing-box"
+    RUNTIME_CFG="$RUNTIME_DIR/config.json"
+    INSTALL_GROUP="wheel"
+    PLIST="/Library/LaunchDaemons/local.singbox.plist"
+    LABEL="local.singbox"
+    LOG="/var/log/sing-box.log"
+    QRENCODE_HINT="brew install qrencode"
+    ;;
+  Linux)
+    OS=linux
+    RUNTIME_DIR="/etc/sing-box"
+    RUNTIME_CFG="$RUNTIME_DIR/config.json"
+    INSTALL_GROUP="root"
+    UNIT="sing-box"
+    UNIT_OVERRIDE="/etc/systemd/system/sing-box.service"
+    QRENCODE_HINT="sudo apt install qrencode"
+    ;;
+  *)
+    echo "proxyctl: unsupported OS: $(uname -s)" >&2
+    exit 1
+    ;;
+esac
+
+die() { echo "proxyctl: $*" >&2; exit 1; }
+
+unit_installed() {
+  [ "$OS" = darwin ] && { [ -f "$PLIST" ]; return; }
+  # Only our override counts. The unit shipped in the .deb runs as
+  # User=sing-box and cannot read the mode-600 root:root config, so treating it
+  # as installed would let `on` start a daemon that immediately fails.
+  [ -f "$UNIT_OVERRIDE" ]
+}
+
+service_on() {
+  if [ "$OS" = darwin ]; then
+    sudo launchctl bootstrap system "$PLIST" 2>/dev/null \
+      || sudo launchctl kickstart -k "system/$LABEL"
+  else
+    unit_installed || die "systemd unit not installed; run ./install.sh, or:
+  sudo install -m 644 $PROXY_DIR/sing-box.service $UNIT_OVERRIDE
+  sudo systemctl daemon-reload"
+    # enable so it survives a reboot, which is what the plist's RunAtLoad gives.
+    sudo systemctl enable --now "$UNIT"
+  fi
+}
+
+service_off() {
+  if [ "$OS" = darwin ]; then
+    sudo launchctl bootout "system/$LABEL" 2>/dev/null || true
+  else
+    # disable as well as stop: on macOS bootout removes it from launchd, so a
+    # plain stop would leave it coming back at boot and not match.
+    sudo systemctl disable --now "$UNIT" 2>/dev/null || true
+  fi
+}
+
+service_restart() {
+  if [ "$OS" = darwin ]; then
+    sudo launchctl kickstart -k "system/$LABEL"
+  else
+    sudo systemctl restart "$UNIT"
+  fi
+}
+
+render() {
+  [ -f "$SECRETS" ] || die "missing $SECRETS (copy proxy/secrets.env.example)"
+  local tmp; tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' RETURN
+  "$PROXY_DIR/render.py" "$PROXY_DIR/config.template.json" \
+    "$PROXY_DIR/direct-domains.txt" "$PROXY_DIR/block-domains.txt" \
+    "$PROXY_DIR/reader-domains.txt" "$SECRETS" "$tmp"
+  sing-box check -c "$tmp" || die "rendered config is invalid; not installing"
+  sudo mkdir -p "$RUNTIME_DIR"
+  sudo install -m 600 -o root -g "$INSTALL_GROUP" "$tmp" "$RUNTIME_CFG"
+}
+
+open_qr() {
+  # The link runs to ~1.4 KB, so the code is ~120 modules a side: too big for a
+  # terminal, sharp as an image. The file holds the link, credentials included
+  # for `server`, so it is private and removed shortly after.
+  local png; png="$(mktemp -t happ-qr)"
+  qrencode -t PNG -o "$png" -s 8 -m 4 "$1"
+  if [ "$OS" = darwin ]; then
+    open -a Preview "$png"
+  else
+    xdg-open "$png" >/dev/null 2>&1 || true
+  fi
+  (sleep 120; rm -f "$png") >/dev/null 2>&1 &
+}
+
+case "${1:-status}" in
+  on)
+    render
+    service_on
+    echo "proxy on"
+    ;;
+  off)
+    service_off
+    echo "proxy off"
+    ;;
+  reload)
+    render
+    service_restart
+    # render() already printed the direct/blocked counts; recounting here
+    # only creates a second number that can drift from the rendered config.
+    echo "reloaded"
+    ;;
+  logs)
+    if [ "$OS" = darwin ]; then
+      sudo tail -f "$LOG"
+    else
+      sudo journalctl -u "$UNIT" -f
+    fi
+    ;;
+  status)
+    # Deliberately sudo-free: `sudo launchctl print` fails silently in a
+    # non-interactive shell and reports a running daemon as stopped. The pgrep
+    # pattern matches the Linux ExecStart line too.
+    if pgrep -f "sing-box run -c $RUNTIME_CFG" >/dev/null 2>&1; then
+      echo "daemon        : running"
+      echo -n "egress        : "
+      curl -s --max-time 8 https://www.cloudflare.com/cdn-cgi/trace 2>/dev/null \
+        | sed -n 's/^ip=//p' || echo "unreachable"
+    else
+      echo "daemon        : stopped"
+    fi
+    ;;
+  happ)
+    if [ "${2:-}" = server ]; then
+      [ -f "$SECRETS" ] || die "missing $SECRETS (copy proxy/secrets.env.example)"
+      link="$("$PROXY_DIR/render-happ.py" server "$SECRETS")"
+      what="the VPS server (contains credentials; don't share or screenshot it)"
+    else
+      link="$("$PROXY_DIR/render-happ.py" routing "$PROXY_DIR/direct-domains.txt")"
+      what="the routing profile (only the direct-domains.txt list stays off the VPS)"
+    fi
+    command -v qrencode >/dev/null || { echo "$link"; die "qrencode not installed ($QRENCODE_HINT); send the link above to the phone instead"; }
+    if [ "${3:-${2:-}}" = --terminal ]; then
+      qrencode -t ansiutf8 -m 2 "$link"
+    else
+      open_qr "$link"
+    fi
+    echo "Scan with the iPhone camera, open in Happ: $what."
+    ;;
+  *)
+    echo "usage: proxyctl {on|off|status|reload|logs|happ [server] [--terminal]}" >&2
+    exit 1
+    ;;
+esac

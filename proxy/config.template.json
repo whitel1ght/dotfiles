@@ -1,0 +1,57 @@
+{
+  "log": { "level": "warn", "timestamp": true },
+  "dns": {
+    "servers": [
+      { "type": "https", "tag": "dns-proxy", "server": "8.8.8.8", "detour": "proxy" },
+      { "type": "local", "tag": "dns-local" }
+    ],
+    "rules": [
+      { "domain": "__READER_EXACT__", "domain_suffix": "__READER_SUFFIX__", "process_name": [ "newsboat" ], "server": "dns-proxy" },
+      { "domain": "__BLOCK_EXACT__", "domain_suffix": "__BLOCK_SUFFIX__", "action": "reject" },
+      { "domain": "__DIRECT_EXACT__", "domain_suffix": "__DIRECT_SUFFIX__", "server": "dns-local" }
+    ],
+    "final": "dns-proxy",
+    "strategy": "prefer_ipv4"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "address": [ "172.19.0.1/30" ],
+      "auto_route": true,
+      "strict_route": true,
+      "route_exclude_address": [ "10.221.0.0/16", "54.213.49.194/32" ],
+      "stack": "gvisor"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "proxy",
+      "server": "__VLESS_SERVER__",
+      "server_port": __VLESS_PORT__,
+      "uuid": "__VLESS_UUID__",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "__VLESS_SNI__",
+        "utls": { "enabled": true, "fingerprint": "chrome" },
+        "reality": { "enabled": true, "public_key": "__VLESS_PBK__", "short_id": "__VLESS_SID__" }
+      }
+    },
+    { "type": "direct", "tag": "direct" }
+  ],
+  "route": {
+    "rules": [
+      { "action": "sniff" },
+      { "protocol": "dns", "action": "hijack-dns" },
+      { "ip_is_private": true, "outbound": "direct" },
+      { "domain": "__READER_EXACT__", "domain_suffix": "__READER_SUFFIX__", "process_name": [ "newsboat" ], "outbound": "proxy" },
+      { "domain": "__BLOCK_EXACT__", "domain_suffix": "__BLOCK_SUFFIX__", "action": "reject" },
+      { "domain": "__DIRECT_EXACT__", "domain_suffix": "__DIRECT_SUFFIX__", "outbound": "direct" }
+    ],
+    "final": "proxy",
+    "auto_detect_interface": true,
+    "default_domain_resolver": { "server": "dns-local" }
+  }
+}

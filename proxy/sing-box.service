@@ -1,0 +1,21 @@
+[Unit]
+Description=sing-box TUN proxy (dotfiles)
+Documentation=https://sing-box.sagernet.org
+After=network-online.target nss-lookup.target
+Wants=network-online.target
+
+[Service]
+# Runs as root for the same reason the macOS LaunchDaemon does: creating a TUN
+# interface, rewriting the routing table (auto_route) and installing the
+# anti-leak firewall rules (strict_route) all require CAP_NET_ADMIN. Running as
+# a user with ambient capabilities is enough for TUN alone, but the shipped
+# unit's User=sing-box cannot read the config, which is mode 600 root:root.
+Type=simple
+ExecStart=/usr/bin/sing-box run -c /etc/sing-box/config.json
+# KeepAlive equivalent: come back if the daemon dies.
+Restart=always
+RestartSec=5
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target
