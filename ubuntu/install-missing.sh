@@ -16,6 +16,7 @@ FZF_VERSION='0.61.3'
 FZF_AMD64_SHA256='6a4f4b211b6b8944c7320f66db468d731888aa86b19d5b0ccdf28fa0d0e06e47'
 FZF_ARM64_SHA256='0a15108bbf20f563e620cb7527515b7db6fcf6ecfec2a2540a58585b9f02c3c6'
 KEYD_VERSION='2.6.0'
+KEYD_COMMIT='7c0aecb'
 KEYD_SHA256='697089681915b89d9e98caf93d870dbd4abce768af8a647d54650a6a90744e26'
 PI_SUBAGENTS_VERSION='0.76.0'
 
@@ -35,7 +36,7 @@ Usage:
   ubuntu/install-missing.sh                         # preview only (default)
   ubuntu/install-missing.sh --dry-run
   ubuntu/install-missing.sh --apply [--skip-pi]
-  ubuntu/install-missing.sh --apply --configure-keyboard --device-id VVVV:PPPP
+  ubuntu/install-missing.sh --apply --configure-keyboard --device-id VVVV:PPPP:HHHHHHHH
 
 The installer adds apt build/runtime dependencies, installs pinned tmux/fzf
 under ~/.local/opt/dotfiles-toolchain with links in ~/.local/bin, builds pinned
@@ -90,7 +91,7 @@ parse_args() {
                 shift
                 ;;
             --device-id)
-                [ "$#" -ge 2 ] || die '--device-id requires VENDOR:PRODUCT'
+                [ "$#" -ge 2 ] || die '--device-id requires VENDOR:PRODUCT:UNIQUE_ID'
                 DEVICE_ID="$2"
                 shift 2
                 ;;
@@ -107,7 +108,7 @@ parse_args() {
     done
 
     if [ "$CONFIGURE_KEYBOARD" -eq 1 ]; then
-        [[ "$DEVICE_ID" =~ ^[[:xdigit:]]{4}:[[:xdigit:]]{4}$ ]] || die '--configure-keyboard requires --device-id VENDOR:PRODUCT'
+        [[ "$DEVICE_ID" =~ ^[[:xdigit:]]{4}:[[:xdigit:]]{4}:[[:xdigit:]]{8}$ ]] || die '--configure-keyboard requires the full --device-id VENDOR:PRODUCT:UNIQUE_ID from keyd monitor'
     elif [ -n "$DEVICE_ID" ]; then
         die '--device-id is accepted only with --configure-keyboard'
     fi
@@ -125,7 +126,7 @@ Ubuntu missing-dependency plan
   tool location: $TOOL_ROOT and $USER_BIN
 EOF
     if [ "$CONFIGURE_KEYBOARD" -eq 1 ]; then
-        printf '  keyboard:    enable Caps Lock -> grave for verified ID %s after confirmation\n' "$DEVICE_ID"
+        printf '  keyboard:    enable Caps Lock -> grave for requested full ID %s after verification and confirmation\n' "$DEVICE_ID"
     else
         printf '  keyboard:    install keyd only; do not enable service or change mappings\n'
     fi
@@ -135,8 +136,9 @@ EOF
 }
 
 verify_keyboard_device() {
-    local wanted_vendor="${DEVICE_ID%%:*}" wanted_product="${DEVICE_ID##*:}"
+    local wanted_vendor wanted_product ignored_unique
     local event vendor product properties
+    IFS=: read -r wanted_vendor wanted_product ignored_unique <<<"$DEVICE_ID"
     wanted_vendor="${wanted_vendor,,}"
     wanted_product="${wanted_product,,}"
     command -v udevadm >/dev/null 2>&1 || die 'udevadm is required to verify a keyboard device ID'
@@ -148,11 +150,11 @@ verify_keyboard_device() {
         [ "$vendor:$product" = "$wanted_vendor:$wanted_product" ] || continue
         properties="$(udevadm info --query=property --path="$event" 2>/dev/null || true)"
         if grep -qx 'ID_INPUT_KEYBOARD=1' <<<"$properties"; then
-            log "verified $DEVICE_ID is present as a keyboard at $event"
+            log "verified the vendor/product prefix for full keyd ID $DEVICE_ID belongs to a keyboard at $event"
             return 0
         fi
     done
-    die "device $DEVICE_ID was not found as a keyboard in sysfs; recheck with sudo keyd monitor"
+    die "device prefix for $DEVICE_ID was not found as a keyboard in sysfs; recheck the full ID with sudo keyd monitor"
 }
 
 confirm_keyboard_activation() {
@@ -323,7 +325,7 @@ install_keyd() {
     tar -xzf "$archive" -C "$source_dir" --strip-components=1
     jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '2')"
     log "building upstream keyd v$KEYD_VERSION"
-    make -C "$source_dir" -j"$jobs"
+    make -C "$source_dir" -j"$jobs" COMMIT="$KEYD_COMMIT"
     "$source_dir/bin/keyd" --help >/dev/null 2>&1 || die 'built keyd binary failed its smoke test'
     sudo make -C "$source_dir" install PREFIX=/usr/local
     sudo systemctl daemon-reload

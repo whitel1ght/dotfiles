@@ -13,12 +13,13 @@ MARKER='# Managed by dotfiles keyboard-linux-setup.sh.'
 usage() {
     cat <<'EOF'
 Usage:
-  keyboard-linux-setup.sh apply --device-id VENDOR:PRODUCT [--dry-run]
+  keyboard-linux-setup.sh apply --device-id VENDOR:PRODUCT:UNIQUE_ID [--dry-run]
   keyboard-linux-setup.sh status
   keyboard-linux-setup.sh remove [--dry-run]
 
-Find the laptop keyboard ID with `sudo keyd monitor` or `lsusb`/udev tools.
-Use only a verified ID; this deliberately does not install a wildcard mapping.
+Copy the complete laptop keyboard ID from `sudo keyd monitor` (format
+VENDOR:PRODUCT:UNIQUE_ID). Use only that verified ID; wildcards and shortened
+vendor/product prefixes are deliberately rejected.
 The apply/remove operations require root and restart keyd when needed.
 EOF
 }
@@ -56,13 +57,13 @@ apply() {
     shift
     while [ "$#" -gt 0 ]; do
         case "$1" in
-            --device-id) [ "$#" -ge 2 ] || die '--device-id requires VENDOR:PRODUCT'; id="$2"; shift 2 ;;
+            --device-id) [ "$#" -ge 2 ] || die '--device-id requires VENDOR:PRODUCT:UNIQUE_ID'; id="$2"; shift 2 ;;
             --dry-run) dry=1; shift ;;
             -h|--help) usage; return 0 ;;
             *) die "unknown apply option: $1" ;;
         esac
     done
-    [[ "$id" =~ ^[[:xdigit:]]{4}:[[:xdigit:]]{4}$ ]] || die 'provide a verified device ID in VENDOR:PRODUCT form'
+    [[ "$id" =~ ^[[:xdigit:]]{4}:[[:xdigit:]]{4}:[[:xdigit:]]{8}$ ]] || die 'provide the full verified keyd ID in VENDOR:PRODUCT:UNIQUE_ID form'
     [ -r "$TEMPLATE" ] || die "missing template: $TEMPLATE"
     config="$(sed "s/@KEYD_DEVICE_ID@/$id/" "$TEMPLATE")"
     config="$MARKER\n$config"

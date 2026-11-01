@@ -43,8 +43,7 @@ Preview first (this is the default; it performs no downloads or changes):
 Then, when ready, install the pinned tmux 3.5a and fzf 0.61.3 under
 `~/.local/opt/dotfiles-toolchain`, put symlinks in `~/.local/bin`, install
 `bat`/`fd-find` (and create compatibility links if needed), build/install keyd
-v2.6.0, and install only the
-pinned `pi-subagents@0.76.0` package:
+v2.6.0, and install only the pinned `pi-subagents@0.76.0` package:
 
 ```bash
 ./ubuntu/install-missing.sh --apply
@@ -60,12 +59,14 @@ Only after identifying the internal keyboard with `sudo keyd monitor`, activate
 the mapping separately with the exact verified device ID:
 
 ```bash
-./ubuntu/install-missing.sh --apply --configure-keyboard --device-id 1234:abcd
+./ubuntu/install-missing.sh --apply --configure-keyboard --device-id vvvv:pppp:hhhhhhhh
 ```
 
-The script checks that the ID exists as a keyboard in sysfs and requires typing
-`APPLY 1234:abcd` interactively. It installs a device-specific Caps Lock → grave
-rule, validates all keyd configs, and then enables/restarts keyd. Never pass a
+The script checks the ID's vendor/product prefix against keyboard devices in
+sysfs and requires typing `APPLY vvvv:pppp:hhhhhhhh` interactively. Supply the
+complete three-part ID shown by keyd, not just the vendor/product prefix. It
+installs a device-specific Caps Lock → grave rule, validates all keyd configs,
+and then enables/restarts keyd. Never pass a
 wildcard. If declining to configure the mapping, keyd remains installed but
 inactive; Caps Lock is not remapped.
 
@@ -114,7 +115,7 @@ opt-in:
 | `SKILLS_SYNC` | Refresh vendored Claude content from its declared upstream repos |
 | `CLAUDE_MARKETPLACE` | Build local wrappers and register the repository with Claude Code |
 | `CLAUDE_HOOKS` | Merge the dotfiles worktree hooks into Claude settings, preserving other hooks |
-| `KEYBOARD_SETUP` | Apply keyboard mapping only with `KEYBOARD_DEVICE_ID=vvvv:pppp` |
+| `KEYBOARD_SETUP` | Apply keyboard mapping only with `KEYBOARD_DEVICE_ID=vvvv:pppp:hhhhhhhh` |
 | `PROXY_SETUP` | Show proxy installation status; does not start/enable systemd |
 
 `DOTFILES_LINKS_ONLY=1` and `DRY_RUN=1` suppress optional actions even if their
@@ -133,17 +134,18 @@ or Escape. Existing i3 Super shortcuts and the US/RU Super+Space layout switch
 must remain intact.
 
 1. Install and verify `keyd` using its current upstream instructions.
-2. Identify the **laptop keyboard only** using the output of `sudo keyd monitor`
-   (or the device ID exposed under `/sys/class/input/`). Do not guess the ID or
-   use the wildcard `*` in `/etc/keyd`.
+2. Identify the **laptop keyboard only** using the complete three-part ID from
+   `sudo keyd monitor` (`vendor:product:unique-id`). Sysfs can confirm the
+   vendor/product prefix but does not provide keyd's complete unique ID. Do not
+   guess the ID or use the wildcard `*` in `/etc/keyd`.
 3. Preview the generated mapping:
    ```bash
-   ./keyboard-linux-setup.sh apply --device-id 1234:abcd --dry-run
+   ./keyboard-linux-setup.sh apply --device-id vvvv:pppp:hhhhhhhh --dry-run
    ```
-   Substitute the verified vendor/product ID.
+   Substitute the complete verified device ID copied from `keyd monitor`.
 4. Apply it explicitly:
    ```bash
-   sudo ./keyboard-linux-setup.sh apply --device-id 1234:abcd
+   sudo ./keyboard-linux-setup.sh apply --device-id vvvv:pppp:hhhhhhhh
    ./keyboard-linux-setup.sh status
    ```
 5. Verify Caps+`c` creates a tmux window; Caps+`j`/`a`/`o` invokes the configured
