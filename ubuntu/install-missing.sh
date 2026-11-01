@@ -22,7 +22,7 @@ PI_SUBAGENTS_VERSION='0.76.0'
 
 APPLY=0
 CONFIGURE_KEYBOARD=0
-DEVICE_ID=''
+DEVICE_IDS=()
 SKIP_PI=0
 MODE_SET=0
 WORK_DIR=''
@@ -36,7 +36,8 @@ Usage:
   ubuntu/install-missing.sh                         # preview only (default)
   ubuntu/install-missing.sh --dry-run
   ubuntu/install-missing.sh --apply [--skip-pi]
-  ubuntu/install-missing.sh --apply --configure-keyboard --device-id VVVV:PPPP:HHHHHHHH
+  ubuntu/install-missing.sh --apply --configure-keyboard \\
+      --device-id VVVV:PPPP:HHHHHHHH [--device-id ...]
 
 The installer adds apt build/runtime dependencies, installs pinned tmux/fzf
 under ~/.local/opt/dotfiles-toolchain with links in ~/.local/bin, builds pinned
@@ -92,7 +93,7 @@ parse_args() {
                 ;;
             --device-id)
                 [ "$#" -ge 2 ] || die '--device-id requires VENDOR:PRODUCT:UNIQUE_ID'
-                DEVICE_ID="$2"
+                DEVICE_IDS+=("$2")
                 shift 2
                 ;;
             --skip-pi)
@@ -108,8 +109,11 @@ parse_args() {
     done
 
     if [ "$CONFIGURE_KEYBOARD" -eq 1 ]; then
-        [[ "$DEVICE_ID" =~ ^[[:xdigit:]]{4}:[[:xdigit:]]{4}:[[:xdigit:]]{8}$ ]] || die '--configure-keyboard requires the full --device-id VENDOR:PRODUCT:UNIQUE_ID from keyd monitor'
-    elif [ -n "$DEVICE_ID" ]; then
+        [ "${#DEVICE_IDS[@]}" -gt 0 ] || die '--configure-keyboard requires at least one full --device-id from keyd monitor'
+        for id in "${DEVICE_IDS[@]}"; do
+            [[ "$id" =~ ^[[:xdigit:]]{4}:[[:xdigit:]]{4}:[[:xdigit:]]{8}$ ]] || die "invalid full keyd ID '$id'; use VENDOR:PRODUCT:UNIQUE_ID"
+        done
+    elif [ "${#DEVICE_IDS[@]}" -gt 0 ]; then
         die '--device-id is accepted only with --configure-keyboard'
     fi
 }
@@ -126,7 +130,7 @@ Ubuntu missing-dependency plan
   tool location: $TOOL_ROOT and $USER_BIN
 EOF
     if [ "$CONFIGURE_KEYBOARD" -eq 1 ]; then
-        printf '  keyboard:    enable Caps Lock -> grave for requested full ID %s after verification and confirmation\n' "$DEVICE_ID"
+        printf '  keyboard:    enable Caps Lock -> grave for requested full IDs %s after verification and confirmation\n' "${DEVICE_IDS[*]}"
     else
         printf '  keyboard:    install keyd only; do not enable service or change mappings\n'
     fi
@@ -136,9 +140,9 @@ EOF
 }
 
 verify_keyboard_device() {
-    local wanted_vendor wanted_product ignored_unique
+    local device_id="$1" wanted_vendor wanted_product ignored_unique
     local event vendor product properties
-    IFS=: read -r wanted_vendor wanted_product ignored_unique <<<"$DEVICE_ID"
+    IFS=: read -r wanted_vendor wanted_product ignored_unique <<<"$device_id"
     wanted_vendor="${wanted_vendor,,}"
     wanted_product="${wanted_product,,}"
     command -v udevadm >/dev/null 2>&1 || die 'udevadm is required to verify a keyboard device ID'
@@ -150,20 +154,20 @@ verify_keyboard_device() {
         [ "$vendor:$product" = "$wanted_vendor:$wanted_product" ] || continue
         properties="$(udevadm info --query=property --path="$event" 2>/dev/null || true)"
         if grep -qx 'ID_INPUT_KEYBOARD=1' <<<"$properties"; then
-            log "verified the vendor/product prefix for full keyd ID $DEVICE_ID belongs to a keyboard at $event"
+            log "verified the vendor/product prefix for full keyd ID $device_id belongs to a keyboard at $event"
             return 0
         fi
     done
-    die "device prefix for $DEVICE_ID was not found as a keyboard in sysfs; recheck the full ID with sudo keyd monitor"
+    die "device prefix for $device_id was not found as a keyboard in sysfs; recheck the full ID with sudo keyd monitor"
 }
 
 confirm_keyboard_activation() {
     [ -t 0 ] || die 'keyboard activation requires a terminal for the confirmation prompt'
-    printf '\nThis will enable keyd and change Caps Lock on device %s to emit grave.\n' "$DEVICE_ID" >&2
-    printf 'Confirm that `sudo keyd monitor` identified the laptop keyboard, then type APPLY %s: ' "$DEVICE_ID" >&2
-    local answer
+    printf '\nThis will enable keyd and map Caps Lock to grave on: %s\n' "${DEVICE_IDS[*]}" >&2
+    printf 'Confirm the IDs came from `sudo keyd monitor`, then type APPLY %s: ' "${DEVICE_IDS[*]}" >&2
+    local answer expected="APPLY ${DEVICE_IDS[*]}"
     IFS= read -r answer
-    [ "$answer" = "APPLY $DEVICE_ID" ] || die 'keyboard activation was not confirmed'
+    [ "$answer" = "$expected" ] || die 'keyboard activation was not confirmed'
 }
 
 require_apply_prerequisites() {
@@ -175,7 +179,7 @@ require_apply_prerequisites() {
     [ "${VERSION_ID:-}" = 24.04 ] || die "review package availability before using on Ubuntu ${VERSION_ID:-unknown}; this installer is pinned/tested for 24.04"
 
     if [ "$CONFIGURE_KEYBOARD" -eq 1 ]; then
-        verify_keyboard_device
+        for id in "${DEVICE_IDS[@]}"; do verify_keyboard_device "$id"; done
         confirm_keyboard_activation
     fi
     sudo -v
@@ -369,8 +373,10 @@ install_pi_package() {
 activate_keyboard() {
     [ "$CONFIGURE_KEYBOARD" -eq 1 ] || return 0
     sudo systemctl cat keyd.service >/dev/null 2>&1 || die 'keyd.service is not installed; refusing to write a mapping without a service unit'
-    log "applying the confirmed Caps Lock -> grave mapping for $DEVICE_ID"
-    sudo "$REPO_ROOT/keyboard-linux-setup.sh" apply --device-id "$DEVICE_ID"
+    local -a args=()
+    for id in "${DEVICE_IDS[@]}"; do args+=(--device-id "$id"); done
+    log "applying the confirmed Caps Lock -> grave mapping for ${DEVICE_IDS[*]}"
+    sudo "$REPO_ROOT/keyboard-linux-setup.sh" apply "${args[@]}"
 }
 
 run_validation() {

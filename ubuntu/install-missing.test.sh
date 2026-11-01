@@ -7,7 +7,8 @@ ROOT="$(mktemp -d)"
 trap 'rm -rf -- "$ROOT"' EXIT
 STUBS="$ROOT/stubs"
 LOG="$ROOT/commands.log"
-DEVICE_ID='1234:ABCD:89ABCDEF'
+DEVICE_ID='0001:0001:09b4e68d'
+EXTERNAL_ID='320f:5086:fc5f7b56'
 mkdir -p "$STUBS" "$ROOT/home"
 
 for command_name in sudo apt-get curl pi; do
@@ -33,8 +34,8 @@ grep -q 'npm:pi-subagents@0.76.0 only' <<<"$preview"
 [ ! -e "$LOG" ]
 [ ! -e "$HOME/.local" ]
 
-preview="$("$SCRIPT" --dry-run --configure-keyboard --device-id "$DEVICE_ID")"
-grep -q "enable Caps Lock -> grave for requested full ID $DEVICE_ID after verification and confirmation" <<<"$preview"
+preview="$("$SCRIPT" --dry-run --configure-keyboard --device-id "$DEVICE_ID" --device-id "$EXTERNAL_ID")"
+grep -q "enable Caps Lock -> grave for requested full IDs $DEVICE_ID $EXTERNAL_ID after verification and confirmation" <<<"$preview"
 if "$SCRIPT" --configure-keyboard >/dev/null 2>&1; then
     echo 'keyboard configuration without a device ID was accepted' >&2
     exit 1
@@ -43,7 +44,7 @@ if "$SCRIPT" --dry-run --device-id "$DEVICE_ID" >/dev/null 2>&1; then
     echo 'device ID without --configure-keyboard was accepted' >&2
     exit 1
 fi
-if "$SCRIPT" --dry-run --configure-keyboard --device-id 1234:ABCD >/dev/null 2>&1; then
+if "$SCRIPT" --dry-run --configure-keyboard --device-id 1234:abcd >/dev/null 2>&1; then
     echo 'short vendor/product prefix unexpectedly accepted' >&2
     exit 1
 fi

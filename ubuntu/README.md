@@ -55,20 +55,21 @@ refresh unrelated Pi packages. Installing the Pi package intentionally updates
 the user's Pi package settings; authentication and session files are untouched.
 Review the pinned versions and script diff before applying.
 
-Only after identifying the internal keyboard with `sudo keyd monitor`, activate
-the mapping separately with the exact verified device ID:
+After identifying each keyboard with `sudo keyd monitor`, a mapping-only
+activation (when keyd is already installed) is:
 
 ```bash
-./ubuntu/install-missing.sh --apply --configure-keyboard --device-id vvvv:pppp:hhhhhhhh
+sudo ./keyboard-linux-setup.sh apply \\
+  --device-id vvvv:pppp:hhhhhhhh --device-id vvvv:pppp:hhhhhhhh
 ```
 
-The script checks the ID's vendor/product prefix against keyboard devices in
-sysfs and requires typing `APPLY vvvv:pppp:hhhhhhhh` interactively. Supply the
-complete three-part ID shown by keyd, not just the vendor/product prefix. It
-installs a device-specific Caps Lock → grave rule, validates all keyd configs,
-and then enables/restarts keyd. Never pass a
-wildcard. If declining to configure the mapping, keyd remains installed but
-inactive; Caps Lock is not remapped.
+Supply the complete three-part IDs shown by keyd, not just vendor/product
+prefixes. Repeat `--device-id` for every keyboard you want mapped, including any
+already-mapped keyboard you want to keep. The helper validates all keyd configs
+before enabling/restarting the service. Never pass a wildcard. For a fresh host,
+`install-missing.sh --apply --configure-keyboard` also checks each ID's
+vendor/product prefix against keyboard devices in sysfs and requires typing
+`APPLY <id-1> <id-2>` interactively.
 
 If the Pi CLI is intentionally absent, `--skip-pi` skips the package installation.
 The updater never installs provider credentials, downloads local models, changes
@@ -140,12 +141,14 @@ must remain intact.
    guess the ID or use the wildcard `*` in `/etc/keyd`.
 3. Preview the generated mapping:
    ```bash
-   ./keyboard-linux-setup.sh apply --device-id vvvv:pppp:hhhhhhhh --dry-run
+   ./keyboard-linux-setup.sh apply --device-id vvvv:pppp:hhhhhhhh \\
+     --device-id vvvv:pppp:hhhhhhhh --dry-run
    ```
-   Substitute the complete verified device ID copied from `keyd monitor`.
+   Repeat `--device-id` for each keyboard and use the complete ID from `keyd monitor`.
 4. Apply it explicitly:
    ```bash
-   sudo ./keyboard-linux-setup.sh apply --device-id vvvv:pppp:hhhhhhhh
+   sudo ./keyboard-linux-setup.sh apply --device-id vvvv:pppp:hhhhhhhh \\
+     --device-id vvvv:pppp:hhhhhhhh
    ./keyboard-linux-setup.sh status
    ```
 5. Verify Caps+`c` creates a tmux window; Caps+`j`/`a`/`o` invokes the configured

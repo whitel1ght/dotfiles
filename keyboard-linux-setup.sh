@@ -13,13 +13,13 @@ MARKER='# Managed by dotfiles keyboard-linux-setup.sh.'
 usage() {
     cat <<'EOF'
 Usage:
-  keyboard-linux-setup.sh apply --device-id VENDOR:PRODUCT:UNIQUE_ID [--dry-run]
+  keyboard-linux-setup.sh apply --device-id VENDOR:PRODUCT:UNIQUE_ID [--device-id ...] [--dry-run]
   keyboard-linux-setup.sh status
   keyboard-linux-setup.sh remove [--dry-run]
 
-Copy the complete laptop keyboard ID from `sudo keyd monitor` (format
-VENDOR:PRODUCT:UNIQUE_ID). Use only that verified ID; wildcards and shortened
-vendor/product prefixes are deliberately rejected.
+Repeat --device-id for each keyboard you want to remap. Copy each complete ID
+from `sudo keyd monitor` (format VENDOR:PRODUCT:UNIQUE_ID). Wildcards and
+shortened vendor/product prefixes are deliberately rejected.
 The apply/remove operations require root and restart keyd when needed.
 EOF
 }
@@ -53,23 +53,37 @@ backup_existing() {
 }
 
 apply() {
-    local id='' dry=0 arg config
+    local id dry=0 line config
+    local -a ids=() normalized_ids=()
     shift
     while [ "$#" -gt 0 ]; do
         case "$1" in
-            --device-id) [ "$#" -ge 2 ] || die '--device-id requires VENDOR:PRODUCT:UNIQUE_ID'; id="$2"; shift 2 ;;
+            --device-id) [ "$#" -ge 2 ] || die '--device-id requires VENDOR:PRODUCT:UNIQUE_ID'; ids+=("$2"); shift 2 ;;
             --dry-run) dry=1; shift ;;
             -h|--help) usage; return 0 ;;
             *) die "unknown apply option: $1" ;;
         esac
     done
-    [[ "$id" =~ ^[[:xdigit:]]{4}:[[:xdigit:]]{4}:[[:xdigit:]]{8}$ ]] || die 'provide the full verified keyd ID in VENDOR:PRODUCT:UNIQUE_ID form'
+    [ "${#ids[@]}" -gt 0 ] || die 'provide at least one full keyd device ID'
+    for id in "${ids[@]}"; do
+        [[ "$id" =~ ^[[:xdigit:]]{4}:[[:xdigit:]]{4}:[[:xdigit:]]{8}$ ]] || die "invalid full keyd ID '$id'; use VENDOR:PRODUCT:UNIQUE_ID"
+        id="${id,,}"
+        [[ " ${normalized_ids[*]} " == *" $id "* ]] || normalized_ids+=("$id")
+    done
     [ -r "$TEMPLATE" ] || die "missing template: $TEMPLATE"
-    config="$(sed "s/@KEYD_DEVICE_ID@/$id/" "$TEMPLATE")"
-    config="$MARKER\n$config"
+    config="$(
+        printf '%s\n' "$MARKER"
+        while IFS= read -r line || [ -n "$line" ]; do
+            if [ "$line" = '@KEYD_DEVICE_ID@' ]; then
+                printf '%s\n' "${normalized_ids[@]}"
+            else
+                printf '%s\n' "$line"
+            fi
+        done < "$TEMPLATE"
+    )"
 
     if [ "$dry" -eq 1 ]; then
-        printf '%b' "$config"
+        printf '%s\n' "$config"
         return 0
     fi
     require_root
@@ -86,7 +100,7 @@ apply() {
 
     local tmp
     tmp="$(mktemp "$CONFIG_DIR/.dotfiles-capslock.XXXXXX")"
-    printf '%b' "$config" > "$tmp"
+    printf '%s\n' "$config" > "$tmp"
     chmod 644 "$tmp"
     if [ -f "$TARGET" ] && cmp -s "$tmp" "$TARGET"; then
         rm -f "$tmp"
@@ -94,7 +108,7 @@ apply() {
     else
         [ ! -e "$TARGET" ] || backup_existing "$TARGET"
         mv -f -- "$tmp" "$TARGET"
-        log "Installed Caps Lock → grave mapping for $id"
+        log "Installed Caps Lock → grave mapping for ${normalized_ids[*]}"
     fi
     keyd check || die 'keyd rejected the current configuration; the mapping file was left in place and the service was not started'
     systemctl daemon-reload
