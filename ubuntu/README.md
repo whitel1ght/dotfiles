@@ -24,15 +24,54 @@ The package lists are **review aids, not blindly installable lockfiles**:
 - `packages-work.txt`: optional reader and development tools.
 
 Check package availability and candidates first (`apt-cache policy <package>`).
-Ubuntu 24.04 repositories may not meet the required tmux/fzf/Neovim versions;
-use a verified maintained package source/release and record its origin. Do not
-replace a working NVM, Rust, Go, Ruby or project SDK installation without
-checking existing versions. Node 24 is used by the Pi TypeScript tests. A Nerd
-Font is needed for Powerlevel10k icons; install one for the user only if wanted.
+Ubuntu 24.04 repositories may not meet the required tmux/fzf/Neovim versions.
+The helper below pins verified upstream releases for tmux/fzf and a source tag
+for keyd rather than replacing distro packages or adding an unreviewed apt
+repository. Do not replace a working NVM, Rust, Go, Ruby or project SDK
+installation without checking existing versions. Node 24 is used by the Pi
+TypeScript tests. A Nerd Font is needed for Powerlevel10k icons; install one for
+the user only if wanted.
 
-`keyd` may not be in the enabled Ubuntu repositories. Verify its package source
-and upstream installation instructions before adding a repository. Do not
-install an arbitrary copied binary or enable a global wildcard mapping.
+### Install the known missing dependencies
+
+Preview first (this is the default; it performs no downloads or changes):
+
+```bash
+./ubuntu/install-missing.sh
+```
+
+Then, when ready, install the pinned tmux 3.5a and fzf 0.61.3 under
+`~/.local/opt/dotfiles-toolchain`, put symlinks in `~/.local/bin`, install
+`bat`/`fd-find` (and create compatibility links if needed), build/install keyd
+v2.6.0, and install only the
+pinned `pi-subagents@0.76.0` package:
+
+```bash
+./ubuntu/install-missing.sh --apply
+```
+
+The script uses `sudo` only for apt dependencies and keyd's system files. It
+leaves distro tmux/fzf packages installed, does not enable keyd, and does not
+refresh unrelated Pi packages. Installing the Pi package intentionally updates
+the user's Pi package settings; authentication and session files are untouched.
+Review the pinned versions and script diff before applying.
+
+Only after identifying the internal keyboard with `sudo keyd monitor`, activate
+the mapping separately with the exact verified device ID:
+
+```bash
+./ubuntu/install-missing.sh --apply --configure-keyboard --device-id 1234:abcd
+```
+
+The script checks that the ID exists as a keyboard in sysfs and requires typing
+`APPLY 1234:abcd` interactively. It installs a device-specific Caps Lock → grave
+rule, validates all keyd configs, and then enables/restarts keyd. Never pass a
+wildcard. If declining to configure the mapping, keyd remains installed but
+inactive; Caps Lock is not remapped.
+
+If the Pi CLI is intentionally absent, `--skip-pi` skips the package installation.
+The updater never installs provider credentials, downloads local models, changes
+the sing-box proxy, links dotfiles, or refreshes all Pi packages.
 
 ## 2. Link configuration safely
 
@@ -215,6 +254,7 @@ bash install.test.sh
 bash zsh-config.test.sh
 bash zsh-setup.test.sh
 bash keyboard-linux-setup.test.sh
+bash ubuntu/install-missing.test.sh
 bash bin/clipboard-copy.test.sh
 bash bin/plink.test.sh
 bash proxy/render.test.sh

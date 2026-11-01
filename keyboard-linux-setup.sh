@@ -95,6 +95,8 @@ apply() {
         mv -f -- "$tmp" "$TARGET"
         log "Installed Caps Lock → grave mapping for $id"
     fi
+    keyd check || die 'keyd rejected the current configuration; the mapping file was left in place and the service was not started'
+    systemctl daemon-reload
     systemctl enable --now keyd.service
     systemctl restart keyd.service
     log 'Caps Lock now sends the grave key; verify it in Ghostty and tmux.'

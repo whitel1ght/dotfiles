@@ -7,11 +7,14 @@ trap 'rm -rf "$ROOT"' EXIT
 STUBS="$ROOT/bin"
 mkdir -p "$STUBS" "$ROOT/etc/keyd"
 LOG="$ROOT/systemctl.log"
+KEYD_LOG="$ROOT/keyd.log"
 export KEYBOARD_SETUP_ROOT="$ROOT"
+export KEYD_LOG
 
 cat > "$STUBS/keyd" <<'EOF'
 #!/usr/bin/env bash
-exit 0
+printf '%s\n' "$*" >> "$KEYD_LOG"
+[ "${KEYD_CHECK_FAIL:-0}" != 1 ] || [ "${1:-}" != check ]
 EOF
 cat > "$STUBS/systemctl" <<'EOF'
 #!/usr/bin/env bash
@@ -52,11 +55,23 @@ grep -q '^1234:ABCD$' "$TARGET"
 grep -q '^capslock = grave$' "$TARGET"
 [ "$(stat -c %a "$TARGET")" = 644 ]
 [ "$(grep -c '^enable --now keyd.service$' "$LOG")" = 1 ]
+[ "$(grep -c '^daemon-reload$' "$LOG")" = 1 ]
 
 before="$(sha256sum "$TARGET")"
 "$SCRIPT" apply --device-id 1234:ABCD >/dev/null
 [ "$(sha256sum "$TARGET")" = "$before" ]
 [ "$(grep -c '^enable --now keyd.service$' "$LOG")" = 2 ]
+[ "$(grep -c '^daemon-reload$' "$LOG")" = 2 ]
+[ "$(grep -c '^check$' "$KEYD_LOG")" = 2 ]
+
+rm "$TARGET"
+if KEYD_CHECK_FAIL=1 "$SCRIPT" apply --device-id 1234:ABCD >/dev/null 2>&1; then
+    echo 'invalid keyd configuration was activated' >&2
+    exit 1
+fi
+[ -f "$TARGET" ]
+[ "$(grep -c '^enable --now keyd.service$' "$LOG")" = 2 ]
+rm "$TARGET"
 
 printf '[ids]\n*\n[main]\ncapslock = control\n' > "$ROOT/etc/keyd/unrelated.conf"
 "$SCRIPT" remove >/dev/null
