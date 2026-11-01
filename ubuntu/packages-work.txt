@@ -1,0 +1,9 @@
+# Optional work/reader dependencies. Install only for workflows you use.
+newsboat
+ffmpeg
+poppler-utils
+libimage-exiftool-perl
+qrencode
+golang-go
+cargo
+sdcv

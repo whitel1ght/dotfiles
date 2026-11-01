@@ -1,0 +1,9 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "lackeyjb",
+  "version": "0.0.0+dd47a6a",
+  "description": "Managed by claude/vendor-sync.sh — do not edit by hand. Vendored skills for lackeyjb.",
+  "skills": [
+    "./skills/playwright-skill"
+  ]
+}

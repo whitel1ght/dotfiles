@@ -1,6 +1,4 @@
 font-size = 17
-macos-titlebar-style = hidden
-macos-option-as-alt = true
 theme = TokyoNight Storm
 window-padding-x = 10
 window-padding-y = 10, 0
@@ -20,14 +18,6 @@ gtk-titlebar = false
 # titlebar, which we just hid, so change window-show-tab-bar instead.
 window-show-tab-bar = never
 
-keybind = super+p=text::Telescope find_files\n
-keybind = super+s=text::w\n
-keybind = super+w=text::Wiki\n
-keybind = super+f=text::Telescope live_grep\n
-keybind = super+/=text:gcc\x1b
-
-keybind = super+k=text::lua TopWin()\n
-keybind = super+l=text::lua RightWin()\n
-keybind = super+h=text::lua LeftWin()\n
-keybind = super+j=text::lua BottomWin()\n
-keybind = shift+enter=text:\n
+# Keep i3's Super/Mod4 workspace and window bindings available. Use Neovim's
+# native leader and navigation mappings instead of intercepting Super here.
+# Shift+Enter is intentionally unbound so tmux/Pi can receive the modified key.

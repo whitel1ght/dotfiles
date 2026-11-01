@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "slack": {
+      "url": "https://mcp.slack.com/mcp",
+      "description": "Search and read Slack channels, threads and messages",
+      "oauth": {
+        "clientId": "${SLACK_MCP_CLIENT_ID}",
+        "clientSecret": "${SLACK_MCP_CLIENT_SECRET}",
+        "callbackPort": 19876
+      }
+    }
+  }
+}

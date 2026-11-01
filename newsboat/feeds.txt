@@ -1,0 +1,37 @@
+# Non-reddit feeds, in newsboat's own urls format:
+#
+#   <url> "~<display title>" <tag> [<tag>...]
+#
+# Tags become filter categories in newsboat: press a tag key or use the tag
+# selector to narrow the feed list. Reddit communities live in subreddits.txt
+# instead — this file is for everything with a stable URL.
+#
+# Edit, then run: newsboat-urls
+# Every URL here was checked live on 2026-09-04.
+
+# --- Computing & terminal -------------------------------------------------
+https://lobste.rs/rss "~lobste.rs" computing
+https://hnrss.org/frontpage?points=250 "~HN (250+ points)" computing
+https://jvns.ca/atom.xml "~Julia Evans" computing
+https://blog.rust-lang.org/feed.xml "~Rust blog" computing
+https://go.dev/blog/feed.atom "~Go blog" computing
+
+# Release feeds for things I actually run. Low volume, high signal — this is
+# how I find out a tool gained a feature rather than reading changelogs later.
+https://github.com/neovim/neovim/releases.atom "~neovim releases" computing releases
+https://github.com/ghostty-org/ghostty/releases.atom "~ghostty releases" computing releases
+https://github.com/junegunn/fzf/releases.atom "~fzf releases" computing releases
+
+# --- AI tooling & harnesses -----------------------------------------------
+# anthropic.com serves no RSS (checked 2026-09-04, /rss.xml is a 404), so
+# Simon Willison plus the release feed is the coverage.
+https://simonwillison.net/atom/everything/ "~Simon Willison" ai
+https://github.com/anthropics/claude-code/releases.atom "~claude-code releases" ai releases
+https://github.com/ollama/ollama/releases.atom "~ollama releases" ai releases
+https://github.com/ggml-org/llama.cpp/releases.atom "~llama.cpp releases" ai releases
+
+# --- Art & visual craft ---------------------------------------------------
+https://www.muddycolors.com/feed/ "~Muddy Colors" art
+
+# --- Media ----------------------------------------------------------------
+https://www.animenewsnetwork.com/all/rss.xml "~Anime News Network" media

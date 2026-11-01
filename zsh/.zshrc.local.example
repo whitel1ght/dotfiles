@@ -1,23 +1,55 @@
-# Private/sensitive configurations
-# Copy this file to ~/.zshrc.local and customize with your private settings
+# Private/sensitive configurations.
+#
+# Copy to ~/.zshrc.local. install.sh does that copy for you on a fresh machine,
+# and .zshrc sources it behind [ -f ], so a missing file is silent.
+#
+# EVERY EXPORT BELOW IS COMMENTED OUT deliberately. An unfilled copy must
+# export nothing, because a placeholder that looks like a value is worse than
+# no value at all: bin/notes prints a precise "unset: NOTES_USER ..." when the
+# variables are absent, but with CLOUD=your.server.ip.here it instead fails at
+# DNS resolution, which reads like a network problem.
+#
+# The PATH line matters too — with PYTHON_UTILS unset, "$PATH:$PYTHON_UTILS"
+# appends an empty element, and an empty element in PATH means the current
+# directory. Uncomment it only together with the line above it.
 
 # Server configurations
-export CLOUD=your.server.ip.here
+# export CLOUD=your.server.ip.here
 
-# No proxy environment variables here on purpose.
+# --- No proxy variables belong in this file -------------------------------
+# Routing is handled at the network layer by sing-box: a TUN interface decides
+# per-domain what goes through the VPS and what goes direct. See
+# proxy/README.md.
 #
-# Routing is done below the application layer by the sing-box TUN setup in
-# proxy/ (see proxy/README.md), so HTTP_PROXY and friends must stay unset.
-# An empty value is NOT "no proxy": tools that test only whether the variable
-# is set will treat "" as a real proxy and fail. If a tool needs to bypass the
-# tunnel, add its apex domain to proxy/direct-domains.txt instead.
+# Do not set HTTP_PROXY / HTTPS_PROXY / NO_PROXY / JAVA_TOOL_OPTIONS here.
+# They would point tools at a local proxy port that nothing is listening on,
+# and the resulting failure looks like a dead network rather than a stale
+# setting — which makes it expensive to diagnose. If you find such exports in
+# an existing ~/.zshrc.local, delete them.
+
+# Wiki sync — consumed by dotfiles/bin/notes (`pull_notes` / `push_notes`).
+# NOTES_HOST falls back to $CLOUD above, so it is usually left unset.
+# export NOTES_USER=your-remote-username
+# export NOTES_PORT=22
+# export NOTES_REMOTE_DIR=/home/your-remote-username # the PARENT of the wiki dir
+# export NOTES_LOCAL_DIR="$HOME/wiki"                # default; override if moved
 
 # Personal server aliases
-alias pull_notes="rsync -chavzP -e 'ssh -p 10001' username@server.ip:/path/to/notes $HOME"
-alias push_notes="rsync -urv -e 'ssh -p 10001' --progress ~/notes username@server.ip:/path/to/notes"
+# (pull_notes / push_notes are defined in .zshrc and call bin/notes)
 
 # Personal project paths
-export PYTHON_UTILS="$HOME/projects/scripts"
-export PATH="$PATH:$PYTHON_UTILS"
+# export PYTHON_UTILS="$HOME/projects/scripts"
+# export PATH="$PATH:$PYTHON_UTILS"
+
+# Slack incoming webhook for the health-check / verify-release skills (the
+# Development channel). Post-only credential — treat it as a secret and rotate
+# it if it ever lands in a tracked file.
+# export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+
+# OAuth client for the Slack MCP server (pi/mcp-servers.json; OpenCode's
+# opencode.jsonc has the same under {env:...}). Registered app credentials, not
+# tokens: the tokens sign-in obtains live in ~/.pi/agent/mcp-auth.json.
+# export SLACK_MCP_CLIENT_ID=
+# export SLACK_MCP_CLIENT_SECRET=
 
 # Add any other private environment variables, aliases, or configurations here

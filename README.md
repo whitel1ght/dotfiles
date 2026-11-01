@@ -1,96 +1,60 @@
-# Dotfiles
+# Ubuntu dotfiles
 
-Personal configuration files for macOS development tools.
+Personal configuration for an Ubuntu laptop, migrated selectively from the
+macOS `main` branch. Portable shell/editor/terminal/workflow settings are
+shared where useful; Ubuntu keeps its own i3 desktop, Ghostty behavior, systemd
+proxy and keyboard setup.
 
-## Structure
+## Quick start
 
-```
-.
-├── tmux/           # tmux configuration
-├── aerospace/      # AeroSpace window manager config
-├── ghostty/        # Ghostty terminal config
-├── nvim/           # Neovim configuration
-├── zsh/            # Zsh configuration (.zshrc, .zprofile, .p10k.zsh)
-├── Brewfile        # Homebrew package list
-├── install.sh      # Symlink setup script
-├── brew-install.sh # Homebrew package installer
-└── zsh-setup.sh    # Oh My Zsh and Powerlevel10k installer
-```
-
-## Installation
-
-1. Clone this repository:
+1. Review [Ubuntu setup and package guidance](ubuntu/README.md), especially the
+   dependency/version checks and Caps Lock → tmux prefix activation.
+2. Preview and test the non-destructive configuration links:
    ```bash
-   git clone <your-repo-url> ~/.dotfiles
-   cd ~/.dotfiles
+   DRY_RUN=1 DOTFILES_LINKS_ONLY=1 ./install.sh
+   bash install.test.sh
    ```
-
-2. Run the install script to create symlinks:
+3. Link configuration and seed inert local examples:
    ```bash
-   ./install.sh
+   DOTFILES_LINKS_ONLY=1 ./install.sh
    ```
+4. Configure only the local credentials and optional applications you use.
+   Install packages, refresh Claude/Pi packages, configure the keyboard, and
+   enable the proxy in separate reviewed steps.
 
-3. (Optional) Set up Zsh with Oh My Zsh and Powerlevel10k:
-   ```bash
-   ./zsh-setup.sh
-   ```
+## Main configuration
 
-4. (Optional) Install Homebrew packages:
-   ```bash
-   ./brew-install.sh
-   ```
+- `i3/`, `ghostty/`: Ubuntu desktop and terminal behavior.
+- `keyboard/`, `keyboard-linux-setup.sh`: explicit keyd mapping; Caps Lock emits
+  backtick for the tmux prefix without changing Super/Mod4.
+- `zsh/`, `zsh-setup.sh`: Zsh, Powerlevel10k, plugins, completions, and optional
+  local environment.
+- `nvim/`, `tmux/`, `git/`: editor, terminal multiplexer, and Git configuration.
+- `bin/`: portable worktree, daily workflow, reader, clipboard, and agent helpers.
+- `claude/`, `pi/`: optional agent configuration; credentials and runtime state
+  stay local.
+- `newsboat/`, `repy/`, `superfile/`, `mrglass/`: optional terminal apps.
+- `proxy/`, `bin/proxyctl`: Ubuntu's systemd-based sing-box routing.
+- `ubuntu/`: package lists, dependency checks and platform setup guide.
 
-The install script will:
-- Create symlinks from config files to their expected system locations
-- Backup existing files with `.backup` extension
-- Create necessary directories if they don't exist
+## Safety defaults
 
-The zsh setup script will:
-- Install Oh My Zsh framework
-- Install Powerlevel10k theme
-- Copy existing Powerlevel10k configuration if found
+`install.sh` links configuration and seeds only absent local files. It does not
+install apt packages, change the login shell, modify the active keyboard,
+replace user Claude/Pi state, authenticate to services, write to a wiki, or
+start/enable sing-box. Optional setup actions are opt-in; `DOTFILES_LINKS_ONLY=1`
+forces linking/seeding only. Existing unrelated symlinks/settings are preserved.
 
-The brew script will:
-- Install all Homebrew packages from the Brewfile
-- Provide helpful error messages if Homebrew isn't installed
+The templates (`*.example`) are inert. Real Git identity, Jira tokens, proxy
+credentials, SSH trust, model downloads and app databases never belong in this
+repository. Do not put `HTTP_PROXY`/`HTTPS_PROXY` variables in shell config;
+the sing-box TUN handles routing below the application layer.
 
-## Config File Locations
+## Implementation and tests
 
-- **tmux**: `~/.tmux.conf`
-- **Aerospace**: `~/.config/aerospace/aerospace.toml`
-- **Ghostty**: `~/.config/ghostty/config`
-- **Neovim**: `~/.config/nvim/`
-- **Zsh**: `~/.zshrc`, `~/.zprofile`, `~/.p10k.zsh`
-
-## Adding New Configs
-
-1. Create a directory for the tool: `mkdir newtool`
-2. Add your config file(s) to that directory
-3. Update `install.sh` to include the new symlink
-4. Run `./install.sh` to create the symlink
-
-## Homebrew Package Management
-
-The `Brewfile` contains all your installed Homebrew packages:
-- **Formulae**: Command-line tools and libraries
-- **Casks**: GUI applications
-- **Mac App Store apps**: Apps installed via `mas`
-- **Taps**: Third-party repositories
-
-To update the Brewfile after installing new packages:
-```bash
-brew bundle dump --describe --force
-```
-
-## Private/Sensitive Configurations
-
-For sensitive information (API keys, server credentials, etc.), use the private config system:
-
-1. Copy the example file: `cp zsh/.zshrc.local.example ~/.zshrc.local`
-2. Edit `~/.zshrc.local` with your private settings
-3. The main `.zshrc` will automatically source this file
-4. `.zshrc.local` is gitignored and won't be committed
-
-## Usage
-
-Edit files directly in this repository - changes will be reflected immediately in the symlinked locations.
+The migration and platform-specific decisions are recorded in
+[`docs/plans/ubuntu-main-migration.md`](docs/plans/ubuntu-main-migration.md).
+Run [the Ubuntu setup guide](ubuntu/README.md) for dependency versions, Caps
+Lock mapping and validation. The source for the migration was `origin/main`
+commit `4bc05e98a23b8ef4be3310ef1b5b92f09c63e37d`; macOS-only applications and
+services were intentionally excluded.

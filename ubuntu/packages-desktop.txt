@@ -1,0 +1,20 @@
+# Optional i3/X11 desktop packages; do not install or change the active session automatically.
+i3-wm
+i3status
+i3lock
+rofi
+dex
+autorandr
+xss-lock
+network-manager-gnome
+pulseaudio-utils
+brightnessctl
+playerctl
+scrot
+x11-xkb-utils
+psmisc
+# Clipboard backends: select the one matching the active desktop session.
+xclip
+wl-clipboard
+# Optional Linux keyboard remapper. Confirm package source/version before use.
+keyd

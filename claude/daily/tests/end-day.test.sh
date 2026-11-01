@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Structure checks for the memory step added to claude/commands/end-day.md.
+set -uo pipefail
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$TEST_DIR/lib.sh"
+F="$TEST_DIR/../../commands/end-day.md"
+
+echo "== original behaviour is kept =="
+has "$F" "~/.local/bin/end-day collect" "still collects the day"
+has "$F" "~/.local/bin/end-day save" "still files the report"
+
+echo "== unreported activity (spec 4.9 safety net) =="
+has "$F" "## Unreported activity" "section exists"
+has "$F" "**Unplanned**" "adds under the Unplanned group"
+has "$F" "~/.local/state/run-day/inbox/" "processes waiting inbox messages first"
+has "$F" "<!-- start-day:start -->" "compares against the plan block only"
+has "$F" "Ask which to add" "asks before adding anything"
+has "$F" "· note:" "gives added lines evidence for the tick guard"
+has "$F" "Bash(awk:*)" "allows the awk and rg pipeline"
+
+echo "== memory step =="
+has "$F" "## Consolidate memory" "section exists"
+has "$F" "state.md" "rewrites state.md"
+has "$F" "60 lines" "keeps it to 60 lines"
+has "$F" "qmd update && qmd embed" "re-indexes"
+has "$F" 'git -C ~/wiki commit -m "wiki: $DAY day"' "commit message"
+has "$F" "~/.local/state/run-day/done" "ends the run"
+has "$F" "/review week" "Friday offer"
+has "$F" "/review month" "first-workday offer"
+has "$F" "Skip this step" "skips cleanly without a vault"
+has "$F" "the commit and the end of the run below still happen" "diary commit is not skipped with the memory step"
+has "$F" '~/.local/bin/end-day touched "$DAY"' "finds touched projects with end-day touched"
+has "$F" '~/.local/bin/end-day entries "$DAY"' "reads the day's log entries with end-day entries"
+echo "== fix round 1 =="
+has "$F" "do not continue until answered" "stops for the user's answer before consolidating"
+has "$F" "## Process the inbox first" "inbox section exists before the report"
+has "$F" "only skips the comparison" "a missing start-day block never skips the inbox"
+has "$F" "Never regress" "a re-run keeps filed Done lines"
+has "$F" "git -C ~/wiki add -A -- diary projects index.md" "adds only existing paths"
+has "$F" "[ -d ~/wiki/reviews ]" "adds reviews only when it exists"
+lacks "$F" "add diary projects reviews index.md" "no unconditional reviews add"
+awk '/^## Process the inbox first/{a=NR} /^## Write the report/{b=NR} /^## Unreported activity/{c=NR} END{exit !(a&&b&&c&&a<b&&b<c)}' "$F" && pass "inbox, then report, then unreported" || fail "section order" "wrong order"
+awk '/DAY=/{if(!d)d=NR} /run-day\/inbox/{if(!i)i=NR} END{exit !(d&&i&&d<i)}' "$F" && pass "DAY defined before the inbox" || fail "DAY before inbox" "wrong order"
+lacks "$F" 'index($0' "no awk \$0 (the command markdown substitutes it)"
+
+echo "== fix wave =="
+has "$F" "~/.claude/plugins/cache/*/daily/*/commands/run-day.md" "locates run-day.md in the plugin cache"
+has "$F" "~/projects/dotfiles/claude/daily/commands/run-day.md" "falls back to the main checkout"
+for t in grep glab jq printf wc fd '[' 'git -C ~/wiki'; do has "$F" "Bash($t" "allows $t"; done
+awk '/^## Unreported activity/{s=1} /^## Consolidate memory/{s=0} s&&/^DAY=/{d=1} END{exit !d}' "$F" && pass "Unreported block defines DAY" || fail "Unreported DAY" "no DAY= line"
+has "$F" "(yesterday)" "parenthesised case pattern"
+awk '/^## Consolidate memory/{a=NR} /^## Index, commit and end the run/{b=NR} END{exit !(a&&b&&a<b)}' "$F" && pass "diary commit is its own step after memory" || fail "commit step" "missing"
+lacks "$F" "ls ~/wiki/*" "no zsh-failing globs"
+
+finish

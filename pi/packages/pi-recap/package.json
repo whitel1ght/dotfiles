@@ -1,0 +1,43 @@
+{
+  "name": "@tifan/pi-recap",
+  "version": "0.4.7",
+  "description": "One-line session recap on demand or after you have been away.",
+  "keywords": [
+    "pi",
+    "pi-extension",
+    "pi-package",
+    "recap",
+    "summary"
+  ],
+  "homepage": "https://github.com/tifandotme/pi-extensions/tree/master/packages/pi-recap#readme",
+  "bugs": "https://github.com/tifandotme/pi-extensions/issues",
+  "license": "MIT",
+  "author": "Tifan Dwi Avianto <hi@tifan.me>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tifandotme/pi-extensions.git",
+    "directory": "packages/pi-recap"
+  },
+  "files": [
+    "src/**/*.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.84.3"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "image": "https://raw.githubusercontent.com/tifandotme/pi-extensions/refs/heads/master/packages/pi-recap/assets/recap-widget.webp"
+  }
+}

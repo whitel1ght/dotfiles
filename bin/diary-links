@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# Move inline links in a diary's plan and report blocks to trailing refs.
+#
+#   diary-links [--check] [FILE]   default: $DIARY_DIR/<today>.md
+#
+# Inside the <!-- start-day:... --> and <!-- daily-report:... --> blocks,
+# "[dashboard!2231](https://...)" becomes the plain text "dashboard!2231" and the
+# line gains a trailing "  [↗][dashboard!2231]" (first-appearance order, once per
+# line). The URLs live once, as "[label]: url" definitions, at the end of the
+# block after one blank line, in order of first appearance. The same label with
+# another URL becomes "label~2" in the ref only. Already-converted lines are
+# kept and merged with new links, so a second run changes nothing. Code spans and
+# everything outside the two blocks are left alone.
+#
+# Rewrites FILE atomically and prints nothing. --check changes nothing and exits
+# 1 when a rewrite would.
+set -euo pipefail
+
+check=0
+case "${1:-}" in
+  -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  --check) check=1; shift ;;
+esac
+file="${1:-${DIARY_DIR:-$HOME/wiki/diary}/$(date +%F).md}"
+[ -f "$file" ] || { echo "diary-links: no such file: $file" >&2; exit 1; }
+
+CHECK="$check" python3 - "$file" <<'PY'
+import os, re, sys, tempfile
+
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+
+LINK = re.compile(r"\[([^\[\]]+)\]\((https?://[^)\s]+)\)")
+CODE = re.compile(r"(`+)(?:(?!\1).)+?\1")
+DEF = re.compile(r"^\[([^\]]+)\]:[ \t]*(\S+)[ \t]*$")
+REF = re.compile(r"\[↗\]\[([^\]]+)\]")
+TAIL = re.compile(r"((?:[ \t]+\[↗\]\[[^\]]+\])+)[ \t]*$")
+BASE = re.compile(r"~\d+$")
+
+
+def convert_block(body):
+    lines = body.split("\n")
+    defs = {}          # lowercased key -> [key, url]
+    kept = []
+    for ln in lines:
+        m = DEF.match(ln)
+        if m:
+            defs.setdefault(m.group(1).lower(), [m.group(1), m.group(2)])
+        else:
+            kept.append(ln)
+    changed = len(kept) != len(lines)
+    out = []
+    for ln in kept:
+        found = []
+        pieces, pos = [], 0
+        for c in CODE.finditer(ln):
+            pieces.append((False, ln[pos:c.start()]))
+            pieces.append((True, c.group(0)))
+            pos = c.end()
+        pieces.append((False, ln[pos:]))
+
+        def sub(m):
+            found.append((m.group(1), m.group(2)))
+            return m.group(1)
+
+        new = "".join(p if code else LINK.sub(sub, p) for code, p in pieces)
+        if not found:
+            out.append(ln)
+            continue
+        existing = []
+        t = TAIL.search(new)
+        if t:
+            existing = REF.findall(t.group(1))
+            new = new[:t.start()]
+        refs = list(existing)
+        for label, url in found:
+            key = None
+            for k, (name, u) in defs.items():
+                if u == url and BASE.sub("", name).lower() == label.lower():
+                    key = name
+                    break
+            if key is None:
+                n = 1
+                while True:
+                    cand = label if n == 1 else f"{label}~{n}"
+                    if cand.lower() not in defs:
+                        defs[cand.lower()] = [cand, url]
+                        key = cand
+                        break
+                    n += 1
+            if key.lower() not in (r.lower() for r in refs):
+                refs.append(key)
+        out.append(new.rstrip() + "  " + " ".join(f"[↗][{r}]" for r in refs))
+        changed = True
+    if not changed:
+        return body
+    # Defs go in order of first appearance among the lines' refs, then any unreferenced.
+    order, seen = [], set()
+    for ln in out:
+        for r in REF.findall(ln):
+            if r.lower() in defs and r.lower() not in seen:
+                seen.add(r.lower()); order.append(r.lower())
+    order += [k for k in defs if k not in seen]
+    while out and out[-1].strip() == "":
+        out.pop()
+    if order:
+        out += [""] + [f"[{defs[k][0]}]: {defs[k][1]}" for k in order]
+    return "\n".join(out) + "\n" if out else body
+
+
+for name in ("start-day", "daily-report"):
+    start, end = f"<!-- {name}:start -->", f"<!-- {name}:end -->"
+    a = text.find(start)
+    if a < 0:
+        continue
+    a += len(start)
+    b = text.find(end, a)
+    if b < 0:
+        continue
+    seg = text[a:b]
+    if seg.strip() == "":
+        continue
+    lead = "\n" if seg.startswith("\n") else ""
+    inner = seg[len(lead):]
+    new = lead + convert_block(inner)
+    if new != seg and not new.endswith("\n"):
+        new += "\n"
+    text = text[:a] + new + text[b:]
+
+if text == open(path, encoding="utf-8").read():
+    sys.exit(0)
+if os.environ.get("CHECK") == "1":
+    print(f"diary-links: {path} would change", file=sys.stderr)
+    sys.exit(1)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)), prefix=".diary-links.")
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    f.write(text)
+os.chmod(tmp, os.stat(path).st_mode & 0o7777)
+os.replace(tmp, path)
+PY

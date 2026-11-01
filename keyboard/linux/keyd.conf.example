@@ -1,0 +1,6 @@
+# Template for keyboard-linux-setup.sh. Keep the verified device ID machine-local.
+[ids]
+@KEYD_DEVICE_ID@
+
+[main]
+capslock = grave

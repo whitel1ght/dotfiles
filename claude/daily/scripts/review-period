@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""review-period LEVEL [PERIOD]: JSON for a review period and the lower-level periods it is built from.
+
+LEVEL is week|month|quarter|year. PERIOD is 2026-W41, 2026-10, 2026-Q3 or 2026; the default is the
+period of that level that most recently ended. REVIEW_TODAY=YYYY-MM-DD overrides today (tests).
+"""
+import calendar
+import datetime as dt
+import json
+import os
+import re
+import sys
+
+
+def today():
+    v = os.environ.get("REVIEW_TODAY")
+    return dt.date.fromisoformat(v) if v else dt.date.today()
+
+
+def week(y, w):
+    start = dt.date.fromisocalendar(y, w, 1)
+    return {"level": "week", "id": f"{y}-W{w:02d}", "from": start, "to": start + dt.timedelta(days=6)}
+
+
+def month(y, m):
+    last = calendar.monthrange(y, m)[1]
+    return {"level": "month", "id": f"{y}-{m:02d}", "from": dt.date(y, m, 1), "to": dt.date(y, m, last)}
+
+
+def quarter(y, q):
+    m1 = 3 * (q - 1) + 1
+    last = calendar.monthrange(y, m1 + 2)[1]
+    return {"level": "quarter", "id": f"{y}-Q{q}", "from": dt.date(y, m1, 1), "to": dt.date(y, m1 + 2, last)}
+
+
+def year(y):
+    return {"level": "year", "id": str(y), "from": dt.date(y, 1, 1), "to": dt.date(y, 12, 31)}
+
+
+def weeks_of_month(y, m):
+    """ISO rule: a week belongs to the month that holds its Thursday."""
+    out = []
+    d = dt.date(y, m, 1)
+    while d.month == m:
+        if d.isoweekday() == 4:
+            iy, iw, _ = d.isocalendar()
+            out.append(week(iy, iw))
+        d += dt.timedelta(days=1)
+    return out
+
+
+def children(p):
+    y = int(p["id"][:4])
+    if p["level"] == "month":
+        return weeks_of_month(y, p["from"].month)
+    if p["level"] == "quarter":
+        q = (p["from"].month - 1) // 3
+        return [month(y, 3 * q + i) for i in (1, 2, 3)]
+    if p["level"] == "year":
+        return [quarter(y, q) for q in (1, 2, 3, 4)]
+    return []
+
+
+def default_period(level, now):
+    if level == "week":
+        iy, iw, _ = (now - dt.timedelta(days=now.isoweekday() - 1 + 7)).isocalendar()
+        return week(iy, iw)
+    if level == "month":
+        prev = now.replace(day=1) - dt.timedelta(days=1)
+        return month(prev.year, prev.month)
+    if level == "quarter":
+        q = (now.month - 1) // 3 + 1
+        return quarter(now.year, q - 1) if q > 1 else quarter(now.year - 1, 4)
+    return year(now.year - 1)
+
+
+PATTERNS = {
+    "week": (r"^(\d{4})-W(\d{2})$", lambda m: week(int(m[1]), int(m[2]))),
+    "month": (r"^(\d{4})-(\d{2})$", lambda m: month(int(m[1]), int(m[2]))),
+    "quarter": (r"^(\d{4})-Q([1-4])$", lambda m: quarter(int(m[1]), int(m[2]))),
+    "year": (r"^(\d{4})$", lambda m: year(int(m[1]))),
+}
+
+
+def render(p, now):
+    return {
+        "level": p["level"],
+        "id": p["id"],
+        "from": p["from"].isoformat(),
+        "to": p["to"].isoformat(),
+        "file": f"reviews/{p['id']}.md",
+        "ended": p["to"] < now,
+    }
+
+
+def main(argv):
+    if len(argv) not in (1, 2) or argv[0] not in PATTERNS:
+        print("usage: review-period week|month|quarter|year [PERIOD]", file=sys.stderr)
+        return 2
+    level, now = argv[0], today()
+    if len(argv) == 2:
+        pattern, build = PATTERNS[level]
+        m = re.match(pattern, argv[1])
+        if not m:
+            print(f"review-period: {argv[1]!r} is not a {level} period", file=sys.stderr)
+            return 2
+        try:
+            p = build(m)
+        except ValueError as e:
+            print(f"review-period: {argv[1]!r}: {e}", file=sys.stderr)
+            return 2
+    else:
+        p = default_period(level, now)
+    out = render(p, now)
+    out["children"] = [render(c, now) for c in children(p)]
+    print(json.dumps(out))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

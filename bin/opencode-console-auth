@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Print the OpenCode Console credential that OpenCode Go accepts, for Pi.
+#
+#   opencode-console-auth token   the access token (Bearer / x-api-key)
+#   opencode-console-auth org     the workspace id (x-opencode-org-id header)
+#
+# OpenCode Go has no API keys: OpenCode v2 signs in to the Console
+# (`opencode auth login opencode`) and calls /inference/go/... with that OAuth
+# token and the workspace id. pi/models.json runs this on every request, so Pi
+# follows the token whenever OpenCode refreshes it. Nothing is cached or copied.
+#
+# Env overrides (used by bin/opencode-console-auth.test.sh):
+#   OPENCODE_DB  defaults to ~/.local/share/opencode/opencode.db
+set -euo pipefail
+
+DB="${OPENCODE_DB:-$HOME/.local/share/opencode/opencode.db}"
+
+case "${1:-}" in
+    token) field='$.access' ;;
+    org)   field='$.metadata.orgID' ;;
+    *) echo "usage: opencode-console-auth token|org" >&2; exit 2 ;;
+esac
+
+[ -f "$DB" ] || { echo "opencode-console-auth: no OpenCode database at $DB" >&2; exit 1; }
+
+row="$(sqlite3 -readonly -separator $'\t' "$DB" \
+    "select json_extract(value, '$field'), json_extract(value, '\$.expires')
+       from credential
+      where integration_id = 'opencode' and active = 1 and json_extract(value, '\$.type') = 'oauth'
+      order by time_updated desc limit 1")"
+value="${row%%$'\t'*}"
+expires="${row#*$'\t'}"
+
+if [ -z "$row" ] || [ -z "$value" ]; then
+    echo "opencode-console-auth: not signed in to the OpenCode Console; run: opencode auth login opencode" >&2
+    exit 1
+fi
+if [ "$1" = token ] && [ -n "$expires" ] && [ "$expires" -le "$(( $(date +%s) * 1000 ))" ]; then
+    echo "opencode-console-auth: the Console token expired; run opencode once to refresh it" >&2
+    exit 1
+fi
+printf '%s' "$value"

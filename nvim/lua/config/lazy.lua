@@ -26,10 +26,18 @@ vim.g.maplocalleader = " "
 require("lazy").setup({
   { import = "plugins" },
   -- Simple plugins (name only, no configuration)
-  'nvim-treesitter/playground',
+  --
+  -- nvim-treesitter/playground was removed: upstream marks it deprecated
+  -- because Neovim ships the feature — :Inspect for highlight groups under the
+  -- cursor, :InspectTree for the parsed tree, :EditQuery for the live query
+  -- editor. Its last commit was September 2023.
+  --
+  -- ThePrimeagen/git-worktree.nvim was removed too: its config in
+  -- after/plugin/worktree.lua had been entirely commented out, so it was
+  -- loading on every start to do nothing. Last upstream commit was
+  -- November 2023.
   'onsails/lspkind.nvim',
   'lewis6991/gitsigns.nvim',
-  'ThePrimeagen/git-worktree.nvim',
   'stevearc/oil.nvim',
   'Tyler-Barham/floating-help.nvim',
   -- Completion plugins

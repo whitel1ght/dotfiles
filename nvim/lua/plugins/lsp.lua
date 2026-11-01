@@ -1,40 +1,60 @@
 return {
+  { 'neovim/nvim-lspconfig' },
   {
-    'neovim/nvim-lspconfig',
+    'mason-org/mason.nvim',
+    config = function()
+      -- This was previously set up twice: bare here, then again with the real
+      -- options from after/plugin/mason.lua, which ran later and won. Folded
+      -- into one call so the options live with the spec that owns them.
+      require('mason').setup({
+        height = 0.5,
+        ui = {
+          border = 'rounded',
+          icons = {
+            package_installed = '✓',
+            package_pending = '➜',
+            package_uninstalled = '✗',
+          },
+        },
+        registries = {
+          'github:mason-org/mason-registry',
+        },
+      })
+    end,
+  },
+  {
+    'mason-org/mason-lspconfig.nvim',
     dependencies = {
-      'williamboman/mason.nvim',
-      "williamboman/mason-lspconfig.nvim",
+      'mason-org/mason.nvim',
+      'neovim/nvim-lspconfig',
     },
     config = function()
-      -- vim.fs.root replaces lspconfig.util.root_pattern. Touching
-      -- `require('lspconfig')` at all -- even for the .util submodule --
-      -- triggers the deprecation warning and a full traceback on startup.
-      local function root_pattern(...)
-        local patterns = { ... }
-        return function(bufnr)
-          return vim.fs.root(bufnr, patterns)
-        end
-      end
+      require('mason-lspconfig').setup({
+        ensure_installed = {
+          'lua_ls',
+          'ts_ls',
+          'cssls',
+          'html',
+          'jsonls',
+          'eslint',
+          'vue_ls',
+          'ruby_lsp',
+          'elixirls',
+          'pyright',
+          'jinja_lsp',
+          'gopls',
+          'rust_analyzer',
+        },
+        automatic_enable = false,
+      })
 
-      local border = {
-        {"🭽", "FloatBorder"},
-        {"▔", "FloatBorder"},
-        {"🭾", "FloatBorder"},
-        {"▕", "FloatBorder"},
-        {"🭿", "FloatBorder"},
-        {" ", "FloatBorder"},
-        {"🭼", "FloatBorder"},
-        {"▏", "FloatBorder"},
-      }
-
-      -- Path to Volar's node_modules for the TypeScript plugin
-      local volar_language_server_path = vim.fn.stdpath('data') .. "/mason/packages/vue-language-server/node_modules/@vue/language-server"
+      -- Path to Vue TypeScript plugin for ts_ls integration
+      local vue_typescript_plugin_path = vim.fn.stdpath('data') .. "/mason/packages/vue-language-server/node_modules/@vue/typescript-plugin"
 
       local vue_typescript_plugin = {
         name = '@vue/typescript-plugin',
-        location = volar_language_server_path,
+        location = vue_typescript_plugin_path,
         languages = { 'vue' },
-        configNamespace = 'typescript',
       }
 
       -- Define capabilities for nvim-cmp if it's available
@@ -43,61 +63,37 @@ return {
         capabilities = require('cmp_nvim_lsp').default_capabilities()
       end
 
-      -- Common on_attach for every LSP client
+      -- Common on_attach function for LSP clients
       local lsp_attach = function(client, bufnr)
         local opts = {buffer = bufnr}
-        vim.keymap.set('n', 'K', '<cmd>lua vim.lsp.buf.hover()<cr>', opts)
+        vim.keymap.set('n', 'K', function() vim.lsp.buf.hover({ border = 'rounded' }) end, opts)
         vim.keymap.set('n', 'gd', '<cmd>lua vim.lsp.buf.definition()<cr>', opts)
         vim.keymap.set('n', 'gD', '<cmd>lua vim.lsp.buf.declaration()<cr>', opts)
         vim.keymap.set('n', 'go', '<cmd>lua vim.lsp.buf.type_definition()<cr>', opts)
         vim.keymap.set('n', 'gr', '<cmd>lua vim.lsp.buf.references()<cr>', opts)
-        vim.keymap.set('n', 'gs', '<cmd>lua vim.lsp.buf.signature_help()<cr>', opts)
+        vim.keymap.set('n', 'gs', function() vim.lsp.buf.signature_help({ border = 'rounded' }) end, opts)
         vim.keymap.set('n', '<F2>', '<cmd>lua vim.lsp.buf.rename()<cr>', opts)
         vim.keymap.set({'n', 'x'}, '<F3>', '<cmd>lua vim.lsp.buf.format({async = true})<cr>', opts)
         vim.keymap.set('n', '<F4>', '<cmd>lua vim.lsp.buf.code_action()<cr>', opts)
       end
 
-      -- Defaults applied to every server, so the per-server setup() calls below
-      -- no longer have to repeat capabilities and on_attach.
-      vim.lsp.config('*', {
-        capabilities = capabilities,
-        on_attach = lsp_attach,
-      })
-
-      -- Directly set global LSP handlers with border options
-      local default_hover_handler = vim.lsp.handlers.hover
-      vim.lsp.handlers["textDocument/hover"] = function(err, result, ctx, config)
-        config = config or {}
-        config.border = border
-        return default_hover_handler(err, result, ctx, config)
-      end
-
-      local default_signature_help_handler = vim.lsp.handlers.signature_help
-      vim.lsp.handlers["textDocument/signatureHelp"] = function(err, result, ctx, config)
-        config = config or {}
-        config.border = border
-        return default_signature_help_handler(err, result, ctx, config)
-      end
-
-      local tsdk = vim.fn.stdpath("data") .. "/mason/packages/typescript-language-server/node_modules/typescript/lib"
-      local js_root = root_pattern('tsconfig.json', 'jsconfig.json', 'package.json', '.git')
-
       -- ts_ls (TypeScript Language Server) configuration
       vim.lsp.config('ts_ls', {
+        capabilities = capabilities,
         filetypes = { 'javascript', 'typescript', 'javascriptreact', 'typescriptreact', 'vue' },
-        tsdk = tsdk,
         init_options = {
           plugins = {
             vue_typescript_plugin,
           },
         },
-        root_dir = js_root,
+        on_attach = lsp_attach,
+        root_markers = { 'tsconfig.json', 'jsconfig.json', 'package.json', '.git' },
       })
+      vim.lsp.enable('ts_ls')
 
-      -- vue_ls is the current name for the server the old config enabled as
-      -- `volar`; the two are the same package.
+      -- Vue Language Server v3 configuration (hybrid mode)
       vim.lsp.config('vue_ls', {
-        filetypes = { 'vue' },
+        capabilities = capabilities,
         settings = {
           vue = {
             complete = {
@@ -107,24 +103,40 @@ return {
               },
             },
           },
-          typescript = {
-            tsdk = tsdk,
-          },
-          javascript = {
-            validate = true,
-          },
         },
-        root_dir = js_root,
+        on_attach = lsp_attach,
+        root_markers = { 'tsconfig.json', 'jsconfig.json', 'package.json', '.git' },
       })
+      vim.lsp.enable('vue_ls')
 
       -- Other server configurations
-      vim.lsp.config('eslint', {})
-      vim.lsp.config('jsonls', {})
-      vim.lsp.config('cssls', {})
-      vim.lsp.config('html', {})
+      vim.lsp.config('eslint', {
+        capabilities = capabilities,
+        on_attach = lsp_attach,
+      })
+      vim.lsp.enable('eslint')
+
+      vim.lsp.config('jsonls', {
+        capabilities = capabilities,
+        on_attach = lsp_attach,
+      })
+      vim.lsp.enable('jsonls')
+
+      vim.lsp.config('cssls', {
+        capabilities = capabilities,
+        on_attach = lsp_attach,
+      })
+      vim.lsp.enable('cssls')
+
+      vim.lsp.config('html', {
+        capabilities = capabilities,
+        on_attach = lsp_attach,
+      })
+      vim.lsp.enable('html')
 
       -- lua_ls configuration
       vim.lsp.config('lua_ls', {
+        capabilities = capabilities,
         settings = {
           Lua = {
             runtime = {
@@ -155,43 +167,121 @@ return {
             },
           },
         },
+        on_attach = lsp_attach,
       })
+      vim.lsp.enable('lua_ls')
 
-      -- mason-lspconfig runs with automatic_enable = false, so this is the
-      -- single place that actually starts servers.
-      vim.lsp.enable({
-        'ts_ls',
-        'vue_ls',
-        'eslint',
-        'jsonls',
-        'cssls',
-        'html',
-        'lua_ls',
+      vim.lsp.config('ruby_lsp', {
+        capabilities = capabilities,
+        on_attach = lsp_attach,
       })
-    end
-  },
-  {
-    'williamboman/mason-lspconfig.nvim',
-    dependencies = { 'williamboman/mason.nvim' },
-    config = function ()
-      require('mason').setup({})
-      require('mason-lspconfig').setup({
-        ensure_installed = {
-          'lua_ls',
-          'ts_ls',
-          'cssls',
-          'html',
-          'jsonls',
-          'eslint',
-          'vue_ls'
+      vim.lsp.enable('ruby_lsp')
+
+      -- Elixir LS configuration
+      vim.lsp.config('elixirls', {
+        capabilities = capabilities,
+        cmd = { vim.fn.stdpath("data") .. "/mason/packages/elixir-ls/language_server.sh" },
+        settings = {
+          elixirLS = {
+            dialyzerEnabled = false,
+            fetchDeps = false,
+            enableTestLenses = false,
+            suggestSpecs = false,
+          }
         },
-        automatic_enable = false,
-        automatic_installation = true,
+        on_attach = lsp_attach,
+        root_markers = { 'mix.exs', '.git' },
       })
+      vim.lsp.enable('elixirls')
+
+      -- Pyright (Python LSP)
+      vim.lsp.config('pyright', {
+        capabilities = capabilities,
+        settings = {
+          python = {
+            analysis = {
+              typeCheckingMode = 'basic',
+              autoSearchPaths = true,
+              useLibraryCodeForTypes = true,
+            },
+          },
+        },
+        on_attach = lsp_attach,
+        root_markers = { 'pyrightconfig.json', 'pyproject.toml', 'setup.py', 'requirements.txt', '.git' },
+      })
+      vim.lsp.enable('pyright')
+
+      -- Jinja LSP (for Flask/Jinja2 templates)
+      vim.lsp.config('jinja_lsp', {
+        capabilities = capabilities,
+        on_attach = lsp_attach,
+        filetypes = { 'jinja', 'htmldjango' },
+        init_options = {
+          templates = './ecfx_admin/templates',
+          backend = { './ecfx_admin' },
+          lang = 'python',
+        },
+      })
+      vim.lsp.enable('jinja_lsp')
+
+      -- gopls (Go)
+      vim.lsp.config('gopls', {
+        capabilities = capabilities,
+        settings = {
+          gopls = {
+            -- Off by default, and both catch real bugs rather than style.
+            analyses = {
+              unusedparams = true,
+              nilness = true,
+              unusedwrite = true,
+              useany = true,
+            },
+            staticcheck = true,
+            gofumpt = true,
+            -- Without this, completing a symbol from a package you have not
+            -- imported yet returns nothing instead of offering the import.
+            completeUnimported = true,
+            usePlaceholders = true,
+          },
+        },
+        on_attach = lsp_attach,
+        root_markers = { 'go.work', 'go.mod', '.git' },
+      })
+      vim.lsp.enable('gopls')
+
+      -- Elm language server
+      vim.lsp.config('elmls', {
+        capabilities = capabilities,
+        on_attach = lsp_attach,
+        root_markers = { 'elm.json', '.git' },
+      })
+      vim.lsp.enable('elmls')
+
+      -- 🚀 RUST ANALYZER CONFIGURATION
+      vim.lsp.config('rust_analyzer', {
+        capabilities = capabilities,
+        on_attach = lsp_attach,
+        -- Rust files are typically recognized by the 'rust' filetype
+        filetypes = { 'rust', 'rs' },
+      })
+      vim.lsp.enable('rust_analyzer')
+
     end
   },
   {
     'WhoIsSethDaniel/mason-tool-installer.nvim',
-    dependencies = { 'williamboman/mason.nvim' },
+    dependencies = { 'mason-org/mason.nvim' },
+    config = function()
+      -- Mason package names, not lspconfig names ('elmls'), which
+      -- mason-lspconfig's ensure_installed does not resolve.
+      require('mason-tool-installer').setup({
+        ensure_installed = {
+          'elm-language-server',
+          'prettier',
+          'stylua',
+          'flake8',
+        },
+      })
+    end,
   },
 }

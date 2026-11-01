@@ -19,7 +19,15 @@
 # the shell instead.
 set -euo pipefail
 
-DOTFILES="${DOTFILES:-$HOME/projects/dotfiles}"
+if [ -z "${DOTFILES:-}" ]; then
+  self="${BASH_SOURCE[0]}"
+  while [ -L "$self" ]; do
+    self_dir="$(cd -P "$(dirname "$self")" && pwd)"
+    self="$(readlink "$self")"
+    case "$self" in /*) ;; *) self="$self_dir/$self" ;; esac
+  done
+  DOTFILES="$(cd -P "$(dirname "$self")/.." && pwd)"
+fi
 PROXY_DIR="$DOTFILES/proxy"
 SECRETS="$HOME/.config/sing-box/secrets.env"
 

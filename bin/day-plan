@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Open today's diary in nvim, in a centred tmux popup, at the start-day plan block.
+#
+#   day-plan [--wait]
+#
+# Reads $DIARY_DIR/<today>.md (default ~/wiki/diary). Needs tmux (exit 2 outside it)
+# and an existing diary file (exit 1). Without --wait the popup is started through
+# `tmux run-shell -b`, so the call returns at once and is safe from a non-interactive
+# caller; --wait runs display-popup in the foreground until the popup is closed.
+# nvim reloads the file when something else (the day session) edits it.
+set -euo pipefail
+
+DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
+START='<!-- start-day:start -->'
+
+die() { echo "day-plan: $1" >&2; exit "${2:-1}"; }
+
+wait=0
+case "${1:-}" in
+  -h|--help) sed -n '2p;4p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  --wait) wait=1 ;;
+  "") ;;
+  *) die "unknown option $1" ;;
+esac
+
+[ -n "${TMUX:-}" ] || die "needs tmux" 2
+
+file="$DIARY_DIR/$(date +%F).md"
+[ -f "$file" ] || die "no diary at $file"
+
+if [ "$wait" = 0 ]; then
+  cmd="$(printf '%q ' env "DIARY_DIR=$DIARY_DIR" "$0" --wait)"
+  target=()
+  [ -z "${TMUX_PANE:-}" ] || target=(-t "$TMUX_PANE")
+  exec tmux run-shell -b "${target[@]}" "$cmd"
+fi
+
+nvim_args=(-c 'set autoread' -c 'autocmd FocusGained,BufEnter,CursorHold * checktime')
+if grep -qF -- "$START" "$file"; then
+  nvim_args=("+/\\V$START" -c 'normal! zt' "${nvim_args[@]}")
+fi
+
+target=()
+[ -z "${TMUX_PANE:-}" ] || target=(-t "$TMUX_PANE")
+exec tmux display-popup -E -w 85% -h 85% -b rounded "${target[@]}" \
+  -T " plan · $(date '+%a %F') " \
+  nvim "${nvim_args[@]}" -- "$file"

@@ -59,6 +59,10 @@ keymap.set('t', '<Esc>', "<C-\\><C-n>")
 keymap.set('n', '<leader>tt', vim.diagnostic.setqflist, {desc = 'Diagnostics to Quickfix'})
 keymap.set('n', '<leader>to', function() vim.diagnostic.open_float(0, {border="single"}) end, {desc = 'Diagnostics popup'})
 
+-- quickfix navigation
+keymap.set('n', '[q', ':cprev<CR>', {desc = 'Previous quickfix item'})
+keymap.set('n', ']q', ':cnext<CR>', {desc = 'Next quickfix item'})
+
 -- flash.nvim jump like lightspeed
 keymap.set('n', 's', function() require('flash').jump() end, {desc = 'Flash jump'})
 keymap.set('n', 'S', function() require('flash').jump({search = {forward = false}}) end, {desc = 'Flash jump backwards'})

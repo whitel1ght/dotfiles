@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Copy stdin to the active Linux desktop clipboard without exposing it.
+set -euo pipefail
+
+if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-copy >/dev/null 2>&1; then
+    exec wl-copy
+fi
+
+if [ -n "${DISPLAY:-}" ] && command -v xclip >/dev/null 2>&1; then
+    exec xclip -selection clipboard -in
+fi
+
+if [ -n "${DISPLAY:-}" ] && command -v xsel >/dev/null 2>&1; then
+    exec xsel --clipboard --input
+fi
+
+echo "clipboard-copy: install wl-clipboard (Wayland) or xclip (X11) and run inside a graphical session" >&2
+exit 1

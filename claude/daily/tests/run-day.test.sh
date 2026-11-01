@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Structure checks for commands/run-day.md: the rules the spec fixes, and the contracts with the mod.
+set -uo pipefail
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$TEST_DIR/lib.sh"
+F="$TEST_DIR/../commands/run-day.md"
+
+echo "== frontmatter =="
+frontmatter_has "$F" description
+frontmatter_has "$F" argument-hint
+
+echo "== rules from the spec =="
+has "$F" "Subagents never write to \`~/wiki\`" "subagents never write the vault"
+has "$F" "<!-- start-day:start -->" "reads the start-day block"
+has "$F" "fewer than **3** ticket agents" "cap of 3 agents"
+has "$F" "\`[ ]\` todo, \`[/]\` in progress, \`[x]\` done, \`[!]\` blocked, \`[>]\` deferred to tomorrow" "marker legend"
+has "$F" "git -C <worktree> diff --stat" "check-before-tick reads the diff"
+has "$F" "PushNotification" "second failure notifies"
+has "$F" "405" "merge 405 rule"
+has "$F" "/orchestrate" "reuses orchestrate by reference"
+has "$F" "wt add <repo> <KEY>" "worktrees via wt"
+has "$F" "\${CLAUDE_PLUGIN_ROOT}/templates/ticket-brief.md" "uses the ticket brief"
+has "$F" "\${CLAUDE_PLUGIN_ROOT}/templates/review-round-brief.md" "uses the review-round brief"
+has "$F" "no draft-only mode" "records the mr-review-response limitation"
+has "$F" '-F "body=@<reply file>"' "posts the reply with glab api"
+has "$F" "\`yes\` / \`edit\` / \`no\`" "one confirmation per round"
+has "$F" "markdown link with the repo in the link text" "MR link rule"
+has "$F" "dry run: nothing created" "dry-run ending line"
+has "$F" "changes-since --cursor run-day >/dev/null" "seeds the watcher cursor right after creating the run state"
+has "$F" "PROJECT_PATH=" "derives the glab project path from the event url"
+has "$F" "_templates/decision.md" "decision frontmatter comes from the vault template"
+
+echo "== contract with the mod =="
+has "$F" "[daily-event] <kind> | <repo>!<iid> | <TICKET> | <summary> | <url>" "event line format matches mod/events.ts formatPrompt"
+has "$F" "[daily-event:info]" "informational lines"
+line="$(grep -m1 '^- ecfx-18169 | class=auto' "$F")"
+order="$(printf '%s' "$line" | tr '|' '\n' | sed -n 's/^ *\([a-z_]*\)=.*/\1/p' | tr '\n' ' ' | sed 's/ $//')"
+[ "$order" = "class agent worktree mr retries needs_you owner" ] && pass "run-state example has the fields mod/runstate.ts reads, in order" \
+  || fail "run-state field order" "got [$order]"
+has "$F" "inbox: <N> new" "handles the mod's inbox prompt"
+has "$F" "**Unplanned**" "uses the group name mod/view.ts orders last"
+has "$F" "owner=external:<KEY>" "writes the owner the mod parser reads"
+
+echo "== inbox (spec 4.9) =="
+has "$F" "~/.local/state/run-day/inbox/" "reads the inbox directory"
+has "$F" '`done`, `progress`, `handback`, `offplan`' "knows the four kinds"
+has "$F" "oldest first" "processes oldest first"
+has "$F" 'inbox/done/$T/' "moves processed messages to done/<date>"
+has "$F" "inbox/bad/" "moves malformed messages to bad/"
+has "$F" "a key that is not on the plan" "a done for an unplanned key becomes off-plan work"
+has "$F" "worktree is gone" "recovers a handback whose worktree was deleted"
+has "$F" "second message for the same key" "two messages for one key update one line"
+has "$F" "never downgrade" "a late progress never reopens a ticked line"
+has "$F" 'apply the `memory:` block (section 4)' "every kind applies the memory block"
+has "$F" "do not spawn a review-round agent for it" "no review round for an item in a side session"
+has "$F" "handling any other event or agent report" "checks the inbox on every event"
+has "$F" "/loop 5m" "no-mod fallback polls the inbox"
+has "$F" "owner=main" "a handback returns the item to the main session"
+
+echo "== fix round 1 =="
+has "$F" "not mentioned in any output, even if they appear in \`ls\`" "non-message files are never named in output"
+has "$F" "merged in the UI by you" "dry run states merge rows are merged in the UI"
+has "$F" 'with the branch from `glab mr view`' "wt add with the MR branch for items that have one"
+has "$F" "an old decision's \`status\` (only to \`superseded\`)" "write rules allow superseding an old decision"
+has "$F" "\`done\` replaces any existing" "done replaces earlier evidence suffixes"
+has "$F" "no run-state line" "inbox keys without a run-state line"
+has "$F" "comes from the agent's \`discussion:\` report line" "discussion id source"
+has "$F" "grep -c '{{'\` on the filled review-round brief" "review-round brief leftover check"
+has "$F" "{{REPLY_FILE}}, {{REPO}}, {{WORKTREE}}" "lists all ten placeholders"
+
+echo "== shell state: every Bash call is a new shell =="
+has "$F" "Each Bash call is a new shell" "states the fresh-shell rule"
+# every fenced block that uses a variable must also set it
+block_sets() { awk -v use="$2" -v set="$3" '/^```/{if(inb){if(u&&!d)bad=1;inb=0;u=d=0}else inb=1;next} inb&&index($0,use){u=1} inb&&index($0,set){d=1} END{exit bad}' "$1"; }
+for pair in 'LOGF=|P=' 'LOGF=|Q=' '$ENC|ENC=' '$IID|IID=' '$INBOX|INBOX=' '$T/|T=' '$f"|f='; do
+  u="${pair%%|*}"; d="${pair##*|}"
+  block_sets "$F" "$u" "$d" && pass "blocks using $u set $d" || fail "blocks using $u set $d" "a Bash block relies on $d from another call"
+done
+
+finish
