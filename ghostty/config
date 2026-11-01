@@ -6,6 +6,20 @@ window-padding-x = 10
 window-padding-y = 10, 0
 window-padding-balance = true
 
+# No titlebar, but still mouse-resizable. "client" keeps GTK client-side
+# decorations (invisible resize border + shadow); gtk-titlebar = false
+# removes only the headerbar. Do NOT use window-decoration = none here:
+# GNOME/Wayland has no server-side decorations, so the window would lose
+# its resize edges entirely.
+window-decoration = client
+gtk-titlebar = false
+
+# Hide the tab bar too (tabs still work: ctrl+shift+t / ctrl+tab, or use a
+# keybind for toggle_tab_overview).
+# Note: gtk-tabs-location = hidden would put a tab-count button in the
+# titlebar, which we just hid, so change window-show-tab-bar instead.
+window-show-tab-bar = never
+
 keybind = super+p=text::Telescope find_files\n
 keybind = super+s=text::w\n
 keybind = super+w=text::Wiki\n
