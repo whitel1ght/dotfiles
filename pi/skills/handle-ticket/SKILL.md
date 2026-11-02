@@ -33,8 +33,8 @@ read ticket → multi-agent investigate + brainstorm → [ask only if genuinely 
 
 **One gate, one review cycle, and one MR unless the approved approach names
 several.** Open exactly the MRs the approach lists; ask before opening any MR it
-does not list. Everything after the approach gate runs unattended. Do not invent extra checkpoints — the user chose a single pause
-deliberately.
+does not list. Everything after the approach gate runs unattended. Do not
+invent extra checkpoints — the user chose a single pause deliberately.
 
 ## When to invoke
 
@@ -377,6 +377,9 @@ Close the tab when you're done.
 ---
 
 ## Phase 7 — Draft MR
+
+When the approved approach lists several MRs, run Phases 7–10 once per MR, in
+the approach's order, each on its own Phase 3 branch as the approach names it.
 
 Commit, push, open as **draft**. Draft matters: the review cycle in Phase 8 is
 still going to push commits, and human reviewers should not be pinged into a

@@ -18,6 +18,7 @@ for harness in claude pi; do
   echo "$harness"
   has "$harness: MR count follows the approved approach" "$text" "Open exactly the MRs the approach lists" "$f"
   lacks "$harness: no bare one-MR rule" "$text" "one review cycle, one MR.**" "$f"
+  has "$harness: MR phases run once per listed MR" "$text" "run Phases 7–10 once per MR" "$f"
 done
 
 echo "$PASS passed, $FAIL failed"
