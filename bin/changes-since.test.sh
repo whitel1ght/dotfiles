@@ -38,7 +38,8 @@ export CHANGES_SINCE_WAIT_FOR="$STUBS/wait-for"
 # default UTC; JIRA_MYSELF_FAIL=1 fails it; JIRA_MYSELF_BODY replies with that
 # body instead, like Jira's error bodies; JIRA_MISSING=<text> prints it to stderr
 # and exits 1 with no stdout, like a missing secret); otherwise picks the fixture
-# by what the JQL asks for.
+# by what the JQL asks for; JIRA_SEARCH_BODY replies to search/jql with that body
+# (GET myself still succeeds).
 cat > "$STUBS/jira-api" <<'STUB'
 #!/bin/bash
 echo "$*" >> "${FIX:?}/jira.log"
@@ -46,6 +47,7 @@ echo "$*" >> "${FIX:?}/jira.log"
 [ -n "${JIRA_SLEEP:-}" ] && sleep "$JIRA_SLEEP"
 [ -n "${JIRA_MISSING:-}" ] && { echo "$JIRA_MISSING" >&2; exit 1; }
 [ "$1 $2" = "GET myself" ] && { [ -n "${JIRA_MYSELF_BODY:-}" ] && { echo "$JIRA_MYSELF_BODY"; exit 0; }; [ -n "${JIRA_MYSELF_FAIL:-}" ] && exit 1; printf '{"timeZone":"%s"}\n' "${JIRA_TZ:-UTC}"; exit 0; }
+[ -n "${JIRA_SEARCH_BODY:-}" ] && { echo "$JIRA_SEARCH_BODY"; exit 0; }
 [ -n "${JIRA_DOWN:-}" ] && { echo '{"errorMessages":["Unauthorized"]}'; exit 0; }
 case "$3" in
     *"CHANGED TO currentUser()"*) cat "$FIX/jira-assigned.json" ;;
@@ -508,6 +510,11 @@ reset; cursor 2026-10-08T07:00:00Z
 out=$(CHANGES_SINCE_WAIT_FOR=/nonexistent/wait-for JIRA_MYSELF_FAIL=1 run); rc=$?
 assert_eq "1" "$rc" "a missing waiter leaves exit 1"
 assert_eq "changes-since: Jira unavailable, retry in a few minutes" "$(errs)" "and stderr has only the usual line"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(JIRA_SEARCH_BODY='{"errorMessages":["Rate limit exceeded"],"status":429}' run); rc=$?
+assert_eq "1" "$rc" "a failed search/jql after a good GET myself: exit 1"
+assert_eq "--source jira service_down Jira search failed, retry in a few minutes" "$(cat "$FIX/friction.log")" "with its own friction line"
+[ ! -e "$FIX/wait-for.log" ] && pass "and starts no waiter, Jira itself is up" || fail "and starts no waiter, Jira itself is up" "$(cat "$FIX/wait-for.log")"
 reset; cursor 2026-10-08T07:00:00Z
 out=$(run); rc=$?
 [ ! -e "$FIX/wait-for.log" ] && pass "a healthy run starts no waiter" || fail "a healthy run starts no waiter" "$(cat "$FIX/wait-for.log")"

@@ -46,7 +46,8 @@
 # times out or the budget is spent, that MR's events go out unmarked, with a
 # note on stderr and a gitlab-approvals friction line, and the run carries on.
 #
-# When Jira is down (not on a timeout or a credentials failure), `wait-for jira --detach`
+# When Jira is down (its reachability check, GET myself, fails; not a timeout, a
+# credentials failure or a failed search), `wait-for jira --detach`
 # starts in the background (CHANGES_SINCE_WAIT_FOR names another command), so
 # the recovery is noted; its output is dropped and a failing waiter changes nothing.
 #
@@ -149,10 +150,12 @@ approvals_call() {
 feed_jira() {
   local jql_since assigned updated tz
   # JQL reads dates in the Jira profile's time zone, not this machine's.
+  JIRA_STEP=myself
   JIRA_REPLY=$(bounded "$JIRA_API" GET myself 2>>"$JIRA_ERR") || return 1
   tz=$(jq -er .timeZone <<<"$JIRA_REPLY") || return 1
   jql_since=$(TZ="$tz" date -r "$(epoch_of "$SINCE")" '+%Y/%m/%d %H:%M' 2>/dev/null || TZ="$tz" date -d "$SINCE" '+%Y/%m/%d %H:%M')
   jira_issues() {
+    JIRA_STEP=search
     JIRA_REPLY=$(bounded "$JIRA_API" POST search/jql "$(jq -cn --arg jql "$1" \
       '{jql: $jql, fields: ["summary", "status", "updated"], maxResults: 100}')" 2>>"$JIRA_ERR") || return 1
     jq -e '.issues | type == "array"' <<<"$JIRA_REPLY" >/dev/null
@@ -291,6 +294,8 @@ jira_down() {
   if grep -Eiq 'must be authenticated|unauthori[sz]ed|"status(Code)?" *: *40[13]' <<<"${JIRA_REPLY:-}" || grep -q 'missing in' "$JIRA_ERR" 2>/dev/null; then
     down jira "Jira unavailable (are JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env still valid?)"
   fi
+  # The waiter probes GET myself: only a failure there means Jira itself is down.
+  [ "${JIRA_STEP:-myself}" = myself ] || down jira "Jira search failed, retry in a few minutes"
   down jira "Jira unavailable, retry in a few minutes" wait
 }
 feed_jira || jira_down
