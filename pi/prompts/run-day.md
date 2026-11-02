@@ -111,7 +111,7 @@ planned pause in the day:
   review items); posting it is one decision. Never for an MR we already approved (D-011): when
   `glab api "projects/<urlencoded path>/merge_requests/<iid>/approvals" | jq -r '.approved_by[].user.username'`
   lists `whitel1ght`, class it `me` with `already approved`. The gate is `review-gate <project path> <iid>`
-  (exit 0 go ahead, 1 approved by us, 3 unknown); run it before every review or re-review dispatch
+  (exit 0 go ahead, 1 approved by us, 3 unknown; any exit other than 0, a missing command included, means do not dispatch); run it before every review or re-review dispatch
   (steps 2, 5 and 11).
 - `me` = syncs, meetings, merges, decisions, replies to people. A review is not a reply: it is `review`.
 - `wait` = blocked on others.

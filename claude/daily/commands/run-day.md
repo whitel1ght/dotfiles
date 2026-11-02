@@ -46,7 +46,7 @@ awk '/<!-- start-day:start -->/{f=1;next} /<!-- start-day:end -->/{f=0} f' ~/wik
 Classify every open item (`[ ]`, `[/]`, `[!]`; skip `[X]` and `[>]`):
 
 - **auto**: ticket work an agent can do (fix, implement, address review, write tests).
-- **review**: someone else's MR to review or re-review. An agent drafts the review (section 2 step 4); posting it is one decision. Never for an MR we already approved (D-011): when `glab api "projects/<urlencoded path>/merge_requests/<iid>/approvals" | jq -r '.approved_by[].user.username'` lists `whitel1ght`, class it `me` with `already approved`. The gate is `review-gate <project path> <iid>` (exit 0 go ahead, 1 approved by us, 3 unknown); run it before every review or re-review dispatch (sections 2, 5 and 11).
+- **review**: someone else's MR to review or re-review. An agent drafts the review (section 2 step 4); posting it is one decision. Never for an MR we already approved (D-011): when `glab api "projects/<urlencoded path>/merge_requests/<iid>/approvals" | jq -r '.approved_by[].user.username'` lists `whitel1ght`, class it `me` with `already approved`. The gate is `review-gate <project path> <iid>` (exit 0 go ahead, 1 approved by us, 3 unknown; any exit other than 0, a missing command included, means do not dispatch); run it before every review or re-review dispatch (sections 2, 5 and 11).
 - **me**: syncs, meetings, merges, decisions, replies to people. A review is not a reply: it is `review`.
 - **wait**: blocked on others.
 

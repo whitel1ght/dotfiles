@@ -488,6 +488,11 @@ if [ -f "$DOTFILES_DIR/bin/changes-since" ]; then
     create_symlink "$DOTFILES_DIR/bin/changes-since" "$HOME/.local/bin/changes-since"
 fi
 
+# review-gate refuses a review of an MR I already approved (D-011); run-day calls it before dispatching one.
+if [ -f "$DOTFILES_DIR/bin/review-gate" ]; then
+    create_symlink "$DOTFILES_DIR/bin/review-gate" "$HOME/.local/bin/review-gate"
+fi
+
 # day-note leaves a message in the run-day inbox (hand-offs, report-backs, off-plan work).
 if [ -f "$DOTFILES_DIR/bin/day-note" ]; then
     create_symlink "$DOTFILES_DIR/bin/day-note" "$HOME/.local/bin/day-note"

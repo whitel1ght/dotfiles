@@ -53,5 +53,8 @@ APPROVALS='{"message":"404 Not Found"}' run ecfx/ecfx-dashboard 2202 >/dev/null;
 run ecfx/ecfx-dashboard >/dev/null; assert_eq "2" "$?" "missing iid: exit 2"
 run ecfx/ecfx-dashboard abc >/dev/null; assert_eq "2" "$?" "non-numeric iid: exit 2"
 
+grep -q 'create_symlink "$DOTFILES_DIR/bin/review-gate" "$HOME/.local/bin/review-gate"' "$TEST_DIR/../install.sh" \
+    && pass "install.sh links review-gate onto PATH" || fail "install.sh links review-gate onto PATH" "no create_symlink line"
+
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
