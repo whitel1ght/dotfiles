@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh friction queue every 2 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+Persistent=true
+Unit=dotfiles-frictions.service
+
+[Install]
+WantedBy=timers.target

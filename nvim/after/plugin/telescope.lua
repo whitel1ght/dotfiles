@@ -34,8 +34,9 @@ vim.keymap.set('n', '<leader>ps', function ()
 end)
 
 -- Project/worktree switcher: `space pp` lists every checkout under ~/projects
--- (top-level dirs and ~/projects/worktrees/<repo>/<branch>) and :cd's into the
--- picked one. Home stays a single long-lived nvim; telescope's find_files /
+-- (project dirs at the top level and one folder deeper inside a grouping dir
+-- such as ~/projects/ecfx/<repo>, plus ~/projects/worktrees/<repo>/<branch>)
+-- and :cd's into the picked one. Home stays a single long-lived nvim; telescope's find_files /
 -- grep_string honour vim's cwd, so <leader>pf/<leader>rg/<leader>ps all follow
 -- the switch.
 --
@@ -114,16 +115,46 @@ local function collect_checkouts()
     end)
   end
 
+  -- Clones live either flat (~/projects/<repo>, the Mac) or grouped one folder
+  -- deeper (~/projects/ecfx/<repo>, the Linux box), so look at both depths and
+  -- keep whatever is a git work tree. A folder that is not one itself but holds
+  -- git checkouts is offered through them (so no bare "ecfx" row with no
+  -- branch); a folder with nothing git-like below it is offered as before.
+  -- worktrees/ and dot-directories are skipped, as bin/wt and bin/mr-watch do.
+  local function add_project(dir, name)
+    if not in_work_tree(dir) then
+      return false
+    end
+    table.insert(projects, {
+      path = dir,
+      repo = name,
+      branch = git_branch(dir),
+    })
+    return true
+  end
+
   for _, name in ipairs(vim.fn.readdir(projects_root)) do
     if vim.fn.isdirectory(projects_root .. "/" .. name) == 1
       and not vim.startswith(name, ".")
       and name ~= "worktrees" then
       local dir = projects_root .. "/" .. name
-      table.insert(projects, {
-        path = dir,
-        repo = name,
-        branch = git_branch(dir),
-      })
+      if not add_project(dir, name) then
+        local added = false
+        for _, child in ipairs(vim.fn.readdir(dir)) do
+          local sub = dir .. "/" .. child
+          if not vim.startswith(child, ".") and vim.fn.isdirectory(sub) == 1 then
+            added = add_project(sub, child) or added
+          end
+        end
+        -- nothing git-like below it, so it is a plain folder, offered as before
+        if not added then
+          table.insert(projects, {
+            path = dir,
+            repo = name,
+            branch = git_branch(dir),
+          })
+        end
+      end
     end
   end
   table.sort(projects, function(a, b)

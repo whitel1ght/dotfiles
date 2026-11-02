@@ -90,6 +90,16 @@ assert_contains "$out" "repo/orphan — not a git worktree" "reports the orphan 
 [ -z "$(git -C "$REPO" worktree list | grep "$WT/repo/merged")" ] && pass "git no longer lists the removed worktree" \
     || fail "git no longer lists the removed worktree" "still listed"
 
+echo "clean-worktrees — worktrees root"
+# WORKTREES_DIR defaults to <PROJECTS_DIR>/worktrees, so pointing PROJECTS_DIR at
+# another root moves it (the clones themselves may sit one folder deeper; this
+# script only ever walks the worktrees tree).
+ALT="$SANDBOX/alt-projects"; mkdir -p "$ALT/worktrees/repo/keepme"
+out="$(PATH="$STUBS:$PATH" MRS="$MRS" PROJECTS_DIR="$ALT" "$SCRIPT" -n 2>&1)"
+assert_contains "$out" "repo/keepme — not a git worktree" "WORKTREES_DIR follows PROJECTS_DIR"
+out="$(PATH="$STUBS:$PATH" MRS="$MRS" PROJECTS_DIR="$SANDBOX/none" "$SCRIPT" -n 2>&1)"
+assert_contains "$out" "no $SANDBOX/none/worktrees" "and a PROJECTS_DIR with no worktrees is reported"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

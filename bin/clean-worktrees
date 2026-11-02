@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Remove worktrees whose MR has been merged.
 #
-#   clean-worktrees        clean ~/projects/worktrees/<repo>/<name>
+#   clean-worktrees        clean <projects>/worktrees/<repo>/<name>
 #   clean-worktrees -n     dry run, print what would go
 #
 # "Merged" is asked of GitLab, not git: MRs are squash-merged, so the branch is
@@ -18,7 +18,8 @@
 # Stale worktree entries whose directory is already gone are pruned.
 set -euo pipefail
 
-WORKTREES_DIR="${WORKTREES_DIR:-$HOME/projects/worktrees}"
+PROJECTS_DIR="${PROJECTS_DIR:-$HOME/projects}"
+WORKTREES_DIR="${WORKTREES_DIR:-$PROJECTS_DIR/worktrees}"
 
 dry=0
 while [ $# -gt 0 ]; do

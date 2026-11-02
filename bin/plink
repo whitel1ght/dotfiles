@@ -11,7 +11,9 @@
 # up startup defaults and the complete resource configuration.
 #
 # Only config items are linked. ~/.pi/agent also holds auth.json, sessions/,
-# install/ and npm/, which Pi owns and which are machine-local.
+# install/ and npm/, which Pi owns and which are machine-local. settings.json is
+# seeded as a per-host file rather than linked, because Pi writes changelog and
+# device state into it; an owned legacy link is converted, never re-created.
 #
 # Env overrides (used by bin/plink.test.sh):
 #   DOTFILES_DIR  repo root; defaults to the parent of this script
@@ -127,9 +129,75 @@ fi
 
 [ "$DRY_RUN" = 1 ] || { mkdir -p "$PI_DEST"; mkdir -p "$HOME/.agents"; }
 
-for name in settings.json models.json mcp-servers.json model-selection.md APPEND_SYSTEM.md; do
+# settings.json is per-host state: Pi writes changelog markers and device
+# identity into it, so pi/settings.json is only a seed. install.sh seeds it and
+# this helper never links it. A legacy link owned by this checkout is converted
+# into a regular copy of the same content so Pi's writes stop dirtying the repo;
+# real files and foreign links are left untouched.
+per_host_settings() {
+    local src="$1" dest="$2" src_real dest_real tmp backup n
+    src_real="$(readlink -m -- "$src")"
+    dest_real="$(readlink -m -- "$dest")"
+    if [ -L "$dest" ]; then
+        if [ "$dest_real" != "$src_real" ]; then
+            log_warn "leaving foreign settings link untouched: $dest -> $(readlink "$dest")"
+            SKIPPED=$((SKIPPED + 1))
+            return 0
+        fi
+        if [ "$DRY_RUN" = 1 ]; then
+            log_warn "would convert owned settings link $dest into a per-host file"
+            CHANGED=$((CHANGED + 1))
+            return 0
+        fi
+        backup="$dest.symlink.backup"; n=1
+        while [ -e "$backup" ] || [ -L "$backup" ]; do
+            backup="$dest.symlink.backup.$n"
+            n=$((n + 1))
+        done
+        cp -P -- "$dest" "$backup" \
+            || { log_error "failed to record the old $dest link"; FAILURES=$((FAILURES + 1)); return 0; }
+        tmp="$(mktemp "$dest.XXXXXX")" \
+            || { log_error "failed to stage $dest"; FAILURES=$((FAILURES + 1)); return 0; }
+        if ! cat -- "$src_real" > "$tmp"; then
+            rm -f -- "$tmp"
+            log_error "failed to copy $src_real"
+            FAILURES=$((FAILURES + 1))
+            return 0
+        fi
+        chmod 664 -- "$tmp"
+        mv -f -- "$tmp" "$dest" \
+            || { log_error "failed to convert $dest"; FAILURES=$((FAILURES + 1)); return 0; }
+        log_info "converted owned settings link $dest into a per-host file (old link recorded at $backup)"
+        CHANGED=$((CHANGED + 1))
+        return 0
+    fi
+    [ -e "$dest" ] && return 0
+    [ -f "$src" ] || return 0
+    if [ "$DRY_RUN" = 1 ]; then
+        log_info "would seed $dest from $src"
+        CHANGED=$((CHANGED + 1))
+        return 0
+    fi
+    tmp="$(mktemp "$dest.XXXXXX")" \
+        || { log_error "failed to stage $dest"; FAILURES=$((FAILURES + 1)); return 0; }
+    if ! cat -- "$src" > "$tmp"; then
+        rm -f -- "$tmp"
+        log_error "failed to copy $src"
+        FAILURES=$((FAILURES + 1))
+        return 0
+    fi
+    chmod 664 -- "$tmp"
+    mv -f -- "$tmp" "$dest" \
+        || { log_error "failed to seed $dest"; FAILURES=$((FAILURES + 1)); return 0; }
+    log_info "seeded $dest from $src as a per-host file"
+    CHANGED=$((CHANGED + 1))
+}
+
+for name in models.json mcp-servers.json model-selection.md APPEND_SYSTEM.md; do
     [ -f "$PI_SRC/$name" ] && link_item "$PI_SRC/$name" "$PI_DEST/$name"
 done
+
+per_host_settings "$PI_SRC/settings.json" "$PI_DEST/settings.json"
 
 # mcp.json used to be linked here. Pi does not expand ${VAR} in its url or
 # oauth.clientId, so the servers now live in mcp-servers.json, which the mcp-env

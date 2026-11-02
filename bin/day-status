@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# Today's plan items joined with live MR, Jira and run-day agent state ("where are we?").
+#
+#   day-status [--date YYYY-MM-DD] [--json]
+#
+# Reads the plan block of $DIARY_DIR/<date>.md (default ~/wiki/diary, today): one entry per
+# top-level `- [m] ...` line between the start-day markers. Per item it adds the MR state from
+# glab (open/merged, draft, pipeline, approvals, unresolved threads), the Jira status from
+# jira-api and, while /run-day is active, the agent and review-round ids from the run state
+# ($RUN_DAY_STATE_DIR/<date>.md, default ~/.local/state/run-day). An item's MRs are the repo!N
+# refs on its plan line, else the mr= of its run-state line, else my open MRs whose branch or
+# title holds the ticket key. Each source is best effort: a failing call shows "unknown" for
+# that field and the rest still prints. Exit 1 when the diary or its plan block is missing.
+# Every glab and jira-api call that exits non-zero is retried once (gitlab.com drops ~2.5% of
+# calls at random); jira-api exits 0 on an HTTP error status (429/5xx), so those are not retried.
+# Tests and stubs: DAY_STATUS_GLAB, DAY_STATUS_JIRA (commands, default glab and jira-api),
+# DAY_STATUS_RETRY_SLEEP (seconds before the retry, default 1).
+set -euo pipefail
+
+DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
+RUN_DAY_STATE_DIR="${RUN_DAY_STATE_DIR:-$HOME/.local/state/run-day}"
+GLAB="${DAY_STATUS_GLAB:-glab}"
+JIRA="${DAY_STATUS_JIRA:-jira-api}"
+
+RETRY_SLEEP="${DAY_STATUS_RETRY_SLEEP:-1}"
+
+# retry <cmd...>: run it, and once more after a pause if it fails; only the output of the
+# successful attempt is printed, so a partial first attempt is never joined to the retry.
+retry() {
+  local out
+  if out=$("$@" 2>/dev/null); then printf '%s\n' "$out"; return 0; fi
+  sleep "$RETRY_SLEEP"
+  out=$("$@" 2>/dev/null) || return 1
+  printf '%s\n' "$out"
+}
+
+die() { echo "day-status: $1" >&2; exit "${2:-1}"; }
+
+date_arg="$(date +%F)"
+json=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) sed -n '2,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "$0"; exit 0 ;;
+    --json) json=1 ;;
+    --date) [ $# -ge 2 ] || die "--date needs a value" 2; date_arg="$2"; shift ;;
+    *) die "unknown option $1" 2 ;;
+  esac
+  shift
+done
+command -v jq >/dev/null || die "needs jq" 2
+
+file="$DIARY_DIR/$date_arg.md"
+[ -f "$file" ] || die "no diary at $file"
+grep -qF -- '<!-- start-day:start -->' "$file" || die "no plan block in $file"
+state="$RUN_DAY_STATE_DIR/$date_arg.md"
+
+mine=""   # my open MRs, fetched once in the main shell and only when an item needs the key search
+mine_loaded=0
+load_mine() {
+  [ "$mine_loaded" = 0 ] || return 0
+  mine=$(retry "$GLAB" api "merge_requests?scope=created_by_me&state=opened&per_page=100") || mine="unknown"
+  mine_loaded=1
+}
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+mr_refs() { printf '%s\n%s\n' "$1" "$2" | grep -oE '[A-Za-z][A-Za-z-]*![0-9]+' || true; }
+
+repo_path() {
+  case "$1" in
+    backend|dashboard|admin|protobufs) echo "ecfx/ecfx-$1" ;;
+    *) echo "ecfx/$1" ;;
+  esac
+}
+
+# def_path <repo> <iid>: project path from the block's `[label]: https://gitlab.com/<path>/-/merge_requests/<iid>`
+# definition (bin/diary-links) whose last path segment is the repo or ecfx-<repo>; empty when none.
+def_path() {
+  sed -nE "s#^\\[[^]]*\\]:[[:space:]]*https://gitlab\\.com/(.+)/-/merge_requests/$2[[:space:]]*\$#\\1#p" <<<"$block" \
+    | awk -v r="$1" -F/ '{ l = tolower($NF) } l == r || l == "ecfx-" r { print; exit }'
+}
+
+# mr_json <project-id-or-path> <iid> <display ref>
+mr_json() {
+  local proj="${1//\//%2F}" iid="$2" ref="$3" detail appr n disc u
+  if ! detail=$(retry "$GLAB" api "projects/$proj/merge_requests/$iid") || ! jq -e . >/dev/null 2>&1 <<<"$detail"; then
+    jq -n --arg ref "$ref" '{ref: $ref, state: "unknown", draft: "unknown", pipeline: "unknown", approvals: "unknown", unresolved: "unknown"}'
+    return
+  fi
+  if appr=$(retry "$GLAB" api "projects/$proj/merge_requests/$iid/approvals") && n=$(jq -e '.approved_by | length' <<<"$appr" 2>/dev/null); then :; else n="\"unknown\""; fi
+  if disc=$(retry "$GLAB" api --paginate "projects/$proj/merge_requests/$iid/discussions?per_page=100") \
+    && u=$(jq -s 'add // [] | [.[] | select(any(.notes[]; .resolvable and (.resolved | not)))] | length' <<<"$disc" 2>/dev/null); then :; else u="\"unknown\""; fi
+  jq --arg ref "$ref" --argjson approvals "$n" --argjson unresolved "$u" '{
+    ref: $ref,
+    state: (.state // "unknown"),
+    draft: (.draft // false),
+    pipeline: (.head_pipeline.status // .pipeline.status // "none"),
+    approvals: $approvals,
+    unresolved: $unresolved
+  }' <<<"$detail"
+}
+
+# mrs_for <key> <line text> <run-state mr=> <my open MRs JSON or "unknown"> -> JSON array
+mrs_for() {
+  local key="$1" text="$2" runmr="$3" found="$4" refs ref r iid p out="" seen=" "
+  if [[ $runmr =~ ^([^[:space:]!]+/[^[:space:]!]+)!([0-9]+)$ ]]; then
+    p="${BASH_REMATCH[1]}"; iid="${BASH_REMATCH[2]}"
+    r=$(printf '%s' "${p##*/}" | tr 'A-Z' 'a-z'); r="${r#ecfx-}"
+    seen="$seen$r!$iid "
+    out="$out$(mr_json "$p" "$iid" "$r!$iid")"$'\n'
+  fi
+  refs=$(mr_refs "$text" "$runmr")
+  for ref in $refs; do
+    r=$(printf '%s' "${ref%!*}" | tr 'A-Z' 'a-z'); r="${r#ecfx-}"; iid="${ref#*!}"
+    case "$seen" in *" $r!$iid "*) continue ;; esac
+    seen="$seen$r!$iid "
+    p=$(def_path "$r" "$iid"); [ -n "$p" ] || p=$(repo_path "$r")
+    out="$out$(mr_json "$p" "$iid" "$r!$iid")"$'\n'
+  done
+  if [ -z "$out" ] && [ -n "$key" ]; then
+    if [ "$found" = unknown ]; then
+      out=$(jq -n '{ref: "?", state: "unknown", draft: "unknown", pipeline: "unknown", approvals: "unknown", unresolved: "unknown"}')
+    else
+      while IFS=$'\t' read -r pid iid full; do
+        [ -n "$pid" ] || continue
+        r="${full%!*}"; r="${r##*/}"; r="${r#ecfx-}"
+        out="$out$(mr_json "$pid" "$iid" "$r!$iid")"$'\n'
+      done < <(jq -r --arg k "$key" '.[] | select(((.source_branch // "") + " " + (.title // "")) | ascii_downcase | contains($k | ascii_downcase)) | [.project_id, .iid, (.references.full // "")] | @tsv' <<<"$found" 2>/dev/null || true)
+    fi
+  fi
+  printf '%s' "$out" | jq -s '.'
+}
+
+jira_status() {
+  local resp
+  resp=$(retry "$JIRA" GET "issue/$1?fields=status") || { echo unknown; return; }
+  jq -r '.fields.status.name // "unknown"' <<<"$resp" 2>/dev/null || echo unknown
+}
+
+# item_json <group> <state> <key> <title> <run-state mr=> <agent> <round> <my open MRs> -> one JSON line
+item_json() {
+  local group="$1" st="$2" key="$3" title="$4" runmr="$5" agent="$6" round="$7" found="$8" jira="-" mrs
+  [ -z "$key" ] || jira=$(jira_status "$key")
+  mrs=$(mrs_for "$key" "$title" "$runmr" "$found")
+  jq -nc --arg group "$group" --arg state "$st" --arg key "$key" --arg text "$title" --arg jira "$jira" \
+    --arg agent "$agent" --arg round "$round" --argjson mrs "$mrs" \
+    '{group: $group, state: $state, key: $key, text: $text, jira: $jira, mrs: $mrs,
+      agent: (if $agent == "-" then null else $agent end), round: (if $round == "-" then null else $round end)}'
+}
+
+n=0
+group=""
+block=$(awk '/<!-- start-day:start -->/{on=1;next} /<!-- start-day:end -->/{on=0} on' "$file")
+while IFS= read -r line; do
+  if [[ $line =~ ^\*\*(.+)\*\*[[:space:]]*$ ]]; then group="${BASH_REMATCH[1]}"; continue; fi
+  [[ $line =~ ^-\ \[([\ xX/!\>])\]\ (.*)$ ]] || continue
+  marker="${BASH_REMATCH[1]}"; text="${BASH_REMATCH[2]}"
+  case "$marker" in
+    " ") st=todo ;; "/") st=in-progress ;; x|X) st=done ;; "!") st=blocked ;; *) st=deferred ;;
+  esac
+  key=""
+  if [[ $text =~ (^|[^A-Za-z0-9])([A-Za-z]{2,10}-[0-9]{2,6})([^0-9]|$) ]]; then
+    key=$(printf '%s' "${BASH_REMATCH[2]}" | tr '[:lower:]' '[:upper:]')
+  fi
+  agent="-" round="-" runmr=""
+  if [ -n "$key" ] && [ -f "$state" ]; then
+    rl=$(grep -i -m1 -E "^- $key[[:space:]]*\|" "$state" || true)
+    if [ -n "$rl" ]; then
+      agent=$(sed -nE 's/.*\| agent=([^ |]*).*/\1/p' <<<"$rl"); agent="${agent:--}"
+      round=$(sed -nE 's/.*\| round=([^ |]*).*/\1/p' <<<"$rl"); round="${round:--}"
+      runmr=$(sed -nE 's/.*\| mr=([^ |]*).*/\1/p' <<<"$rl")
+    fi
+  fi
+  title="${text%% · *}"
+  if [ -n "$key" ] && [ -z "$(mr_refs "$title" "$runmr")" ]; then load_mine; fi
+  n=$((n + 1))
+  { item_json "$group" "$st" "$key" "$title" "$runmr" "$agent" "$round" "$mine" > "$tmp/$(printf '%05d' "$n")" 2>/dev/null || true; } </dev/null &
+done <<<"$block"
+wait
+
+all=$(for f in "$tmp"/[0-9]*; do if [ -f "$f" ]; then cat "$f"; fi; done | jq -s '.')
+if [ "$json" = 1 ]; then
+  printf '%s\n' "$all"
+  exit 0
+fi
+
+echo "Plan $date_arg: $(jq -r 'length' <<<"$all") items"
+jq -r '
+  def mrline: if .state == "unknown" then "MR unknown (\(.ref))"
+    else "\(.ref) \(.state)\(if .draft == true then " draft" else "" end), pipeline \(.pipeline), approvals \(.approvals)\(if .unresolved == "unknown" then ", threads unknown" elif .unresolved > 0 then ", \(.unresolved) unresolved threads" else "" end)" end;
+  .[] | "[\(.state)] \(.key // "") \(.text | sub("^[A-Za-z]{2,10}-[0-9]+ "; "") | .[0:80])"
+    + " | Jira: \(if .key == "" then "-" elif .jira == "unknown" then "Jira unknown" else .jira end)"
+    + " | " + (if (.mrs | length) == 0 then "no MR" else (.mrs | map(mrline) | join("; ")) end)
+    + (if .agent then " | agent \(.agent)" else "" end)
+    + (if .round then " | round agent \(.round)" else "" end)' <<<"$all"

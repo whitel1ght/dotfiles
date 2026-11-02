@@ -1,0 +1,498 @@
+#!/usr/bin/env python3
+"""Words: the first track of the learning system. A word is a quiz card in $CARDS_DIR
+(~/wiki/cards) with tag `word`, so the morning quiz and `cards` work on it as on any card.
+
+  words add WORD... [--back TEXT] [--met-in S] [--from F] [--date D]
+        save WORD: the back is the first senses from macOS's dictionary (`macdict`, or
+        $WORDS_MACDICT) unless --back; the front "What does *WORD* mean?" plus the sentence it
+        was met in. Prints the slug; a word already saved prints its slug and writes nothing; a
+        word the dictionary lacks, with no --back, exits 1 and writes nothing.
+  words look WORD... [--back TEXT]   (a phrase needs no quotes: `w gordian knot`)
+        (zsh alias `w`) print the full definition, then save the word (from lookup) and print
+        "saved" or "already saved"; a miss prints macdict's message and saves nothing (exit 1)
+        unless --back.
+  words today [--date D]
+        Merriam-Webster's word of the day ($WORDS_FEED, a URL or a file): the feed item dated D
+        (else the newest), its short definition as the back, its example sentence as met_in,
+        from mw. Prints the slug, or nothing when it is already saved. Offline, an HTML page or
+        a changed feed: one line on stderr, exit 0, nothing written (it runs in /start-day).
+  words import-diary [--diary-dir DIR]
+        the one-time backfill: every ticked "merriam-webster word of the day (...)" line in
+        DIR (~/wiki/diary). "word - meaning" (or "=" or ",") keeps the user's meaning as the
+        back; a bare word gets the dictionary's; one the dictionary lacks gets "(look this one up
+        again)" and tag word-check. Dated by the diary day, from diary; words already saved are
+        skipped. Prints "imported N, already saved M, to check K".
+  words pending [--clear]
+        the words looked up in the book reader (macdict's log, $WORDS_STATE/lookups.log) since
+        the last keep or clear, once each, minus words already saved. --clear: skip them all.
+  words keep WORD ...
+        save those words (from book) and move past the logged lookups.
+  words stats [--date D] [--json|--line]
+        {total, new_today, reviewed_today, known, streak} over the word cards, from their
+        `## Reviews` history (cards grade writes it): known = interval of 21 days or more (its
+        stage is written `known`); streak = days in a row with a word review, up to D (or D-1
+        when D has none yet). --line: "Words: R reviewed, N new, K known of T · streak S days", nothing before the first word card.
+
+A word card's extra front matter: word, met_in, from (mw|lookup|book|diary), captured (date),
+stage (learning|known). Cards are written through `cards` ($WORDS_CARDS, default the one next to
+this script).
+"""
+import argparse
+import datetime
+import email.utils
+import html
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.request
+import xml.etree.ElementTree as ET
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+CARDS = os.environ.get("WORDS_CARDS") or os.path.join(HERE, "cards")
+CARDS_DIR = os.path.expanduser(os.environ.get("CARDS_DIR") or "~/wiki/cards")
+MACDICT = os.environ.get("WORDS_MACDICT") or "macdict"
+STATE = os.path.expanduser(os.environ.get("WORDS_STATE") or "~/.local/state/words")
+FEED = os.environ.get("WORDS_FEED") or "https://www.merriam-webster.com/wotd/feed/rss2"
+MW_NS = "https://www.merriam-webster.com/word-of-the-day"
+ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
+BACK_MAX = 300
+SECTIONS = re.compile(r"^(ORIGIN|DERIVATIVES|PHRASES|PHRASAL VERBS|USAGE|PRONUNCIATION|COMPARE|PLURAL|ABBREVIATION)\b")
+POS = re.compile(r"^(plural noun|noun|verb|adjective|adverb|pronoun|preposition|conjunction|exclamation"
+                 r"|determiner|abbreviation|prefix|suffix|combining form|contraction|symbol|number)\b\s*")
+
+
+class Fail(Exception):
+    def __init__(self, msg, code=1):
+        super().__init__(msg)
+        self.code = code
+
+
+def one_line(s):
+    return " ".join((s or "").split())
+
+
+def norm_word(w):
+    return one_line(w).lower()
+
+
+def clip(text, limit=BACK_MAX):
+    text = one_line(text)
+    if len(text) <= limit:
+        return text
+    cut = text[:limit - 1].rsplit(" ", 1)[0].rstrip(",;:")
+    return cut + "…"
+
+
+def lookup(word):
+    """macdict's text for word, or None on a miss"""
+    try:
+        out = subprocess.run([MACDICT, word], capture_output=True, text=True, timeout=20,
+                             env={**os.environ, "MACDICT_LOG": "0"}).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    out = out.strip()
+    if not out or out.startswith(("No definition found", "Dictionary lookup failed", "Usage:")):
+        return None
+    return out
+
+
+def first_block(text):
+    """the first part of speech of a macdict entry as one line: the dictionary wraps lines
+    mid-sentence, so a line joins the block unless the block ended a sentence and it starts
+    another part of speech; sub-senses (•) and ORIGIN and later sections are left out"""
+    block = ""
+    for line in text.split("\n")[1:]:
+        line = line.strip()
+        if SECTIONS.match(line):
+            break
+        if not line or line.startswith("•"):
+            continue
+        if block and block.endswith(".") and POS.match(line):
+            break
+        block = f"{block} {line}" if block else line
+    return block
+
+
+def word_forms(inner, head):
+    """an inflection note: '(, gamboled)', '(; British English gambols)', '(rectifies, rectified)'"""
+    if inner.startswith((",", ";")):
+        return True
+    items = [i.strip() for i in inner.split(",")]
+    return all(re.fullmatch(r"[a-z]+", i) and i.startswith(head[:3]) for i in items)
+
+
+def drop_notes(s, head=""):
+    """s without [..] labels and the (..) grammar notes: a pronunciation, a plural, word forms"""
+    out, i = [], 0
+    while i < len(s):
+        if s[i] in "([":
+            close, depth, j = {"(": ")", "[": "]"}[s[i]], 0, i
+            while j < len(s):
+                depth += s[j] == s[i]
+                depth -= s[j] == close
+                if depth == 0:
+                    break
+                j += 1
+            inner = s[i + 1:j]
+            if s[i] == "[" or "|" in inner or inner.startswith("plural ") or word_forms(inner, head):
+                i = j + 1
+                continue
+        out.append(s[i])
+        i += 1
+    return one_line("".join(out))
+
+
+def before_example(sense):
+    """a sense up to its examples or the end of its first sentence (': ' or '. ' outside brackets)"""
+    depth = 0
+    for i, ch in enumerate(sense):
+        depth += ch == "("
+        depth -= ch == ")"
+        if depth == 0 and sense.startswith((": ", ". "), i):
+            return sense[:i]
+    return sense
+
+
+def short_back(text):
+    """the first two definitions of a macdict entry, without part of speech, notes or examples"""
+    head = text.split(" ", 1)[0].lower()
+    block = drop_notes(POS.sub("", first_block(text), count=1), head)
+    if block.startswith("1 "):
+        parts, rest, k = [], block[2:], 2
+        while True:
+            m = re.search(rf"\.\s{k}\s", rest)
+            parts.append(rest[:m.start() + 1] if m else rest)
+            if not m:
+                break
+            rest, k = rest[m.end():], k + 1
+    else:
+        parts = [block]
+    senses = [s for s in (before_example(p).strip().rstrip(".").strip() for p in parts) if s]
+    return clip(" · ".join(senses[:2]) or block)
+
+
+def saved(word):
+    """slug of the card already saved for word, or None"""
+    want = norm_word(word)
+    try:
+        names = sorted(n for n in os.listdir(CARDS_DIR) if n.endswith(".md"))
+    except OSError:
+        return None
+    for n in names:
+        try:
+            with open(os.path.join(CARDS_DIR, n), encoding="utf-8") as f:
+                head = f.read(2000)
+        except OSError:
+            continue
+        m = re.search(r"^word:[ \t]*(.*)$", head, re.M)
+        if m and norm_word(m.group(1)) == want:
+            return n[:-3]
+    return None
+
+
+def add(word, back=None, met_in="", src="lookup", day=None, tags=()):
+    """slug of the saved card (new or existing); Fail when the dictionary lacks the word"""
+    word = one_line(word)
+    if not word:
+        raise Fail("a word is needed", 2)
+    slug = saved(word)
+    if slug:
+        return slug
+    if back is None:
+        text = lookup(word)
+        if text is None:
+            raise Fail(f"no definition for {word}")
+        back = short_back(text)
+    back = clip(back)
+    met_in = one_line(met_in)
+    front = f"What does *{word}* mean?" + (f' — "{met_in}"' if met_in else "")
+    day = day or datetime.date.today().isoformat()
+    args = [CARDS, "add", "--front", front, "--back", back, "--tags", ",".join(("word",) + tuple(tags)),
+            "--source", f"words: {src}",
+            "--date", day]
+    for k, v in (("word", word), ("met_in", met_in), ("from", src), ("captured", day), ("stage", "learning")):
+        if v:
+            args += ["--set", f"{k}={v}"]
+    ran = subprocess.run(args, capture_output=True, text=True, env={**os.environ, "CARDS_DIR": CARDS_DIR})
+    if ran.returncode != 0:
+        raise Fail(f"cards add failed: {ran.stderr.strip()}")
+    return ran.stdout.strip()
+
+
+def cmd_add(a):
+    print(add(a.word, a.back, a.met_in, a.src, a.date))
+
+
+def cmd_look(a):
+    """w WORD: the full definition, then the word saved; a miss shows macdict's message"""
+    text = lookup(a.word)
+    if text is None:
+        try:
+            out = subprocess.run([MACDICT, a.word], capture_output=True, text=True, timeout=20,
+                                 env={**os.environ, "MACDICT_LOG": "0"}).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            out = ""
+        print(out or f"no definition for {a.word}")
+        if a.back is None:
+            sys.exit(1)
+    else:
+        print(text)
+    existed = saved(a.word)
+    add(a.word, back=a.back if text is None else None, src="lookup")
+    print("already saved" if existed else "saved")
+
+
+def log_lines():
+    try:
+        with open(os.path.join(STATE, "lookups.log"), encoding="utf-8") as f:
+            return [l.rstrip("\n") for l in f if l.strip()]
+    except OSError:
+        return []
+
+
+def cursor(set_to=None):
+    path = os.path.join(STATE, "pending.cursor")
+    if set_to is None:
+        try:
+            with open(path) as f:
+                return int(f.read().strip() or 0)
+        except (OSError, ValueError):
+            return 0
+    os.makedirs(STATE, exist_ok=True)
+    with open(path, "w") as f:
+        f.write(f"{set_to}\n")
+
+
+def pending():
+    """words looked up (macdict's log) since the last keep or clear, once each, minus saved ones"""
+    lines, seen, out = log_lines(), set(), []
+    for line in lines[cursor():]:
+        word = one_line(line.partition(" ")[2])
+        if word and norm_word(word) not in seen and not saved(word):
+            seen.add(norm_word(word))
+            out.append(word)
+    return out
+
+
+def cmd_pending(a):
+    if a.clear:
+        cursor(len(log_lines()))
+        return
+    for w in pending():
+        print(w)
+
+
+def cmd_keep(a):
+    end = len(log_lines())
+    for w in a.words:
+        try:
+            print(add(w, src="book"))
+        except Fail as e:
+            print(f"words: {e}", file=sys.stderr)
+    cursor(end)
+
+
+REVIEW_LINE = re.compile(r"^- (\d{4}-\d{2}-\d{2}) grade [0-3] interval \d+", re.M)
+KNOWN_DAYS = 21
+
+
+def word_cards():
+    """[(path, text, front matter dict)] of the cards tagged word"""
+    out = []
+    try:
+        names = sorted(n for n in os.listdir(CARDS_DIR) if n.endswith(".md") and not n.startswith("."))
+    except OSError:
+        return out
+    for n in names:
+        path = os.path.join(CARDS_DIR, n)
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        m = re.match(r"---\n(.*?)\n---\n", text, re.S)
+        if not m:
+            continue
+        fm = {k.strip(): v.strip() for k, _, v in (l.partition(":") for l in m.group(1).split("\n")) if k.strip()}
+        if "word" in [t.strip() for t in fm.get("tags", "").strip("[]").split(",")]:
+            out.append((path, text, fm))
+    return out
+
+
+def mark_known(path, text):
+    new = re.sub(r"^stage:.*$", "stage: known", text, count=1, flags=re.M)
+    if new != text:
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(new)
+        os.replace(tmp, path)
+
+
+def stats(day):
+    cards, review_days = word_cards(), set()
+    s = {"total": len(cards), "new_today": 0, "reviewed_today": 0, "known": 0, "streak": 0}
+    for path, text, fm in cards:
+        days = REVIEW_LINE.findall(text.split("\n## Reviews", 1)[1] if "\n## Reviews" in text else "")
+        review_days.update(days)
+        s["new_today"] += fm.get("captured") == day
+        s["reviewed_today"] += day in days
+        try:
+            known = int(float(fm.get("interval", "0"))) >= KNOWN_DAYS
+        except ValueError:
+            known = False
+        if known:
+            s["known"] += 1
+            if fm.get("stage") != "known":
+                mark_known(path, text)
+    d = datetime.date.fromisoformat(day)
+    if d.isoformat() not in review_days:
+        d -= datetime.timedelta(days=1)
+    while d.isoformat() in review_days:
+        s["streak"] += 1
+        d -= datetime.timedelta(days=1)
+    return s
+
+
+def cmd_stats(a):
+    s = stats(a.date or datetime.date.today().isoformat())
+    if a.line:
+        if not s["total"]:
+            return
+        unit = "day" if s["streak"] == 1 else "days"
+        print(f"Words: {s['reviewed_today']} reviewed, {s['new_today']} new, {s['known']} known of {s['total']}"
+              f" · streak {s['streak']} {unit}")
+    else:
+        print(json.dumps(s))
+
+
+DIARY_LINE = re.compile(r"^\s*-\s*\[[xX]\]\s*merriam-webster word of the day\s*\((.*)\)\s*$", re.I)
+SEPARATOR = re.compile(r"\s+-\s+|\s*=\s*|,\s*")
+CHECK_BACK = "(look this one up again)"
+
+
+def diary_words(diary_dir):
+    """[(date, word, meaning or "")] from ticked word-of-the-day lines, in date order"""
+    out = []
+    for name in sorted(os.listdir(diary_dir)):
+        m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})\.md", name)
+        if not m:
+            continue
+        with open(os.path.join(diary_dir, name), encoding="utf-8") as f:
+            for line in f:
+                hit = DIARY_LINE.match(line)
+                if not hit:
+                    continue
+                parts = SEPARATOR.split(hit.group(1).strip(), 1)
+                word = one_line(parts[0]).lower()
+                if word:
+                    out.append((m.group(1), word, one_line(parts[1]) if len(parts) > 1 else ""))
+    return out
+
+
+def cmd_import_diary(a):
+    imported = already = check = 0
+    for day, word, meaning in diary_words(os.path.expanduser(a.diary_dir)):
+        if saved(word):
+            already += 1
+            continue
+        if meaning:
+            add(word, back=meaning, src="diary", day=day)
+        else:
+            text = lookup(word)
+            if text is None:
+                add(word, back=CHECK_BACK, src="diary", day=day, tags=("word-check",))
+                check += 1
+            else:
+                add(word, back=short_back(text), src="diary", day=day)
+        imported += 1
+    print(f"imported {imported}, already saved {already}, to check {check}")
+
+
+def read_feed(src):
+    if re.match(r"https?://", src):
+        with urllib.request.urlopen(src, timeout=15) as r:
+            return r.read()
+    with open(src, "rb") as f:
+        return f.read()
+
+
+def feed_items(data):
+    """[(date, word, shortdef, example)] from Merriam-Webster's word-of-the-day feed"""
+    items = []
+    for it in ET.fromstring(data).findall("./channel/item"):
+        word = one_line(it.findtext("title"))
+        day = email.utils.parsedate_to_datetime(it.findtext("pubDate") or "").date().isoformat()
+        short = one_line(html.unescape(it.findtext(f"{{{MW_NS}}}shortdef") or ""))
+        summary = it.findtext(f"{{{ITUNES_NS}}}summary") or ""
+        example = next((one_line(l.strip()[2:]) for l in summary.split("\n") if l.strip().startswith("//")), "")
+        if word and short:
+            items.append((day, word, short, example))
+    return items
+
+
+def cmd_today(a):
+    """never fails the morning: any problem is one line on stderr, exit 0"""
+    day = a.date or datetime.date.today().isoformat()
+    try:
+        items = feed_items(read_feed(FEED))
+        if not items:
+            raise ValueError("no words in the feed")
+    except Exception as e:  # noqa: BLE001 — offline, a captive portal, a changed feed
+        print(f"words today: no word of the day ({one_line(str(e))[:120]})", file=sys.stderr)
+        return
+    day_, word, short, example = next((i for i in items if i[0] == day), items[0])
+    if saved(word):
+        return
+    print(add(word, back=short, met_in=example, src="mw", day=day))
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print(f"words: {message}", file=sys.stderr)
+        sys.exit(2)
+
+
+def main():
+    p = Parser(prog="words", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("add")
+    s.add_argument("word", nargs="+")
+    s.add_argument("--back")
+    s.add_argument("--met-in", default="")
+    s.add_argument("--from", dest="src", default="lookup")
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_add)
+    s = sub.add_parser("look")
+    s.add_argument("word", nargs="+")
+    s.add_argument("--back")
+    s.set_defaults(fn=cmd_look)
+    s = sub.add_parser("today")
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_today)
+    s = sub.add_parser("pending")
+    s.add_argument("--clear", action="store_true")
+    s.set_defaults(fn=cmd_pending)
+    s = sub.add_parser("keep")
+    s.add_argument("words", nargs="+")
+    s.set_defaults(fn=cmd_keep)
+    s = sub.add_parser("stats")
+    s.add_argument("--date")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--json", action="store_true")
+    g.add_argument("--line", action="store_true")
+    s.set_defaults(fn=cmd_stats)
+    s = sub.add_parser("import-diary")
+    s.add_argument("--diary-dir", default="~/wiki/diary")
+    s.set_defaults(fn=cmd_import_diary)
+    a = p.parse_args()
+    if isinstance(getattr(a, "word", None), list):
+        a.word = " ".join(a.word)
+    try:
+        a.fn(a)
+    except Fail as e:
+        print(f"words: {e}", file=sys.stderr)
+        sys.exit(e.code)
+
+
+if __name__ == "__main__":
+    main()

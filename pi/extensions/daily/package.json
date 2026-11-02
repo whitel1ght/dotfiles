@@ -1,0 +1,6 @@
+{
+  "name": "daily",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test *.test.ts" }
+}

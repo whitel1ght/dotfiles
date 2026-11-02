@@ -1,0 +1,14 @@
+[Unit]
+Description=Refresh the friction queue
+[Service]
+ExecStartPre=/usr/bin/test -x %h/.local/share/decisions/bin/decisions
+ExecStartPre=/usr/bin/test -x %h/.local/bin/frictions
+ExecStartPre=/usr/bin/test -x %h/.local/bin/friction-cards
+ExecStartPre=/usr/bin/test -x %h/.local/bin/friction-ledger
+ExecStartPre=/usr/bin/test -x %h/.local/bin/coach-fix
+ExecStartPre=/usr/bin/test -d %h/wiki/work/friction
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/friction-cards tick
+StandardOutput=journal
+StandardError=journal

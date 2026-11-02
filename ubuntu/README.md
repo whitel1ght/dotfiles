@@ -227,8 +227,12 @@ review diffs before committing any vendor updates. Do not link the whole
 `~/.claude` directory or replace user settings/hooks.
 
 Pi's `bin/plink` links individual settings/resources into `~/.pi/agent`; it
-preserves auth, sessions, installations and foreign links. After setup, review
-`pi/settings.json` and explicitly refresh packages with `pi update --extensions`.
+preserves auth, sessions, installations and foreign links. `settings.json` is
+seeded as a per-host file instead of linked, because Pi writes changelog markers
+and device identity into it; a legacy link is converted into a copy and never
+re-created. After setup, review `pi/settings.json` (shared packages and the
+`subagents` policy) and `~/.pi/agent/settings.json` (this host's provider, model,
+and pool), then explicitly refresh packages with `pi update --extensions`.
 OpenAI/OpenCode login and local-model serving are manual. Local endpoints stay
 on loopback. No API credentials or machine-specific model downloads are stored
 here. The configured local models must actually be loaded by the selected Linux
@@ -251,6 +255,88 @@ Ollama/LM Studio runtime before their aliases work; MLX is not a Linux backend.
   controller and seeds secrets but does not install/replace a system unit or
   enable the tunnel. Inspect the unit/config and use `proxyctl on` only after
   explicit review and a recovery path. No HTTP proxy variables are used.
+
+## Daily workflows and optional user services
+
+The installer links portable helpers individually into `~/.local/bin`, including
+Pi/Claude workflow commands, wiki/repository/plugin sync, Jira readers and
+friction/decision tooling. Re-run `./install.sh` to add links safely. The
+`pi()` shell function runs `pi-autoupdate` before interactive Pi starts; updater
+errors do not prevent Pi launching. Successful refreshes are rate-limited and
+subcommands/non-interactive invocations are skipped.
+
+Claude's `daily` plugin is part of the local marketplace. To expose its commands
+and hooks, explicitly build/register the local marketplace and install the
+plugin using Claude's CLI, for example:
+
+```bash
+CLAUDE_MARKETPLACE=1 ./install.sh
+claude plugin install daily@dmitry-dotfiles --scope user
+```
+
+Do not overwrite `~/.claude/settings.json`; installation merges only when
+`CLAUDE_HOOKS=1`, and existing unrelated hooks remain. Pi links its selected
+prompts, shared daily modules, extensions, and skills via `bin/plink`, and seeds
+`~/.pi/agent/settings.json` only when absent; provider credentials and
+machine-owned state remain untouched. The decisions MCP is
+intentionally not enabled in the repository defaults. Follow `pi/README.md` to
+opt in only after the external decisions runtime is installed and verified.
+
+Jira readers (`jira-api`, `jira-issue`) require `jq` and `curl`; the API wrapper
+uses only `JIRA_EMAIL` and `JIRA_API_TOKEN` already present in the invoking
+process. Supply these through your own private environment/secret manager; no
+secret backend, token, or credentials are installed here. Tests use stubs and
+never call Jira. `system-check` runs read-only checks; its `--record` and
+`--baseline` modes intentionally write only its user state file. End-day
+`qmd` indexing remains optional and requires the user's local qmd/wiki runtime.
+
+Wiki and friction services are **not installed or activated by `install.sh`**.
+Review the source and test in `ubuntu/install-user-services.sh`, then inspect
+without changing the host:
+
+```bash
+ubuntu/install-user-services.sh dry-run
+ubuntu/install-user-services.sh status
+```
+
+If and only if the user wants these timers, install unit files without
+activation, then explicitly enable them:
+
+```bash
+ubuntu/install-user-services.sh install  # install inactive user units
+ubuntu/install-user-services.sh enable   # wiki/artifacts every 900s; friction every 120s
+```
+
+The installer never enables timers itself. Status/log/manual/removal paths:
+
+```bash
+ubuntu/install-user-services.sh status
+journalctl --user -u 'dotfiles-autosync@*.service' --since today
+journalctl --user -u dotfiles-frictions.service --since today
+ubuntu/install-user-services.sh manual
+ubuntu/install-user-services.sh remove
+```
+
+Wiki synchronization is restricted to `~/wiki` and `~/artifacts`, does not force
+push, and handles divergence without discarding local changes. Configure those
+repositories deliberately before activation. The optional decisions Telegram
+service has no timer and is never activated by `enable`; only after an explicit
+pairing and review of runtime prerequisites may the user run
+`ubuntu/install-user-services.sh enable-decisions`. It requires the external
+Rust decisions binary, `secret` credential helper and paired Telegram state;
+none are provisioned or read by this repo. If the user has already obtained and
+reviewed the standalone decisions source at `~/projects/decisions`, the
+source-backed optional build is explicit and local-only:
+
+```bash
+cd "$HOME/projects/decisions"
+[[ -f Cargo.toml && -f Cargo.lock && -d src ]] || { echo 'not a verified decisions checkout' >&2; exit 1; }
+cargo install --locked --quiet --path "$HOME/projects/decisions" --root "$HOME/.local/share/decisions"
+```
+
+This repository does not clone the project or run Cargo. Without user systemd,
+use the `manual` command for safe manual invocations. Never use these services
+to point at a live wiki during tests.
 
 ## Validation
 

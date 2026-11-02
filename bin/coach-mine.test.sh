@@ -1,0 +1,225 @@
+#!/bin/bash
+# Tests for bin/coach-mine. Every input points into a sandbox, TZ is pinned to UTC+3
+# and the fixtures (including a fake token) are written here, so nothing touches
+# ~/.claude, ~/.pi, ~/.zsh_history or ~/wiki.
+set -uo pipefail
+
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT="$TEST_DIR/coach-mine"
+PASS=0
+FAIL=0
+
+pass() { PASS=$((PASS + 1)); echo "  ok   - $1"; }
+fail() { FAIL=$((FAIL + 1)); echo "  FAIL - $1"; echo "         $2"; }
+assert_eq() { [ "$1" = "$2" ] && pass "$3" || fail "$3" "expected [$1] got [$2]"; }
+yn() { jq -e "$2" <<<"$1" >/dev/null 2>&1 && echo yes || echo no; }
+
+SANDBOX="$(cd "$(mktemp -d)" && pwd -P)"
+trap 'rm -rf "${SANDBOX:?}"' EXIT
+export TZ=Etc/GMT-3
+D=2026-10-15
+CP="$SANDBOX/claude" PI="$SANDBOX/pi" WIKI="$SANDBOX/wiki" FW="$SANDBOX/friction" ZH="$SANDBOX/zsh_history"
+mkdir -p "$CP/-proj" "$PI/--proj--" "$WIKI/notes" "$FW" "$SANDBOX/repo"
+
+mine() { CLAUDE_PROJECTS_DIR="$CP" PI_SESSIONS_DIR="$PI" ZSH_HISTORY="$ZH" FRICTION_WIKI="$FW" COACH_SCAN_DIRS="$WIKI:$SANDBOX/repo" "$SCRIPT" "$@" 2>"$SANDBOX/stderr"; }
+f() { jq -r "$2" <<<"$1"; }
+
+# --- fixtures ---------------------------------------------------------------
+TOK="abcdefTEST""TOKEN0123456789"
+cl() { jq -cn --arg ts "$1" --arg cwd "$2" --argjson m "$3" --arg t "$4" '{type:$t, timestamp:$ts, cwd:$cwd, sessionId:"s1", message:$m}'; }
+us() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"user",content:$c}')" user; }
+as() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$2" '{role:"assistant",content:[{type:"text",text:$c}]}')" assistant; }
+long() { printf '%s ' "$1"; for _ in 1 2 3 4 5 6; do printf 'It works by keeping state in one place and reading it back later. '; done; }
+pm() { jq -cn --arg ts "$1" --argjson m "$2" '{type:"message", timestamp:$ts, message:$m}'; }
+
+{ us 2026-10-14T07:00:00.000Z "check the mr queue and post the replies for ECFX-123"
+  us 2026-10-15T07:00:00.000Z "check the mr queue and post the replies for ECFX-456"
+  us 2026-10-14T07:10:00.000Z "yes, looks right, go on"
+  us 2026-10-15T07:10:00.000Z "yes, looks right, go on"
+  us 2026-10-14T07:11:00.000Z "continue please"
+  us 2026-10-15T07:11:00.000Z "continue please"
+  us 2026-10-14T07:12:00.000Z "<system-reminder>sync the wiki notes for the standup again</system-reminder>"
+  us 2026-10-15T07:12:00.000Z "<system-reminder>sync the wiki notes for the standup again</system-reminder>"
+  us 2026-10-14T07:13:00.000Z "The daily plugin sent a message: rebuild the whole index please now"
+  us 2026-10-15T07:13:00.000Z "The daily plugin sent a message: rebuild the whole index please now"
+  us 2026-10-14T07:20:00.000Z "new rule: always run the linter before every commit"
+  us 2026-10-15T07:20:00.000Z "New rule: always run the linter before every commit!"
+  us 2026-10-15T07:25:00.000Z "new rule: keep every commit message under seventy two characters wide"
+  us 2026-10-14T07:21:00.000Z "never ever push to main without asking me first"
+  us 2026-10-13T07:21:00.000Z "rebase the branch onto main and push it for review"
+  us 2026-09-20T07:22:00.000Z "rebase the branch onto main and push it for review"
+  us 2026-10-15T07:22:00.000Z "rebase the branch onto main and push it for review"
+  us 2026-10-15T07:30:00.000Z "explain how the retry queue works in this project"
+  as 2026-10-15T07:30:20.000Z "Let me look at the code."
+  as 2026-10-15T07:30:40.000Z "$(long 'The retry queue')"
+  us 2026-10-15T07:31:00.000Z "could you fix the retry queue so it explains itself better?"
+  as 2026-10-15T07:31:20.000Z "$(long 'Fixed.')"
+  us 2026-10-15T07:32:00.000Z "so where are we now with the retry queue work?"
+  as 2026-10-15T07:32:20.000Z "$(long 'Status.')"
+  us 2026-10-14T10:00:00.000Z "call the status api with Bearer $TOK for the health page"
+  us 2026-10-15T10:00:00.000Z "call the status api with Bearer $TOK for the health page"
+  us 2026-10-15T10:05:00.000Z "call the status api with Bearer $TOK for the health page"
+  us 2026-10-15T10:05:00.000Z "call the status api with Bearer $TOK for the health page"
+  us 2026-10-15T07:50:00.000Z "explain how the token header gets built here"
+  as 2026-10-15T07:50:20.000Z "$(long "It sends Bearer $TOK in the header.")"
+  us 2026-10-15T11:00:00.000Z "run the nightly export for the reports"
+  printf '%s\n' '{"type":"user","timestamp":"2026-10-15T07:40:00.000Z","message":{"role":"user","content":"check the mr queue and post the repl'; } >"$CP/-proj/s1.jsonl"
+
+us 2026-10-15T12:00:00.000Z "run the nightly export for the reports" >"$CP/-proj/s2.jsonl"
+{ echo '{"type":"session","version":3,"id":"p1","timestamp":"2026-10-14T07:00:00.000Z","cwd":"/w/ECFX-88"}'
+  pm 2026-10-14T09:00:00.000Z '{"role":"user","content":[{"type":"text","text":"check the mr queue and post the replies for ECFX-1011"}]}'
+  pm 2026-10-15T09:00:00.000Z '{"role":"user","content":[{"type":"text","text":"what is the difference between a mutex and a semaphore?"}]}'
+  pm 2026-10-15T09:00:30.000Z "$(jq -cn --arg c "$(long 'A mutex')" '{role:"assistant",content:[{type:"text",text:$c}]}')"; } >"$PI/--proj--/2026-10-14T07-00-00-000Z_p1.jsonl"
+
+{ echo 'ls -la'; echo "curl -H 'Authorization: Bearer $TOK' https://example.test/api"; echo 'echo done'; } >"$ZH"
+printf 'clean line\nToken: Bearer %s\n' "$TOK" >"$WIKI/notes/leak.md"
+printf 'nothing to see\n' >"$WIKI/notes/clean.md"
+printf 'Bearer %s\0binary\n' "$TOK" >"$WIKI/notes/blob.bin"
+printf 'x=Bearer $TOKEN is a placeholder\n' >"$SANDBOX/repo/doc.md"
+
+cat >"$FW/directions.md" <<'EOT'
+# Standing directions
+
+| id | rule | scope | since | source | status |
+|---|---|---|---|---|---|
+| D-007 | Always run the linter before every commit | global | 2026-09-01 | claude | active |
+| D-008 | keep every commit message under seventy two characters wide | global | 2026-09-02 | claude | active |
+EOT
+
+OUT=$(mine --date $D); RC=$?
+assert_eq "0" "$RC" "coach-mine exits 0"
+assert_eq "yes" "$(yn "$OUT" '(.groups|type)=="array" and (.concepts|type)=="array"')" "prints {groups, concepts}"
+
+echo "coach-mine — repeat"
+g=$(jq -c '[.groups[]|select(.kind=="repeat")|select(.samples[0]|test("mr queue"))]|.[0]' <<<"$OUT")
+assert_eq "3|2|high|user" "$(f "$g" '[.count,.days,.confidence,.source]|join("|")')" "a prompt said 3 times on 2 days (Claude and pi) forms one repeat group"
+assert_eq "yes" "$(yn "$g" '(.sig|startswith("user:repeat:")) and (.sig|test("<key>"))')" "sig is user:repeat:<normalised head> with the ticket key replaced"
+assert_eq "1" "$(jq '[.groups[]|select(.kind=="repeat")|select(.samples[0]|test("mr queue"))]|length' <<<"$OUT")" "ticket numbers and the half-written last line neither split nor inflate the group"
+assert_eq "0" "$(jq '[.groups[]|select(.sig|test("looks right|continue please|sync the wiki|rebuild the whole"))]|length' <<<"$OUT")" "acknowledgements and injected lines never cluster"
+g=$(jq -c '[.groups[]|select(.sig|test("rebase the branch"))]|.[0]' <<<"$OUT")
+assert_eq "2|2|low" "$(f "$g" '[.count,.days,.confidence]|join("|")')" "the 14-day window cuts older sightings; count 2 stays low"
+OUT14=$(mine --date 2026-10-14)
+assert_eq "0" "$(jq '[.groups[]|select(.sig|test("rebase the branch"))]|length' <<<"$OUT14")" "a repeat with nothing on the mined date is not emitted"
+
+g=$(jq -c '[.groups[]|select(.sig|test("status api"))]|.[0]' <<<"$OUT")
+assert_eq "3|2" "$(f "$g" '[.count,.days]|join("|")')" "a prompt carrying a token still clusters (3 on 2 days) and a replayed entry counts once"
+assert_eq "yes" "$(yn "$g" '.samples[0]|test("<secret:bearer>")')" "the token in a prompt is replaced by a placeholder"
+g=$(jq -c '[.groups[]|select(.sig|test("nightly export"))]|.[0]' <<<"$OUT")
+assert_eq "2|1|low" "$(f "$g" '[.count,.days,.confidence]|join("|")')" "the same prompt in two sessions on one day counts twice"
+
+echo "coach-mine — restated"
+g=$(jq -c '[.groups[]|select(.kind=="restated")|select(.samples[0]|test("linter"))]|.[0]' <<<"$OUT")
+assert_eq "2|2|high|user" "$(f "$g" '[.count,.days,.confidence,.source]|join("|")')" "a rule restated on two days forms a restated group"
+assert_eq "yes" "$(yn "$g" '.samples|any(test("restates D-007"))')" "and notes the matching standing direction"
+assert_eq "0" "$(jq '[.groups[]|select(.sig|test("push to main"))]|length' <<<"$OUT")" "a rule said once is not a group"
+g=$(jq -c '[.groups[]|select(.kind=="restated")|select(.samples[0]|test("seventy two"))]|.[0]' <<<"$OUT")
+assert_eq "1|high|yes" "$(f "$g" '[.count,.confidence,(.samples|any(test("restates D-008")))|tostring]|join("|")' | sed 's/true/yes/')" "a rule said once on the date that matches a standing direction is a group"
+
+echo "coach-mine — secret"
+g=$(jq -c '[.groups[]|select(.kind=="secret")|select(.evidence[0]|test("leak.md"))]|.[0]' <<<"$OUT")
+assert_eq "files|high" "$(f "$g" '[.source,.confidence]|join("|")')" "a planted bearer token in a wiki file gives a secret group"
+assert_eq "yes" "$(yn "$g" '.evidence[0]|endswith("notes/leak.md:2 bearer")')" "evidence is <path>:<line> <pattern>"
+assert_eq "yes" "$(yn "$OUT" '[.groups[]|select(.kind=="secret")|select(.evidence[0]|test("zsh_history:2 bearer"))]|length==1')" "the zsh history is scanned"
+assert_eq "0" "$(jq '[.groups[]|select(.kind=="secret")|select(.evidence[0]|test("blob.bin|clean.md|doc.md"))]|length' <<<"$OUT")" "binary files, clean files and placeholders are not flagged"
+assert_eq "0" "$(grep -c "$TOK" <<<"$OUT"; true)" "the token is not in stdout"
+assert_eq "0" "$(grep -c "$TOK" "$SANDBOX/stderr"; true)" "the token is not in stderr"
+assert_eq "0" "$(grep -c "Authorization" <<<"$OUT"; true)" "nor is the line around it"
+
+echo "coach-mine — concepts"
+assert_eq "3" "$(jq '.concepts|length' <<<"$OUT")" "explain and what-is questions (one answer quoting a token) give a concept; a fix request and a status ping give none"
+c=$(jq -c '.concepts[]|select(.question|test("retry queue"))' <<<"$OUT")
+assert_eq "claude|s1" "$(f "$c" '[.harness,.session]|join("|")')" "concept carries harness and session"
+assert_eq "yes" "$(yn "$c" '.answer|startswith("The retry queue")')" "the answer is the last assistant text of the turn, not the first"
+assert_eq "yes" "$(yn "$OUT" '[.concepts[]|select(.harness=="pi")]|length==1 and all(.[]; .answer|length<=1500)')" "pi concepts are found, answer cut to 1500 chars"
+
+echo "coach-mine — commands"
+CC="$SANDBOX/ccl" CPI="$SANDBOX/cpi" CZH="$SANDBOX/czsh"
+mkdir -p "$CC/-proj" "$CPI/--proj--"
+tu() { cl "$1" /w/ECFX-77 "$(jq -cn --arg c "$3" --arg id "$2" '{role:"assistant",content:[{type:"text",text:"running"},{type:"tool_use",id:$id,name:"Bash",input:{command:$c}}]}')" assistant; }
+{ tu 2026-10-15T07:00:00.000Z t1 "FOO=bar jira-api GET /rest/api/3/issue/ECFX-1"
+  tu 2026-10-15T07:01:00.000Z t2 "cd /tmp/x && glab mr view 12 --comments"
+  tu 2026-10-15T07:02:00.000Z t3 "sudo /usr/local/bin/jq . file.json"
+  tu 2026-10-15T07:03:00.000Z t4 "API_KEY=$TOK curl -H 'Authorization: Bearer $TOK' https://example.test"
+  tu 2026-10-15T07:04:00.000Z t5 "rg foo | head -3"
+  tu 2026-10-14T07:04:00.000Z t6 "/opt/homebrew/bin/rg bar"
+  tu 2026-10-14T07:05:00.000Z t7 "jira-api GET /x"
+  tu 2026-10-14T07:05:00.000Z t7 "jira-api GET /x"
+  tu 2026-08-01T07:00:00.000Z t8 "oldtool --run"
+  tu 2026-10-16T07:00:00.000Z t9 "futuretool --run"
+  cl 2026-10-15T08:00:00.000Z /w/ECFX-77 '{"role":"assistant","content":[{"type":"tool_use","id":"t10","name":"Read","input":{"file_path":"/x"}}]}' assistant
+  tu 2026-10-15T09:00:00.000Z t11 "sk-$TOK --flag"
+  printf '%s\n' '{"type":"assistant","timestamp":"2026-10-15T07:40:00.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tx","name":"Bash","input":{"comm'; } >"$CC/-proj/c1.jsonl"
+{ echo '{"type":"session","version":3,"id":"p1","timestamp":"2026-10-14T07:00:00.000Z","cwd":"/w/ECFX-88"}'
+  pm 2026-10-15T09:00:00.000Z '{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"jira-api GET /y"}}]}'
+  pm 2026-10-15T09:01:00.000Z '{"role":"assistant","content":[{"type":"toolCall","id":"c2","name":"bash","arguments":{"command":"rg x src"}}]}'
+  pm 2026-10-15T09:02:00.000Z '{"role":"assistant","content":[{"type":"toolCall","id":"c3","name":"read","arguments":{"path":"/x"}}]}'; } >"$CPI/--proj--/2026-10-14T07-00-00-000Z_p1.jsonl"
+{ printf ': 1792054800:0;rg --files\n: 1792054860:0;jira-api GET /secret/path/here\n: 1792054900:0;git commit -m "a \\\n'
+  printf 'continued line rg\n'
+  printf ': 1789376400:0;ancient --old\n: 1792099800:0;tomorrow --new\nplain old line\n'; } >"$CZH"
+cmine() { CLAUDE_PROJECTS_DIR="$CC" PI_SESSIONS_DIR="$CPI" ZSH_HISTORY="$CZH" "$SCRIPT" --commands "$@" 2>"$SANDBOX/stderr"; }
+OUT=$(cmine --date $D); RC=$?
+assert_eq "0" "$RC" "--commands exits 0"
+assert_eq "2026-09-15|2026-10-15" "$(f "$OUT" '[.since,.until]|join("|")')" "since defaults to date minus 30 days"
+assert_eq "yes" "$(yn "$OUT" '(.commands|type)=="array" and (has("groups")|not)')" "prints {since, until, commands} only"
+nm() { jq -c --arg n "$1" '.commands[]|select(.name==$n)' <<<"$OUT"; }
+assert_eq "4|2|1|1" "$(f "$(nm jira-api)" '[.count,.sources.claude,.sources.pi,.sources.shell]|join("|")')" "jira-api: env prefix stripped, replayed id counted once, sources split"
+assert_eq "4|2|1|1" "$(f "$(nm rg)" '[.count,.sources.claude,.sources.pi,.sources.shell]|join("|")')" "rg: pipes and basename of a full path give one program; shell lines counted"
+assert_eq "1" "$(f "$(nm glab)" .count)" "a cd x && prefix is stripped"
+assert_eq "1" "$(f "$(nm jq)" .count)" "sudo and the path are stripped"
+assert_eq "1" "$(f "$(nm curl)" .count)" "env assignments with a token are stripped"
+assert_eq "1" "$(f "$(nm git)" .count)" "a backslash continuation line is not a command"
+assert_eq "0" "$(jq '[.commands[]|select(.name|test("oldtool|futuretool|ancient|tomorrow|plain"))]|length' <<<"$OUT")" "commands outside [since, until] and plain history lines are skipped"
+assert_eq "yes" "$(yn "$OUT" '[.commands[].count]==([.commands[].count]|sort|reverse)')" "sorted by count desc"
+assert_eq "0" "$(grep -c "$TOK" <<<"$OUT"; true)" "no token in stdout, even as a command name"
+assert_eq "0" "$(grep -c "secret/path\|Authorization\|rest/api\|--comments" <<<"$OUT"; true)" "arguments are never printed"
+assert_eq "yes" "$(yn "$OUT" '[.commands[]|keys|sort]|all(.==["count","name","sources"])')" "each entry is {name, count, sources}"
+OUT=$(cmine --date $D --since 2026-10-15)
+assert_eq "2026-10-15" "$(f "$OUT" .since)" "--since overrides the default"
+assert_eq "yes" "$(yn "$OUT" '([.commands[]|select(.name=="jira-api")][0].count)==3')" "and narrows the count"
+for i in $(seq 1 60); do tu 2026-10-15T10:00:00.000Z "m$i" "prog$i x"; done >"$CC/-proj/c2.jsonl"
+OUT=$(cmine --date $D)
+assert_eq "50" "$(jq '.commands|length' <<<"$OUT")" "only the top 50 are listed"
+cmine --date $D --since nope >/dev/null 2>&1; assert_eq "1" "$?" "a bad --since is an error"
+OUT=$(CLAUDE_PROJECTS_DIR="$SANDBOX/none" PI_SESSIONS_DIR="$SANDBOX/none" ZSH_HISTORY="$SANDBOX/none" "$SCRIPT" --commands --date $D)
+assert_eq "[]" "$(jq -c .commands <<<"$OUT")" "missing inputs give no commands"
+
+echo "coach-mine — Atlassian, Slack and GitLab tokens"
+# synthetic tokens, split so no scanner sees a token in this file
+T_ATL="ATA""TT3xFfGF0TESTONLY0123456789abcdefABCD"
+T_SLK="xo""xb-1234567890-TESTONLYabcdef"
+T_GLS="gl""soat-TESTONLYabcdef012345"
+T_GLR="gl""rt-TESTONLYabcdef0123456"
+SC="$SANDBOX/s_claude" SW="$SANDBOX/s_wiki"
+mkdir -p "$SC/-proj" "$SW"
+{ for t in "$T_ATL" "$T_SLK" "$T_GLS" "$T_GLR"; do
+    us 2026-10-14T07:00:00.000Z "post the nightly status using $t to the team channel"
+    us 2026-10-15T07:00:00.000Z "post the nightly status using $t to the team channel"
+  done
+  us 2026-10-15T08:00:00.000Z "explain how the release token gets passed along here"
+  as 2026-10-15T08:00:20.000Z "$(long "It passes $T_ATL and $T_SLK and $T_GLS and $T_GLR along.")"
+} >"$SC/-proj/t1.jsonl"
+n=0; for t in "$T_ATL" "$T_SLK" "$T_GLS" "$T_GLR"; do n=$((n + 1)); tu 2026-10-15T09:00:00.000Z "k$n" "$t --run"; done >"$SC/-proj/t2.jsonl"
+printf 'a: %s\nb: %s\nc: %s\nd: %s\n' "$T_ATL" "$T_SLK" "$T_GLS" "$T_GLR" >"$SW/tokens.md"
+smine() { CLAUDE_PROJECTS_DIR="$SC" PI_SESSIONS_DIR="$SANDBOX/none" ZSH_HISTORY="$SANDBOX/none" FRICTION_WIKI="$FW" COACH_SCAN_DIRS="$SW" "$SCRIPT" "$@" 2>"$SANDBOX/stderr"; }
+OUT=$(smine --date $D)
+OUTC=$(smine --commands --date $D)
+for t in "$T_ATL" "$T_SLK" "$T_GLS" "$T_GLR"; do
+  assert_eq "0" "$(grep -cF -- "$t" <<<"$OUT$OUTC"; true)" "no ${t:0:5}… token in the prompts, answers or commands output"
+  assert_eq "0" "$(grep -cF -- "$t" "$SANDBOX/stderr"; true)" "nor in stderr"
+done
+for n in atlassian slack gitlab; do
+  assert_eq "yes" "$(yn "$OUT" "[.groups[]|select(.kind==\"repeat\")|.samples[]|select(test(\"<secret:$n>\"))]|length>0")" "a $n token in a prompt is replaced by <secret:$n>"
+  assert_eq "yes" "$(yn "$OUT" "[.concepts[].answer|select(test(\"<secret:$n>\"))]|length==1")" "a $n token in an answer is replaced"
+  assert_eq "yes" "$(yn "$OUTC" "[.commands[].name|select(.==\"<secret:$n>\")]|length==1")" "a $n token as a command name is replaced"
+done
+assert_eq "tokens.md:1 atlassian|tokens.md:2 slack|tokens.md:3 gitlab|tokens.md:4 gitlab" \
+  "$(jq -r '[.groups[]|select(.kind=="secret")|.evidence[]|sub(".*/";"")]|sort_by(.)|join("|")' <<<"$OUT")" "the file scan finds each token by location and pattern only"
+
+echo "coach-mine — robustness"
+OUT=$(CLAUDE_PROJECTS_DIR="$SANDBOX/none" PI_SESSIONS_DIR="$SANDBOX/none" ZSH_HISTORY="$SANDBOX/none" FRICTION_WIKI="$SANDBOX/none" COACH_SCAN_DIRS="$SANDBOX/none" "$SCRIPT" --date $D); RC=$?
+assert_eq "0|{\"groups\":[],\"concepts\":[]}" "$RC|$(jq -c . <<<"$OUT")" "missing inputs give an empty result"
+"$SCRIPT" --date nope >/dev/null 2>&1; assert_eq "1" "$?" "a bad --date is an error"
+
+echo
+echo "coach-mine: $PASS passed, $FAIL failed"
+[ "$FAIL" -eq 0 ]

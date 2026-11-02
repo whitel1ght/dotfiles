@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Usage: jira-api <METHOD> <path-under-/rest/api/3> [json-body]
+# Credentials must be supplied by the caller; this helper never reads secrets.
+# e.g. JIRA_EMAIL=... JIRA_API_TOKEN=... jira-api GET issue/ECFX-17533
+set -euo pipefail
+(( $# >= 2 )) || { echo "usage: jira-api <METHOD> <api-path> [json-body]" >&2; exit 2; }
+: "${JIRA_EMAIL:?set JIRA_EMAIL in your private environment}" \
+  "${JIRA_API_TOKEN:?set JIRA_API_TOKEN in your private environment}"
+method=$1 api_path=$2 body=${3:-}
+args=(-sS -X "$method" -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -H 'Accept: application/json')
+if [[ -n $body ]]; then args+=(-H 'Content-Type: application/json' --data "$body"); fi
+exec curl "${args[@]}" "https://ecfxdev.atlassian.net/rest/api/3/${api_path#/}"

@@ -1,0 +1,552 @@
+#!/usr/bin/env python3
+"""Drills: the second track of the learning system. A drill is a quiz card in $CARDS_DIR
+(~/wiki/cards) with tag `drill`: the front is a goal in plain words, the back the command that
+reaches it. The user practises them by typing the real commands in a tmux window.
+
+  drills add --goal G --cmd C --accept A --run yes|no [--back B] [--page P] [--from F] [--date D]
+        save a drill: A is the words a typed line must hold, in order, the first being the
+        command (`friction-cards count`); --back defaults to A; run no = checked, never run.
+        Prints the slug; a drill with the same accept prints its slug and writes nothing.
+  drills check --accept A LINE
+        ok, wrong or refuse. ok: LINE is one command holding A's words in order, the same
+        command first (an alias is expanded, a path cut to its name; extra flags are fine),
+        piped at most into head, tail, less, jq, rg or wc; a quoted phrase counts as its words.
+        refuse: ;, &&, ||, &, a redirect, $(..) or backticks, a second line, sudo, env, a pipe
+        into anything else, or a line the shell can't parse (# is not a comment here).
+        Aliases come from $DRILLS_ALIASES, else the dotfiles zsh/ folder.
+  drills start [--date D] [--limit 5]
+        start a round ($DRILLS_STATE/round.json): the due drills, new ones first, then the
+        reviewed ones oldest due first. Prints "Goal: <front>", or "no drills due".
+  drills step LINE
+        one JSON line {action, message, done} for a line typed in the round: action run (right,
+        run it), checked (right, a run-no drill: don't run it), wrong, show (LINE "?"), refuse.
+        A right line is graded at once with `cards grade`: 2 first try, 1 after a miss, 0 after
+        the answer was shown; the day's {right, total} go to $DRILLS_STATE/<date>.json. done is
+        true after the last drill or once $DRILLS_ROUND_SECONDS (300) have passed.
+  drills finish
+        end the round (remove round.json) and print "Drills: R right of N".
+  drills stats [--date D] [--json|--line]
+        {right, total, streak} for D; streak = days in a row with a round, up to D (or D-1 when
+        D has none yet). --line: "Drills: R right of N · streak S days", nothing before the first
+        drill card. Writes stage: known on drills whose interval reached 21 days.
+  drills window [--date D]
+        start a round and become the user's interactive zsh with the drill hook (zsh/drill.zsh,
+        through a ZDOTDIR in $DRILLS_STATE/zdotdir that sources ~/.zshenv and ~/.zshrc first):
+        each line goes through `drills step`; the window ends itself after the round. With no
+        drills due it says so and exits after 3 s.
+  drills candidates [--json]
+        tools-manual rows ($DRILLS_MANUAL, default ~/wiki/tools) whose first cell starts with a
+        backticked command we built (a program in $DRILLS_BIN, default the dotfiles bin/, or an
+        alias): the command up to the first <, [ or …, once each, minus commands that have a
+        drill (its cmd, or an accept that starts with them) or are in drills-skipped.txt.
+        Plain: command<TAB>page; --json: [{command, page, row}].
+  drills skip COMMAND --reason R [--date D]
+        never propose COMMAND again ($CARDS_DIR/drills-skipped.txt: command, date, reason).
+  drills open [--date D]
+        open the drill window in the caller's tmux session (the pane `tmux-here` finds;
+        $DRILLS_TMUX_HERE overrides), or focus a window named drills there. Prints
+        "opened <session>:drills" or "focused <session>:drills"; with no tmux "drills need tmux".
+
+A drill card's extra front matter: cmd, accept, run (yes|no), from (manual|hand), page, stage
+(learning|known). Cards are written through `cards` ($DRILLS_CARDS, default the one next to this
+script).
+"""
+import argparse
+import datetime
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+CARDS = os.environ.get("DRILLS_CARDS") or os.path.join(HERE, "cards")
+CARDS_DIR = os.path.expanduser(os.environ.get("CARDS_DIR") or "~/wiki/cards")
+STATE = os.path.expanduser(os.environ.get("DRILLS_STATE") or "~/.local/state/drills")
+ROUND_SECONDS = int(os.environ.get("DRILLS_ROUND_SECONDS") or 300)
+
+
+class Fail(Exception):
+    def __init__(self, msg, code=1):
+        super().__init__(msg)
+        self.code = code
+
+
+def one_line(s):
+    return " ".join((s or "").split())
+
+
+def read_card(path):
+    """{slug, fm, front, back, text} of a card file, or None when it has no front matter"""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    m = re.match(r"---\n(.*?)\n---\n", text, re.S)
+    if not m:
+        return None
+    fm = {k.strip(): v.strip() for k, _, v in (l.partition(":") for l in m.group(1).split("\n")) if k.strip()}
+    front = re.search(r"(?m)^## Question: (.*)$", text)
+    back = re.search(r"(?m)^### Answer: (.*)$", text)
+    return {"slug": os.path.basename(path)[:-3], "fm": fm, "text": text,
+            "front": front.group(1) if front else "", "back": back.group(1) if back else ""}
+
+
+def tags(card):
+    return [t.strip() for t in card["fm"].get("tags", "").strip("[]").split(",") if t.strip()]
+
+
+def drill_cards():
+    """the cards tagged drill"""
+    try:
+        names = sorted(n for n in os.listdir(CARDS_DIR) if n.endswith(".md") and not n.startswith("."))
+    except OSError:
+        return []
+    cards = (read_card(os.path.join(CARDS_DIR, n)) for n in names)
+    return [c for c in cards if c and "drill" in tags(c)]
+
+
+def run_cards(*args):
+    ran = subprocess.run([CARDS, *args], capture_output=True, text=True, env={**os.environ, "CARDS_DIR": CARDS_DIR})
+    if ran.returncode != 0:
+        raise Fail(f"cards {args[0]} failed: {ran.stderr.strip()}")
+    return ran.stdout.strip()
+
+
+READERS = {"head", "tail", "less", "jq", "rg", "wc"}
+
+
+def load_aliases():
+    """{name: [words]} from `alias name=...` lines in $DRILLS_ALIASES, else every file in the
+    dotfiles zsh/ folder"""
+    if os.environ.get("DRILLS_ALIASES"):
+        paths = [os.environ["DRILLS_ALIASES"]]
+    else:
+        zdir = os.path.join(HERE, "..", "zsh")
+        try:
+            paths = [os.path.join(zdir, n) for n in sorted(os.listdir(zdir))]
+        except OSError:
+            paths = []
+    out = {}
+    for path in paths:
+        try:
+            with open(path, encoding="utf-8") as f:
+                lines = f.read().split("\n")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line in lines:
+            m = re.match(r"\s*alias\s+([\w.-]+)=(.+)$", line)
+            if not m:
+                continue
+            try:
+                value = shlex.split(m.group(2), comments=True)
+            except ValueError:
+                continue
+            if value:
+                out[m.group(1)] = value[0].split()
+    return out
+
+
+def tokens(line):
+    lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    lex.commenters = ""
+    return list(lex)
+
+
+def match(line, accept, aliases):
+    """ok, wrong or refuse: is line one command (piped into readers at most) holding the accept
+    words in order, with the same command first"""
+    if "`" in line or "$(" in line or "\n" in line or "\r" in line:
+        return "refuse"
+    try:
+        toks = tokens(line)
+    except ValueError:
+        return "refuse"
+    segments, cur = [], []
+    for t in toks:
+        if t and all(ch in "();<>|&" for ch in t):
+            if t != "|":
+                return "refuse"
+            segments.append(cur)
+            cur = []
+        else:
+            cur.append(t)
+    segments.append(cur)
+    if any(not s for s in segments) or any(os.path.basename(s[0]) not in READERS for s in segments[1:]):
+        return "refuse"
+    words = segments[0]
+    if words[0] in ("sudo", "env"):
+        return "refuse"
+    first = os.path.basename(words[0]) if "/" in words[0] else words[0]
+    words = (aliases.get(first) or [first]) + [w for arg in words[1:] for w in arg.split()]
+    want = accept.split()
+    if not want or words[0] != want[0]:
+        return "wrong"
+    rest = iter(words[1:])
+    return "ok" if all(w in rest for w in want[1:]) else "wrong"
+
+
+def cmd_check(a):
+    print(match(a.line, one_line(a.accept), load_aliases()))
+
+
+def now():
+    return float(os.environ.get("DRILLS_NOW") or time.time())
+
+
+def write_json(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.tmp{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    os.replace(tmp, path)
+
+
+def read_json(path, default=None):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def round_path():
+    return os.path.join(STATE, "round.json")
+
+
+def results_path(day):
+    return os.path.join(STATE, f"{day}.json")
+
+
+def goal(item):
+    return f"Goal: {item['front']}"
+
+
+def cmd_start(a):
+    day = a.date or datetime.date.today().isoformat()
+    due = json.loads(run_cards("due", "--tag", "drill", "--limit", "50", "--json", "--date", day) or "[]")
+    order = [d for d in due if d["new"]] + [d for d in due if not d["new"]]
+    by_slug = {c["slug"]: c for c in drill_cards()}
+    items = []
+    for d in order[:a.limit]:
+        c = by_slug.get(d["slug"])
+        if c and c["fm"].get("accept"):
+            items.append({"slug": c["slug"], "front": c["front"], "back": c["back"],
+                          "accept": c["fm"]["accept"], "run": c["fm"].get("run", "no")})
+    if not items:
+        print("no drills due")
+        return
+    write_json(round_path(), {"date": day, "started": now(), "items": items, "i": 0,
+                              "missed": False, "shown": False})
+    print(goal(items[0]))
+
+
+def summary(day):
+    r = read_json(results_path(day), {}) or {}
+    return f"Drills: {r.get('right', 0)} right of {r.get('total', 0)}"
+
+
+def cmd_step(a):
+    rnd = read_json(round_path())
+    if not rnd or rnd["i"] >= len(rnd["items"]):
+        print(json.dumps({"action": "show", "message": "No drill round.", "done": True}))
+        return
+    item = rnd["items"][rnd["i"]]
+    over = now() >= rnd["started"] + ROUND_SECONDS
+    line = a.line.strip()
+    verdict = "show" if line == "?" else match(line, item["accept"], load_aliases())
+    if verdict != "ok" and over:
+        print(json.dumps({"action": "show", "message": f"Time's up. {summary(rnd['date'])}", "done": True}))
+        return
+    if verdict == "show":
+        rnd["shown"] = True
+        out = {"action": "show", "message": f"→ {item['back']}   (type it)", "done": False}
+    elif verdict == "refuse":
+        out = {"action": "refuse", "message": "One command please: no ;, &&, redirects, sudo or env.", "done": False}
+    elif verdict == "wrong":
+        rnd["missed"] = True
+        out = {"action": "wrong", "message": f"✗ → {item['back']}   (type it)", "done": False}
+    else:
+        grade = 0 if rnd["shown"] else 1 if rnd["missed"] else 2
+        run_cards("grade", item["slug"], str(grade), "--date", rnd["date"])
+        res = read_json(results_path(rnd["date"]), {}) or {}
+        res = {"right": res.get("right", 0) + (grade == 2), "total": res.get("total", 0) + 1}
+        write_json(results_path(rnd["date"]), res)
+        rnd.update(i=rnd["i"] + 1, missed=False, shown=False)
+        done = over or rnd["i"] >= len(rnd["items"])
+        mark = "✓" if item["run"] == "yes" else "✓ (checked, not run)"
+        nxt = summary(rnd["date"]) if done else goal(rnd["items"][rnd["i"]])
+        out = {"action": "run" if item["run"] == "yes" else "checked", "message": f"{mark}\n{nxt}", "done": done}
+    write_json(round_path(), rnd)
+    print(json.dumps(out, ensure_ascii=False))
+
+
+def cmd_finish(a):
+    rnd = read_json(round_path())
+    day = rnd["date"] if rnd else (a.date or datetime.date.today().isoformat())
+    try:
+        os.remove(round_path())
+    except OSError:
+        pass
+    print(summary(day))
+
+
+def mark_known(cards):
+    """write stage: known on drill cards whose interval reached 21 days"""
+    for c in cards:
+        try:
+            interval = int(c["fm"].get("interval", "0"))
+        except ValueError:
+            continue
+        if interval >= 21 and c["fm"].get("stage") != "known":
+            text = re.sub(r"^stage:.*$", "stage: known", c["text"], count=1, flags=re.M)
+            if text != c["text"]:
+                path = os.path.join(CARDS_DIR, c["slug"] + ".md")
+                with open(f"{path}.tmp", "w", encoding="utf-8") as f:
+                    f.write(text)
+                os.replace(f"{path}.tmp", path)
+
+
+def stats(day):
+    d = datetime.date.fromisoformat(day)
+    today = read_json(results_path(day), {}) or {}
+    day_has = lambda x: (read_json(results_path(x.isoformat()), {}) or {}).get("total", 0) > 0
+    cur, streak = (d if day_has(d) else d - datetime.timedelta(days=1)), 0
+    while day_has(cur):
+        streak += 1
+        cur -= datetime.timedelta(days=1)
+    return {"right": today.get("right", 0), "total": today.get("total", 0), "streak": streak}
+
+
+def cmd_stats(a):
+    cards = drill_cards()
+    mark_known(cards)
+    s = stats(a.date or datetime.date.today().isoformat())
+    if a.line:
+        if cards:
+            unit = "day" if s["streak"] == 1 else "days"
+            print(f"Drills: {s['right']} right of {s['total']} · streak {s['streak']} {unit}")
+    else:
+        print(json.dumps(s))
+
+
+ZSHRC = """[ -f "$HOME/.zshenv" ] && source "$HOME/.zshenv"
+[ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc"
+typeset -g POWERLEVEL9K_INSTANT_PROMPT=quiet
+export DRILLS_CMD={cmd}
+source {hook}
+_drill_banner() {{
+  print "Drill: type the command for each goal (it runs for real, or is only checked). ? shows it."
+  print -r -- {goal}
+  add-zsh-hook -d precmd _drill_banner
+}}
+autoload -Uz add-zsh-hook
+add-zsh-hook precmd _drill_banner
+"""
+
+
+def cmd_window(a):
+    out = subprocess.run([os.path.realpath(__file__), "start", *(["--date", a.date] if a.date else [])],
+                         capture_output=True, text=True)
+    first = out.stdout.strip()
+    if out.returncode != 0 or not first.startswith("Goal:"):
+        print(first or "no drills due")
+        time.sleep(float(os.environ.get("DRILLS_WINDOW_WAIT") or 3))
+        return
+    zdot = os.path.join(STATE, "zdotdir")
+    os.makedirs(zdot, exist_ok=True)
+    hook = os.path.join(os.path.dirname(HERE), "zsh", "drill.zsh")
+    with open(os.path.join(zdot, ".zshrc"), "w", encoding="utf-8") as f:
+        f.write(ZSHRC.format(cmd=shlex.quote(os.path.realpath(__file__)), hook=shlex.quote(hook),
+                             goal=shlex.quote(first)))
+    zsh = os.environ.get("DRILLS_ZSH") or "zsh"
+    os.execvpe(zsh, [zsh, "-i"], {**os.environ, "ZDOTDIR": zdot})
+
+
+ROW = re.compile(r"^\|\s*(?:⭐\s*)?`([^`]+)`")
+
+
+def skipped_path():
+    return os.path.join(CARDS_DIR, "drills-skipped.txt")
+
+
+def built_programs():
+    """names of the executables in $DRILLS_BIN (colon list; default the dotfiles bin/)"""
+    out = set()
+    for d in (os.environ.get("DRILLS_BIN") or HERE).split(":"):
+        try:
+            out.update(n for n in os.listdir(d) if os.access(os.path.join(d, n), os.X_OK)
+                       and not os.path.isdir(os.path.join(d, n)))
+        except OSError:
+            pass
+    return out
+
+
+def candidates():
+    """[{command, page, row}] of tools-manual rows for commands we built with no drill yet"""
+    manual = os.path.expanduser(os.environ.get("DRILLS_MANUAL") or "~/wiki/tools")
+    aliases, programs = load_aliases(), built_programs()
+    drills = drill_cards()
+    have = {one_line(c["fm"].get("cmd")) for c in drills}
+    accepts = [c["fm"].get("accept", "").split() for c in drills]
+    try:
+        with open(skipped_path(), encoding="utf-8") as f:
+            have |= {l.split("\t")[0] for l in f.read().splitlines() if l.strip()}
+    except OSError:
+        pass
+    try:
+        pages = sorted(n for n in os.listdir(manual) if n.endswith(".md"))
+    except OSError:
+        return []
+    out = []
+    for page in pages:
+        with open(os.path.join(manual, page), encoding="utf-8") as f:
+            lines = f.read().split("\n")
+        for line in lines:
+            m = ROW.match(line)
+            if not m:
+                continue
+            command = one_line(re.split(r"[<\[…]", m.group(1))[0])
+            words = command.split()
+            if not words or (words[0] not in programs and words[0] not in aliases):
+                continue
+            expanded = aliases.get(words[0], words[:1]) + words[1:]
+            if command in have or any(a[:len(expanded)] == expanded for a in accepts):
+                continue
+            have.add(command)
+            out.append({"command": command, "page": page, "row": one_line(line)})
+    return out
+
+
+def cmd_candidates(a):
+    rows = candidates()
+    if a.json:
+        print(json.dumps(rows, ensure_ascii=False))
+    else:
+        for r in rows:
+            print(f"{r['command']}\t{r['page']}")
+
+
+def cmd_skip(a):
+    command = one_line(a.command)
+    if not command:
+        raise Fail("a command is needed", 2)
+    os.makedirs(CARDS_DIR, exist_ok=True)
+    with open(skipped_path(), "a", encoding="utf-8") as f:
+        f.write(f"{command}\t{a.date or datetime.date.today().isoformat()}\t{one_line(a.reason)}\n")
+
+
+def tmux(*args):
+    return subprocess.run(["tmux", *args], capture_output=True, text=True)
+
+
+def cmd_open(a):
+    day = a.date or datetime.date.today().isoformat()
+    here = os.environ.get("DRILLS_TMUX_HERE") or os.path.join(HERE, "tmux-here")
+    session = ""
+    try:
+        pane = subprocess.run([here], capture_output=True, text=True)
+        if pane.returncode == 0 and pane.stdout.strip():
+            session = tmux("display-message", "-p", "-t", pane.stdout.strip(), "#{session_name}").stdout.strip()
+    except OSError:
+        pass
+    if not session:
+        print("drills need tmux")
+        return
+    for row in tmux("list-windows", "-t", f"={session}:", "-F", "#{window_index} #{window_name}").stdout.splitlines():
+        index, _, name = row.partition(" ")
+        if name == "drills":
+            tmux("select-window", "-t", f"={session}:{index}")
+            print(f"focused {session}:drills")
+            return
+    tmux("new-window", "-t", f"={session}:", "-n", "drills",
+         shlex.join([os.path.realpath(__file__), "window", "--date", day]))
+    print(f"opened {session}:drills")
+
+
+def cmd_add(a):
+    goal, accept = one_line(a.goal), one_line(a.accept)
+    if not goal or not accept or not one_line(a.cmd):
+        raise Fail("--goal, --cmd and --accept must not be empty", 2)
+    if a.run not in ("yes", "no"):
+        raise Fail("--run is yes or no", 2)
+    for c in drill_cards():
+        if one_line(c["fm"].get("accept")) == accept:
+            print(c["slug"])
+            return
+    args = ["add", "--front", goal, "--back", one_line(a.back) or accept, "--tags", "drill",
+            "--source", f"drills: {a.src}"]
+    if a.date:
+        args += ["--date", a.date]
+    for k, v in (("cmd", one_line(a.cmd)), ("accept", accept), ("run", a.run), ("from", a.src),
+                 ("page", one_line(a.page)), ("stage", "learning")):
+        if v:
+            args += ["--set", f"{k}={v}"]
+    print(run_cards(*args))
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print(f"drills: {message}", file=sys.stderr)
+        sys.exit(2)
+
+
+def main():
+    p = Parser(prog="drills", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("add")
+    s.add_argument("--goal", required=True)
+    s.add_argument("--cmd", required=True)
+    s.add_argument("--accept", required=True)
+    s.add_argument("--run", required=True)
+    s.add_argument("--back", default="")
+    s.add_argument("--page", default="")
+    s.add_argument("--from", dest="src", default="hand")
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_add)
+    s = sub.add_parser("check")
+    s.add_argument("--accept", required=True)
+    s.add_argument("line")
+    s.set_defaults(fn=cmd_check)
+    s = sub.add_parser("start")
+    s.add_argument("--date")
+    s.add_argument("--limit", type=int, default=5)
+    s.set_defaults(fn=cmd_start)
+    s = sub.add_parser("step")
+    s.add_argument("line")
+    s.set_defaults(fn=cmd_step)
+    s = sub.add_parser("finish")
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_finish)
+    s = sub.add_parser("stats")
+    s.add_argument("--date")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--json", action="store_true")
+    g.add_argument("--line", action="store_true")
+    s.set_defaults(fn=cmd_stats)
+    s = sub.add_parser("window")
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_window)
+    s = sub.add_parser("open")
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_open)
+    s = sub.add_parser("candidates")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_candidates)
+    s = sub.add_parser("skip")
+    s.add_argument("command")
+    s.add_argument("--reason", required=True)
+    s.add_argument("--date")
+    s.set_defaults(fn=cmd_skip)
+    a = p.parse_args()
+    try:
+        a.fn(a)
+    except Fail as e:
+        print(f"drills: {e}", file=sys.stderr)
+        sys.exit(e.code)
+
+
+if __name__ == "__main__":
+    main()

@@ -82,6 +82,17 @@ assert_contains "$out" "held by something else" "won't kill a process that isn't
 kill -0 "$other" 2>/dev/null && pass "the foreign process survives" || fail "the foreign process survives" "killed"
 kill "$other" 2>/dev/null
 
+echo "dev — the dashboard clone one folder deeper"
+# As on Ubuntu: PROJECTS_DIR/ecfx/ecfx-dashboard, and a PROJECTS_DIR that itself
+# lives in a dot directory must not hide it. --complete needs no server.
+DROOT="$SANDBOX/.local/projects"
+mkdir -p "$DROOT/ecfx"
+git init -q -b main "$DROOT/ecfx/ecfx-dashboard" && git -C "$DROOT/ecfx/ecfx-dashboard" commit -q --allow-empty -m init
+git -C "$DROOT/ecfx/ecfx-dashboard" worktree add -q -b feat/nested "$DROOT/ecfx/ecfx-dashboard-wt"
+out="$(env -u DEV_REPO PROJECTS_DIR="$DROOT" "$SCRIPT" --complete 2>&1)"
+assert_contains "$out" "feat/nested:$DROOT/ecfx/ecfx-dashboard-wt" \
+    "finds the dashboard clone one folder deeper under a dot root"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

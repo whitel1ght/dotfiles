@@ -29,9 +29,10 @@ read ticket → multi-agent investigate + brainstorm → [ask only if genuinely 
                            report
 ```
 
-**One gate, one review cycle, one MR.** Everything after the approach gate runs
-unattended. Do not invent extra checkpoints — the user chose a single pause
-deliberately.
+**One gate, one review cycle, and one MR unless the approved approach names
+several.** Open exactly the MRs the approach lists; ask before opening any MR it
+does not list. Everything after the approach gate runs unattended. Do not
+invent extra checkpoints — the user chose a single pause deliberately.
 
 ## When to invoke
 
@@ -90,26 +91,25 @@ them decide.
 
 ### P3. Fetch the ticket
 
-Jira lives at `https://ecfxdev.atlassian.net`, authenticated with `JIRA_EMAIL` /
-`JIRA_API_TOKEN` from the shell environment (sourced from
-`~/.config/mrglass/secrets.env`).
+Jira is read through `jira-issue`, which calls `jira-api`. On Ubuntu the
+wrapper uses only `JIRA_EMAIL` and `JIRA_API_TOKEN` already exported in the
+process environment. Supply them through your private environment/secret manager;
+never put credentials in this repository, print tokens, or search secret files.
 
 ```bash
-JIRA_BASE="https://ecfxdev.atlassian.net"
-curl -s -w '\n%{http_code}' -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
-  -H "Accept: application/json" \
-  "$JIRA_BASE/rest/api/3/issue/ECFX-15234?fields=summary,description,status,issuetype,priority,labels,components,assignee,reporter,comment,issuelinks,parent"
+jira-issue ECFX-15234 --fields summary,issuetype,status,priority,labels,components,assignee,reporter,parent,issuelinks,comment,description
 ```
 
-Walk the ADF `description` into plain text (`type: "text"` nodes; break on
-`paragraph`). Extract: summary, type, status, priority, labels, components,
-description, recent comments, linked issues, parent epic.
+`jira-issue` prints one `Field: value` line per field, with the description and
+comments already rendered as plain text, so nothing needs walking. Extract:
+summary, type, status, priority, labels, components, description, recent
+comments, linked issues, parent epic.
 
-**If the API returns 401/403/404** — the token expires periodically, and it was
-returning 401 when this skill was written — say so once, plainly, and continue
-from the user's pasted text. Do not retry-loop, do not hunt for other
-credentials, and do not stop: the paste is usually sufficient. Only stop if
-there is no paste *and* no API access.
+**If it exits non-zero** (Jira's message is on stderr: 401/403/404 — the token
+expires periodically, and it was returning 401 when this skill was written) — say
+so once, plainly, and continue from the user's pasted text. Do not retry-loop, do
+not hunt for other credentials, and do not stop: the paste is usually sufficient.
+Only stop if there is no paste *and* no API access.
 
 Note the issue type. A **Story/Task** is feature work — the flow below fits. A
 **Bug** with EMLs in `/workspace/shared/<TICKET>/` should go to
@@ -375,6 +375,9 @@ Close the tab when you're done.
 
 ## Phase 7 — Draft MR
 
+When the approved approach lists several MRs, run Phases 7–10 once per MR, in
+the approach's order, each on its own Phase 3 branch as the approach names it.
+
 Commit, push, open as **draft**. Draft matters: the review cycle in Phase 8 is
 still going to push commits, and human reviewers should not be pinged into a
 moving target.
@@ -395,8 +398,8 @@ EOF
 git push -u origin dmitry/ECFX-15234_short-slug
 ```
 
-Use `/commit-msg` if you want the message generated, and `/mr-description` for
-the body. Then:
+Run `/mr-description` for the body first; `glab mr create` is blocked without it.
+Use `/commit-msg` if you want the commit message generated. Then:
 
 ```bash
 glab mr create --draft \
@@ -489,7 +492,7 @@ git commit -m "ECFX-15234: address review findings
 
 <one line per fix — what changed and which finding it answers>"
 git push
-glab mr update <iid> --ready
+~/.local/bin/mr-ship <repo> <iid>   # ready, assigned to me, the team requested as reviewers
 ```
 
 Update the MR description with anything the review changed materially — a
@@ -499,8 +502,7 @@ Optionally transition the Jira ticket to *In MR* / *In Review* and attach the
 MR link, if the API credentials worked in P3:
 
 ```bash
-curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
-  "$JIRA_BASE/rest/api/3/issue/ECFX-15234/transitions?includeUnavailableTransitions=true"
+jira-api GET "issue/ECFX-15234/transitions?includeUnavailableTransitions=true"
 ```
 
 Look the transition ID up — never hardcode it. If the credentials are dead,

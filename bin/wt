@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# Keep every git worktree in one place: ~/projects/worktrees/<repo>/<name>.
+# Keep every git worktree in one place: <projects>/worktrees/<repo>/<name>,
+# with <projects> $HOME/projects unless PROJECTS_DIR says otherwise.
 #
 #   wt add <repo> <name> [branch]   create one; the branch is checked out if it
 #                                   exists locally or on origin, else created
 #                                   from origin's default branch (default: name)
 #   wt move <worktree> [name]       move an existing worktree into the layout
-#   wt ls                           every worktree of every repo in ~/projects,
-#                                   out-of-place ones marked
+#   wt ls                           every worktree of every repo in the projects
+#                                   root, out-of-place ones marked
 #   wt hook-create | hook-remove    Claude Code's WorktreeCreate/WorktreeRemove
 #                                   hooks: JSON on stdin, see install.sh
 #
-# Clones live at ~/projects/<repo>. clean-worktrees, dev, /orchestrate and
-# /watch-mrs all look for worktrees here. The hooks send Claude Code's own
+# Clones live under the projects root: ~/projects/<repo>, or one folder deeper
+# when they are grouped there (~/projects/ecfx/ecfx-backend). clean-worktrees,
+# dev, /orchestrate and /watch-mrs all look for worktrees here. The hooks send
+# Claude Code's own
 # worktrees here too (claude -w, subagent isolation, background sessions),
 # instead of <repo>/.claude/worktrees. A hook-made worktree gets the branch
 # named like it if that exists, else Claude's usual worktree-<name>; removal
@@ -32,8 +35,30 @@ CLAUDE_PROJECTS="${CLAUDE_PROJECTS:-$HOME/.claude/projects}"
 die() { echo "wt: $*" >&2; exit 1; }
 claude_key() { printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g'; }
 
+# repo_path NAME — where the clone of NAME lives: $PROJECTS_DIR/NAME, or one
+# folder deeper when the clones are grouped there (~/projects/ecfx/ecfx-backend;
+# $HOME/projects is the root either way). A flat clone wins over a deeper one,
+# and between two clones at the same depth the first in glob order wins, so a
+# same-named clone in a later group is shadowed silently (js/ecfx-dashboard
+# loses to ecfx/ecfx-dashboard). Dot-directories and worktrees/ are skipped,
+# matching only the path below $PROJECTS_DIR, so a projects root that itself
+# lives in a dot directory (say ~/.local/projects) still resolves. Prints the
+# flat path when neither depth has the clone, so the caller can name it.
+repo_path() {
+  local name="$1" p="$PROJECTS_DIR/$1" d rel
+  if [ ! -d "$p/.git" ]; then
+    for d in "$PROJECTS_DIR"/*/"$name"; do
+      rel="${d#"$PROJECTS_DIR"/}"
+      case "$rel" in .*|../"$name"|worktrees/"$name") continue ;; esac
+      [ -d "$d/.git" ] || continue
+      p="$d"; break
+    done
+  fi
+  printf '%s\n' "$p"
+}
+
 add() {
-  add_at "$PROJECTS_DIR/$1" "$2" "${3:-$2}"
+  add_at "$(repo_path "$1")" "$2" "${3:-$2}"
 }
 
 add_at() { # clone name branch
@@ -127,10 +152,16 @@ hook_remove() {
 }
 
 ls_all() {
-  local clone
-  for clone in "$PROJECTS_DIR"/*/; do
+  local clone rel
+  # depth 1 and depth 2 (flat clones and grouped ones, ~/projects/ecfx/<repo>);
+  # dot-directories and the worktrees root are skipped by the same rule repo_path
+  # applies, so `wt ls` and `wt add` always agree on which clones exist
+  for clone in "$PROJECTS_DIR"/*/ "$PROJECTS_DIR"/*/*/; do
     clone="${clone%/}"
     [ -d "$clone/.git" ] || continue
+    rel="${clone#"$PROJECTS_DIR"/}"
+    case "$rel" in .*|../*) continue ;; esac
+    case "$clone" in "$WORKTREES_DIR"/*) continue ;; esac
     git -C "$clone" worktree list --porcelain | awk -v root="$WORKTREES_DIR/$(basename "$clone")/" -v repo="$(basename "$clone")" '
       /^worktree / { w = substr($0, 10); n++; b = "(detached)"; lock = ""; next }
       /^branch / { b = substr($0, 19) }

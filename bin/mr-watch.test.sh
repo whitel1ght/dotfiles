@@ -74,8 +74,11 @@ git init -q -b main "$PROJ/api" && git -C "$PROJ/api" commit -q --allow-empty -m
 git -C "$PROJ/api" worktree add -q -b feat/a "$SANDBOX/wt-a"
 git init -q -b main "$PROJ/web" && git -C "$PROJ/web" commit -q --allow-empty -m init
 
-run() {
-    PATH="$STUBS:$PATH" FIX="$FIX" MR_WATCH_STATE="$STATE" PROJECTS_DIR="$PROJ" \
+run() { run_at "$PROJ" "$STATE" "$@"; }
+# run_at ROOT STATE args — same, against another projects root and state dir
+run_at() {
+    local root="$1" state="$2"; shift 2
+    PATH="$STUBS:$PATH" FIX="$FIX" MR_WATCH_STATE="$state" PROJECTS_DIR="$root" \
     MR_WATCH_IGNORE="renovate" "$SCRIPT" "$@" 2>&1
 }
 
@@ -149,6 +152,62 @@ cat > "$FIX/disc-1-10.json" <<EOF
 EOF
 out="$(run check)"
 assert_contains "$out" "grp/api!10: 1 new note(s)" "a later note in an acked thread is new again"
+
+echo "mr-watch — clones one folder deeper"
+# As on Ubuntu: the clones are grouped, ~/projects/ecfx/{ecfx-backend,...},
+# with nothing at ~/projects/<repo>. Same MR fixtures, separate root and state.
+NEST="$SANDBOX/nested-projects"; NSTATE="$SANDBOX/nested-state"
+mkdir -p "$NEST/ecfx"
+git init -q -b main "$NEST/ecfx/api" && git -C "$NEST/ecfx/api" commit -q --allow-empty -m init
+git -C "$NEST/ecfx/api" worktree add -q -b feat/a "$SANDBOX/wt-nested"
+out="$(run_at "$NEST" "$NSTATE" check --since 2026-09-20T00:00:00Z)"; rc=$?
+assert_eq 0 "$rc" "finds the MRs with every clone one folder deeper"
+assert_contains "$out" "worktree: $SANDBOX/wt-nested (clean)" "resolves a nested clone's worktree"
+assert_lacks "$out" "no clone at $NEST/api" "no false 'no clone' line for a nested clone"
+assert_contains "$out" "worktree: none (no clone at $NEST/web)" "still says so when there is no clone at all"
+echo x > "$SANDBOX/wt-nested/scratch"
+out="$(run_at "$NEST" "$NSTATE" check --since 2026-09-20T00:00:00Z)"
+assert_contains "$out" "worktree: $SANDBOX/wt-nested (DIRTY: 1 changed files)" "sees the nested worktree's changes"
+rm "$SANDBOX/wt-nested/scratch"
+# A worktrees directory that happens to hold a directory of the repo's name must
+# not be mistaken for the clone.
+mkdir -p "$NEST/worktrees/api/ABC-1"
+out="$(run_at "$NEST" "$NSTATE" check --since 2026-09-20T00:00:00Z)"
+assert_contains "$out" "worktree: $SANDBOX/wt-nested (clean)" "skips the worktrees directory when looking deeper"
+# A clone at the flat path wins over the nested one of the same name.
+git init -q -b main "$NEST/api" && git -C "$NEST/api" commit -q --allow-empty -m init
+git -C "$NEST/api" worktree add -q -b feat/a "$SANDBOX/wt-flat"
+out="$(run_at "$NEST" "$NSTATE" check --since 2026-09-20T00:00:00Z)"
+assert_contains "$out" "worktree: $SANDBOX/wt-flat (clean)" "the flat clone wins when both depths have one"
+
+echo "mr-watch — a projects root that itself sits in a dot directory"
+# $HOME/.local/projects style: the dot component is in the ROOT, not below it, so
+# it must not hide the grouped clones (the skip rule only looks below the root).
+DROOT="$SANDBOX/.local/projects"; DSTATE="$SANDBOX/dot-state"
+mkdir -p "$DROOT/ecfx"
+git init -q -b main "$DROOT/ecfx/api" && git -C "$DROOT/ecfx/api" commit -q --allow-empty -m init
+git -C "$DROOT/ecfx/api" worktree add -q -b feat/a "$SANDBOX/wt-dot"
+out="$(run_at "$DROOT" "$DSTATE" check --since 2026-09-20T00:00:00Z)"
+assert_contains "$out" "worktree: $SANDBOX/wt-dot (clean)" "resolves a nested clone under a root with a dot component"
+assert_lacks "$out" "no clone at $DROOT/api" "and does not fall back to the flat path"
+# A dot directory BELOW the root is still skipped, as before.
+mkdir -p "$DROOT/.cache/api" && cp -R "$DROOT/ecfx/api/.git" "$DROOT/.cache/api/.git"
+out="$(run_at "$DROOT" "$DSTATE" check --since 2026-09-20T00:00:00Z)"
+assert_contains "$out" "worktree: $SANDBOX/wt-dot (clean)" "a dot directory below the root is still skipped"
+
+echo "repo_path — one function, four copies"
+# The four helpers must stay standalone (they are symlinked into ~/.local/bin on
+# their own), so repo_path is copied rather than shared: pin the copies together.
+repo_path_body() { sed -n '/^repo_path() {$/,/^}$/p' "$TEST_DIR/$1"; }
+REF="$(repo_path_body mr-watch)"
+[ -n "$REF" ] && pass "bin/mr-watch has a repo_path" || fail "bin/mr-watch has a repo_path" "not found"
+for helper in wt jt dev; do
+  if [ "$(repo_path_body "$helper")" = "$REF" ]; then
+    pass "bin/$helper carries the same repo_path"
+  else
+    fail "bin/$helper carries the same repo_path" "body differs from bin/mr-watch's"
+  fi
+done
 
 echo "mr-watch — GitLab down"
 GLAB_DOWN=1 run check >/dev/null; rc=$?

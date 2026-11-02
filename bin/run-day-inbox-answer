@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# decisions' on_answer hook for /run-day: turn one answer event (JSON on stdin) into a
+# run-day inbox message, the same file the Python decide wrote, so the session's watcher
+# wakes it. Kinds: answered and told -> decision, asked -> clarify. Questions that other
+# sessions asked over MCP carry a source; their answers go back to them, not to /run-day.
+set -euo pipefail
+
+STATE="${RUN_DAY_STATE_DIR:-$HOME/.local/state/run-day}"
+INBOX="${INBOX_DIR:-$STATE/inbox}"
+
+ev="$(cat)"
+[ -z "$(jq -r '.source // ""' <<<"$ev" 2>/dev/null)" ] || exit 0
+read -r event id key at < <(jq -r '[.event, .id, (.key // ""), .at] | map(if . == "" then "-" else . end) | @tsv' <<<"$ev") \
+  || { echo "run-day-inbox-answer: not an event: $ev" >&2; exit 1; }
+[ "$key" = "-" ] && key=""
+text="$(jq -r '.text' <<<"$ev")"
+case "$event" in
+  answered|told) kind=decision ;;
+  asked) kind=clarify ;;
+  *) echo "run-day-inbox-answer: unknown event $event" >&2; exit 1 ;;
+esac
+
+chars=abcdefghijklmnopqrstuvwxyz0123456789 rand=""
+for _ in 1 2 3 4; do rand+="${chars:RANDOM%36:1}"; done
+name="$(date +%Y%m%dT%H%M%S)-${key:-offplan}-$rand.md"
+mkdir -p "$INBOX"
+printf -- '---\nkey: %s\nkind: %s\ndecision: %s\nsession: decisions\nat: %s\n---\n%s\n' \
+  "$key" "$kind" "$id" "$at" "$text" > "$INBOX/$name.tmp"
+mv "$INBOX/$name.tmp" "$INBOX/$name"

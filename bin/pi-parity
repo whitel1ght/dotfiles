@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Keep pi's playbooks in step with their Claude twins.
+
+Every pi/prompts/<name>.md that has a Claude command of the same name
+(claude/commands/ or claude/daily/commands/) is a pair. The two differ on
+purpose where the harnesses differ (how a subagent starts, where scripts live),
+so neither is generated from the other. Instead pi/parity.json records which
+version of the Claude side the pi side was last brought in step with, and this
+script says when the Claude side has moved on since.
+
+  pi-parity [check]          list pairs whose Claude side changed since the pi
+                             side last caught up (or that were never compared);
+                             exit 1 when there are any
+  pi-parity diff NAME        what changed on the Claude side since then
+  pi-parity mark NAME...     record that pi/prompts/NAME.md now matches its twin
+                             (run after porting the change)
+  pi-parity commit-msg FILE  git hook: a commit that changes a Claude playbook
+                             must bring its pi twin in step (ported and marked
+                             in the same commit) unless the message has a line
+                             "Pi: later"
+
+Porting is the port-claude-workflow skill's job: it knows what maps to what.
+Run from anywhere inside the dotfiles repo.
+"""
+
+import json
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+LEDGER = "pi/parity.json"
+TWIN_DIRS = ("claude/commands", "claude/daily/commands")
+PI_LATER = re.compile(r"(?im)^pi:\s*later\s*$")
+
+
+def git(*args: str, input_text: str | None = None) -> str:
+    return subprocess.run(["git", *args], capture_output=True, text=True, check=True, input=input_text).stdout.strip()
+
+
+ROOT = Path(git("rev-parse", "--show-toplevel"))
+
+
+def pairs() -> dict[str, str]:
+    out = {}
+    for prompt in sorted((ROOT / "pi/prompts").glob("*.md")):
+        for d in TWIN_DIRS:
+            if (ROOT / d / prompt.name).is_file():
+                out[prompt.stem] = f"{d}/{prompt.name}"
+                break
+    return out
+
+
+def ledger(text: str | None = None) -> dict:
+    if text is None:
+        path = ROOT / LEDGER
+        text = path.read_text() if path.exists() else "{}"
+    return json.loads(text or "{}")
+
+
+def blob(path: str, write: bool = False) -> str:
+    return git("hash-object", *(["-w"] if write else []), str(ROOT / path))
+
+
+def check() -> int:
+    marks, drifted = ledger(), []
+    for name, twin in pairs().items():
+        if name not in marks:
+            drifted.append(f"  {name:16} never compared with {twin}")
+        elif marks[name] != blob(twin):
+            drifted.append(f"  {name:16} {twin} changed since pi/prompts/{name}.md last caught up "
+                           f"(pi-parity diff {name})")
+    if not drifted:
+        print(f"pi-parity: all {len(pairs())} playbooks in step with their Claude twins")
+        return 0
+    print(f"pi-parity: {len(drifted)} pi playbook(s) behind their Claude twin:")
+    print("\n".join(drifted))
+    print("Port with the port-claude-workflow skill, then: pi-parity mark <name>")
+    return 1
+
+
+def diff(name: str) -> int:
+    twins, marks = pairs(), ledger()
+    if name not in twins:
+        print(f"pi-parity: no pair named {name}", file=sys.stderr)
+        return 2
+    if name not in marks:
+        print(f"pi-parity: {name} was never compared; read both files:\n  {twins[name]}\n  pi/prompts/{name}.md")
+        return 0
+    old = git("cat-file", "-p", marks[name])
+    with tempfile.NamedTemporaryFile("w", suffix=".md") as f:
+        f.write(old + ("\n" if not old.endswith("\n") else ""))
+        f.flush()
+        out = subprocess.run(["git", "diff", "--no-index", "--", f.name, str(ROOT / twins[name])],
+                             capture_output=True, text=True).stdout
+    print(out or f"pi-parity: {twins[name]} is unchanged")
+    return 0
+
+
+def mark(names: list[str]) -> int:
+    twins, marks = pairs(), ledger()
+    unknown = [n for n in names if n not in twins]
+    if unknown or not names:
+        print(f"pi-parity: no pair named {', '.join(unknown) or '(none given)'}", file=sys.stderr)
+        return 2
+    for n in names:
+        marks[n] = blob(twins[n], write=True)
+    (ROOT / LEDGER).write_text(json.dumps(dict(sorted(marks.items())), indent=2) + "\n")
+    print(f"pi-parity: marked {', '.join(names)} in step")
+    return 0
+
+
+def commit_msg(msg_file: str) -> int:
+    if PI_LATER.search(Path(msg_file).read_text(errors="replace")):
+        return 0
+    staged = set(git("diff", "--cached", "--name-only").splitlines())
+    try:
+        marks = ledger(git("show", f":{LEDGER}"))
+    except subprocess.CalledProcessError:
+        marks = {}
+    behind = []
+    for name, twin in pairs().items():
+        if twin not in staged:
+            continue
+        entry = git("ls-files", "-s", "--", twin).split()
+        if not entry or marks.get(name) != entry[1]:
+            behind.append(name)
+    if not behind:
+        return 0
+    print("pi-parity: this commit changes a Claude playbook without bringing its pi twin in step.", file=sys.stderr)
+    for n in behind:
+        print(f"  port it to pi/prompts/{n}.md, then: pi-parity mark {n} (and stage both)", file=sys.stderr)
+    print("If pi can wait, add a line 'Pi: later' to the commit message; `pi-parity` keeps listing it.",
+          file=sys.stderr)
+    return 1
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    cmd = args[0] if args else "check"
+    if cmd == "check" and len(args) <= 1:
+        return check()
+    if cmd == "diff" and len(args) == 2:
+        return diff(args[1])
+    if cmd == "mark":
+        return mark(args[1:])
+    if cmd == "commit-msg" and len(args) == 2:
+        return commit_msg(args[1])
+    print(__doc__.strip(), file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

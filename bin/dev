@@ -25,7 +25,29 @@
 # src/protobufs-ts is left to dev.sh, which builds it when it's missing.
 set -euo pipefail
 
-REPO="${DEV_REPO:-$HOME/projects/ecfx-dashboard}"
+PROJECTS_DIR="${PROJECTS_DIR:-$HOME/projects}"
+# repo_path NAME — where the clone of NAME lives: $PROJECTS_DIR/NAME, or one
+# folder deeper when the clones are grouped there (~/projects/ecfx/ecfx-backend;
+# $HOME/projects is the root either way). A flat clone wins over a deeper one,
+# and between two clones at the same depth the first in glob order wins, so a
+# same-named clone in a later group is shadowed silently (js/ecfx-dashboard
+# loses to ecfx/ecfx-dashboard). Dot-directories and worktrees/ are skipped,
+# matching only the path below $PROJECTS_DIR, so a projects root that itself
+# lives in a dot directory (say ~/.local/projects) still resolves. Prints the
+# flat path when neither depth has the clone, so the caller can name it.
+repo_path() {
+  local name="$1" p="$PROJECTS_DIR/$1" d rel
+  if [ ! -d "$p/.git" ]; then
+    for d in "$PROJECTS_DIR"/*/"$name"; do
+      rel="${d#"$PROJECTS_DIR"/}"
+      case "$rel" in .*|../"$name"|worktrees/"$name") continue ;; esac
+      [ -d "$d/.git" ] || continue
+      p="$d"; break
+    done
+  fi
+  printf '%s\n' "$p"
+}
+REPO="${DEV_REPO:-$(repo_path ecfx-dashboard)}"
 PORT="${DEV_PORT:-4000}"
 URL="${DEV_URL:-https://testfirm1.myecfxlocal.com:$PORT}"
 SESSION="${DEV_SESSION:-servers}"
@@ -39,9 +61,10 @@ listener() { lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | head -1; }
 cwd_of() { lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'; }
 branch_of() { git -C "$1" branch --show-current 2>/dev/null || true; }
 
-# Worktrees of the repo that live under ~/projects: skips review scratch copies in /tmp.
+# Worktrees of the repo that live under the projects root: skips review scratch
+# copies in /tmp.
 worktrees() {
-  git -C "$REPO" worktree list --porcelain | awk -v home="$HOME/projects/" '
+  git -C "$REPO" worktree list --porcelain | awk -v home="$PROJECTS_DIR/" '
     /^worktree / { path = substr($0, 10); branch = "(detached)" }
     /^branch /   { branch = substr($0, 8); sub("^refs/heads/", "", branch) }
     /^prunable/  { path = "" }

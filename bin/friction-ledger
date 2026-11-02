@@ -1,0 +1,1287 @@
+#!/usr/bin/env bash
+# Keep the friction ledger in the wiki: one F-NNN.md per recurring annoyance, and ledger.md,
+# a table rebuilt from them. The end-day reflect step drives it; no model needed here.
+#
+#   friction-ledger apply --date D [--mine-json FILE]
+#   friction-ledger set F-NNN [--class C] [--status S] [--rung R] [--fix SHA]
+#                             [--diagnosis TEXT] [--proposal-file FILE] [--date D]
+#                             [--safety true|false] [--queued-by user] [--reason TEXT]
+#   friction-ledger coach-offer --date D [--limit 3]
+#   friction-ledger coach-answer F-NNN yes|no|later|done --date D
+#   friction-ledger cards --date D
+#   friction-ledger card-filed F-NNN --date D (--hash H | --result)
+#   friction-ledger card-answer F-NNN apply|ignore|later|done --date D
+#   friction-ledger revise F-NNN --question-file Q --answer-file A [--proposal-file P] --date D
+#   friction-ledger safety-check F-NNN
+#   friction-ledger coach-log --date D --offered N --answered N --landed N --failed N --cards N
+#   friction-ledger diary-section --date D [--mine-json FILE]
+#   friction-ledger frustration --date D --what TEXT --class C --sig-hint H [--quote Q]
+#                               [--rung R --proposal-file F]
+#   friction-ledger add-tool --sig tool:NAME --proposal-file F --date D
+#   friction-ledger ingest FILE --date D
+#   friction-ledger directions add --rule R|--rule-file F [--scope S] [--quote Q] [--harness H] [--date D] [--same-as D-NNN]
+#   friction-ledger directions retire D-NNN [--reason R]
+#   friction-ledger directions promote D-NNN --fix SHA
+#   friction-ledger directions render [--scope S]
+#
+# apply   folds one day of `friction-mine` output (FILE, else it runs the miner) into the
+#         ledger. A group whose signature is already there gets last/days/Evidence updated
+#         (one bullet per date, so a second run changes nothing); `fixed` seen again turns
+#         `regressed`, unless the group's `last_seen` is at or before the entry's `fixed_at`
+#         (sightings from before the fix landed). A new high-confidence group becomes the next F-NNN, status open, class
+#         empty. Corrections (kind correction, low confidence) are never added. Nothing is
+#         ever set to `proposed` here. Prints JSON:
+#           {new: items first seen on D with no class yet,
+#            needs_proposal: open items with no proposal that qualify (seen on >= 2 days, or
+#              kind blocked),
+#            regressed: items that regressed on D,
+#            corrections: [{count, samples}]}
+#         each item {id, sig, kind, count, days, class, samples, evidence}.
+# set     writes the given front-matter fields and sections; a status change adds a dated
+#         History line. class: env|instruction|script|model|external; status:
+#         open|proposed|fixed|regressed|wontfix|offered|declined|landing|landed|failed;
+#         rung: script|config|prompt. --status fixed stamps `fixed_at` (UTC) when the status
+#         turns fixed, the --fix sha changes or there is no stamp yet: now for today's date,
+#         that day's local midnight for an earlier --date. --safety writes the `safety` field (ingest only ever sets
+#         it true); --queued-by records who queued the entry (`queued_by`). --reason writes
+#         `reason` on one line (why a coach fix failed, or a user step after it landed; "" clears
+#         it). --clear-result-reported clears `result_reported_on` so the result card is filed
+#         again. A change to `landing` clears `reason` and `result_reported_on`, so the result of
+#         the new attempt is reported. A change to `proposed` clears `offered_on`, `answer` and
+#         `answered_on`: the entry waits to be offered afresh (coach-fix holds an unapproved
+#         safety change this way), and an earlier yes never counts for it.
+# diary-section  prints the `## Friction` markdown for D (nothing when there is no friction):
+#         counts of new / recurring / regressed, a `→ in the friction queue (`` ` f ``)` suffix per proposed or
+#         regressed item seen on D, and one line for possible corrections (unverified).
+#
+# frustration  records a user frustration as a ledger group (source user, kind frustration,
+#         signature user:frustration:<sig-hint>), so it counts toward promotion like any
+#         group. Sets class and diagnosis on a new entry. Prints {id, new, days, needs_proposal}.
+# add-tool  records a monthly tool-review verdict (switch or try) as a ledger entry of kind
+#         tool: signature tool:tool:NAME (--sig is tool:NAME; the name must be non-empty),
+#         status proposed, ## Proposal from F. Calling it again for the same NAME adds the
+#         date's evidence and replaces the proposal while the entry is still open|proposed;
+#         any other status (fixed, landed, declined, ...) is kept as is, with the existing
+#         proposal and no regressed flip: only the date's Evidence bullet is added. is_safety applied to the proposal and signature sets
+#         `safety: true`, never back to false. Prints {id, new}.
+# directions  the standing directions in $FRICTION_WIKI/directions.md (D-NNN | rule | scope |
+#         since | source | status). add takes the rule as --rule R, or as --rule-file F (its
+#         first line, trimmed; a playbook writes model text there instead of quoting it into a
+#         shell argument; not both). The scope must match ^[A-Za-z0-9][A-Za-z0-9:._/-]{0,59}$
+#         (else exit 2, nothing added; ingest rejects such a reply whole, and coach-offer's
+#         `direction` turns such a `Scope:` line into global). add skips a rule already active (same words, ignoring case
+#         and punctuation) or flagged --same-as, and prints the id either way; retire and
+#         promote change the status (retired / promoted: no longer injected); render prints
+#         the active rules as a list of at most 2 KB, oldest global first folded into an
+#         "N more" line, or nothing when there are none. apply also passes `user_signals`
+#         from the miner output through.
+#
+# ingest  applies the classifier subagent's whole reply at once; FILE is one JSON object:
+#           {"items": {"F-NNN": {"class": C, "diagnosis": T, "rung": R, "proposal": MD}},
+#            "directions": [{"rule": T, "scope": S, "quote": Q, "same_as": "D-NNN", "harness": H}],
+#            "frustrations": [{"what_went_wrong": T, "class": C, "sig_hint": H, "rung": R, "proposal": MD}]}
+#         items: rung and proposal go together; directions: same_as, harness, quote are optional.
+#         Unknown keys, ids, classes or rungs reject the whole file and nothing is applied. An item with a proposal goes open -> proposed, an
+#         `external` one open -> wontfix. A frustration always stores its proposal; the script
+#         sets it proposed from the second day. Marks D as ingested (.ingested/D): apply then
+#         drops user_signals for D and a re-run of ingest skips directions and frustrations.
+#         A group of kind repeat|restated|secret that carries `days` (coach-mine counts over a
+#         14-day window) also writes frontmatter `window_count` and `window_days`, overwritten
+#         on every run.
+#         "cards": [{"front": T, "back": T, "tags": [T], "source": T}] (tags, source optional)
+#         are added with `cards add` ($CARDS_BIN, default the `cards` next to this script), once
+#         per date like directions; an invalid card rejects the whole file, and a reply with
+#         cards while $CARDS_BIN is not executable is refused before anything is applied. One
+#         failing `cards add` only prints a warning naming the card's front; the date is still marked. An item whose
+#         signature kind is `secret` always gets `safety: true`, whatever its proposal says.
+# ingest  also sets frontmatter `safety: true` on an item or frustration whose proposal or
+#         signature matches is_safety (case-insensitive: any guard, permission, allow/deny
+#         rules or lists, auto mode, allowedTools / allowed-tools, defaultMode,
+#         WorktreeCreate/Remove, wt hook, settings.json, docs-check, commit-msg, commit hook,
+#         pre-commit, --no-verify, core.hooksPath, mr-description, --dangerously, PreToolUse,
+#         permission mode, bypassPermissions,
+#         hooks.json, plugin.json, .claude-plugin, CLAUDE.md, .githooks, bypass, skipDangerous,
+#         auto-approve, secrets-guard); an existing true is never reset.
+# safety-check  prints true or false for F: stored `safety: true`, a `secret` entry, or
+#         is_safety on its proposal and signature; writes `safety: true` back when it was not
+#         stored (never true -> false). coach-fix asks it at enqueue, run and retry. A busy
+#         ledger exits 75 (not 1), so coach-fix can tell busy from a failed check.
+#
+# coach-offer  picks what the usage coach suggests on date D and prints
+#           {results: [item], offer: [item]}; item = {id, kind, sig, count, days, safety, rung,
+#            proposal_summary (first line of ## Proposal, 200 chars), change (the lines of a
+#            `## Change` block, else the lines stating a before → after or ->), proposal (the
+#            full text, 1500 chars), direction ({rule, scope} from `Direction:`/`Scope:` lines,
+#            or null), evidence: [2 newest bullets]}. Before picking, every entry not fixed,
+#            landed or wontfix gets the safety-check backfill, so `safety` is never stale.
+#           offer: at most --limit (default 3) entries, newest `last` first, from status
+#            proposed; offered with offered_on at least 3 days before D (answered `later`, or
+#            ignored); declined whose count reached 2x `declined_count`. A `repeat` entry needs
+#            count >= 3 and days >= 2. count/days are window_count/window_days when present,
+#            else the Evidence (N×) sum and frontmatter days. Offered entries become `offered`
+#            with offered_on: D and a cleared `answer`. Idempotent per date: once any entry has
+#            offered_on == D, offer is exactly those entries (newest last first, up to --limit)
+#            and nothing new is picked, so a second harness sees the same list.
+#           results: entries `landed` or `failed` with no result_reported_on, plus those already
+#            reported on D (result_reported_on is set to D), so a second run on D shows the same.
+#            A result item also carries `status` (landed|failed), `fix` (the A..B range, or the
+#            draft MR link), `reason` (why it failed, or a user step after landing) and
+#            `retryable` (failed, and the reason does not start with "needs the user").
+# coach-answer  records the user's answer on an offered entry: yes -> landing, no -> declined
+#           (declined_count = current count), later -> offered, done -> fixed (only for a
+#           `secret` entry, whose fix is the user's own steps; yes is refused for one). Stored as
+#           `answer`/`answered_on`. The same answer again changes nothing (whatever the status);
+#           a different one wins and adds one History line. Accepted only while the entry is
+#           offered (with offered_on), or landing/declined/fixed from an answer given on D;
+#           otherwise exit 1 and nothing is written.
+# cards   prints {file: [item], results: [item]} for the friction queue's card deck, selecting like
+#           coach-offer but without marking anything. item = coach-offer's public fields plus
+#           `card` (suggestion|rule|nochange|secret; results landed|failed), `diagnosis` (600
+#           chars), `discussion` (the last `## Discussion` entry, or ""), `reason`; a result also
+#           has `fix` and `retryable`. file: entries with a proposal that are proposed|regressed,
+#           or offered 3+ days ago, or declined and at 2x declined_count (repeat: count >= 3 and
+#           days >= 2). results: landed|failed with no result_reported_on. Newest `last` first.
+#           rule = a restated entry with a `Direction:`; nochange = a safety entry with no exact
+#           change to show.
+# card-filed  marks a suggestion's card as filed: status offered, offered_on D, answer cleared,
+#           card_hash = fingerprint (sha256, 16 hex) of the ## Proposal text plus safety, taken after
+#           backfill_safety; --hash H (what `cards` listed) is required and card-filed refuses (exit 1)
+#           when the entry's hash now differs;
+#           with --result only result_reported_on D (the result card was filed).
+# card-answer  the answer on a filed card, accepted only while the entry is offered (else exit 1).
+#           apply: a rule card adds the standing direction (rule through a temp file, scope from
+#           `Scope:`) and fixes the entry, prints {"rule":"D-NNN"}; a suggestion goes landing with
+#           answer yes and prints {"enqueue":true,"safety":BOOL}; secret and nochange cards refuse
+#           (exit 1). ignore -> declined (declined_count = count); later -> offered_on D, answer
+#           later; done -> fixed (secret only). Each prints one JSON line ({} for all but apply).
+#           apply first recomputes the card_hash: if the proposal or safety differs from what the
+#           card showed (or card_hash is empty) nothing is approved: the entry goes proposed with
+#           reason "the proposal changed after its card was shown", prints {"changed":true}, exit 1.
+# revise  records a question and the coach's answer on F as a `## Discussion` bullet (created when
+#           missing), optionally replaces `## Proposal`, re-checks safety (never true -> false)
+#           and sets the entry proposed with `reason` cleared, so its card is filed afresh.
+# coach-log  writes the day's counts as one row of $FRICTION_WIKI/coach-log.md (a header and a
+#           table sorted by date). A re-run for the same date replaces that row. The date and
+#           every count are validated (counts: non-negative integers); nothing is written on error.
+#
+# apply creates an entry for a tool_error only with count >= 2 on the day or on a second day
+#         (first sightings are kept in .seen-sigs.tsv).
+#
+# Every command that writes (all but diary-section, directions render and --help) holds the
+# mkdir lock $FRICTION_WIKI/.lock for its whole run, so concurrent writers (the tool-review
+# subagent, coach-fix, a session's end-day) queue up. It waits up to $FRICTION_LOCK_WAIT seconds
+# (default 30), takes over a lock whose pid is dead, and otherwise exits 1 "ledger busy"
+# (safety-check exits 75).
+#
+# $FRICTION_WIKI (default ~/wiki/work/friction) holds ledger.md and the F-files. The F-files are
+# the source of truth; ledger.md is regenerated from them. Only the main session at end-day
+# calls this: subagents never write the wiki. The one exception is `add-tool`, which the
+# monthly tool review's background subagent calls (the /start-day session does not wait for it).
+set -euo pipefail
+
+FRICTION_WIKI="${FRICTION_WIKI:-$HOME/wiki/work/friction}"
+HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
+CARDS_BIN="${CARDS_BIN:-$HERE/cards}"
+
+die() { echo "friction-ledger: $*" >&2; exit 1; }
+need() { [ $# -ge 2 ] || die "$1 needs a value"; }
+valid_date() { [[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "--date must be YYYY-MM-DD, got $1"; }
+# UTC stamp for a fix on DATE: now when DATE is today, else that day's local midnight
+fixed_stamp() {
+  [ "$1" != "$(date +%F)" ] || { date -u +%Y-%m-%dT%H:%M:%SZ; return; }
+  local s; s="$(date -j -f '%Y-%m-%d %H:%M:%S' "$1 00:00:00" +%s 2>/dev/null || date -d "$1 00:00:00" +%s)"
+  date -u -r "$s" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$s" +%Y-%m-%dT%H:%M:%SZ
+}
+# the group (JSON) was last seen at or before the entry's fixed_at; false when either is missing
+seen_before_fix() {
+  local seen fixed_at; seen="$(jq -r '.last_seen // empty' <<<"$2")"; fixed_at="$(fm_get "$1" fixed_at)"
+  [ -n "$seen" ] && [ -n "$fixed_at" ] && [[ ! "$seen" > "$fixed_at" ]]
+}
+one_line() { tr '\n\r\t' '   ' <<<"$1" | sed 's/  */ /g; s/^ //; s/ $//'; }
+# a direction's scope: global, run-day, a repo, a skill or command, a repo:path
+SCOPE_RE='^[A-Za-z0-9][A-Za-z0-9:._/-]{0,59}$'
+
+# --- lock ---------------------------------------------------------------------
+# One mkdir lock ($FRICTION_WIKI/.lock, pid file inside) around every mutating subcommand,
+# taken once at the dispatch at the bottom so nested calls never wait on themselves.
+LOCK_DIR="$FRICTION_WIKI/.lock"
+LOCK_HELD=0
+lock_pid() { cat "$LOCK_DIR/pid" 2>/dev/null || true; }
+release_lock() {
+  [ "$LOCK_HELD" = 1 ] && [ "$(lock_pid)" = "$$" ] && rm -rf "$LOCK_DIR"
+  return 0
+}
+cleanup() { rm -rf "${work:-}"; release_lock; }
+trap cleanup EXIT
+acquire_lock() {
+  local waited=0 max="${FRICTION_LOCK_WAIT:-30}" pid busy_rc="${1:-1}"
+  mkdir -p "$FRICTION_WIKI"
+  while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+    pid="$(lock_pid)"
+    if { [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; } || { [ -z "$pid" ] && [ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +1 2>/dev/null)" ]; }; then
+      # take over a dead holder's lock; the rename lets only one waiter win
+      if mv "$LOCK_DIR" "$LOCK_DIR.stale.$$" 2>/dev/null; then
+        if [ -n "$(cat "$LOCK_DIR.stale.$$/pid" 2>/dev/null)" ] && kill -0 "$(cat "$LOCK_DIR.stale.$$/pid")" 2>/dev/null; then
+          mv "$LOCK_DIR.stale.$$" "$LOCK_DIR" 2>/dev/null || rm -rf "$LOCK_DIR.stale.$$"
+        else
+          rm -rf "$LOCK_DIR.stale.$$"
+        fi
+      fi
+      continue
+    fi
+    if [ "$waited" -ge "$max" ]; then echo "friction-ledger: ledger busy (lock held by pid ${pid:-unknown})" >&2; exit "$busy_rc"; fi
+    sleep 1; waited=$((waited + 1))
+  done
+  echo "$$" >"$LOCK_DIR/pid"
+  LOCK_HELD=1
+}
+
+# --- F-file helpers -----------------------------------------------------------
+
+fm_get() { # file key
+  awk -v k="$2" 'NR == 1 && $0 != "---" { exit } NR > 1 && $0 == "---" { exit }
+    index($0, k ":") == 1 { v = substr($0, length(k) + 2); sub(/^ +/, "", v); print v; exit }' "$1"
+}
+
+fm_set() { # file key value
+  local tmp; tmp="$(mktemp "$1.XXXXXX")"
+  K="$2" V="$3" awk 'BEGIN { k = ENVIRON["K"]; v = ENVIRON["V"] }
+    NR == 1 { print; fm = 1; next }
+    fm && $0 == "---" { if (!found) print (v == "" ? k ":" : k ": " v); fm = 0 }
+    fm && index($0, k ":") == 1 { print (v == "" ? k ":" : k ": " v); found = 1; next }
+    { print }' "$1" >"$tmp" && chmod 644 "$tmp" && mv "$tmp" "$1"
+}
+
+section_get() { # file name
+  awk -v n="## $2" '$0 == n { on = 1; next } /^## / { on = 0 } on' "$1" |
+    awk 'NF { started = 1; for (; pend > 0; pend--) print ""; print; next } started { pend++ }'
+}
+
+# mode replace|append; text via env so backslashes and newlines survive
+section_edit() { # file name mode text
+  local tmp text; tmp="$(mktemp "$1.XXXXXX")"
+  text="$(sed -E 's/^#{1,2} /### /' <<<"$4")" # a heading in the text would split the section
+  N="## $2" M="$3" T="$text" awk '
+    function flush(   i) {
+      while (nb > 0 && buf[nb] == "") nb--
+      if (ENVIRON["M"] != "append") nb = 0
+      if (nb > 0 || ENVIRON["T"] != "") print ""
+      for (i = 1; i <= nb; i++) print buf[i]
+      if (ENVIRON["T"] != "") print ENVIRON["T"]
+      print ""
+      nb = 0; on = 0
+    }
+    $0 == ENVIRON["N"] { print; on = 1; next }
+    on && /^## / { flush() }
+    on { if (nb == 0 && $0 == "") next; buf[++nb] = $0; next }
+    { print }
+    END { if (on) { flush() } }' "$1" >"$tmp" && chmod 644 "$tmp" && mv "$tmp" "$1"
+}
+
+evidence_dates() { section_get "$1" Evidence | grep -oE '^- [0-9]{4}-[0-9]{2}-[0-9]{2}' | cut -c3- | sort -u || true; }
+has_date() { evidence_dates "$1" | grep -qx "$2"; }
+
+# true when text touches a guard, permission rule, hook or auto mode the coach must not change
+# unseen; case-insensitive, and wide on purpose: when in doubt it counts as safety-loosening
+is_safety() { # text
+  grep -qiE 'secrets?[ -]guard|docker[ -]guard|worktree[ -]guard|(^|[^a-z0-9_])guards?([^a-z0-9_]|$)|permission|(allow|deny)[a-z/ ]{0,12} rules?|allow ?-?list|deny|auto[- ]?mode|allowed[-_ ]?tools|defaultmode|worktree(create|remove)|wt hook|settings\.json|docs[- ]?check|commit-msg|commit[- ]?hook|pre-commit|pre-push|--no-verify|core\.hookspath|mr[ -]description|dangerously|pretooluse|permission ?mode|bypasspermissions|hooks?\.json|plugin\.json|\.claude-plugin|claude\.md|\.githooks|bypass|skipdangerous|auto[- ]?approv|automatically approve|extension mode' <<<"$1"
+}
+
+sig_of() { fm_get "$1" signature | jq -r .; }
+kind_of() { sig_of "$1" | cut -d: -f2; }
+# safety = stored || secret || is_safety(proposal + signature); writes `safety: true` when it
+# was not stored yet, never true -> false
+backfill_safety() { # file
+  [ "$(fm_get "$1" safety)" != true ] || return 0
+  if [ "$(kind_of "$1")" = secret ] || is_safety "$(section_get "$1" Proposal) $(sig_of "$1")"; then fm_set "$1" safety true; fi
+}
+# the coach's view of an entry: window totals when coach-mine wrote them, else all-time
+entry_count() {
+  local w; w="$(fm_get "$1" window_count)"
+  if [ -n "$w" ]; then echo "$w"; else section_get "$1" Evidence | grep -oE '^- [0-9]{4}-[0-9]{2}-[0-9]{2} \([0-9]+×\)' | sed -E 's/.*\(([0-9]+)×\)/\1/' | awk '{ n += $1 } END { print n + 0 }'; fi
+}
+entry_days() { local w; w="$(fm_get "$1" window_days)"; if [ -n "$w" ]; then echo "$w"; else fm_get "$1" days; fi; }
+
+fpath() { printf '%s/%s.md' "$FRICTION_WIKI" "$1"; }
+
+new_file() { # id sig date
+  cat >"$(fpath "$1").tmp.$$" <<EOT
+---
+id: $1
+signature: $(jq -Rn --arg v "$2" '$v')
+class:
+status: open
+first: $3
+last: $3
+days: 1
+fix:
+rung:
+---
+
+# $1
+
+## Evidence
+
+## Diagnosis
+
+## Proposal
+
+## History
+- $3: opened
+EOT
+  mv "$(fpath "$1").tmp.$$" "$(fpath "$1")"
+}
+
+rebuild_ledger() {
+  local files=() f out
+  for f in "$FRICTION_WIKI"/F-*.md; do [ -f "$f" ] && files+=("$f"); done
+  [ ${#files[@]} -gt 0 ] || return 0
+  out="$(mktemp "$FRICTION_WIKI/ledger.md.XXXXXX")"
+  {
+    printf '# Friction ledger\n\n| id | signature | class | first | last | days | status | fix |\n|---|---|---|---|---|---|---|---|\n'
+    for f in "${files[@]}"; do
+      printf '| %s | %s | %s | %s | %s | %s | %s | %s |\n' "$(fm_get "$f" id)" \
+        "$(fm_get "$f" signature | jq -r . | sed 's/|/∣/g')" "$(fm_get "$f" class)" "$(fm_get "$f" first)" \
+        "$(fm_get "$f" last)" "$(fm_get "$f" days)" "$(fm_get "$f" status)" "$(fm_get "$f" fix)"
+    done
+  } >"$out"
+  if cmp -s "$out" "$FRICTION_WIKI/ledger.md" 2>/dev/null; then rm -f "$out"; else chmod 644 "$out" && mv "$out" "$FRICTION_WIKI/ledger.md"; fi
+}
+
+# --- mine input ---------------------------------------------------------------
+
+load_mine() { # date file-or-empty -> prints JSON
+  if [ -n "$2" ]; then
+    [ -f "$2" ] || die "no such file: $2"
+    jq -c . "$2" || die "not JSON: $2"
+  else
+    local ledger="$FRICTION_WIKI/ledger.md" bin
+    if [ -x "$HERE/friction-mine" ]; then bin="$HERE/friction-mine"; else bin="$(command -v friction-mine)" || die "friction-mine not found"; fi
+    "$bin" --date "$1" --ledger "$ledger" | jq -c .
+  fi
+}
+
+# A tool_error becomes an entry only at 2+ occurrences in a day or on a second day, so one-off
+# errors stay out of the ledger; the first sighting of a signature is kept in .seen-sigs.tsv.
+tool_error_ready() { # sig date count
+  local seen="$FRICTION_WIKI/.seen-sigs.tsv" prior=1
+  mkdir -p "$FRICTION_WIKI"
+  if [ -f "$seen" ]; then
+    S="$1" D="$2" awk -F'\t' '$2 == ENVIRON["S"] && $1 != ENVIRON["D"] { f = 1 } END { exit !f }' "$seen" && prior=0
+    grep -qxF "$2"$'\t'"$1" "$seen" || printf '%s\t%s\n' "$2" "$1" >>"$seen"
+  else
+    printf '%s\t%s\n' "$2" "$1" >"$seen"
+  fi
+  [ "$3" -ge 2 ] || [ "$prior" = 0 ]
+}
+
+ingested() { [ -f "$FRICTION_WIKI/.ingested/$1" ]; } # date: its signals were already classified
+
+# --- apply --------------------------------------------------------------------
+
+cmd_apply() {
+  local date_="" mine_file=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      --mine-json) need "$@"; mine_file="$2"; shift ;;
+      *) die "apply: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "apply needs --date"
+  valid_date "$date_"
+
+  local mine f id sig num next g kind conf ev
+  local rc=0; work="$(mktemp -d)"
+  mine="$(load_mine "$date_" "$mine_file")"
+  : >"$work/map.tsv"; : >"$work/touched.jsonl"
+  next=1
+  for f in "$FRICTION_WIKI"/F-*.md; do
+    [ -f "$f" ] || continue
+    id="$(basename "$f" .md)"
+    printf '%s\t%s\n' "$id" "$(fm_get "$f" signature | jq -r .)" >>"$work/map.tsv"
+    num=$((10#${id#F-})); [ "$num" -lt "$next" ] || next=$((num + 1))
+  done
+
+  while IFS= read -r g; do
+    sig="$(jq -r .sig <<<"$g")"; kind="$(jq -r .kind <<<"$g")"; conf="$(jq -r .confidence <<<"$g")"
+    id="$(S="$sig" awk -F'\t' '$2 == ENVIRON["S"] { print $1; exit }' "$work/map.tsv")"
+    if [ -z "$id" ]; then
+      [ "$kind" != correction ] && [ "$conf" = high ] || continue
+      if [ "$kind" = tool_error ]; then tool_error_ready "$sig" "$date_" "$(jq -r .count <<<"$g")" || continue; fi
+      id="$(printf 'F-%03d' "$next")"; next=$((next + 1))
+      mkdir -p "$FRICTION_WIKI"
+      new_file "$id" "$sig" "$date_"
+      printf '%s\t%s\n' "$id" "$sig" >>"$work/map.tsv"
+    fi
+    f="$(fpath "$id")"
+    if ! has_date "$f" "$date_"; then
+      ev="- $date_ ($(jq -r .count <<<"$g")×): $(jq -r '(.samples[0] // "") | gsub("\\s+"; " ") | .[0:160]' <<<"$g")"
+      ev+=" — $(jq -r '(.evidence // [])[:5] | join(", ")' <<<"$g")"
+      section_edit "$f" Evidence append "$(sed 's/ — $//' <<<"$ev")"
+      local days first last
+      days="$(evidence_dates "$f" | wc -l | tr -d ' ')"
+      first="$(fm_get "$f" first)"; last="$(fm_get "$f" last)"
+      [[ "$date_" < "$first" ]] && fm_set "$f" first "$date_"
+      [[ "$date_" > "$last" ]] && fm_set "$f" last "$date_"
+      fm_set "$f" days "$days"
+      if [ "$(fm_get "$f" status)" = fixed ] && ! seen_before_fix "$f" "$g"; then
+        fm_set "$f" status regressed
+        section_edit "$f" History append "- $date_: regressed (seen again after fix $(fm_get "$f" fix))"
+      fi
+    fi
+    if [[ "$kind" =~ ^(repeat|restated|secret)$ ]] && [ "$(jq -r 'has("days")' <<<"$g")" = true ]; then
+      fm_set "$f" window_count "$(jq -r .count <<<"$g")"
+      fm_set "$f" window_days "$(jq -r .days <<<"$g")"
+    fi
+    jq -nc --arg id "$id" --argjson g "$g" '{id: $id, g: $g}' >>"$work/touched.jsonl"
+  done < <(jq -c '.groups[]?' <<<"$mine")
+
+  rebuild_ledger
+
+  : >"$work/state.tsv"
+  for f in "$FRICTION_WIKI"/F-*.md; do
+    [ -f "$f" ] || continue
+    id="$(basename "$f" .md)"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$(fm_get "$f" status)" "$(fm_get "$f" class)" "$(fm_get "$f" days)" \
+      "$(fm_get "$f" first)" "$([ -n "$(section_get "$f" Proposal)" ] && echo 1 || echo 0)" \
+      "$(grep -c "^- $date_: regressed" "$f" || true)" >>"$work/state.tsv"
+  done
+
+  jq -n --arg date "$date_" --argjson mine "$mine" --rawfile state "$work/state.tsv" --argjson done "$(ingested "$date_" && echo true || echo false)" --slurpfile touched "$work/touched.jsonl" '
+    ([$state | split("\n")[] | select(length > 0) | split("\t")
+      | {key: .[0], value: {status: .[1], class: .[2], days: (.[3] | tonumber), first: .[4], proposal: (.[5] == "1"), regressed: (.[6] != "0")}}]
+      | from_entries) as $st
+    | def item($t): $st[$t.id] as $s | {id: $t.id, sig: $t.g.sig, kind: $t.g.kind, count: $t.g.count, days: $s.days, class: $s.class,
+        samples: ($t.g.samples // []), evidence: ($t.g.evidence // [])};
+      {new: [$touched[] | select($st[.id].first == $date and $st[.id].class == "") | item(.)],
+       needs_proposal: [$touched[] | select($st[.id].status == "open" and ($st[.id].proposal | not) and ($st[.id].days >= 2 or .g.kind == "blocked")) | item(.)],
+       regressed: [$touched[] | select($st[.id].status == "regressed" and $st[.id].regressed) | item(.)],
+       corrections: [$mine.groups[]? | select(.kind == "correction") | {count, samples}],
+       user_signals: (if $done then [] else ($mine.user_signals // []) end)}' || rc=$?
+  rm -rf "$work"
+  return "$rc"
+}
+
+# --- set ----------------------------------------------------------------------
+
+cmd_set() {
+  local id="${1:-}" class="" status="" rung="" fix="" diag="" pfile="" date_="" has_fix=0 safety="" queued_by=""
+  local reason="" has_reason=0 clear_reported=0
+  [[ "$id" =~ ^F-[0-9]+$ ]] || die "set needs an F-NNN id"
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --class) need "$@"; class="$2"; shift ;;
+      --status) need "$@"; status="$2"; shift ;;
+      --rung) need "$@"; rung="$2"; shift ;;
+      --fix) need "$@"; fix="$2"; has_fix=1; shift ;;
+      --diagnosis) need "$@"; diag="$2"; shift ;;
+      --proposal-file) need "$@"; pfile="$2"; shift ;;
+      --date) need "$@"; date_="$2"; shift ;;
+      --safety) need "$@"; safety="$2"; shift ;;
+      --queued-by) need "$@"; queued_by="$2"; shift ;;
+      --reason) need "$@"; reason="$2"; has_reason=1; shift ;;
+      --clear-result-reported) clear_reported=1 ;;
+      *) die "set: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || date_="$(date +%F)"
+  valid_date "$date_"
+  local f; f="$(fpath "$id")"
+  [ -f "$f" ] || die "no such entry: $id"
+  [ -z "$class" ] || [[ "$class" =~ ^(env|instruction|script|model|external)$ ]] || die "bad class: $class"
+  [ -z "$status" ] || [[ "$status" =~ ^(open|proposed|fixed|regressed|wontfix|offered|declined|landing|landed|failed)$ ]] || die "bad status: $status"
+  [ -z "$rung" ] || [[ "$rung" =~ ^(script|config|prompt)$ ]] || die "bad rung: $rung"
+  [ -z "$pfile" ] || [ -f "$pfile" ] || die "no such file: $pfile"
+  [ -z "$safety" ] || [[ "$safety" =~ ^(true|false)$ ]] || die "bad --safety: $safety"
+  [ -z "$queued_by" ] || [ "$queued_by" = user ] || die "bad --queued-by: $queued_by"
+
+  [ -z "$safety" ] || fm_set "$f" safety "$safety"
+  [ -z "$queued_by" ] || fm_set "$f" queued_by "$queued_by"
+  [ -z "$class" ] || fm_set "$f" class "$class"
+  [ -z "$rung" ] || fm_set "$f" rung "$rung"
+  if [ "$status" = fixed ] && { [ "$(fm_get "$f" status)" != fixed ] || [ -z "$(fm_get "$f" fixed_at)" ] \
+      || { [ "$has_fix" = 1 ] && [ "$fix" != "$(fm_get "$f" fix)" ]; }; }; then
+    fm_set "$f" fixed_at "$(fixed_stamp "$date_")"
+  fi
+  [ "$has_fix" = 0 ] || fm_set "$f" fix "$fix"
+  [ -z "$diag" ] || section_edit "$f" Diagnosis replace "$(one_line "$diag")"
+  [ -z "$pfile" ] || section_edit "$f" Proposal replace "$(cat "$pfile")"
+  if [ -n "$status" ]; then
+    local old; old="$(fm_get "$f" status)"
+    if [ "$old" != "$status" ]; then
+      fm_set "$f" status "$status"
+      section_edit "$f" History append "- $date_: $old → $status${fix:+ (fix $fix)}"
+      local k
+      if [ "$status" = landing ]; then
+        for k in reason result_reported_on; do [ -z "$(fm_get "$f" "$k")" ] || fm_set "$f" "$k" ""; done
+      elif [ "$status" = proposed ]; then
+        for k in offered_on answer answered_on; do [ -z "$(fm_get "$f" "$k")" ] || fm_set "$f" "$k" ""; done
+      fi
+    fi
+  fi
+  [ "$has_reason" = 0 ] || fm_set "$f" reason "$(one_line "$reason")"
+  [ "$clear_reported" = 0 ] || [ -z "$(fm_get "$f" result_reported_on)" ] || fm_set "$f" result_reported_on ""
+  rebuild_ledger
+}
+
+# --- diary-section ------------------------------------------------------------
+
+cmd_diary() {
+  local date_="" mine_file=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      --mine-json) need "$@"; mine_file="$2"; shift ;;
+      *) die "diary-section: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "diary-section needs --date"
+  valid_date "$date_"
+
+  local f id rows="" mine=""
+  for f in "$FRICTION_WIKI"/F-*.md; do
+    [ -f "$f" ] || continue
+    id="$(basename "$f" .md)"
+    local text; text="$(section_get "$f" Diagnosis | head -1)"
+    [ -n "$text" ] || text="$(fm_get "$f" signature | jq -r .)"
+    rows+="$(jq -nc --arg id "$id" --arg status "$(fm_get "$f" status)" --arg first "$(fm_get "$f" first)" --arg last "$(fm_get "$f" last)" \
+      --arg text "$text" --argjson frustr "$([[ "$(fm_get "$f" signature | jq -r .)" == user:frustration:* ]] && echo true || echo false)" --argjson regressed "$([ "$(grep -c "^- $date_: regressed" "$f" || true)" != 0 ] && echo true || echo false)" \
+      '{id: $id, status: $status, first: $first, last: $last, text: $text, regressed: $regressed, frustr: $frustr}')"$'\n'
+  done
+  mine="$(load_mine "$date_" "$mine_file" 2>/dev/null || echo '{"groups":[]}')"
+
+  jq -rn --arg date "$date_" --slurpfile mine <(printf '%s' "$mine") --slurpfile rows <(printf '%s' "$rows") --slurpfile dirs <(dir_rows | jq -c .) '
+    def short: gsub("\\s+"; " ") | if length > 60 then .[0:57] + "..." else . end;
+    [$rows[] | select(.last == $date)] as $seen
+    | [$seen[] | select(.first == $date)] as $new
+    | [$seen[] | select(.regressed)] as $reg
+    | [$seen[] | select(.first != $date and (.regressed | not))] as $rec
+    | [($mine[0].groups // [])[] | select(.kind == "correction")] as $cor
+    | ([$cor[].count] | add // 0) as $ncor
+    | [$dirs[] | select(.since == $date and .status == "active")] as $dnew
+    | ([$dirs[] | select(.status == "active" and .scope != "global")] | group_by(.scope) | map(select(length >= 3))) as $dgrp
+    | if ($seen | length) == 0 and $ncor == 0 and ($dnew | length) == 0 then empty else
+        "## Friction", "",
+        "\($new | length) new · \($rec | length) recurring · \($reg | length) regressed", "",
+        ($seen[] | select(.status == "proposed" or .regressed) | "- \(.id) — \(.text) → in the friction queue (`` ` f ``)"),
+        ($seen[] | select(.frustr and (.status != "proposed") and (.regressed | not)) | "- \(.id) — \(.text) (frustration)"),
+        (if $ncor > 0 then "- \($ncor) possible corrections (unverified): " + ([$cor[].samples[]? | short | "\"" + . + "\""] | .[:3] | join(" · ")) else empty end),
+        (if ($dnew | length) > 0 then "", "Directions learned today (active from the next session; retire with `friction-ledger directions retire D-NNN`):", ($dnew[] | "- \(.id) — \(.rule) (\(.scope))") else empty end),
+        ($dgrp[] | "", "\(length) active directions share the scope \"\(.[0].scope)\" (\([.[].id] | join(", "))): they can be folded into that prompt or skill; say so to any session, which commits the change and runs `friction-ledger directions promote D-NNN --fix <sha>`.")
+      end'
+}
+
+# --- frustration --------------------------------------------------------------
+
+find_id() { # sig -> F-id or empty
+  local f
+  for f in "$FRICTION_WIKI"/F-*.md; do
+    [ -f "$f" ] || continue
+    [ "$(fm_get "$f" signature | jq -r .)" = "$1" ] && { basename "$f" .md; return; }
+  done
+  return 0
+}
+
+cmd_frustration() {
+  local date_="" what="" class="" hint="" quote="" bin rung="" pfile=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      --what) need "$@"; what="$2"; shift ;;
+      --class) need "$@"; class="$2"; shift ;;
+      --sig-hint) need "$@"; hint="$2"; shift ;;
+      --quote) need "$@"; quote="$2"; shift ;;
+      --rung) need "$@"; rung="$2"; shift ;;
+      --proposal-file) need "$@"; pfile="$2"; shift ;;
+      *) die "frustration: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] && [ -n "$what" ] && [ -n "$hint" ] || die "frustration needs --date, --what and --sig-hint"
+  valid_date "$date_"
+  [ -z "$class" ] || [[ "$class" =~ ^(env|instruction|script|model|external)$ ]] || die "bad class: $class"
+  [ -z "$rung" ] || [[ "$rung" =~ ^(script|config|prompt)$ ]] || die "bad rung: $rung"
+  [ -z "$pfile" ] || [ -f "$pfile" ] || die "no such file: $pfile"
+  local sig tmp out id
+  if [ -x "$HERE/friction" ]; then bin="$HERE/friction"; else bin="$(command -v friction || true)"; fi
+  if [ -n "$bin" ]; then sig="$("$bin" sig user frustration "$hint")"; else sig="user:frustration:$(tr '[:upper:]' '[:lower:]' <<<"$hint")"; fi
+  tmp="$(mktemp)"
+  jq -n --arg sig "$sig" --arg s "$(one_line "${quote:-$what}" | cut -c1-200)" \
+    '{groups: [{sig: $sig, source: "user", kind: "frustration", count: 1, confidence: "high", keys: [], samples: [$s], evidence: []}]}' >"$tmp"
+  out="$(cmd_apply --date "$date_" --mine-json "$tmp")"; rm -f "$tmp"
+  id="$(find_id "$sig")"
+  [ -n "$id" ] || die "frustration: no entry for $sig"
+  local was_new=false
+  [ "$(jq -r --arg id "$id" '[.new[].id] | index($id) != null' <<<"$out")" = true ] && was_new=true
+  if [ -z "$(fm_get "$(fpath "$id")" class)" ]; then
+    cmd_set "$id" --diagnosis "$what" --date "$date_" ${class:+--class "$class"}
+  fi
+  local f days; f="$(fpath "$id")"; days="$(fm_get "$f" days)"
+  if [ -n "$rung" ] || [ -n "$pfile" ]; then
+    cmd_set "$id" --date "$date_" ${rung:+--rung "$rung"} ${pfile:+--proposal-file "$pfile"}
+    [ -z "$pfile" ] || [ "$days" -lt 2 ] || [ "$(fm_get "$f" status)" != open ] || cmd_set "$id" --date "$date_" --status proposed
+  fi
+  jq -nc --arg id "$id" --argjson new "$was_new" --argjson out "$out" --arg days "$days" --arg status "$(fm_get "$f" status)" \
+    '{id: $id, new: $new, days: ($days | tonumber), needs_proposal: ($status == "open" and ([$out.needs_proposal[].id] | index($id) != null))}'
+}
+
+# --- add-tool -----------------------------------------------------------------
+
+cmd_add_tool() {
+  local date_="" sig="" pfile="" name
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      --sig) need "$@"; sig="$2"; shift ;;
+      --proposal-file) need "$@"; pfile="$2"; shift ;;
+      *) die "add-tool: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] && [ -n "$sig" ] && [ -n "$pfile" ] || die "add-tool needs --sig, --proposal-file and --date"
+  valid_date "$date_"
+  [[ "$sig" == tool:* ]] || die "add-tool: --sig must start with tool:, got $sig"
+  name="$(one_line "${sig#tool:}")"
+  [ -n "$name" ] || die "add-tool: --sig needs a tool name after tool:"
+  [ -f "$pfile" ] && [ -r "$pfile" ] || die "no such file: $pfile"
+  sig="tool:tool:$name"
+  local tmp out id f was_new=false status
+  id="$(find_id "$sig")"
+  if [ -n "$id" ]; then
+    f="$(fpath "$id")"; status="$(fm_get "$f" status)"
+    if [ "$status" != open ] && [ "$status" != proposed ]; then
+      # a settled entry keeps its status and proposal; only the date's evidence is added
+      if ! has_date "$f" "$date_"; then
+        local days first last
+        section_edit "$f" Evidence append "- $date_ (1×): monthly tool review: $name"
+        days="$(evidence_dates "$f" | wc -l | tr -d ' ')"
+        first="$(fm_get "$f" first)"; last="$(fm_get "$f" last)"
+        [[ "$date_" < "$first" ]] && fm_set "$f" first "$date_"
+        [[ "$date_" > "$last" ]] && fm_set "$f" last "$date_"
+        fm_set "$f" days "$days"
+        rebuild_ledger
+      fi
+      jq -nc --arg id "$id" '{id: $id, new: false}'
+      return 0
+    fi
+  fi
+  tmp="$(mktemp)"
+  jq -n --arg sig "$sig" --arg s "monthly tool review: $name" \
+    '{groups: [{sig: $sig, source: "tool", kind: "tool", count: 1, confidence: "high", keys: [], samples: [$s], evidence: []}]}' >"$tmp"
+  out="$(cmd_apply --date "$date_" --mine-json "$tmp")"; rm -f "$tmp"
+  id="$(find_id "$sig")"
+  [ -n "$id" ] || die "add-tool: no entry for $sig"
+  [ "$(jq -r --arg id "$id" '[.new[].id] | index($id) != null' <<<"$out")" = true ] && was_new=true
+  f="$(fpath "$id")"
+  status="$(fm_get "$f" status)"
+  if [ "$status" = open ] || [ "$status" = proposed ]; then
+    cmd_set "$id" --date "$date_" --proposal-file "$pfile"
+    [ "$status" != open ] || cmd_set "$id" --date "$date_" --status proposed
+  fi
+  if is_safety "$(cat "$pfile") $sig"; then fm_set "$f" safety true; fi
+  jq -nc --arg id "$id" --argjson new "$was_new" '{id: $id, new: $new}'
+}
+
+# --- ingest -------------------------------------------------------------------
+
+INGEST_ERRORS='
+  def cls: ["env", "instruction", "script", "model", "external"];
+  def rungs: ["script", "config", "prompt"];
+  def str: type == "string" and test("\\S");
+  def unk($ok): keys - $ok | map("unknown key " + .);
+  def obj($where; $ok; $need):
+    if type != "object" then ["\($where): must be an object"] else
+      ((unk($ok) + ($need - keys | map("missing " + .))) | map("\($where): " + .)) end;
+  def common($where):
+    (if has("class") and (.class | IN(cls[]) | not) then ["\($where): bad class \(.class | tojson)"] else [] end)
+    + (if has("rung") and (.rung | IN(rungs[]) | not) then ["\($where): bad rung \(.rung | tojson)"] else [] end)
+    + ([to_entries[] | select(.key | IN("diagnosis", "proposal", "what_went_wrong", "sig_hint", "rule") ) | select(.value | str | not) | "\($where): \(.key) must be non-empty text"])
+    + (if has("proposal") != has("rung") then ["\($where): rung and proposal go together"] else [] end);
+  if type != "object" then ["the reply must be a JSON object"] else
+    obj("reply"; ["items", "directions", "frustrations", "cards"]; [])
+    + ((.items // {}) | if type != "object" then ["items: must be an object keyed by F-NNN"] else
+        [to_entries[] | .key as $k | .value | "items.\($k)" as $w
+          | (if ($k | test("^F-[0-9]+$") | not) then ["\($w): not an F-NNN id"] else [] end)
+            + obj($w; ["class", "diagnosis", "rung", "proposal"]; ["class", "diagnosis"])
+            + (if type == "object" then common($w) else [] end)] | add // [] end)
+    + ((.directions // []) | if type != "array" then ["directions: must be an array"] else
+        [to_entries[] | .key as $i | .value | "directions[\($i)]" as $w
+          | obj($w; ["rule", "scope", "quote", "same_as", "harness"]; ["rule", "scope"])
+            + (if type == "object" then (if has("rule") and (.rule | str | not) then ["\($w): rule must be non-empty text"] else [] end)
+                + (if has("scope") and ((.scope | type) != "string" or (.scope | test("^[A-Za-z0-9][A-Za-z0-9:._/-]{0,59}$") | not)) then ["\($w): bad scope (letters, digits and :._/- only, at most 60)"] else [] end)
+                + (if has("same_as") and ((.same_as | type) != "string" or (.same_as | test("^D-[0-9]+$") | not)) then ["\($w): bad same_as"] else [] end) else [] end)] | add // [] end)
+    + ((.frustrations // []) | if type != "array" then ["frustrations: must be an array"] else
+        [to_entries[] | .key as $i | .value | "frustrations[\($i)]" as $w
+          | obj($w; ["what_went_wrong", "class", "sig_hint", "rung", "proposal"]; ["what_went_wrong", "class", "sig_hint", "rung", "proposal"])
+            + (if type == "object" then common($w) else [] end)] | add // [] end)
+    + ((.cards // []) | if type != "array" then ["cards: must be an array"] else
+        [to_entries[] | .key as $i | .value | "cards[\($i)]" as $w
+          | obj($w; ["front", "back", "tags", "source"]; ["front", "back"])
+            + (if type == "object" then
+                ([("front", "back", "source") as $k | select(has($k) and (.[$k] | str | not)) | "\($w): \($k) must be non-empty text"])
+                + (if has("tags") and ((.tags | type) != "array" or any(.tags[]; type != "string")) then ["\($w): tags must be a list of strings"] else [] end)
+              else [] end)] | add // [] end)
+  end | .[]'
+
+cmd_ingest() {
+  local file="${1:-}" date_="" errs id n
+  [ -n "$file" ] && [ -f "$file" ] || die "ingest needs a reply FILE"
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      *) die "ingest: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "ingest needs --date"
+  valid_date "$date_"
+  jq -e . "$file" >/dev/null 2>&1 || die "ingest: $file is not JSON, nothing applied"
+  errs="$(jq -r "$INGEST_ERRORS" "$file")"
+  for id in $(jq -r '(.items // {}) | if type == "object" then keys[] else empty end' "$file"); do
+    [ -f "$(fpath "$id")" ] || errs+=$'
+'"items.$id: no such entry"
+  done
+  errs="$(sed '/^$/d' <<<"$errs")"
+  if [ -n "$errs" ]; then
+    echo "friction-ledger: invalid reply, nothing applied:" >&2; sed 's/^/  /' <<<"$errs" >&2; exit 1
+  fi
+
+  if [ "$(jq '(.cards // []) | length' "$file")" -gt 0 ] && [ ! -x "$CARDS_BIN" ]; then
+    die "ingest: the reply has cards but $CARDS_BIN is not executable, nothing applied"
+  fi
+
+  local tmp; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
+  local f cur class rung out ids="" frs="" skipped=false
+  for id in $(jq -r '(.items // {}) | keys[]' "$file"); do
+    f="$(fpath "$id")"; cur="$(fm_get "$f" status)"
+    class="$(jq -r --arg i "$id" '.items[$i].class' "$file")"; rung="$(jq -r --arg i "$id" '.items[$i].rung // empty' "$file")"
+    local args=(--class "$class" --diagnosis "$(jq -r --arg i "$id" '.items[$i].diagnosis' "$file")" --date "$date_")
+    if [ "$cur" = open ]; then
+      if [ "$class" = external ]; then args+=(--status wontfix)
+      elif [ -n "$rung" ]; then args+=(--status proposed); fi
+    fi
+    if [ -n "$rung" ] && [ "$class" != external ]; then
+      jq -r --arg i "$id" '.items[$i].proposal' "$file" >"$tmp/$id.md"
+      args+=(--rung "$rung" --proposal-file "$tmp/$id.md")
+    fi
+    cmd_set "$id" "${args[@]}"
+    if [ "$(kind_of "$f")" = secret ] || is_safety "$(jq -r --arg i "$id" '(.items[$i].proposal // "")' "$file") $(sig_of "$f")"; then fm_set "$f" safety true; fi
+  done
+  if ingested "$date_"; then
+    skipped=true
+  else
+    while IFS= read -r d; do
+      local dargs=(--rule "$(jq -r .rule <<<"$d")" --scope "$(jq -r .scope <<<"$d")" --quote "$(jq -r '.quote // empty' <<<"$d")"
+        --harness "$(jq -r '.harness // empty' <<<"$d")" --date "$date_")
+      [ -z "$(jq -r '.same_as // empty' <<<"$d")" ] || dargs+=(--same-as "$(jq -r .same_as <<<"$d")")
+      out="$(cmd_dir_add "${dargs[@]}")"
+      ids+="${ids:+ }$out"
+    done < <(jq -c '(.directions // [])[]' "$file")
+    n=0
+    while IFS= read -r d; do
+      n=$((n + 1)); jq -r .proposal <<<"$d" >"$tmp/fr$n.md"
+      out="$(cmd_frustration --date "$date_" --what "$(jq -r .what_went_wrong <<<"$d")" --class "$(jq -r .class <<<"$d")" \
+        --sig-hint "$(jq -r .sig_hint <<<"$d")" --rung "$(jq -r .rung <<<"$d")" --proposal-file "$tmp/fr$n.md")"
+      frs+="${frs:+,}$out"
+      local ff; ff="$(fpath "$(jq -r .id <<<"$out")")"
+      if is_safety "$(jq -r .proposal <<<"$d") $(sig_of "$ff")"; then fm_set "$ff" safety true; fi
+    done < <(jq -c '(.frustrations // [])[]' "$file")
+    local c cargs
+    while IFS= read -r c; do
+      cargs=(add --front "$(jq -r .front <<<"$c")" --back "$(jq -r .back <<<"$c")" --tags "$(jq -r '(.tags // []) | join(",")' <<<"$c")" --date "$date_")
+      [ -z "$(jq -r '.source // empty' <<<"$c")" ] || cargs+=(--source "$(jq -r .source <<<"$c")")
+      "$CARDS_BIN" "${cargs[@]}" >/dev/null || echo "friction-ledger: cards add failed for \"$(jq -r '.front[:60]' <<<"$c")\"" >&2
+    done < <(jq -c '(.cards // [])[]' "$file")
+    mkdir -p "$FRICTION_WIKI/.ingested"; : >"$FRICTION_WIKI/.ingested/$date_"
+  fi
+  jq -nc --argjson items "$(jq '(.items // {}) | length' "$file")" --arg dirs "$ids" --argjson fr "[${frs}]" --argjson skipped "$skipped" \
+    '{items: $items, directions: ($dirs | split(" ") | map(select(length > 0))), frustrations: $fr, skipped_signals: $skipped}'
+}
+
+# --- coach --------------------------------------------------------------------
+
+# the proposal's exact change: the lines of a `## Change` block when it has one, else every
+# line that states a before -> after (with → or ->); at most 12 lines of 300 chars, as JSON
+change_of() { # proposal text
+  awk '/^###? *[Cc]hange:? *$/ { inb = 1; next } inb && /^#/ { inb = 0 }
+    inb && NF { b[++nb] = $0 } !inb && (index($0, "→") || index($0, "->")) { l[++nl] = $0 }
+    END { if (nb) { for (i = 1; i <= nb; i++) print b[i] } else { for (i = 1; i <= nl; i++) print l[i] } }' <<<"$1" |
+    sed -E 's/^[[:space:]]*//' | head -12 | cut -c1-300 | jq -Rn '[inputs | select(length > 0)]'
+}
+# a restated entry's standing rule: {rule, scope} from the proposal's `Direction: <rule>` and
+# `Scope: <scope>` lines (scope global when absent), or null
+direction_of() { # proposal text
+  local rule scope
+  rule="$(sed -nE 's/^[-*[:space:]]*Direction:[[:space:]]*//p' <<<"$1" | head -1)"
+  scope="$(sed -nE 's/^[-*[:space:]]*Scope:[[:space:]]*//p' <<<"$1" | head -1)"
+  scope="$(one_line "$scope")"
+  [ -z "$scope" ] || [[ "$scope" =~ $SCOPE_RE ]] || scope=global # it reaches a shell argument in /start-day
+  jq -nc --arg r "$(one_line "$rule")" --arg s "$(one_line "$scope")" \
+    'if $r == "" then null else {rule: $r, scope: (if $s == "" then "global" else $s end)} end'
+}
+
+coach_item() { # file -> item JSON, plus the status/last/offered_on/declined_count/reported selection fields
+  local f="$1" summary ev proposal
+  proposal="$(section_get "$f" Proposal)"
+  summary="$(awk 'NF { print; exit }' <<<"$proposal" | cut -c1-200)"
+  ev="$(section_get "$f" Evidence | grep '^- ' | tail -2 | sed 's/^- //' | jq -Rn '[inputs] | reverse')"
+  jq -nc --arg id "$(basename "$f" .md)" --arg kind "$(kind_of "$f")" --arg sig "$(sig_of "$f")" --arg count "$(entry_count "$f")" \
+    --arg days "$(entry_days "$f")" --arg safety "$(fm_get "$f" safety)" --arg summary "$summary" --argjson ev "$ev" \
+    --arg rung "$(fm_get "$f" rung)" --arg proposal "$proposal" --argjson change "$(change_of "$proposal")" \
+    --argjson direction "$(direction_of "$proposal")" \
+    --arg status "$(fm_get "$f" status)" --arg last "$(fm_get "$f" last)" --arg offered_on "$(fm_get "$f" offered_on)" \
+    --arg declined_count "$(fm_get "$f" declined_count)" --arg reported "$(fm_get "$f" result_reported_on)" \
+    --arg fix "$(fm_get "$f" fix)" --arg reason "$(fm_get "$f" reason)" \
+    '{id: $id, kind: $kind, sig: $sig, count: ($count | tonumber? // 0), days: ($days | tonumber? // 0), safety: ($safety == "true"),
+      rung: $rung, proposal_summary: $summary, change: $change, proposal: $proposal[0:1500], direction: $direction,
+      evidence: $ev, status: $status, last: $last, offered_on: $offered_on,
+      declined_count: ($declined_count | tonumber? // 0), reported: $reported, fix: $fix, reason: $reason}'
+}
+
+cmd_coach_offer() {
+  local date_="" limit=3
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      --limit) need "$@"; limit="$2"; shift ;;
+      *) die "coach-offer: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "coach-offer needs --date"
+  valid_date "$date_"
+  [[ "$limit" =~ ^[0-9]+$ ]] || die "bad --limit: $limit"
+
+  local f rows="" out id
+  for f in "$FRICTION_WIKI"/F-*.md; do
+    [ -f "$f" ] || continue
+    case "$(fm_get "$f" status)" in fixed | landed | wontfix) ;; *) backfill_safety "$f" ;; esac
+    rows+="$(coach_item "$f")"$'\n'
+  done
+  out="$(printf '%s' "$rows" | jq -sc --arg d "$date_" --argjson limit "$limit" '
+    def secs($x): $x | strptime("%Y-%m-%d") | mktime;
+    def item: del(.status, .last, .offered_on, .declined_count, .reported, .fix, .reason);
+    def result: del(.last, .offered_on, .declined_count, .reported)
+      | .retryable = (.status == "failed" and (.reason | startswith("needs the user") | not));
+    ([.[] | select(.offered_on == $d)]) as $today
+    | { results: [.[] | select((.status == "landed" or .status == "failed") and (.reported == "" or .reported == $d)) | result],
+      offer: (if ($today | length) > 0 then ($today | sort_by(.last, .id) | reverse | .[:$limit] | map(item)) else [.[] | select(
+          (.status == "proposed"
+            or (.status == "offered" and .offered_on != "" and secs($d) - secs(.offered_on) >= 3 * 86400)
+            or (.status == "declined" and .declined_count > 0 and .count >= 2 * .declined_count))
+          and (.kind != "repeat" or (.count >= 3 and .days >= 2)))]
+        | sort_by(.last, .id) | reverse | .[:$limit] | map(item) end) }')"
+  for id in $(jq -r '.results[].id' <<<"$out"); do
+    [ "$(fm_get "$(fpath "$id")" result_reported_on)" = "$date_" ] || fm_set "$(fpath "$id")" result_reported_on "$date_"
+  done
+  for id in $(jq -r '.offer[].id' <<<"$out"); do
+    f="$(fpath "$id")"
+    [ "$(fm_get "$f" offered_on)" != "$date_" ] || continue
+    cmd_set "$id" --status offered --date "$date_"
+    fm_set "$f" offered_on "$date_"
+    fm_set "$f" answer ""
+  done
+  echo "$out"
+}
+
+cmd_coach_answer() {
+  local id="${1:-}" ans="${2:-}" date_=""
+  [[ "$id" =~ ^F-[0-9]+$ ]] || die "coach-answer needs an F-NNN id"
+  [[ "$ans" =~ ^(yes|no|later|done)$ ]] || die "coach-answer needs yes|no|later|done"
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      *) die "coach-answer: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "coach-answer needs --date"
+  valid_date "$date_"
+  local f target; f="$(fpath "$id")"
+  [ -f "$f" ] || die "no such entry: $id"
+  case "$ans" in yes) target=landing ;; no) target=declined ;; later) target=offered ;; done) target=fixed ;; esac
+  if [ "$(kind_of "$f")" = secret ]; then
+    [ "$ans" != yes ] || die "$id is a secret in a file: its steps are the user's; answer done, no or later"
+  else
+    [ "$ans" != done ] || die "done is only for secret entries; $id is $(kind_of "$f")"
+  fi
+  local st; st="$(fm_get "$f" status)"
+  [ "$(fm_get "$f" answer)" != "$ans" ] || return 0
+  if ! { [ "$st" = offered ] && [ -n "$(fm_get "$f" offered_on)" ]; } &&
+     ! { [[ "$st" =~ ^(landing|declined|fixed)$ ]] && [ "$(fm_get "$f" answered_on)" = "$date_" ]; }; then
+    die "$id is $st, not waiting for an answer"
+  fi
+  if [ "$(fm_get "$f" status)" != "$target" ]; then
+    [ "$ans" != no ] || fm_set "$f" declined_count "$(entry_count "$f")"
+    cmd_set "$id" --status "$target" --date "$date_"
+  else
+    section_edit "$f" History append "- $date_: answered $ans"
+  fi
+  fm_set "$f" answer "$ans"
+  fm_set "$f" answered_on "$date_"
+}
+
+# --- cards --------------------------------------------------------------------
+
+# jq: which card an item is (needs kind, direction, safety, change, status)
+CARD_JQ='def card: if .kind == "secret" then "secret" elif .kind == "restated" and .direction != null then "rule"
+  elif .safety and (.change | length) == 0 then "nochange" else "suggestion" end;'
+
+cmd_cards() {
+  local date_=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      *) die "cards: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "cards needs --date"
+  valid_date "$date_"
+  local f rows=""
+  for f in "$FRICTION_WIKI"/F-*.md; do
+    [ -f "$f" ] || continue
+    case "$(fm_get "$f" status)" in fixed | landed | wontfix) ;; *) backfill_safety "$f" ;; esac
+    rows+="$(coach_item "$f" | jq -c --arg diag "$(section_get "$f" Diagnosis | cut -c1-600 | head -c 600)" \
+      --arg disc "$(section_get "$f" Discussion | grep '^- ' | tail -1 | sed 's/^- //')" --arg h "$(card_hash "$f")" \
+      '. + {diagnosis: $diag, discussion: $disc, card_hash: $h}')"$'\n'
+  done
+  printf '%s' "$rows" | jq -sc --arg d "$date_" "$CARD_JQ"'
+    def secs($x): $x | strptime("%Y-%m-%d") | mktime;
+    def item: {id, kind, sig, card_hash, count, days, safety, rung, proposal_summary, change, proposal, direction, evidence, card: card, diagnosis, discussion, reason};
+    def result: item + {card: .status, fix, retryable: (.status == "failed" and (.reason | startswith("needs the user") | not))};
+    { file: [.[] | select(.proposal != ""
+          and (.status == "proposed" or .status == "regressed"
+            or (.status == "offered" and .offered_on != "" and secs($d) - secs(.offered_on) >= 3 * 86400)
+            or (.status == "declined" and .declined_count > 0 and .count >= 2 * .declined_count))
+          and (.kind != "repeat" or (.count >= 3 and .days >= 2)))]
+        | sort_by(.last, .id) | reverse | map(item),
+      results: [.[] | select((.status == "landed" or .status == "failed") and .reported == "")]
+        | sort_by(.last, .id) | reverse | map(result) }'
+}
+
+# fingerprint of what a card shows: the exact ## Proposal text plus the safety value
+card_hash() { # file
+  { section_get "$1" Proposal; printf '\nsafety=%s\n' "$([ "$(fm_get "$1" safety)" = true ] && echo true || echo false)"; } | shasum -a 256 | cut -c1-16
+}
+
+cmd_card_filed() {
+  local id="${1:-}" date_="" hash_="" result=0
+  [[ "$id" =~ ^F-[0-9]+$ ]] || die "card-filed needs an F-NNN id"
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      --hash) need "$@"; hash_="$2"; shift ;;
+      --result) result=1 ;;
+      *) die "card-filed: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "card-filed needs --date"
+  [ "$result" = 1 ] || [ -n "$hash_" ] || die "card-filed needs --hash (or --result)"
+  valid_date "$date_"
+  local f; f="$(fpath "$id")"
+  [ -f "$f" ] || die "no such entry: $id"
+  if [ "$result" = 1 ]; then
+    fm_set "$f" result_reported_on "$date_"
+  else
+    case "$(fm_get "$f" status)" in
+      proposed | regressed | offered | declined) ;;
+      *) die "card-filed: $id is $(fm_get "$f" status), not waiting for a card" ;;
+    esac
+    backfill_safety "$f"
+    [ "$(card_hash "$f")" = "$hash_" ] || die "card-filed: the proposal of $id changed after it was listed"
+    cmd_set "$id" --status offered --date "$date_"
+    fm_set "$f" card_hash "$hash_"
+    fm_set "$f" offered_on "$date_"
+    fm_set "$f" answer ""
+  fi
+}
+
+cmd_card_answer() {
+  local id="${1:-}" ans="${2:-}" date_=""
+  [[ "$id" =~ ^F-[0-9]+$ ]] || die "card-answer needs an F-NNN id"
+  [[ "$ans" =~ ^(apply|ignore|later|done)$ ]] || die "card-answer needs apply|ignore|later|done"
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      *) die "card-answer: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "card-answer needs --date"
+  valid_date "$date_"
+  local f st; f="$(fpath "$id")"
+  [ -f "$f" ] || die "no such entry: $id"
+  st="$(fm_get "$f" status)"
+  [ "$st" = offered ] || die "$id is $st, not on a card"
+  local item card; item="$(coach_item "$f")"
+  card="$(jq -r "$CARD_JQ"' card' <<<"$item")"
+  if [ "$ans" = apply ] && [ "$card" != secret ] && [ "$card" != nochange ]; then
+    backfill_safety "$f"
+    if [ -z "$(fm_get "$f" card_hash)" ] || [ "$(card_hash "$f")" != "$(fm_get "$f" card_hash)" ]; then
+      cmd_set "$id" --status proposed --reason "the proposal changed after its card was shown" --date "$date_"
+      echo '{"changed":true}'
+      echo "the proposal changed after its card was shown" >&2
+      exit 1
+    fi
+  fi
+  case "$ans" in
+    apply)
+      case "$card" in
+        secret) die "$id is a secret in a file: its steps are the user's; answer done, ignore or later" ;;
+        nochange) die "$id: no exact change to approve" ;;
+        rule)
+          local tmp rid; tmp="$(mktemp -d)"
+          jq -r .direction.rule <<<"$item" >"$tmp/rule"
+          rid="$(cmd_dir_add --rule-file "$tmp/rule" --scope "$(jq -r .direction.scope <<<"$item")" --date "$date_")" || { rm -rf "$tmp"; exit 1; }
+          rm -rf "$tmp"
+          cmd_set "$id" --status fixed --fix "$rid" --date "$date_"
+          jq -nc --arg r "$rid" '{rule: $r}' ;;
+        *)
+          backfill_safety "$f"
+          cmd_set "$id" --status landing --date "$date_"
+          fm_set "$f" answer yes
+          fm_set "$f" answered_on "$date_"
+          jq -nc --argjson s "$([ "$(fm_get "$f" safety)" = true ] && echo true || echo false)" '{enqueue: true, safety: $s}' ;;
+      esac ;;
+    ignore)
+      fm_set "$f" declined_count "$(entry_count "$f")"
+      cmd_set "$id" --status declined --date "$date_"
+      echo '{}' ;;
+    later)
+      fm_set "$f" offered_on "$date_"
+      fm_set "$f" answer later
+      echo '{}' ;;
+    done)
+      [ "$card" = secret ] || die "done is only for secret entries; $id is $(kind_of "$f")"
+      cmd_set "$id" --status fixed --date "$date_"
+      echo '{}' ;;
+  esac
+}
+
+cmd_revise() {
+  local id="${1:-}" qfile="" afile="" pfile="" date_=""
+  [[ "$id" =~ ^F-[0-9]+$ ]] || die "revise needs an F-NNN id"
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --question-file) need "$@"; qfile="$2"; shift ;;
+      --answer-file) need "$@"; afile="$2"; shift ;;
+      --proposal-file) need "$@"; pfile="$2"; shift ;;
+      --date) need "$@"; date_="$2"; shift ;;
+      *) die "revise: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "revise needs --date"
+  valid_date "$date_"
+  [ -f "$qfile" ] || die "revise needs --question-file"
+  [ -f "$afile" ] || die "revise needs --answer-file"
+  [ -z "$pfile" ] || [ -f "$pfile" ] || die "no such file: $pfile"
+  local f; f="$(fpath "$id")"
+  [ -f "$f" ] || die "no such entry: $id"
+  grep -qx '## Discussion' "$f" || printf '\n## Discussion\n' >>"$f"
+  section_edit "$f" Discussion append "- $date_: you asked: $(one_line "$(cat "$qfile")") · coach: $(one_line "$(cat "$afile")" | cut -c1-600)"
+  [ -z "$pfile" ] || cmd_set "$id" --proposal-file "$pfile" --date "$date_"
+  backfill_safety "$f"
+  cmd_set "$id" --status proposed --reason "" --date "$date_"
+}
+
+cmd_safety_check() {
+  local id="${1:-}" f
+  [[ "$id" =~ ^F-[0-9]+$ ]] || die "safety-check needs an F-NNN id"
+  [ $# -eq 1 ] || die "safety-check takes only the id"
+  f="$(fpath "$id")"
+  [ -f "$f" ] || die "no such entry: $id"
+  backfill_safety "$f"
+  [ "$(fm_get "$f" safety)" = true ] && echo true || echo false
+}
+
+cmd_coach_log() {
+  local date_="" n_offered="" n_answered="" n_landed="" n_failed="" n_cards=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      --offered) need "$@"; n_offered="$2"; shift ;;
+      --answered) need "$@"; n_answered="$2"; shift ;;
+      --landed) need "$@"; n_landed="$2"; shift ;;
+      --failed) need "$@"; n_failed="$2"; shift ;;
+      --cards) need "$@"; n_cards="$2"; shift ;;
+      *) die "coach-log: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$date_" ] || die "coach-log needs --date"
+  valid_date "$date_"
+  local n
+  for n in "$n_offered" "$n_answered" "$n_landed" "$n_failed" "$n_cards"; do
+    [[ "$n" =~ ^[0-9]+$ ]] || die "coach-log needs --offered --answered --landed --failed --cards as non-negative integers"
+  done
+  local f="$FRICTION_WIKI/coach-log.md" tmp
+  mkdir -p "$FRICTION_WIKI"
+  tmp="$(mktemp "$FRICTION_WIKI/.coach-log.XXXXXX")"
+  {
+    printf '# Coach log\n\nOne row per morning: suggestions offered and answered, results reported, cards quizzed.\n\n'
+    printf '| date | offered | answered | landed | failed | cards |\n|---|---|---|---|---|---|\n'
+    {
+      [ ! -f "$f" ] || grep -E '^\| [0-9]{4}-[0-9]{2}-[0-9]{2} \|' "$f" | grep -vF "| $date_ |" || true
+      printf '| %s | %s | %s | %s | %s | %s |\n' "$date_" "$n_offered" "$n_answered" "$n_landed" "$n_failed" "$n_cards"
+    } | LC_ALL=C sort
+  } >"$tmp"
+  mv "$tmp" "$f"
+}
+
+# --- directions ---------------------------------------------------------------
+
+DIR_HEAD='# Standing directions
+
+| id | rule | scope | since | source | status |
+|---|---|---|---|---|---|'
+dir_file() { printf '%s/directions.md' "$FRICTION_WIKI"; }
+cell() { tr '\n\r\t' '   ' <<<"$1" | sed 's/|/¦/g; s/  */ /g; s/^ //; s/ $//'; }
+norm() { jq -rn --arg v "$1" '$v | ascii_downcase | gsub("[^\\p{L}\\p{N}\\s]"; "") | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ")'; }
+
+# id<TAB>rule<TAB>scope<TAB>since<TAB>source<TAB>status for every row
+dir_tsv() {
+  [ -f "$(dir_file)" ] || return 0
+  awk -F'|' '/^\| *D-[0-9]+ *\|/ { for (i = 2; i <= 7; i++) gsub(/^ +| +$/, "", $i); print $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 }' "$(dir_file)"
+}
+dir_rows() { dir_tsv | jq -Rc 'split("\t") | {id: .[0], rule: .[1], scope: .[2], since: .[3], source: .[4], status: .[5]}'; }
+
+dir_set_status() { # id status suffix
+  local f tmp; f="$(dir_file)"; tmp="$(mktemp "$(dir_file).XXXXXX")"
+  I="$1" S="$2" X="$3" awk -F'|' 'BEGIN { OFS = "|" }
+    $0 ~ "^\\| *" ENVIRON["I"] " *\\|" { src = $6; sub(/ +$/, "", src); $6 = src ENVIRON["X"] " "; $7 = " " ENVIRON["S"] " " }
+    { print }' "$f" >"$tmp" && chmod 644 "$tmp" && mv "$tmp" "$f"
+}
+
+cmd_dir_add() {
+  local rule="" scope=global quote="" harness="" date_="" same="" has_rule=0 rule_file=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --rule) need "$@"; rule="$2"; has_rule=1; shift ;;
+      --rule-file) need "$@"; rule_file="$2"; shift ;;
+      --scope) need "$@"; scope="$2"; shift ;;
+      --quote) need "$@"; quote="$2"; shift ;;
+      --harness) need "$@"; harness="$2"; shift ;;
+      --date) need "$@"; date_="$2"; shift ;;
+      --same-as) need "$@"; same="$2"; shift ;;
+      *) die "directions add: unknown option $1" ;;
+    esac
+    shift
+  done
+  if [ -n "$rule_file" ]; then
+    [ "$has_rule" = 0 ] || die "directions add takes --rule or --rule-file, not both"
+    [ -f "$rule_file" ] && [ -r "$rule_file" ] || die "no such file: $rule_file"
+    IFS= read -r rule <"$rule_file" || true
+  fi
+  [ -n "$(cell "$rule")" ] || die "directions add needs --rule or --rule-file"
+  [ -n "$date_" ] || date_="$(date +%F)"
+  valid_date "$date_"
+  rule="$(cell "$rule")"; scope="$(cell "${scope:-global}")"; [ -n "$scope" ] || scope=global
+  if ! [[ "$scope" =~ $SCOPE_RE ]]; then echo "friction-ledger: directions add: bad --scope (letters, digits and :._/- only, at most 60): $scope" >&2; exit 2; fi
+  local id n existing
+  if [ -n "$same" ]; then
+    [ -n "$(dir_tsv | awk -F'\t' -v i="$same" '$1 == i && $6 == "active"')" ] && { echo "$same"; return; }
+  fi
+  n="$(norm "$rule")"
+  if [ -n "$n" ]; then
+    while IFS=$'\t' read -r id r _ _ _ st; do
+      [ "$st" = active ] && [ "$(norm "$r")" = "$n" ] && { echo "$id"; return; }
+    done < <(dir_tsv)
+  fi
+  local next=1 num
+  while IFS=$'\t' read -r id _; do num=$((10#${id#D-})); [ "$num" -lt "$next" ] || next=$((num + 1)); done < <(dir_tsv)
+  id="$(printf 'D-%03d' "$next")"
+  mkdir -p "$FRICTION_WIKI"
+  [ -f "$(dir_file)" ] || printf '%s\n' "$DIR_HEAD" >"$(dir_file)"
+  local src; src="$(cell "$quote" | cut -c1-160)"
+  [ -z "$src" ] || src="\"$src\""
+  [ -z "$harness" ] || src="${src:+$src }($(cell "$harness"))"
+  printf '| %s | %s | %s | %s | %s | active |\n' "$id" "$rule" "$scope" "$date_" "$src" >>"$(dir_file)"
+  echo "$id"
+}
+
+cmd_dir_change() { # retire|promote args
+  local what="$1" id="${2:-}" reason="" fix="" st
+  [[ "$id" =~ ^D-[0-9]+$ ]] || die "directions $what needs a D-NNN id"
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason) need "$@"; reason="$2"; shift ;;
+      --fix) need "$@"; fix="$2"; shift ;;
+      *) die "directions $what: unknown option $1" ;;
+    esac
+    shift
+  done
+  st="$(dir_tsv | awk -F'\t' -v i="$id" '$1 == i { print $6 }')"
+  [ -n "$st" ] || die "no such direction: $id"
+  if [ "$what" = retire ]; then
+    [ "$st" = retired ] && return 0
+    dir_set_status "$id" retired "${reason:+ — retired: $(cell "$reason")}"
+  else
+    [ -n "$fix" ] || die "directions promote needs --fix SHA"
+    [ "$st" = promoted ] && return 0
+    dir_set_status "$id" promoted " — fix $(cell "$fix")"
+  fi
+}
+
+cmd_dir_render() {
+  local scope=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --scope) need "$@"; scope="$2"; shift ;;
+      *) die "directions render: unknown option $1" ;;
+    esac
+    shift
+  done
+  dir_rows | jq -rn --arg scope "$scope" --argjson cap 2048 '
+    def text($a; $n): ($a | map("- \(.rule)" + (if .scope == "global" then "" else " [\(.scope)]" end)) | join("\n"))
+      + (if $n > 0 then (if ($a | length) > 0 then "\n" else "" end) + "- \($n) more in ~/wiki/work/friction/directions.md" else "" end);
+    def fit($a; $n):
+      if ($a | length) == 0 or (text($a; $n) | utf8bytelength) <= $cap then {a: $a, n: $n}
+      else (([$a[] | select(.scope == "global")] | sort_by(.since, .id) | first) // ($a | sort_by(.since, .id) | first)) as $d
+        | fit([$a[] | select(.id != $d.id)]; $n + 1) end;
+    [inputs | select(.status == "active" and ($scope == "" or .scope == "global" or .scope == $scope))] | sort_by(.id)
+    | fit(.; 0) | if (.a | length) == 0 and .n == 0 then empty else text(.a; .n) end'
+}
+
+cmd_directions() {
+  local sub="${1:-}"; shift || true
+  case "$sub" in
+    add) cmd_dir_add "$@" ;;
+    retire|promote) cmd_dir_change "$sub" "$@" ;;
+    render) cmd_dir_render "$@" ;;
+    *) die "directions: add|retire|promote|render" ;;
+  esac
+}
+
+case "${1:-}" in
+  apply) acquire_lock; shift; cmd_apply "$@" ;;
+  set) acquire_lock; shift; cmd_set "$@" ;;
+  diary-section) shift; cmd_diary "$@" ;;
+  frustration) acquire_lock; shift; cmd_frustration "$@" ;;
+  add-tool) acquire_lock; shift; cmd_add_tool "$@" ;;
+  ingest) acquire_lock; shift; cmd_ingest "$@" ;;
+  directions) [ "${2:-}" = render ] || acquire_lock; shift; cmd_directions "$@" ;;
+  coach-offer) acquire_lock; shift; cmd_coach_offer "$@" ;;
+  coach-answer) acquire_lock; shift; cmd_coach_answer "$@" ;;
+  cards) acquire_lock; shift; cmd_cards "$@" ;;
+  card-filed) acquire_lock; shift; cmd_card_filed "$@" ;;
+  card-answer) acquire_lock; shift; cmd_card_answer "$@" ;;
+  revise) acquire_lock; shift; cmd_revise "$@" ;;
+  coach-log) acquire_lock; shift; cmd_coach_log "$@" ;;
+  safety-check) acquire_lock 75; shift; cmd_safety_check "$@" ;;
+  -h|--help|"") awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print } /^set -/ { exit }' "$0"; [ -n "${1:-}" ] ;;
+  *) die "unknown command $1" ;;
+esac

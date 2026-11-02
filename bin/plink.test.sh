@@ -48,9 +48,17 @@ echo "plink — create"
 mkdir -p "$DEST/sessions"
 printf 'secret\n' > "$DEST/auth.json"
 run_plink >/dev/null
-for f in settings.json models.json mcp-servers.json model-selection.md APPEND_SYSTEM.md; do
+for f in models.json mcp-servers.json model-selection.md APPEND_SYSTEM.md; do
     assert_link "$DEST/$f" "$DOT/pi/$f" "links $f"
 done
+# settings.json is per-host state (Pi writes changelog markers into it): seeded,
+# never linked, so a repo refresh cannot clobber the host's own defaults.
+[ -f "$DEST/settings.json" ] && [ ! -L "$DEST/settings.json" ] \
+    && pass "seeds settings.json as a regular file" \
+    || fail "seeds settings.json as a regular file" "missing or a symlink"
+cmp -s "$DEST/settings.json" "$DOT/pi/settings.json" \
+    && pass "seeded settings.json matches the repo seed" \
+    || fail "seeded settings.json matches the repo seed" "content differs"
 assert_link "$DEST/AGENTS.md" "$DOT/claude/CLAUDE.md" "links CLAUDE.md as AGENTS.md"
 assert_link "$DEST/skills" "$DOT/pi/skills" "links skills/"
 assert_link "$HOME_DIR/.agents/modules" "$DOT/pi/modules" "links modules/ into the cross-runtime ~/.agents"
@@ -106,13 +114,40 @@ assert_link "$DEST/skills" "$DOT/pi/skills" "repairs a broken link owned by this
 case "$out" in *"re-pointed owned link"*) pass "reports the owned-link repair" ;;
                 *) fail "reports the re-point" "$out" ;; esac
 
-echo "real file backup"
+echo "per-host settings"
 rm "$DEST/settings.json"
 printf '{"lastChangelogVersion":"1"}\n' > "$DEST/settings.json"
 run_plink >/dev/null
-[ -f "$DEST/settings.json.backup" ] && grep -q lastChangelogVersion "$DEST/settings.json.backup" \
-    && pass "backs up a real file" || fail "backs up a real file" "no settings.json.backup with its content"
-assert_link "$DEST/settings.json" "$DOT/pi/settings.json" "links over the backup"
+[ ! -L "$DEST/settings.json" ] && grep -q lastChangelogVersion "$DEST/settings.json" \
+    && pass "leaves a real settings.json with its machine keys" \
+    || fail "leaves a real settings.json with its machine keys" "replaced or rewritten"
+[ -e "$DEST/settings.json.backup" ] && fail "a real settings.json needs no backup" "backup appeared" \
+    || pass "a real settings.json needs no backup"
+rm "$DEST/settings.json"
+ln -s "$DOT/pi/settings.json" "$DEST/settings.json"
+out="$(run_plink -n)"
+[ -L "$DEST/settings.json" ] && pass "dry run keeps the legacy settings link" \
+    || fail "dry run keeps the legacy settings link" "link replaced"
+case "$out" in *"would convert owned settings link"*) pass "dry run reports the pending conversion" ;;
+                *) fail "dry run reports the pending conversion" "$out" ;; esac
+out="$(run_plink)"
+[ -f "$DEST/settings.json" ] && [ ! -L "$DEST/settings.json" ] \
+    && pass "converts an owned settings link into a per-host file" \
+    || fail "converts an owned settings link into a per-host file" "still a link"
+cmp -s "$DEST/settings.json" "$DOT/pi/settings.json" \
+    && pass "conversion preserves the settings content" \
+    || fail "conversion preserves the settings content" "content differs"
+[ -L "$DEST/settings.json.symlink.backup" ] \
+    && pass "records the old settings link" \
+    || fail "records the old settings link" "no settings.json.symlink.backup"
+case "$out" in *"converted owned settings link"*) pass "reports the settings conversion" ;;
+                *) fail "reports the settings conversion" "$out" ;; esac
+rm -f "$DEST/settings.json" "$DEST/settings.json.symlink.backup"
+ln -s /foreign/settings.json "$DEST/settings.json"
+run_plink >/dev/null
+assert_link "$DEST/settings.json" /foreign/settings.json "preserves a foreign settings link"
+rm -f "$DEST/settings.json"
+ln -s "$DOT/pi/settings.json" "$DEST/settings.json"
 
 echo "foreign active link"
 ln -sfn /foreign/skills "$DEST/skills"

@@ -11,9 +11,9 @@ Run the panel from the `mr-review-multi-agent` skill against these MRs, but **re
 the result lands in this chat and in a local file, never on GitLab. Several URLs mean one
 feature spread across projects — review them together as one change, not one by one.
 
-You are the orchestrator and the expensive agent. Spend your context on routing and
-synthesis; let named specialist agents do the reading. Pi specialist agents are read-only
-by default.
+You are the orchestrator and the expensive model. Spend your tokens on routing and
+synthesis; let the reviewers (named specialist agents on a cheaper model) do the reading.
+Pi specialist agents are read-only by default.
 
 ## Hard rules
 
@@ -22,16 +22,18 @@ by default.
   other than GET, `--field`, or `--input`. Do not load the `mr-review-multi-agent`
   skill itself — its posting steps are the part this command replaces.
 - **Never touch the user's working tree.** Review from a detached worktree (step 2).
+- **Every reviewer runs on a cheaper model than yours**, passed explicitly as `model` on
+  the `subagent` call (step 3), whatever its role says. Nothing else reads the diff.
 - Don't read the full diff or the reviewer brief yourself. Files are written by shell
   commands and read by reviewers.
 
 ## 1. Stage
 
 ```bash
-SKILL=~/.pi/agent/skills/mr-review-multi-agent/SKILL.md
+SKILL=~/.pi/agent/skills-team/mr-review-multi-agent/SKILL.md
 RUN=/tmp/review-local/$(date +%Y%m%d-%H%M%S); mkdir -p "$RUN"
 # Reviewer brief (the skill's §3), run path substituted — written, not read by you.
-# Its ~/.agents/modules/ references resolve as-is.
+# plink already resolved its plugin paths to absolute ones.
 awk '/^### 3\. /{p=1} /^### 4\. /{p=0} p' "$SKILL" \
   | sed -e "s#/tmp/mr-review-<iid>/#$RUN/#g" > "$RUN/brief.md"
 echo "RUN=$RUN"
@@ -39,8 +41,8 @@ echo "RUN=$RUN"
 
 Shell variables don't survive between Bash calls — use the echoed literal path from here on.
 
-If the skill file is missing, stop and say the `mr-review-multi-agent` skill isn't
-installed.
+If `$SKILL` is missing, stop and say the team skills aren't generated (`plink` builds
+`~/.pi/agent/skills-team/` from claude-components).
 
 Then read only the panel-selection section into your context:
 `awk '/^### 2\. /{p=1} /^### 3\. /{p=0} p' "$SKILL"`.
@@ -50,19 +52,20 @@ Then read only the panel-selection section into your context:
 Parse each URL into `<group/project>` and `<iid>`. For each:
 
 ```bash
-glab mr view <iid> -R <project> --output json \
-  | jq '{title, author: .author.username, source_branch, target_branch, draft, description, sha: .diff_refs.head_sha, base: .diff_refs.base_sha}' \
+glab mr view <iid> -R <project> --unresolved -F json > "$RUN/<slug>.view.json"
+jq '{title, author: .author.username, source_branch, target_branch, draft, description, sha: .diff_refs.head_sha, base: .diff_refs.base_sha}' "$RUN/<slug>.view.json" \
   > "$RUN/<slug>.meta.json"
 glab mr diff <iid> -R <project> > "$RUN/<slug>.diff"
-bash ~/.pi/agent/skills/mr-review/scripts/locate-checkout.sh <project>   # exit 1/2: see below
+bash ~/.pi/agent/skills-team/mr-review/scripts/locate-checkout.sh <project>   # exit 1/2: see below
 git -C <checkout> fetch -q origin <source_branch>
 git -C <checkout> worktree add -q --detach "$RUN/<slug>" <head_sha>
 ```
 
 `<slug>` is `<repo-name>-<iid>`. If locate-checkout exits 1 or 2, ask the user for the
-clone path; don't review without source. Existing unresolved discussions are worth one
-GET (`glab api "projects/<url-encoded-project>/merge_requests/<iid>/discussions" | jq`
-reduced to unresolved note bodies, first 300 chars each) so reviewers don't re-raise them.
+clone path; don't review without source. The same `--unresolved` call already holds
+the existing unresolved discussions (`.Discussions[].notes[] | select(.system|not)`,
+`.body[:300]` each) — reduce them with `jq` so reviewers don't re-raise them; no separate
+discussions GET.
 
 Take `git -C <worktree> diff --stat <base>...<head_sha>` and the meta JSON — that is all
 you read about the change. Then write `$RUN/context.md`:
@@ -71,7 +74,7 @@ you read about the change. Then write `$RUN/context.md`:
   what matters), worktree path, diff path, changed files.
 - For multi-MR: how the MRs relate (API producer/consumer, shared contract, rollout
   order) and an explicit instruction to check the seams between them.
-- Relevant `AGENTS.md` rules from each worktree root — excerpt, not a dump.
+- Relevant `CLAUDE.md` (or `AGENTS.md`) rules from each worktree root — excerpt, not a dump.
 - A file-to-lens map so each reviewer knows where to look first.
 - Unresolved prior discussion points, if any.
 
@@ -85,21 +88,19 @@ feature spans backend and UI. Announce the panel in one line.
 Every request includes a `<subagent_models>` block with the live selected ∩ available
 models. Before each panel launch, choose a difficulty-, cost-, and capability-appropriate
 exact `provider/id` for every reviewer solely from that block and pass it explicitly as
-`model`. Do not use the broader `subagent({ action: "models" })` registry as eligibility,
-call a model gate, omit the model, or rely on automatic fallback. If the list is empty,
-launch nothing and ask the user to repair the session model pool. See
-`~/.pi/agent/model-selection.md`.
+`model`. Do not treat the wider registry as eligibility, call a model gate, omit the model,
+or rely on automatic fallback. If the list is empty, launch nothing and ask the user to
+repair the session model pool. See `~/.pi/agent/model-selection.md`.
 
 ## 4. Round 1 — parallel, one turn
 
-Spawn the whole panel with one `subagent` workflow: write a `js workflow` block that
-returns `await runs.all([...])`, then call `subagent({ workflow: true, async: true })` in
-the same reply. Each item uses a stable `key`, the specialist's file name without `.md`
-as `agent` (for example `java-micronaut-dev`, `vue-expert`, or
-`security-compliance-reviewer`), an explicit live-list `model`, and
-`tools: ["read", "grep", "find", "ls"]`. The explicit per-call allowlist keeps this
-command read-only even if an agent's definition changes later. Use this short `task`; do
-not inline the brief:
+Launch the whole panel in one turn with one `subagent` call per reviewer — that is what
+runs them in parallel; there is no workflow form. Every call uses the lens's role (a
+read-only file in `~/.pi/agent/agents/`: `security-compliance-reviewer`, `prod-readiness`,
+`vue-expert`, …; plain `reviewer` when no specialist fits), an explicit live-list `model`,
+and `cwd` set to the first MR's worktree (reviewers read absolute paths, so one cwd is
+enough). Record each returned agent id against its lens. Use this short `task`; do not
+inline the brief:
 
 > Read `$RUN/brief.md` (your review instructions) and `$RUN/context.md` (the change).
 > Review through the <lens> lens. For MR !X the worktree is `<path>` — ignore any
@@ -112,17 +113,13 @@ not inline the brief:
 Build the finding table in your head (dedupe, corroborated/unique). Default is no second
 round — skip it when findings agree, are lane-specific, or the verdict is already clear.
 Only when a dispute genuinely affects the verdict, continue just the one or two
-reviewers involved with only the disputed items. Prefer an awaited workflow
-`runs.run("<new-key>", { resume: "<latest-runId>", task: "<dispute>" })` when the prior
-result reports a resumable `runId`; the resumed child retains its model and read-only tool
-contract. If it is not resumable, launch the same specialist as a fresh child with a model
-from the current live list and the same read-only `tools` allowlist. Never run a fresh
-panel or a full R2. Max 3 rounds.
+reviewers involved with only the disputed items: launch the same role and model fresh,
+with a task that names its round-1 result file and lists the disputed items. Never run a
+fresh panel or a full R2. Max 3 rounds.
 
-The async workflow returns a run id, and its completion notice wakes the parent. Use
-`subagent({ action: "status", id: "<run-id>" })` for status/results and
-`subagent({ action: "stop", id: "<run-id>" })` only to terminate it. There is no `wait`
-action.
+Each launch returns an agent id at once; a `[pi-sub]` wake-up names the result file when it
+finishes. End the turn after launching — never wait, sleep or poll. `subagent_result({ id })`
+shows a result (or the live tail); `subagent_stop({ id })` only to terminate a run.
 
 Before finalising, spot-check each BLOCKER and MAJOR citation by reading only the cited
 lines (`sed -n` a small range) in the worktree. Drop or downgrade anything that doesn't

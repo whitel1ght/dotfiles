@@ -21,9 +21,18 @@ not the whole directory: authentication, sessions, installed packages, and other
 runtime state remain machine-local. Existing real config items are backed up;
 wrong or broken links are repaired. Review the dry run before applying it.
 
+`settings.json` is the one exception: Pi writes per-host state into it
+(`lastChangelogVersion`, `extensionChangelogVersions`, device identity), so the
+repo copy is only a seed. `install.sh` and `bin/plink` create it as a regular
+file when absent and never replace an existing file; a legacy symlink owned by
+this checkout is converted into a per-host copy of the same content, with the
+old link recorded beside it. Edit `pi/settings.json` for the shared declaration
+(packages, `subagents` policy, theme) and the per-host file for
+`defaultProvider`, `defaultModel`, `enabledModels`, and machine keys.
+
 | Agent-directory item | Source in this repo |
 | --- | --- |
-| `settings.json` | `pi/settings.json`: startup defaults, packages, scoped models, theme |
+| `settings.json` | seeded from `pi/settings.json`: shared packages, scoped `subagents` policy, theme; provider/model and machine keys are per-host |
 | `models.json` | `pi/models.json`: local models and OpenCode Go overrides |
 | `mcp-servers.json` | `pi/mcp-servers.json`: MCP definitions with environment references |
 | `APPEND_SYSTEM.md`, `model-selection.md` | `pi/`: global assistant rules and delegation policy |
@@ -37,14 +46,22 @@ wrong or broken links are repaired. Review the dry run before applying it.
 
 The `packages/` link is required because `./packages/pi-recap` resolves relative
 to the settings location in `~/.pi/agent/`. Project settings in `.pi/settings.json`
-can override personal settings once the project is trusted.
+can override personal settings once the project is trusted. The `/status` prompt
+is a read-only wrapper around the locally linked `day-status` helper; `/system`
+marks the session for the daily extension's idle ideas review.
 
 ## Models and authentication
 
-The startup default is **`opencode-go/longcat-2.5`**. Changing the default affects
-new sessions, not the model of an already running session.
+The startup default in the repo seed is **`opencode-go/longcat-2.5`**, authored on
+the Mac. A host without that provider's login sets its own `defaultProvider`,
+`defaultModel`, and `enabledModels` in its per-host `~/.pi/agent/settings.json`;
+seeding never overwrites an existing file, so those host overrides survive
+re-installs. On this Ubuntu host the default is `qwen-token-plan/qwen3.8-max`
+with the pool `qwen-token-plan/qwen3.8-max` and
+`qwen-token-plan/deepseek-v4.1-flash`. Changing the default affects new
+sessions, not the model of an already running session.
 
-The current configured session pool in `settings.json` is:
+The repo seed's session pool is:
 
 - `openai/gpt-6.1-sol`
 - `ollama/qwen2.5-coder:14b-16k`
@@ -83,11 +100,39 @@ Pi/provider authentication stays outside the repo. MCP configuration uses
 `~/.pi/agent/mcp-auth.json`. Claude Bridge is no longer installed or required
 by the active model-selection policy.
 
+### Optional decisions deck MCP
+
+The daily ask/follow-up workflow can use the `decisions` MCP server, but the
+standalone decisions runtime is not installed by this configuration and the
+server is deliberately absent from the default `mcp-servers.json`. Until you
+have installed and verified `~/.local/bin/decisions mcp` on this machine, Pi
+uses the normal chat fallback; no missing executable is launched at session
+start. To opt in on a machine with that runtime, add this entry to its personal
+MCP config (or to this repo only after intentionally choosing repo-wide
+activation):
+
+```json
+"decisions": {
+  "command": "~/.local/bin/decisions",
+  "args": ["mcp"],
+  "description": "Ask the user through the decisions deck",
+  "timeout": 3600,
+  "env": { "DECISIONS_WAIT": "3000" }
+}
+```
+
+The `decisions` wrapper itself expects its external binary at
+`$HOME/.local/share/decisions/bin/decisions` unless `DECISIONS_BIN` is set.
+The wrapper, binary, and their runtime state are machine-local, not copied or
+installed by Pi setup.
+
 ## Delegation
 
 Delegation uses the explicitly pinned **`npm:pi-subagents@0.76.0`** package, not the retired custom runtime. `pi/settings.json` declares this package so a package refresh installs the implementation described here.
-Its bundled skills and prompts are disabled so the shared skills and local
-prompt templates remain authoritative.
+It is declared in object form with empty `skills` and `prompts` filters
+(`{"source": "npm:pi-subagents@0.76.0", "skills": [], "prompts": []}`), so its
+bundled skills and prompts stay disabled and the shared skills and local prompt
+templates remain authoritative.
 
 1. `extensions/session-models/` injects `<subagent_models>` before each parent
    model request: the exact IDs in **selected scoped models ∩ available models**.
@@ -121,6 +166,9 @@ Local components:
 | Component | Purpose |
 | --- | --- |
 | [background-terminals](extensions/background-terminals/README.md) | `bg_start`, `bg_list`, `bg_output`, `bg_stop`, and `/ps`; completion wakes the parent |
+| `daily/` | Daily run-state injection, diary edit guard and the `/run-day` event/inbox watcher; shares parser modules with Claude Code |
+| `secrets-guard/` | Blocks Pi file tools from reading or writing `~/.secrets` and the Jira environment file; Bash guards run separately through `claude-hooks` |
+| `artifacts-home/` | Keeps Pi artifacts under `~/artifacts/pi/` by linking the project artifact path |
 | [session-models](extensions/session-models/README.md) | Live model-pool injection; does not launch children or call providers |
 | `mcp-env/` | Expands environment references and registers MCP servers; skips servers with missing variables |
 | `inline-files/` | Expands `@path` into file contents when the model has no tools |
@@ -135,6 +183,25 @@ questions, browser artifacts, context display, memory, background tasks,
 Superpowers skills, Ponytail, pi-lens, and Billion Context. Except for the
 pinned subagent package, npm declarations are unversioned. `pi list` shows
 configured packages; `pi config` controls discovered resources.
+
+### Daily workflow and local search
+
+The `daily` extension uses `RUN_DAY_STATE_DIR`, `WIKI_DIR` and `RUN_DAY_DATE` when
+set; otherwise it reads and writes the user's normal `~/.local/state/run-day/` and
+`~/wiki/` state. Run only one `/run-day` session per day because the Pi and Claude
+harnesses share state. Its tests use temporary state. The secrets guard protects Pi
+file tools but is not a shell sandbox; Bash continues through the separately
+configured Claude hook guards.
+
+`artifacts-home` redirects `pi-artifacts` output into `~/artifacts/pi/` by default
+(or `$ARTIFACTS_DIR` when set). Before it links an existing project `.pi/artifacts`
+directory, it moves its contents into the store; collisions are left in place and
+reported rather than overwritten.
+
+The optional `pi/local-model/wiki-search` extension is for the `pigm` local-model
+profile, loaded explicitly with `-e` rather than during ordinary Pi startup. It
+provides `wiki_search` and `wiki_read` through `qmd`; it excludes the `pi-memory`
+collection and does not copy wiki data into this repository.
 
 ## Retired setup
 
@@ -155,7 +222,7 @@ configured subagent package installed:
 ./bin/plink.test.sh
 PI_SUBAGENTS_PACKAGE="$HOME/.pi/agent/npm/node_modules/pi-subagents" \
   node --test pi/agents.test.mjs
-for extension in background-terminals inline-files mcp-env session-models; do
+for extension in artifacts-home daily inline-files mcp-env secrets-guard session-models; do
   (cd "pi/extensions/$extension" && npm test) || break
 done
 git diff --check

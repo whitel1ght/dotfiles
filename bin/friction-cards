@@ -1,0 +1,439 @@
+#!/usr/bin/env bash
+# The friction queue's cards: files friction-ledger entries as cards in the `frictions` deck.
+#
+#   friction-cards sync [--date D]    file a card for every entry `friction-ledger cards` lists
+#                                     (a suggestion, rule, nochange or secret card; a result
+#                                     card for a landed or failed entry), then close the cards
+#                                     whose entry has moved on. Prints one line per card filed
+#                                     or closed. Runs under $COACH_STATE_DIR/.cards.lock (a
+#                                     dead holder's lock is taken over), so two syncs never
+#                                     file one card twice.
+#   friction-cards count [--badge]    the deck's waiting cards (`frictions count`)
+#   friction-cards hook               the deck's on_answer command: one JSON line on stdin
+#                                     ({event, id, key, source, option, note, text, at}); returns
+#                                     at once, the work runs detached (log: $COACH_STATE_DIR/logs/
+#                                     cards.log). answered: Apply/Ignore/Later/Done go to
+#                                     `friction-ledger card-answer` under the cards lock (waited for
+#                                     up to 5 min; still busy, the event is kept in
+#                                     $COACH_STATE_DIR/answers/ for tick, never dropped; a refused
+#                                     answer closes the card and logs one line), then the card is
+#                                     closed; an Apply that
+#                                     needs a fix runs `coach-fix enqueue F [--approved-safety]`
+#                                     ($COACH_FIX), and when that fails the entry goes back to
+#                                     proposed with the reason and the card is filed again; Retry on
+#                                     a failed result runs `coach-fix retry F`. asked or told: the
+#                                     text goes to `reply`, the card stays open.
+#   friction-cards reply F-NNN --card D-n    (question on stdin) start the reply job: a state file
+#                                     $COACH_STATE_DIR/replies/F-NNN.json {id, card, questions,
+#                                     started_epoch, pid} and a headless job, no window:
+#                                     `$COACH_HARNESS -p --permission-prompts none '<cmd> F-NNN
+#                                     --revise'` (pi: -p only) under nohup in its own process
+#                                     group, output to logs/reply-F-NNN.log, with coach-fix's
+#                                     refusals (a permission flag in COACH_HARNESS, a bad
+#                                     COACH_PROMPT_CMD: `unrevised`). A job already running just
+#                                     gets the question appended.
+#   friction-cards revised F-NNN --answer-file A [--proposal-file P]
+#                                     the job's answer: `friction-ledger revise`, the asked card
+#                                     withdrawn and closed, the job file deleted, sync (the revised
+#                                     card is filed). Holds the cards lock throughout.
+#   friction-cards unrevised F-NNN --reason R    the job could not answer: same, with the answer
+#                                     "could not revise: R" and no new proposal.
+#   friction-cards tick               replays the answers kept in answers/ (each waits up to 30 s
+#                                     for the lock, else stays kept), sync, then the reply
+#                                     watchdog: a job whose process is gone
+#                                     (one from before headless replies, with no pid: its tmux
+#                                     window reply-F-NNN) and older than $COACH_STALE_GRACE s (30)
+#                                     ends "the reply job ended without an answer (log: ...)"; one
+#                                     older than $COACH_REPLY_MAX s (1800) has its process group
+#                                     stopped and ends "the reply job stalled: ...".
+#
+# sync keeps a result card (source coach:landed|failed) open while its entry is landed or
+# failed, and any other card open while its entry is offered; every other open card is
+# withdrawn and closed. A card's key is the entry id, so an entry has one card at a time.
+# Ledger text reaches the deck only through stdin (the card's context) or one quoted argument
+# (the question, one line); never through the shell's word splitting or eval.
+# FRICTIONS_BIN (default ~/.local/bin/frictions), FRICTION_LEDGER, COACH_FIX, FRICTION_WIKI,
+# COACH_STATE_DIR, COACH_HARNESS, COACH_PROMPT_CMD, COACH_REPOS_DIR can be overridden (the tests do).
+set -euo pipefail
+
+command -v jq >/dev/null 2>&1 || { echo "friction-cards: jq is required and was not found on PATH" >&2; exit 1; }
+HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
+COACH_STATE_DIR="${COACH_STATE_DIR:-$HOME/.local/state/coach}"
+FRICTION_WIKI="${FRICTION_WIKI:-$HOME/wiki/work/friction}"
+FRICTION_LEDGER="${FRICTION_LEDGER:-$HERE/friction-ledger}"
+FRICTIONS_BIN="${FRICTIONS_BIN:-$HOME/.local/bin/frictions}"
+COACH_FIX="${COACH_FIX:-$HERE/coach-fix}"
+COACH_HARNESS="${COACH_HARNESS:-claude}"
+COACH_REPOS_DIR="${COACH_REPOS_DIR:-$HOME/projects}"
+COACH_STALE_GRACE="${COACH_STALE_GRACE:-30}"
+COACH_REPLY_MAX="${COACH_REPLY_MAX:-1800}"
+SELF="$HERE/friction-cards"
+LOG="$COACH_STATE_DIR/logs/cards.log"
+REPLIES="$COACH_STATE_DIR/replies"
+ANSWERS="$COACH_STATE_DIR/answers"
+HELD=""
+
+die() { echo "friction-cards: $*" >&2; exit 1; }
+need() { [ $# -ge 2 ] || die "$1 needs a value"; }
+one_line() { tr '\n\r\t' '   ' <<<"$1" | sed 's/  */ /g; s/^ //; s/ $//'; }
+
+lock() { # name [tries, 0.2 s apart; default 150]; a dead holder's lock is taken over
+  local d="$COACH_STATE_DIR/.$1.lock" i=0 pid
+  mkdir -p "$COACH_STATE_DIR"
+  while ! mkdir "$d" 2>/dev/null; do
+    pid="$(cat "$d/pid" 2>/dev/null || true)"
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then rm -rf "$d"; continue; fi
+    # no pid file: the holder died between mkdir and writing it (or is about to write it)
+    if [ -z "$pid" ] && [ -n "$(find "$d" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then rm -rf "$d"; continue; fi
+    i=$((i + 1)); [ "$i" -lt "${2:-150}" ] || return 1
+    sleep 0.2
+  done
+  echo $$ >"$d/pid"
+  HELD="$HELD $d"
+}
+unlock() { rm -rf "$COACH_STATE_DIR/.$1.lock"; HELD="${HELD/ $COACH_STATE_DIR\/.$1.lock/}"; }
+trap 'for d in $HELD; do rm -rf "$d"; done' EXIT
+
+options_for() { # card retryable(true|false): the card's answers, one per line
+  case "$1" in
+    suggestion) printf '%s\n' Apply Ignore Later ;;
+    rule) printf '%s\n' "Apply: add the rule" Ignore Later ;;
+    nochange) printf '%s\n' Ignore Later ;;
+    secret) printf '%s\n' "Done (I did the steps)" Later Ignore ;;
+    landed) printf '%s\n' OK ;;
+    failed) if [ "${2:-false}" = true ]; then printf '%s\n' Retry Ignore; else printf '%s\n' OK; fi ;;
+    *) die "no answers for card kind: $1" ;;
+  esac
+}
+
+card_context() { # item JSON on stdin -> the card's markdown
+  jq -r '
+    def bullets: map("- " + .) | join("\n");
+    def asked: (.discussion | sub("^[0-9-]+: you asked: "; "") | split(" · coach: ")) as $p
+      | "**You asked:** \($p[0])" + (if ($p | length) > 1 then "\n\n**Answer:** \($p[1:] | join(" · coach: "))" else "" end);
+    def keeps: "## What keeps happening\n\nSeen \(.count) times on \(.days) days.\n\n" + (.evidence | bullets);
+    if .card == "landed" then
+      [ (if .reason != "" then "**Note:** \(.reason)" else empty end),
+        "## What landed\n\n\(.proposal_summary)\n\nTo undo it: `git revert \(.fix)`" ]
+    elif .card == "failed" then
+      [ "## What went wrong\n\nThe fix for \(.proposal_summary) did not land.\n\n" + (if .reason != "" then .reason else "No reason was recorded." end) ]
+    else
+      [ (if .safety then "**Loosens a safety control**" else empty end),
+        (if .reason != "" then "**Note:** \(.reason)" else empty end),
+        (if .discussion != "" then asked else empty end),
+        keeps,
+        (if .diagnosis != "" then "## Why\n\n\(.diagnosis)" else empty end),
+        "## The fix" + (if .rung != "" then " (\(.rung))" else "" end) + "\n\n"
+          + (if (.change | length) > 0 then "Before → after:\n\n" + (.change | bullets) else .proposal end),
+        (if .card == "nochange" then "Press `a` to ask the coach for the exact change." else empty end) ]
+    end | join("\n\n")'
+}
+
+entry_status() { sed -n 's/^status: *//p' "$FRICTION_WIKI/$1.md" 2>/dev/null | head -1; }
+
+keeps_card() { # source status -> 0 when an open card with that source stays open for an entry in that status
+  case "$1" in
+    coach:landed | coach:failed) [ "$2" = landed ] || [ "$2" = failed ] ;;
+    *) [ "$2" = offered ] ;;
+  esac
+}
+
+file_card() { # item JSON, date, result(0|1)
+  local item="$1" date_="$2" result="$3" id card retry q opts=() o ctx new errf
+  id="$(jq -r .id <<<"$item")"; card="$(jq -r .card <<<"$item")"
+  retry="$(jq -r '.retryable // false' <<<"$item")"
+  q="$(one_line "$id · $(jq -r .proposal_summary <<<"$item")")"
+  while IFS= read -r o; do opts+=(--option "$o"); done < <(options_for "$card" "$retry")
+  ctx="$(card_context <<<"$item")"
+  errf="$(mktemp)"
+  if ! new="$("$FRICTIONS_BIN" add --key "$id" --source "coach:$card" --question "$q" "${opts[@]}" <<<"$ctx" 2>"$errf")"; then
+    echo "friction-cards: could not file the card for $id: $(one_line "$(tail -1 "$errf")")" >&2
+    rm -f "$errf"; return 1
+  fi
+  if [ "$result" = 1 ]; then rm -f "$errf"; "$FRICTION_LEDGER" card-filed "$id" --date "$date_" --result
+  elif ! "$FRICTION_LEDGER" card-filed "$id" --date "$date_" --hash "$(jq -r .card_hash <<<"$item")" 2>"$errf"; then
+    echo "friction-cards: $id no longer waits for a card; closed $new: $(one_line "$(tail -1 "$errf")")"
+    drop_card "$new" "the entry moved on"; rm -f "$errf"; return 1
+  fi
+  echo "filed $new for $id ($card)"
+}
+
+cmd_sync() {
+  local date_
+  date_="$(date +%F)"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --date) need "$@"; date_="$2"; shift ;;
+      *) die "sync: unknown option $1" ;;
+    esac
+    shift
+  done
+  lock cards || die "another sync is busy"
+  sync_locked "$date_"
+  unlock cards
+}
+
+sync_locked() { # date; the caller holds the cards lock
+  local date_="$1" cards open row id src st item
+  cards="$("$FRICTION_LEDGER" cards --date "$date_")"
+  open="$("$FRICTIONS_BIN" list --json)"
+  while IFS= read -r row; do
+    id="$(jq -r .id <<<"$row")"; src="$(jq -r .source <<<"$row")"
+    st="$(entry_status "$(jq -r .key <<<"$row")")"
+    keeps_card "$src" "$st" && continue
+    "$FRICTIONS_BIN" withdraw "$id" "the entry is now ${st:-gone}" >/dev/null || true
+    "$FRICTIONS_BIN" close "$id" >/dev/null && echo "closed $id for $(jq -r .key <<<"$row") (entry is ${st:-gone})"
+  done < <(jq -c '.[] | select(.key | test("^F-[0-9]+$"))' <<<"$open")
+  open="$("$FRICTIONS_BIN" list --json)"
+  while IFS= read -r item; do
+    id="$(jq -r .id <<<"$item")"
+    jq -e --arg k "$id" 'any(.[]; .key == $k)' <<<"$open" >/dev/null && continue
+    file_card "$item" "$date_" 0 || true
+  done < <(jq -c '.file[]' <<<"$cards")
+  while IFS= read -r item; do
+    id="$(jq -r .id <<<"$item")"
+    jq -e --arg k "$id" 'any(.[]; .key == $k)' <<<"$open" >/dev/null && continue
+    file_card "$item" "$date_" 1 || true
+  done < <(jq -c '.results[]' <<<"$cards")
+}
+
+cmd_count() { exec "$FRICTIONS_BIN" count "$@"; }
+
+# --- answers, replies, the watchdog ----------------------------------------------
+
+log() { mkdir -p "$COACH_STATE_DIR/logs"; echo "$(date +%FT%T) $*" >>"$LOG"; }
+today() { date +%F; }
+windows() { command -v tmux >/dev/null && tmux list-windows -a -F '#{window_name}' 2>/dev/null || true; }
+harness_flag() { # prints the permission flag COACH_HARNESS carries, if any (as coach-fix does)
+  local w
+  for w in $COACH_HARNESS; do
+    case "$w" in -p | --print | --dangerously* | --allow-dangerously* | --permission-mode*) echo "$w"; return ;; esac
+  done
+}
+prompt_cmd() { # Claude Code knows the daily plugin's command only namespaced; pi's prompt is bare
+  if [ -n "${COACH_PROMPT_CMD:-}" ]; then echo "$COACH_PROMPT_CMD"; return; fi
+  local h="${COACH_HARNESS%% *}"
+  case "${h##*/}" in pi) echo /fix-friction ;; *) echo /daily:fix-friction ;; esac
+}
+headless_args() { # print mode; Claude Code also denies anything that would prompt (as coach-fix does)
+  local h="${COACH_HARNESS%% *}"
+  case "${h##*/}" in pi) echo -p ;; *) echo -p --permission-prompts none ;; esac
+}
+# alive: its process (pid in the job file, still running the reply prompt) or, for a job
+# started in a tmux window before replies went headless, that window
+reply_alive() { # F job-file
+  local pid; pid="$(jq -r '.pid // empty' "$2" 2>/dev/null)"
+  if [ -z "$pid" ]; then grep -qxF "reply-$1" <<<"$(windows)"; return; fi
+  ps -o command= -p "$pid" 2>/dev/null | grep -qF -- "$1 --revise"
+}
+valid_entry() { [[ "${1:-}" =~ ^F-[0-9]+$ ]] || die "needs an F-NNN id, got: ${1:-}"; }
+entry_field() { sed -n "s/^$2: *//p" "$FRICTION_WIKI/$1.md" 2>/dev/null | head -1; }
+drop_card() { # card id: withdraw and close, whether or not it is still there
+  [ -n "$1" ] || return 0
+  "$FRICTIONS_BIN" withdraw "$1" "${2:-answered}" >/dev/null 2>&1 || true
+  "$FRICTIONS_BIN" close "$1" >/dev/null 2>&1 || true
+}
+
+cmd_hook() {
+  local line tmp
+  IFS= read -r line || true
+  [ -n "$line" ] || return 0
+  mkdir -p "$COACH_STATE_DIR/logs"
+  tmp="$(mktemp "$COACH_STATE_DIR/logs/hook.XXXXXX")"
+  printf '%s\n' "$line" >"$tmp"
+  ( set -m; nohup "$SELF" handle "$tmp" </dev/null >>"$LOG" 2>&1 & )
+}
+
+cmd_handle() { # event file: the hook's work, run detached
+  local f="$1" ev id key src opt text card F retry label ans out errf date_ evjson
+  evjson="$(cat "$f")"
+  ev="$(jq -r '.event // ""' "$f")"; id="$(jq -r '.id // ""' "$f")"; key="$(jq -r '.key // ""' "$f")"
+  src="$(jq -r '.source // ""' "$f")"; opt="$(jq -r '.option // ""' "$f")"
+  text="$(jq -r '.text // .note // ""' "$f")"
+  rm -f "$f"
+  F="$key"; card="${src#coach:}"; date_="$(today)"
+  [[ "$F" =~ ^F-[0-9]+$ ]] && [ "$src" != "$card" ] || { log "hook: not a friction card: $id $key $src"; return 0; }
+  [ "$ev" != answered ] || rm -f "$REPLIES/$F.json"
+  case "$ev" in
+    asked | told)
+      [ -n "$text" ] || { log "hook: $F: $ev without text"; return 0; }
+      printf '%s\n' "$text" | cmd_reply "$F" --card "$id" ;;
+    answered)
+      retry=false
+      if [ "$card" = failed ]; then
+        [ "$(entry_field "$F" status)" = failed ] && ! [[ "$(entry_field "$F" reason)" == "needs the user"* ]] && retry=true
+      fi
+      label="$(options_for "$card" "$retry" | sed -n "${opt:-0}p")"
+      case "$label" in
+        Apply*) ans=apply ;; Ignore) ans=ignore ;; Later) ans=later ;; Done*) ans=done ;;
+        Retry)
+          drop_card "$id"; errf="$(mktemp)"
+          if ! "$COACH_FIX" retry "$F" 2>"$errf"; then
+            log "hook: $F: coach-fix retry failed"
+            "$FRICTION_LEDGER" set "$F" --reason "could not retry: $(one_line "$(tail -1 "$errf")")" --clear-result-reported --date "$date_" || true
+            rm -f "$errf"; cmd_sync
+            return 0
+          fi
+          rm -f "$errf"; return 0 ;;
+        OK) drop_card "$id"; return 0 ;;
+        *) log "hook: $F: no answer $opt on a $card card"; return 0 ;;
+      esac
+      errf="$(mktemp)"
+      # detached, so it can wait (5 min); past that the answer is kept for tick, never dropped
+      if ! lock cards "${FRICTION_CARDS_LOCK_TRIES:-1500}"; then
+        mkdir -p "$ANSWERS"; printf '%s\n' "$evjson" >"$(mktemp "$ANSWERS/$F.XXXXXX")"
+        log "hook: $F: the deck is busy; answer $ans kept for the next tick"; rm -f "$errf"; return 0
+      fi
+      if ! out="$("$FRICTION_LEDGER" card-answer "$F" "$ans" --date "$date_" 2>"$errf")"; then
+        log "hook: $F: answer $ans refused: $(one_line "$(cat "$errf"; printf ' %s' "$out")")"
+        rm -f "$errf"; drop_card "$id"; unlock cards; return 0
+      fi
+      drop_card "$id"
+      unlock cards
+      if [ "$(jq -r '.enqueue // false' <<<"$out")" = true ]; then
+        local args=(enqueue "$F")
+        [ "$(jq -r '.safety // false' <<<"$out")" != true ] || args+=(--approved-safety)
+        if ! "$COACH_FIX" "${args[@]}" 2>"$errf"; then
+          "$FRICTION_LEDGER" set "$F" --status proposed --reason "could not queue the fix: $(one_line "$(tail -1 "$errf")")" --date "$date_" || true
+          rm -f "$errf"; cmd_sync
+          return 0
+        fi
+      fi
+      rm -f "$errf" ;;
+    *) ;;
+  esac
+}
+
+cmd_reply() {
+  local F="${1:-}" card="" q job flag
+  valid_entry "$F"; shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --card) need "$@"; card="$2"; shift ;;
+      *) die "reply: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$card" ] || die "reply needs --card"
+  q="$(one_line "$(cat)")"
+  [ -n "$q" ] || die "reply needs the question on stdin"
+  job="$REPLIES/$F.json"
+  mkdir -p "$REPLIES"
+  lock replies || die "another reply is busy"
+  if [ -f "$job" ]; then
+    jq --arg q "$q" '.questions += [$q]' "$job" >"$job.new" && mv "$job.new" "$job"
+    unlock replies; return 0
+  fi
+  jq -n --arg id "$F" --arg card "$card" --arg q "$q" --argjson e "$(date +%s)" '{id: $id, card: $card, questions: [$q], started_epoch: $e}' >"$job"
+  unlock replies
+  flag="$(harness_flag)"
+  if [ -n "$flag" ]; then cmd_unrevised "$F" --reason "COACH_HARNESS carries the permission flag $flag; the reply job never starts with one"; return 0; fi
+  if ! [[ "$(prompt_cmd)" =~ ^/[A-Za-z0-9:_-]+$ ]]; then cmd_unrevised "$F" --reason "bad COACH_PROMPT_CMD: $(prompt_cmd)"; return 0; fi
+  local dir="$COACH_REPOS_DIR" pid out="$COACH_STATE_DIR/logs/reply-$F.log"; [ -d "$dir" ] || dir="$HOME"
+  mkdir -p "$COACH_STATE_DIR/logs"
+  # headless: detached in its own process group (nohup, set -m), stdin closed, no window
+  set -m
+  # shellcheck disable=SC2046,SC2086 # COACH_HARNESS may carry its own words (checked by harness_flag)
+  (cd "$dir" && exec nohup $COACH_HARNESS $(headless_args) "$(prompt_cmd) $F --revise") </dev/null >"$out" 2>&1 &
+  pid=$!
+  set +m
+  if lock replies; then
+    [ ! -f "$job" ] || { jq --argjson p "$pid" '.pid = $p' "$job" >"$job.new" && mv "$job.new" "$job"; }
+    unlock replies
+  fi
+  log "reply: $F started (pid $pid, log $out): $COACH_HARNESS $(headless_args) '$(prompt_cmd) $F --revise'"
+}
+
+finish_job() { # F answer-file [proposal-file]: revise the entry, drop the asked card and the job file, sync
+  local F="$1" afile="$2" pfile="${3:-}" job="$REPLIES/$1.json" qfile
+  [ -f "$job" ] || die "no reply job for $F"
+  lock cards || die "another sync is busy"
+  if [ "$(entry_field "$F" status)" != offered ]; then
+    log "reply: $F is no longer on a card (status $(entry_field "$F" status)); dropped its reply job without revising"
+    drop_card "$(jq -r .card "$job")" "answered while the reply was running"
+    rm -f "$job"; unlock cards; return 0
+  fi
+  qfile="$(mktemp)"
+  jq -r '.questions | join(" / ")' "$job" >"$qfile"
+  local rc=0
+  if [ -n "$pfile" ]; then "$FRICTION_LEDGER" revise "$F" --question-file "$qfile" --answer-file "$afile" --proposal-file "$pfile" --date "$(today)" || rc=1
+  else "$FRICTION_LEDGER" revise "$F" --question-file "$qfile" --answer-file "$afile" --date "$(today)" || rc=1; fi
+  rm -f "$qfile"
+  if [ "$rc" = 1 ]; then unlock cards; echo "friction-cards: could not revise $F; its reply job and card stay" >&2; return 1; fi
+  drop_card "$(jq -r .card "$job")" "revised after your question"
+  rm -f "$job"
+  sync_locked "$(today)"
+  unlock cards
+}
+
+cmd_revised() {
+  local F="${1:-}" afile="" pfile=""
+  valid_entry "$F"; shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --answer-file) need "$@"; afile="$2"; shift ;;
+      --proposal-file) need "$@"; pfile="$2"; shift ;;
+      *) die "revised: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -f "$afile" ] || die "revised needs --answer-file"
+  finish_job "$F" "$afile" "$pfile"
+}
+
+cmd_unrevised() {
+  local F="${1:-}" reason="" afile
+  valid_entry "$F"; shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason) need "$@"; reason="$2"; shift ;;
+      *) die "unrevised: unknown option $1" ;;
+    esac
+    shift
+  done
+  [ -n "$reason" ] || die "unrevised needs --reason"
+  afile="$(mktemp)"; printf 'could not revise: %s\n' "$reason" >"$afile"
+  finish_job "$F" "$afile"; rm -f "$afile"
+}
+
+cmd_tick() {
+  local job F age t pid p
+  # answers kept while the deck was busy; handle removes each file first, and keeps it again if still busy
+  for p in "$ANSWERS"/F-*; do
+    [ -f "$p" ] || continue
+    FRICTION_CARDS_LOCK_TRIES=150 cmd_handle "$p"
+  done
+  cmd_sync
+  [ -d "$REPLIES" ] || return 0
+  t="$(date +%s)"
+  for job in "$REPLIES"/F-*.json; do
+    [ -f "$job" ] || continue
+    F="$(basename "$job" .json)"
+    age=$((t - $(jq -r '.started_epoch // 0' "$job")))
+    if ! reply_alive "$F" "$job"; then
+      [ "$age" -ge "$COACH_STALE_GRACE" ] || continue
+      cmd_unrevised "$F" --reason "the reply job ended without an answer (log: $COACH_STATE_DIR/logs/reply-$F.log)" || log "tick: $F: could not close the reply job"
+    elif [ "$age" -ge "$COACH_REPLY_MAX" ]; then
+      pid="$(jq -r '.pid // empty' "$job")"
+      if [ -n "$pid" ]; then
+        kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+        cmd_unrevised "$F" --reason "the reply job stalled: still running after $((COACH_REPLY_MAX / 60)) min, stopped" || log "tick: $F: could not close the reply job"
+      else
+        cmd_unrevised "$F" --reason "the reply job stalled in tmux window reply-$F (waiting on a prompt?)" || log "tick: $F: could not close the reply job"
+      fi
+    fi
+  done
+}
+
+case "${1:-}" in
+  hook) shift; cmd_hook ;;
+  handle) shift; cmd_handle "$@" ;;
+  reply) shift; cmd_reply "$@" ;;
+  revised) shift; cmd_revised "$@" ;;
+  unrevised) shift; cmd_unrevised "$@" ;;
+  tick) shift; cmd_tick ;;
+  sync) shift; cmd_sync "$@" ;;
+  count) shift; cmd_count "$@" ;;
+  -h | --help | help) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' ;;
+  *) sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
+esac

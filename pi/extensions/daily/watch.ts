@@ -1,0 +1,276 @@
+// The /run-day watcher for pi: the same work as the Claude plugin's
+// hooks/register.tsx (watch, watchInbox), on the same harness-free parsers, so
+// both harnesses turn changes-since output into identical [daily-event] lines.
+// The session that runs the day starts it with the run_day_watch tool (index.ts).
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+
+import { mrKeyFromRef, mrKeysOf, parseItems, ticketKey } from "./mod/diary.ts";
+import { classify, formatNote, formatPrompt, parseEvents } from "./mod/events.ts";
+import { inboxPrompt, messageFiles, nextInbox } from "./mod/inbox.ts";
+import { parseRunState } from "./mod/runstate.ts";
+import { isFullWake, outstanding, parseGraphics, parseLid, sleptBetween, WAKE_PREFIX } from "./mod/wake.ts";
+import { REPORT_MARK } from "./mod/warm.ts";
+import { PI_BUSY_PROMPT, nextNudged, shouldNudgeBusy } from "./mod/busy.ts";
+import { parsePrint, shouldResume } from "./mod/update.ts";
+
+export const WATCH_MS = 180_000;
+export const INBOX_MS = 30_000;
+
+const BLIND_PROBES = 3;
+
+export type Exec = { code: number; stdout: string; stderr: string };
+
+/**
+ * What one wake probe could read (index.ts). Linux judges by CLOCK_BOOTTIME outrunning
+ * CLOCK_MONOTONIC and needs no lid or display; Darwin keeps its lid and display probe; an
+ * unsupported platform can judge nothing, so a sleep there is reported and dropped.
+ */
+export type WakeProbe = {
+  platform: "darwin" | "linux" | "unsupported";
+  /** Linux: resumedBetween saw a suspend end between the previous tick's sample and this one. */
+  resumed: boolean;
+  /** Linux: false when the sample itself could not be read, so this probe judged nothing. */
+  sampled: boolean;
+  /** Darwin: the raw ioreg output (lid); an empty string when unreadable. Empty off Darwin. */
+  lid: string;
+  /** Darwin: the raw pmset systemstate output (display); an empty string when unreadable. */
+  systemstate: string;
+};
+
+export type WatchDeps = {
+  paths: () => { runState: string; diary: string; playbook: string };
+  /** changes-since --cursor run-day */
+  changes: () => Promise<Exec>;
+  listInbox: () => string[];
+  /** True while this session holds watch.lock. */
+  holdsLock: () => boolean;
+  /**
+   * One probe of the machine's sleep state. `needed` is true when a verdict may be asked for this
+   * tick (a gap since the last tick, or a sleep still pending), so macOS only runs ioreg and pmset
+   * then; Linux must sample every tick for CLOCK_BOOTTIME to straddle the sleep.
+   */
+  probe: (needed: boolean) => Promise<WakeProbe>;
+  /** Add a message and start a turn on it. */
+  wake: (text: string) => void;
+  /** Add a message for the next turn, without starting one. */
+  note: (text: string) => void;
+  notify: (message: string, level: "info" | "warning") => void;
+  friction: (kind: string, msg: string, source: string) => void;
+};
+
+const firstLine = (s: string) => s.split("\n")[0].trim();
+const readOr = (path: string) => (existsSync(path) ? readFileSync(path, "utf8") : "");
+
+export class DayWatcher {
+  private checking = false;
+  private failed = false;
+  private seen: string[] = [];
+  private prevTickAt: number | null = null;
+  private pendingSince: number | null = null;
+  private blindProbes = 0;
+  private busyNudged = false;
+  private updateSent = false;
+  private deps: WatchDeps;
+
+  constructor(deps: WatchDeps) {
+    this.deps = deps;
+  }
+
+  active(): boolean {
+    return existsSync(this.deps.paths().runState);
+  }
+
+  async checkEvents(): Promise<void> {
+    if (this.checking || !this.active()) return;
+    this.checking = true;
+    try {
+      const ran = await this.deps.changes();
+      if (ran.code !== 0) {
+        if (!this.failed) {
+          const why = `changes-since failed (exit ${ran.code}): ${firstLine(ran.stderr)}`;
+          this.deps.notify(`run-day: ${why}. Events are not reaching this session.`, "warning");
+          // changes-since logs its own service_down; only its timeout is invisible to it
+          if (ran.code === 124 || /timed? ?out/i.test(ran.stderr)) this.deps.friction("timeout", why, "changes-since");
+        }
+        this.failed = true;
+        return;
+      }
+      if (this.failed) this.deps.notify("run-day: changes-since is working again", "info");
+      this.failed = false;
+
+      const p = this.deps.paths();
+      const items = parseItems(readOr(p.diary));
+      const runs = parseRunState(readOr(p.runState));
+      const ctx = {
+        mrKeys: new Set([
+          ...items.flatMap((i) => mrKeysOf(i.line)),
+          ...runs.flatMap((r) => r.mrs.map(mrKeyFromRef)).filter((k) => k !== ""),
+        ]),
+        ticketKeys: new Set(items.map((i) => ticketKey(i.text)).filter((k) => k !== "")),
+      };
+      const prompts: string[] = [];
+      for (const ev of parseEvents(ran.stdout).events) {
+        try {
+          if (classify(ev, ctx) === "prompt") prompts.push(formatPrompt(ev));
+          else this.deps.note(formatNote(ev));
+        } catch {
+          // one malformed event never costs the others
+        }
+      }
+      if (prompts.length > 0) this.deps.wake(prompts.join("\n"));
+    } catch (err) {
+      if (!this.failed) {
+        const why = err instanceof Error ? err.message : String(err);
+        this.deps.notify(`run-day watcher: ${why}`, "warning");
+        this.deps.friction(/timed? ?out/i.test(why) ? "timeout" : "tool_error", `daily watcher: ${why}`, "changes-since");
+      }
+      this.failed = true;
+    } finally {
+      this.checking = false;
+    }
+  }
+
+  /**
+   * Called on the 30 s tick. A gap since the last tick means the machine slept; on a full wake
+   * (a Linux resume, or a display that is on) with work outstanding it returns the prompt telling
+   * the session to run the Wake check, once. The gap is recorded before anything that could throw.
+   */
+  async checkWake(now: number): Promise<string | null> {
+    const prev = this.prevTickAt;
+    this.prevTickAt = now;
+    const watching = this.deps.holdsLock() && this.active() && !readOr(this.deps.paths().diary).includes(REPORT_MARK);
+    if (!watching) {
+      this.pendingSince = null;
+      this.blindProbes = 0;
+      // Sample off duty too, so a later resume is never judged against a stale Linux sample.
+      await this.deps.probe(false).catch(() => null);
+      return null;
+    }
+    const slept = prev !== null && sleptBetween(prev, now);
+    const probed = await this.deps.probe(slept || this.pendingSince !== null);
+
+    if (probed.platform === "linux") {
+      // A resume is the whole verdict here: no lid, no display, and no blind probe spent on it.
+      if (probed.resumed) this.pendingSince ??= prev ?? now;
+      if (this.pendingSince === null) {
+        // A sample it could not read judged nothing: report that like any other blind probe.
+        return slept && !probed.sampled ? this.giveUp("the suspend sample") : null;
+      }
+    } else {
+      if (slept && prev !== null) this.pendingSince ??= prev;
+      if (this.pendingSince === null) return null;
+      if (probed.platform === "unsupported") {
+        this.pendingSince = null;
+        this.blindProbes = 0;
+        this.deps.notify("daily wake: no supported wake probe; no wake nudge for this sleep", "info");
+        return null;
+      }
+      const lid = parseLid(probed.lid);
+      const graphics = parseGraphics(probed.systemstate);
+      if (lid === null && graphics === null) return this.giveUp("lid or display state");
+      if (!isFullWake(lid, graphics)) return null;
+    }
+    this.blindProbes = 0;
+    // Another tick may have taken this wake while the probe ran.
+    const since = this.pendingSince;
+    if (since === null) return null;
+    this.pendingSince = null;
+    const hasInbox = messageFiles(this.deps.listInbox()).length > 0;
+    if (outstanding(parseRunState(readOr(this.deps.paths().runState))).length === 0 && !hasInbox) return null;
+    return `${WAKE_PREFIX} woke after ${Math.round((now - since) / 60_000)} min: run the Wake check of /run-day (section 10).`;
+  }
+
+  /** BLIND_PROBES ticks that could not read `read`: one honest notification, then the sleep is dropped. */
+  private giveUp(read: string): null {
+    if (++this.blindProbes < BLIND_PROBES) return null;
+    this.blindProbes = 0;
+    this.pendingSince = null;
+    this.deps.notify(`daily wake: cannot read ${read}; no wake nudge for this sleep`, "info");
+    return null;
+  }
+
+  /**
+   * Called on the 30 s tick: the Keep busy prompt when the watching session has sat idle with no
+   * agent outstanding (mod/busy.ts), once per idle stretch.
+   */
+  checkBusy(now: number, a: { lastActiveAt: number; turnRunning: boolean; userWrote: boolean }): string | null {
+    const p = this.deps.paths();
+    const out = this.active() ? outstanding(parseRunState(readOr(p.runState))).length : 0;
+    this.busyNudged = nextNudged(this.busyNudged, { outstanding: out, userWrote: a.userWrote });
+    const dayRunning = this.active() && !readOr(p.diary).includes(REPORT_MARK);
+    const state = {
+      isOwner: this.deps.holdsLock(),
+      dayRunning,
+      now,
+      lastActiveAt: a.lastActiveAt,
+      outstanding: out,
+      agentsRunning: a.turnRunning ? 1 : 0,
+      nudged: this.busyNudged,
+    };
+    if (!shouldNudgeBusy(state)) return null;
+    this.busyNudged = true;
+    return PI_BUSY_PROMPT;
+  }
+
+  /** What the day runs with (mod/update.ts): written when the watcher starts. */
+  recordPlaybook(print: string): void {
+    writeFileSync(this.deps.paths().playbook, `${print}\n`);
+    this.updateSent = false;
+  }
+
+  /**
+   * Called on the 30 s tick with the playbook's print as it is on disk: true once when it differs
+   * from the recorded one, in the watching session while the day runs (the caller runs /daily-update).
+   */
+  checkUpdate(print: string): boolean {
+    const p = this.deps.paths();
+    const dayRunning = this.active() && !readOr(p.diary).includes(REPORT_MARK);
+    const recorded = parsePrint(existsSync(p.playbook) ? readFileSync(p.playbook, "utf8") : null);
+    if (this.updateSent || !shouldResume({ isOwner: this.deps.holdsLock(), dayRunning, recorded, current: print })) return false;
+    this.updateSent = true;
+    return true;
+  }
+
+  /** True when it sent an `inbox: N new` prompt. */
+  checkInbox(): boolean {
+    if (!this.active()) return false;
+    const { fresh, state } = nextInbox(this.deps.listInbox(), this.seen);
+    this.seen = state.seen;
+    if (fresh.length > 0) this.deps.wake(inboxPrompt(fresh.length));
+    return fresh.length > 0;
+  }
+}
+
+type Holder = { pid: number; session: string };
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Take the watch lock; returns why not, or null when this session holds it now. */
+export function acquireLock(path: string, me: Holder): string | null {
+  try {
+    const held = JSON.parse(readFileSync(path, "utf8")) as Holder;
+    if (held.pid !== me.pid && alive(held.pid)) {
+      return `pi session ${held.session} (pid ${held.pid}) is already watching this day`;
+    }
+  } catch {
+    // no lock, or an unreadable one: take it
+  }
+  writeFileSync(path, `${JSON.stringify({ ...me, started: new Date().toISOString() })}\n`);
+  return null;
+}
+
+export function releaseLock(path: string, pid: number): void {
+  try {
+    const held = JSON.parse(readFileSync(path, "utf8")) as Holder;
+    if (held.pid === pid) rmSync(path, { force: true });
+  } catch {
+    // nothing to release
+  }
+}

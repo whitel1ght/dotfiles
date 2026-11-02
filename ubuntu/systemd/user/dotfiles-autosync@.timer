@@ -1,0 +1,11 @@
+[Unit]
+Description=Run %i repository autosync every 15 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+Persistent=true
+Unit=dotfiles-autosync@%i.service
+
+[Install]
+WantedBy=timers.target

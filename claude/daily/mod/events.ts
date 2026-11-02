@@ -62,3 +62,5 @@ export function formatToast(ev: DayEvent): string {
   const text = str(ev.summary) ? `${head}: ${clean(ev.summary, 100)}` : head
   return text.length > 140 ? `${text.slice(0, 139)}…` : text
 }
+
+export const isTimeout = (message: string): boolean => /timed? ?out|still running after/i.test(message)

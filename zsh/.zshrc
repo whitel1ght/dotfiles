@@ -102,6 +102,11 @@ alias pil='pi --model ollama/qwen2.5-coder:14b-16k --no-tools -ns -nc -np'
 # context files are off: with them Pi sends ~40k tokens before the first message.
 alias pilm='pi --model lmstudio/qwen/qwen2.5-coder-14b --models lmstudio/qwen/qwen2.5-coder-14b -ne -ns -np -nc --no-mcp'
 
+# Keep Pi and its extensions current before an interactive start. The updater
+# skips subcommands/non-interactive calls, rate-limits successful updates, and
+# always lets Pi start if an update fails. Ubuntu installs this helper via install.sh.
+pi() { if (( $+commands[pi-autoupdate] )); then command pi-autoupdate "$@"; fi; command pi "$@"; }
+
 # Free Pi session, with Longcat as the only scoped model.
 alias pifree='pi --model opencode-go/longcat-2.5-preview-free --models opencode-go/longcat-2.5-preview-free'
 

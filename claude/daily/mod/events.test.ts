@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { classify, eventMrKey, formatNote, formatPrompt, formatToast, parseEvents } from './events.ts'
+import { classify, eventMrKey, formatNote, formatPrompt, formatToast, isTimeout, parseEvents } from './events.ts'
 
 const ctx = { mrKeys: new Set(['dashboard!2231']), ticketKeys: new Set(['ecfx-18169']) }
 const review = { kind: 'review', ticket: 'ECFX-18169', mr: 2231, repo: 'ecfx/ecfx-dashboard', summary: 'bkeeling requested changes', url: 'https://x/2231' }
@@ -60,6 +60,13 @@ test('formatPrompt flattens newlines and pipes, truncates, and fills gaps with a
   expect(line.split(' | ').length).toBe(5)
 })
 
+test('a long summary keeps the whole reply-only prefix changes-since puts on MRs we approved', async () => {
+  const prefix = '[approved by you — reply only, never review] '
+  const line = formatPrompt({ ...review, kind: 'comment', summary: `${prefix}@bob mentioned: ${'x'.repeat(300)}` })
+  expect(line.split(' | ')[3].startsWith(prefix.trim())).toBe(true)
+  expect(line.includes('… | https://x/2231')).toBe(true)
+})
+
 test('formatNote uses the info tag; formatToast is short and readable', async () => {
   expect(formatNote(review).startsWith('[daily-event:info] review')).toBe(true)
   expect(formatToast(review)).toBe('review ECFX-18169 dashboard!2231: bkeeling requested changes')
@@ -73,4 +80,11 @@ test('a malformed event does not throw in classify or the formatters', async () 
   expect(formatPrompt(bad)).toContain('[daily-event] review | dashboard!2231 | 42 |')
   expect(formatToast(bad)).toContain('review')
   expect(formatNote({ kind: 'assigned', ticket: 5, summary: 9 } as never)).toContain('[daily-event:info] assigned')
+})
+
+test('isTimeout matches the host\'s wrapped abort text and the script\'s own wording, not other failures', async () => {
+  expect(isTimeout('daily: $.process.run(/bin/sh) aborted: still running after 60000ms')).toBe(true)
+  expect(isTimeout('changes-since: timed out waiting for Jira or GitLab')).toBe(true)
+  expect(isTimeout('Request Timeout')).toBe(true)
+  expect(isTimeout('daily: $.process.run(/bin/sh) denied: EACCES')).toBe(false)
 })

@@ -41,3 +41,10 @@ test('files that left the inbox are forgotten, and an empty inbox is zero pendin
 test('inboxPrompt is the line the main session recognises', async () => {
   expect(inboxPrompt(2)).toBe('inbox: 2 new')
 })
+
+test('a service note, keyed or not, is an ordinary message: listed, counted, never routed to bad/', async () => {
+  const keyed = '20261015T091200-ECFX-18169-ab12.md'
+  const unkeyed = '20261015T091300-offplan-cd34.md'
+  expect(messageFiles([unkeyed, keyed])).toEqual([keyed, unkeyed])
+  expect(nextInbox([keyed, unkeyed], []).state.pending).toBe(2)
+})

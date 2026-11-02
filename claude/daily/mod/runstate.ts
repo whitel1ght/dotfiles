@@ -24,6 +24,8 @@ export function parseRunState(text: string): RunItem[] {
       retries: Number(f.retries ?? 0) || 0,
       needsYou: f.needs_you === 'yes',
       owner: blank(f.owner) || 'main',
+      waiting: blank(f.waiting),
+      round: blank(f.round),
     })
   }
   return out

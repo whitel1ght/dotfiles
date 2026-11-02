@@ -1,0 +1,317 @@
+#!/usr/bin/env bash
+# Contract test against a REAL pi, not a fake pi object.
+#
+# Unit tests that hand an extension a stub `pi` cannot notice Pi dropping the hook the
+# extension depends on. That happened once: context_with_system sections stopped reaching
+# the provider request somewhere between 1.0.3 and 1.2.0, every unit test still passed, and
+# subagent model selection ran unguided for days. This script boots pi in a throwaway
+# config dir with a probe extension, captures the outgoing provider payload, and asserts
+# that what my extensions and APPEND_SYSTEM.md rely on is really in it.
+#
+# Run it after any `pi update`, and after changing pi/extensions/{session-models,daily,pi-sub}.
+# The pi-sub checks launch one real subagent and drive an interactive pi in tmux, so the
+# whole run takes a minute or two and needs tmux.
+#
+# Usage: pi-contract [--model provider/id]
+set -euo pipefail
+
+DOTFILES="${DOTFILES:-$HOME/projects/dotfiles}"
+AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+MODEL="qwen-token-plan/qwen3.8-flash"
+[ "${1:-}" = --model ] && MODEL="${2:?--model needs provider/id}"
+PROVIDER="${MODEL%%/*}"
+MODEL_ID="${MODEL#*/}"
+TODAY="$(date +%F)"
+
+T="$(mktemp -d /tmp/pi-contract.XXXXXX)"
+trap 'rm -rf "$T"' EXIT
+mkdir -p "$T/sessions" "$T/state/run-day" "$T/wiki/diary"
+# pi-sub loads in every pi run below: its agents, wake-ups and watcher stay in the sandbox,
+# never in the real ~/.local/state/pi-sub where live subagents are.
+export PI_SUB_STATE_DIR="$T/pi-sub" PI_SUB_AGENTS_DIR="$DOTFILES/pi/agents"
+# Every entry of the extensions dir, not just the two under test: package- and
+# extension-registered tools (bg_start and friends) have to be present or the prose tool
+# check below reports tools that really do exist in an interactive session. Linked entry by
+# entry on purpose: the probe is written into $T/extensions below, and symlinking the dir
+# itself wrote that probe into the repo, where every real session loaded it and threw
+# because PROBE_OUT is unset outside this test.
+mkdir -p "$T/extensions"
+for entry in "$DOTFILES"/pi/extensions/*; do
+  ln -s "$entry" "$T/extensions/$(basename "$entry")"
+done
+
+# Credentials and model definitions come from the live install; everything the test asserts
+# on comes from the repo, so the test measures what dotfiles actually ships.
+ln -s "$AGENT_DIR/auth.json" "$T/auth.json"
+ln -s "$DOTFILES/pi/models.json" "$T/models.json"
+ln -s "$DOTFILES/pi/APPEND_SYSTEM.md" "$T/APPEND_SYSTEM.md"
+cp "$DOTFILES/pi/settings.json" "$T/settings.json"
+# Packages are installed under the agent dir; without this link package-provided tools never load.
+ln -s "$AGENT_DIR/npm" "$T/npm"
+
+cat > "$T/extensions/probe.ts" <<'EOF'
+import { writeFileSync } from "node:fs";
+export default function probe(pi: any) {
+  pi.on("before_provider_request", (event: any) => {
+    if (process.env.PROBE_OUT) writeFileSync(process.env.PROBE_OUT, JSON.stringify(event.payload ?? null));
+  });
+}
+EOF
+
+# The daily extension stays silent without a run state, so give it one.
+printf '# run-day %s\nmax_agents: 3\n\n- ecfx-1001 | class=me | agent=- | worktree=- | mr=- | retries=0 | needs_you=no | owner=main\n' "$TODAY" > "$T/state/run-day/$TODAY.md"
+{
+  printf '# %s\n\n<!-- start-day:start -->\n#### Plan\n\n**Today**\n\n- [ ] ecfx-1001 fix the export\n<!-- start-day:end -->\n' "$TODAY"
+} > "$T/wiki/diary/$TODAY.md"
+
+cd /tmp
+PROBE_OUT="$T/payload.json" \
+PI_CODING_AGENT_DIR="$T" \
+PI_CODING_AGENT_SESSION_DIR="$T/sessions" \
+RUN_DAY_STATE_DIR="$T/state/run-day" \
+WIKI_DIR="$T/wiki" \
+RUN_DAY_DATE="$TODAY" \
+PI_OFFLINE=1 \
+  pi -p --provider "$PROVIDER" --model "$MODEL_ID" --models "$MODEL" --thinking off \
+  'Reply with one word: ok' > "$T/out.txt" 2> "$T/err.txt" || {
+    echo "FAIL: pi exited non-zero"; sed 's/^/  /' "$T/err.txt" | head -20; exit 1;
+  }
+
+[ -s "$T/payload.json" ] || { echo "FAIL: probe captured no provider payload"; exit 1; }
+
+fails=0
+check() { # check <label> <needle>
+  if python3 -c 'import json,sys; sys.exit(0 if sys.argv[1] in json.dumps(json.load(open(sys.argv[2]))) else 1)' "$2" "$T/payload.json"; then
+    printf 'PASS  %s\n' "$1"
+  else
+    printf 'FAIL  %s\n      expected to find: %s\n' "$1" "${2:0:90}"
+    fails=$((fails + 1))
+  fi
+}
+
+check "session-models: live model list reaches the request" "Choose subagent models only from this live session list"
+check "session-models: the scoped model is the one listed" "$MODEL"
+check "daily: run state reaches the request" "A /run-day session is active for $TODAY"
+check "daily: plan block reaches the request" "ecfx-1001 fix the export"
+check "APPEND_SYSTEM: fail-closed subagent rule reaches the request" "launch no subagents at all"
+check "APPEND_SYSTEM: fail-closed run-day rule reaches the request" "daily_run_state"
+
+# Every tool the prose tells the model to call must exist in this install. Dotfiles once
+# shipped prompts calling `subagent({…})` from a package that was no longer installed, and
+# nothing anywhere complained: the model just had no such tool.
+tools_file="$T/tools.txt"
+python3 - "$T/payload.json" > "$tools_file" <<'EOF'
+import json, sys
+payload = json.load(open(sys.argv[1]))
+for tool in payload.get("tools") or []:
+    name = (tool.get("function") or {}).get("name")
+    if name:
+        print(name)
+EOF
+
+check_tool() { # check_tool <name>
+  if grep -qxF "$1" "$tools_file"; then
+    printf 'PASS  tool exists: %s\n' "$1"
+  else
+    printf 'FAIL  tool missing from this pi install: %s\n' "$1"
+    fails=$((fails + 1))
+  fi
+}
+
+while IFS= read -r name; do
+  check_tool "$name"
+done < <(rg -oN --no-filename '`([a-zA-Z_][a-zA-Z0-9_-]*)\(\{' \
+  "$DOTFILES"/pi/prompts/*.md "$DOTFILES"/pi/skills/*/SKILL.md \
+  "$DOTFILES"/pi/APPEND_SYSTEM.md "$DOTFILES"/pi/model-selection.md \
+  | sed 's/`//; s/({$//' | sort -u)
+
+# The delegation tools the prompts depend on, checked by name rather than by prose, so a
+# prompt that stops mentioning them cannot hide their absence.
+for required in subagent subagent_stop subagent_result subagent_adopt subagent_handoff; do
+  check_tool "$required"
+done
+
+# pi-sub replaces acp_delegate: its completions never wake the session, so the main model
+# must not see it at all, and no prompt may tell the model to use it.
+if grep -qE '^acp_delegate' "$tools_file"; then
+  echo "FAIL  acp_delegate tools still reach the main model (pi-sub should strip them)"
+  fails=$((fails + 1))
+else
+  echo "PASS  acp_delegate tools are not offered to the main model"
+fi
+prose_acp="$(rg -l 'acp_delegate' "$DOTFILES"/pi/prompts/*.md "$DOTFILES"/pi/skills/*/SKILL.md \
+  "$DOTFILES"/pi/APPEND_SYSTEM.md "$DOTFILES"/pi/model-selection.md 2>/dev/null || true)"
+if [ -z "$prose_acp" ]; then
+  echo "PASS  no prompt, skill or APPEND_SYSTEM prose mentions acp_delegate"
+else
+  echo "FAIL  prose still tells the model to use acp_delegate:"
+  printf '%s\n' "$prose_acp" | sed "s|^$DOTFILES/|        |"
+  fails=$((fails + 1))
+fi
+
+# --- pi-sub against the real pi -------------------------------------------------------
+# Unit tests stub pi; these run it. A subagent is launched exactly the way the subagent
+# tool does (launch.ts), by a launcher process that exits right away, so the agent must
+# outlive whoever started it. Its owner is a session that does not exist yet: opening
+# that session later in an interactive pi must deliver the exit once and start a turn
+# on its own, with nobody typing.
+PISUB="$DOTFILES/pi/extensions/pi-sub"
+SID="$(uuidgen | tr 'A-Z' 'a-z')"
+cat > "$T/launch.ts" <<'EOF'
+import { launch } from "PISUB/launch.ts";
+import { loadRole } from "PISUB/roles.ts";
+const m = launch({
+  role: loadRole("worker"), model: process.argv[2], label: "contract probe",
+  task: "Reply with exactly this line and nothing else: PISUB OK",
+  cwd: "/tmp", skills: [], extras: [], ownerSession: process.argv[3], ownerPid: process.pid,
+  maxMinutes: 5, idleMinutes: 0,
+});
+console.log(m.id);
+EOF
+sed -i '' "s|PISUB/|$PISUB/|" "$T/launch.ts" 2>/dev/null || sed -i "s|PISUB/|$PISUB/|" "$T/launch.ts"
+
+agent="$(cd /tmp && PI_CODING_AGENT_DIR="$T" node "$T/launch.ts" "$MODEL" "$SID" 2>"$T/launch.err")" || agent=""
+if [ -z "$agent" ]; then
+  echo "FAIL  pi-sub: launch.ts could not start a subagent"; sed 's/^/        /' "$T/launch.err" | head -5
+  fails=$((fails + 1))
+else
+  adir="$PI_SUB_STATE_DIR/$agent"
+  for _ in $(seq 1 180); do [ -s "$adir/exit.json" ] && break; sleep 1; done
+  if [ "$(jq -r .how "$adir/exit.json" 2>/dev/null)" = done ] && grep -q 'PISUB OK' "$adir/result.md" 2>/dev/null; then
+    echo "PASS  pi-sub: subagent outlived its launcher and finished (PISUB OK)"
+  else
+    echo "FAIL  pi-sub: subagent did not finish with PISUB OK (exit: $(cat "$adir/exit.json" 2>/dev/null || echo none))"
+    sed 's/^/        /' "$adir/stderr.log" 2>/dev/null | tail -5
+    fails=$((fails + 1))
+  fi
+  # Bare: the child's request holds the task and nothing inherited — one user message,
+  # no AGENTS.md, no skill list, no memory snapshot.
+  if python3 - "$adir/events.jsonl" <<'EOF'
+import json, sys
+users, system = 0, ""
+for line in open(sys.argv[1]):
+    try: ev = json.loads(line)
+    except ValueError: continue
+    if ev.get("type") != "message_start": continue
+    msg = ev.get("message") or {}
+    if msg.get("role") == "user": users += 1
+    if msg.get("role") == "system": system += json.dumps(msg)
+leaks = [w for w in ("project_instructions", "available_skills", "## Memory") if w in system]
+sys.exit(0 if users == 1 and not leaks else 1)
+EOF
+  then echo "PASS  pi-sub: the child started bare (one user message, no inherited context)"
+  else echo "FAIL  pi-sub: the child inherited context or prior messages"; fails=$((fails + 1))
+  fi
+
+  if ! command -v tmux >/dev/null; then
+    echo "FAIL  pi-sub: tmux is needed to check that a wake-up starts a turn"; fails=$((fails + 1))
+  else
+    tm="pi-contract-$$"
+    tmux new-session -d -s "$tm" -x 160 -y 40 \
+      "cd /tmp && PROBE_OUT='$T/wake.json' PI_CODING_AGENT_DIR='$T' PI_CODING_AGENT_SESSION_DIR='$T/sessions' \
+       PI_SUB_STATE_DIR='$PI_SUB_STATE_DIR' PI_SUB_AGENTS_DIR='$PI_SUB_AGENTS_DIR' PI_OFFLINE=1 \
+       pi --session-id '$SID' --provider '$PROVIDER' --model '$MODEL_ID' --models '$MODEL' --thinking off"
+    for _ in $(seq 1 90); do grep -q "\[pi-sub\] #1 worker" "$T/wake.json" 2>/dev/null && break; sleep 1; done
+    # Pi writes the session file only once the turn has a reply; killing earlier loses it.
+    for _ in $(seq 1 60); do cat "$T"/sessions/*"$SID"*.jsonl 2>/dev/null | grep -q '"role":"assistant"' && break; sleep 1; done
+    tmux kill-session -t "$tm" 2>/dev/null || true
+    if grep -q "\[pi-sub\] #1 worker" "$T/wake.json" 2>/dev/null; then
+      echo "PASS  pi-sub: reopening the owner session delivered the exit and started a turn unprompted"
+    else
+      echo "FAIL  pi-sub: no turn carrying the [pi-sub] wake-up started in the reopened session"
+      fails=$((fails + 1))
+    fi
+    # A second open must not deliver it again.
+    (cd /tmp && PI_CODING_AGENT_DIR="$T" PI_CODING_AGENT_SESSION_DIR="$T/sessions" PI_OFFLINE=1 \
+      pi -p --session-id "$SID" --provider "$PROVIDER" --model "$MODEL_ID" --models "$MODEL" --thinking off \
+      'Reply with one word: ok' >/dev/null 2>&1) || true
+    wakes="$(cat "$T"/sessions/*"$SID"*.jsonl 2>/dev/null | grep -c '"customType":"pi-sub"' || true)"
+    if [ "$wakes" = 1 ]; then
+      echo "PASS  pi-sub: the exit was delivered exactly once across two opens"
+    else
+      echo "FAIL  pi-sub: expected 1 delivered wake-up in the session, found ${wakes:-0}"
+      fails=$((fails + 1))
+    fi
+  fi
+fi
+
+# recap: /recap must produce a recap on the session model from the digest. It runs on a
+# Pi model-registry call and session APIs, so a Pi update can break it without a sound.
+if command -v tmux >/dev/null; then
+  RSID="$(uuidgen | tr 'A-Z' 'a-z')"
+  rtm="pi-contract-recap-$$"
+  tmux new-session -d -s "$rtm" -x 160 -y 40 \
+    "cd /tmp && PI_CODING_AGENT_DIR='$T' PI_CODING_AGENT_SESSION_DIR='$T/sessions' PI_OFFLINE=1 \
+     pi --session-id '$RSID' --provider '$PROVIDER' --model '$MODEL_ID' --models '$MODEL' --thinking off \
+     'We are renaming the widget module to gadget. Reply with one word: ok'"
+  for _ in $(seq 1 60); do cat "$T"/sessions/*"$RSID"*.jsonl 2>/dev/null | grep -q '"role":"assistant"' && break; sleep 1; done
+  tmux send-keys -t "$rtm" "/recap" Enter
+  for _ in $(seq 1 45); do cat "$T"/sessions/*"$RSID"*.jsonl 2>/dev/null | grep -q '"customType":"pi-recap:state"' && break; sleep 1; done
+  tmux kill-session -t "$rtm" 2>/dev/null || true
+  recap="$(cat "$T"/sessions/*"$RSID"*.jsonl 2>/dev/null | jq -r 'select(.customType=="pi-recap:state")|.data.lastRecap' | tail -1)"
+  if [ -n "$recap" ]; then
+    printf 'PASS  recap: /recap answered on the session model: %s\n' "$(printf '%s' "$recap" | cut -c1-80)"
+  else
+    echo "FAIL  recap: /recap produced no recap within 45s"
+    fails=$((fails + 1))
+  fi
+fi
+
+# session-summary: quitting an ordinary session must leave sessions/<date>/<id>.md in the
+# wiki. It hangs off session_shutdown and the model registry; an update can silence it.
+if command -v tmux >/dev/null; then
+  SSID="$(uuidgen | tr 'A-Z' 'a-z')"
+  stm="pi-contract-summary-$$"
+  mkdir -p "$T/wiki" "$T/run-day"
+  tmux new-session -d -s "$stm" -x 160 -y 40 \
+    "cd /tmp && PI_CODING_AGENT_DIR='$T' PI_CODING_AGENT_SESSION_DIR='$T/sessions' PI_OFFLINE=1 \
+     WIKI_DIR='$T/wiki' RUN_DAY_STATE_DIR='$T/run-day' \
+     pi --session-id '$SSID' --provider '$PROVIDER' --model '$MODEL_ID' --models '$MODEL' --thinking off \
+     'We are renaming the widget module to gadget. Reply with one word: ok'"
+  for _ in $(seq 1 60); do [ "$(cat "$T"/sessions/*"$SSID"*.jsonl 2>/dev/null | grep -c '"role":"assistant"')" -ge 1 ] && break; sleep 1; done
+  tmux send-keys -t "$stm" "Done. Reply with one word: bye" Enter
+  for _ in $(seq 1 60); do [ "$(cat "$T"/sessions/*"$SSID"*.jsonl 2>/dev/null | grep -c '"role":"assistant"')" -ge 2 ] && break; sleep 1; done
+  tmux send-keys -t "$stm" "/quit" Enter
+  summary=""
+  for _ in $(seq 1 40); do summary="$(ls "$T"/wiki/work/sessions/*/"$SSID".md 2>/dev/null | head -1 || true)"; [ -n "$summary" ] && break; sleep 1; done
+  tmux kill-session -t "$stm" 2>/dev/null || true
+  if [ -n "$summary" ] && grep -q "^session: $SSID" "$summary"; then
+    printf 'PASS  session-summary: quitting wrote %s\n' "$(grep -m1 '^# ' "$summary" | cut -c1-70)"
+  else
+    echo "FAIL  session-summary: no sessions/<date>/$SSID.md within 40s of /quit"
+    fails=$((fails + 1))
+  fi
+fi
+
+# Write-capable children load pi-lens by path with --no-extensions; if the package moves,
+# the -e path breaks and every worker would start without diagnostics, or not at all.
+lens_argv="$(cd /tmp && node --input-type=module -e '
+  const { extraExtensions } = await import(process.argv[1] + "/launch.ts");
+  console.log(extraExtensions({ writeCapable: true }, []).join("\n"));
+' "$PISUB" 2>/dev/null | head -2 | tail -1)"
+if [ -n "$lens_argv" ] && [ -e "$lens_argv" ] \
+  && (cd /tmp && PI_CODING_AGENT_DIR="$T" pi --no-extensions -e "$lens_argv" --help 2>/dev/null) | grep -q -- '--no-lens'; then
+  echo "PASS  pi-sub: the pi-lens -e path loads ($lens_argv)"
+else
+  echo "FAIL  pi-sub: the pi-lens -e path does not load (${lens_argv:-no path})"
+  fails=$((fails + 1))
+fi
+
+# The sandbox must not write into the repo: a stray .ts directly in pi/extensions is loaded
+# by every real pi session, which is exactly how the probe leak above broke them.
+if [ -e "$DOTFILES/pi/extensions/probe.ts" ]; then
+  echo "FAIL  the sandbox leaked probe.ts into pi/extensions (every pi session would load it)"
+  fails=$((fails + 1))
+else
+  echo "PASS  the sandbox wrote nothing into pi/extensions"
+fi
+
+echo
+if [ "$fails" -eq 0 ]; then
+  echo "All checks passed against pi $(pi --version 2>/dev/null || echo '?')."
+else
+  echo "$fails check(s) failed against pi $(pi --version 2>/dev/null || echo '?')."
+  echo "Pi's extension hooks or prompt assembly probably changed; see pi/extensions/*/README.md."
+  sed 's/^/  stderr: /' "$T/err.txt" | head -10
+fi
+exit "$fails"

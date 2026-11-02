@@ -32,6 +32,28 @@ STATE_DIR="${MR_WATCH_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/mr-watch}"
 PROJECTS_DIR="${PROJECTS_DIR:-$HOME/projects}"
 BOT_RE='^(project|group)_[0-9]+_bot'
 
+# repo_path NAME — where the clone of NAME lives: $PROJECTS_DIR/NAME, or one
+# folder deeper when the clones are grouped there (~/projects/ecfx/ecfx-backend;
+# $HOME/projects is the root either way). A flat clone wins over a deeper one,
+# and between two clones at the same depth the first in glob order wins, so a
+# same-named clone in a later group is shadowed silently (js/ecfx-dashboard
+# loses to ecfx/ecfx-dashboard). Dot-directories and worktrees/ are skipped,
+# matching only the path below $PROJECTS_DIR, so a projects root that itself
+# lives in a dot directory (say ~/.local/projects) still resolves. Prints the
+# flat path when neither depth has the clone, so the caller can name it.
+repo_path() {
+  local name="$1" p="$PROJECTS_DIR/$1" d rel
+  if [ ! -d "$p/.git" ]; then
+    for d in "$PROJECTS_DIR"/*/"$name"; do
+      rel="${d#"$PROJECTS_DIR"/}"
+      case "$rel" in .*|../"$name"|worktrees/"$name") continue ;; esac
+      [ -d "$d/.git" ] || continue
+      p="$d"; break
+    done
+  fi
+  printf '%s\n' "$p"
+}
+
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 ignore_re() {
   local re="$BOT_RE" u
@@ -40,7 +62,7 @@ ignore_re() {
 }
 
 worktree_of() { # project-path branch
-  local clone="$PROJECTS_DIR/${1##*/}"
+  local clone; clone=$(repo_path "${1##*/}")
   [ -d "$clone/.git" ] || { echo "none (no clone at $clone)"; return; }
   local wt
   wt=$(git -C "$clone" worktree list --porcelain \

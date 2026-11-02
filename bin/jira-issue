@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Usage: jira-issue KEY [--fields a,b,...]
+# Prints one Jira issue as plain text, one "Field: value" line per requested field
+# (default: summary,status,assignee,description); ADF text is rendered as plain text.
+# Built on jira-api; a failing call exits 1 with the message on stderr.
+set -uo pipefail
+usage() { echo "usage: jira-issue KEY [--fields a,b,...]" >&2; exit 2; }
+key="" fields="summary,status,assignee,description"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help) usage ;;
+        --fields) [ $# -ge 2 ] && [ -n "$2" ] || usage; fields=$2; shift 2 ;;
+        -*) usage ;;
+        *) [ -z "$key" ] || usage; key=$1; shift ;;
+    esac
+done
+[ -n "$key" ] || usage
+
+err=$(mktemp); trap 'rm -f "$err"' EXIT
+body=$(jira-api GET "issue/$key?fields=$fields" 2>"$err") || {
+    cat "$err" >&2; [ -n "$body" ] && echo "$body" >&2; exit 1
+}
+cat "$err" >&2
+
+# Jira answers an HTTP error with a JSON body that has no .fields.
+if ! jq -e 'type == "object" and has("fields")' >/dev/null 2>&1 <<<"$body"; then
+    msg=$(jq -r '[(.errorMessages // [])[], ((.errors // {}) | to_entries[] | "\(.key): \(.value)"), (.message // empty)] | join("; ")' 2>/dev/null <<<"$body")
+    echo "jira-issue: ${key}: ${msg:-$body}" >&2
+    exit 1
+fi
+
+jq -r --arg fields "$fields" '
+def adf:
+    if type == "string" then .
+    elif .type == "text" then
+        ([.marks[]? | select(.type == "link") | .attrs.href][0]) as $h
+        | if $h == null or $h == .text then .text else "\(.text) (\($h))" end
+    elif .type == "inlineCard" then (.attrs.url // "")
+    elif (.type | IN("blockCard", "embedCard")) then (.attrs.url // "") + "\n"
+    elif .type == "hardBreak" then "\n"
+    elif .type == "mention" then (.attrs.text // "")
+    elif (.type | IN("paragraph", "heading", "codeBlock")) then ([.content[]? | adf] | join("")) + "\n"
+    elif .type == "listItem" then "- " + ([.content[]? | adf] | join(""))
+    else [.content[]? | adf] | join("")
+    end;
+def text: adf | rtrimstr("\n");
+def names: map(if type == "object" then .name else . end) | join(", ");
+def line($k; $v): "\($k | (.[0:1] | ascii_upcase) + .[1:]): \($v)";
+def block($k; $v): if $v == null or $v == "" then line($k; "(none)") else "\($k | (.[0:1] | ascii_upcase) + .[1:]):\n\($v)" end;
+.fields as $f
+| $fields | split(",")[] | . as $k | $f[$k] as $v
+| if $k == "description" then block($k; $v | if . == null then null else text end)
+  elif $v == null then line($k; if $k == "assignee" then "(unassigned)" else "(none)" end)
+  elif $k == "status" or $k == "issuetype" or $k == "priority" then line($k; $v.name)
+  elif ($k == "assignee" or $k == "reporter" or $k == "creator") then line($k; $v.displayName // "(unassigned)")
+  elif $k == "labels" or $k == "components" then line($k; if ($v | length) == 0 then "(none)" else $v | names end)
+  elif $k == "parent" then line($k; "\($v.key) \($v.fields.summary // "")")
+  elif $k == "issuelinks" then
+      if ($v | length) == 0 then line($k; "(none)")
+      else "\($k | (.[0:1] | ascii_upcase) + .[1:]):", ($v[] | (.outwardIssue // .inwardIssue) as $i
+          | "  \(if .outwardIssue then .type.outward else .type.inward end) \($i.key) \($i.fields.summary // "")")
+      end
+  elif $k == "comment" then
+      ($v.comments // []) as $c
+      | if ($c | length) == 0 then line($k; "(none)")
+        else "Comment:", ($c[-5:][] | "  \(.author.displayName // "?"): \(.body | text)")
+        end
+  elif ($v | type) == "string" then line($k; $v)
+  elif ($v | type) == "object" and ($v.type? == "doc") then block($k; $v | text)
+  else line($k; $v | tojson)
+  end
+' <<<"$body"

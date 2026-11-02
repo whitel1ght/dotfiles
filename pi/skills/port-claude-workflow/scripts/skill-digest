@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""skill-digest: compare a pi skill with its Claude source by content, not formatting.
+
+  skill-digest DIR       print a digest of DIR's normalized content
+  skill-digest A B       print a unified diff of A's and B's normalized content
+
+Normalized content is the `description` (folded `>-` blocks joined into one line), the body
+after the frontmatter, and every support file. The `name` field and blank-line and
+trailing-space differences are ignored, as are __pycache__ and .DS_Store.
+"""
+import difflib
+import hashlib
+import os
+import re
+import sys
+
+SKIP = {"__pycache__", ".DS_Store", "node_modules"}
+
+
+def description(front):
+    lines = front.splitlines()
+    for i, line in enumerate(lines):
+        m = re.match(r"description:\s*(.*)$", line)
+        if not m:
+            continue
+        value = m.group(1).strip()
+        if value in (">", ">-", "|", "|-", ""):
+            parts = []
+            for cont in lines[i + 1 :]:
+                if cont and not cont[0].isspace():
+                    break
+                parts.append(cont.strip())
+            value = " ".join(p for p in parts if p)
+        return value.strip("'\"")
+    return ""
+
+
+def tidy(text):
+    return [l.rstrip() for l in text.splitlines() if l.strip()]
+
+
+def normalized(root):
+    out = []
+    for dirpath, dirs, files in os.walk(root, followlinks=True):
+        dirs[:] = sorted(d for d in dirs if d not in SKIP)
+        for f in sorted(files):
+            if f in SKIP or f.endswith(".pyc"):
+                continue
+            path = os.path.join(dirpath, f)
+            rel = os.path.relpath(path, root)
+            try:
+                text = open(path, encoding="utf-8").read()
+            except (UnicodeDecodeError, OSError):
+                text = hashlib.sha256(open(path, "rb").read()).hexdigest()
+            if rel == "SKILL.md":
+                m = re.match(r"---\n(.*?)\n---\n?(.*)", text, re.S)
+                front, body = (m.group(1), m.group(2)) if m else ("", text)
+                out += ["== SKILL.md", "description: " + description(front)] + tidy(body)
+            else:
+                out += ["== " + rel] + tidy(text)
+    return out
+
+
+if len(sys.argv) == 2:
+    data = "\n".join(normalized(sys.argv[1])).encode()
+    print(hashlib.sha256(data).hexdigest()[:12])
+elif len(sys.argv) == 3:
+    a, b = sys.argv[1:]
+    sys.stdout.writelines(
+        l + "\n" for l in difflib.unified_diff(normalized(a), normalized(b), a, b, lineterm="")
+    )
+else:
+    sys.exit(__doc__)

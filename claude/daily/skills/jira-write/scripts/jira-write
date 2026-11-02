@@ -5,7 +5,7 @@
 # --dry-run resolves everything and prints what would be sent, without sending.
 set -euo pipefail
 
-JIRA_API="${JIRA_API:-$HOME/bin/jira-api}"
+JIRA_API="${JIRA_API:-$HOME/.local/bin/jira-api}"
 DRY=0
 if [ "${1:-}" = "--dry-run" ]; then DRY=1; shift; fi
 

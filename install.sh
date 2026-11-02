@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Link Ubuntu dotfiles and seed inert machine-local config templates.
-# Package installation, system services, keyboard remapping, and authentication
-# are separate, explicit operations; this script never enables the proxy.
+# Link Ubuntu dotfiles, seed machine-local config templates, and seed the
+# per-host Pi settings file. Package installation, system services, keyboard
+# remapping, and authentication are separate, explicit operations; this script
+# never enables the proxy.
 set -euo pipefail
 
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -166,10 +167,13 @@ create_symlink "$DOTFILES_DIR/git/config/git/ignore" "$XDG_CONFIG_HOME/git/ignor
 # Portable command links. Do not link tests, macOS-only helpers, or the proxy
 # script indirectly: the Ubuntu branch's bin/proxyctl is deliberately retained.
 [ "$DRY_RUN" = 1 ] || mkdir -p "$HOME/.local/bin"
-for name in clipboard-copy changes-since clean-worktrees cs cs-add daily-stats \
-    day-note day-plan dev diary-links ecfx-daily-commits end-day jt mr-watch \
-    newsboat-urls notes open-path opencode-console-auth plink session-picker \
-    start-day sync-tickets tmux-prune vault-check wt proxyctl; do
+for name in cards changes-since clean-worktrees clipboard-copy coach-fix coach-mine cs cs-add \
+    daily-stats day-note day-plan day-status decide decisions dev diary-links \
+    drills docs-check ecfx-daily-commits end-day friction friction-cards friction-ledger \
+    friction-mine frictions ideas jira-api jira-issue jt mr-ship mr-watch \
+    newsboat-urls notes open-path opencode-console-auth pi-autoupdate pi-contract \
+    pi-parity plink repos-sync run-day-inbox-answer session-picker start-day sync-tickets system-check \
+    team-plugins-sync tmux-prune vault-check wiki-commit wiki-sync words wt proxyctl; do
     link_command "$name"
 done
 ensure_command_compat fd fdfind
@@ -177,6 +181,14 @@ ensure_command_compat bat batcat
 
 # Pi owns auth, sessions, package state and the rest of ~/.pi/agent. Link only
 # managed configuration items through plink.
+#
+# settings.json is the exception: Pi rewrites per-host state into it (changelog
+# markers, device identity), so it is seeded as a regular file rather than
+# linked. Seeding never overwrites an existing file or symlink; bin/plink
+# converts an owned legacy link into a per-host copy instead of re-linking it.
+seed_local_config "$DOTFILES_DIR/pi/settings.json" \
+    "$HOME/.pi/agent/settings.json" 664 'per-host Pi defaults; Pi writes changelog markers here'
+
 if [ -f "$DOTFILES_DIR/bin/plink" ]; then
     if [ "$DRY_RUN" = 1 ]; then
         log_info "Would link Pi configuration with bin/plink"
@@ -349,9 +361,9 @@ fi
 
 if [ ${#SEEDED_CONFIGS[@]} -gt 0 ]; then
     printf '\n'
-    log_warn "Created ${#SEEDED_CONFIGS[@]} inert local config file(s):"
+    log_warn "Created ${#SEEDED_CONFIGS[@]} local config file(s) that this repo never overwrites:"
     printf '  %s\n' "${SEEDED_CONFIGS[@]}"
-    log_warn 'Fill in only the values you use; no placeholders are active.'
+    log_warn 'Keep private values and per-host choices here; no placeholders are active.'
 fi
 
 if [ "$DRY_RUN" = 1 ]; then

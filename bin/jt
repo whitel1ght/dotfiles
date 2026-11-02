@@ -13,7 +13,8 @@
 # ctrl-w makes a worktree for it with `wt add` and prints the path. ctrl-d/ctrl-u
 # scroll the preview half a page, shift-up/down a line.
 #
-# ctrl-w uses the repo you're in, else asks which clone in ~/projects. The
+# ctrl-w uses the repo you're in, else asks which clone under the projects root
+# (~/projects, or one folder deeper as in ~/projects/ecfx/ecfx-backend). The
 # branch is one that already has the key in its name (local or origin), else a
 # new <user>/<KEY>_<summary-slug>, as the rest of my branches are named.
 #
@@ -29,6 +30,28 @@ TEAM_FILTER="${JT_TEAM_FILTER:-OmniEngineersFilter}"
 MAX_ROWS="${JT_MAX_ROWS:-1000}"
 
 die() { echo "jt: $*" >&2; exit 1; }
+
+# repo_path NAME — where the clone of NAME lives: $PROJECTS_DIR/NAME, or one
+# folder deeper when the clones are grouped there (~/projects/ecfx/ecfx-backend;
+# $HOME/projects is the root either way). A flat clone wins over a deeper one,
+# and between two clones at the same depth the first in glob order wins, so a
+# same-named clone in a later group is shadowed silently (js/ecfx-dashboard
+# loses to ecfx/ecfx-dashboard). Dot-directories and worktrees/ are skipped,
+# matching only the path below $PROJECTS_DIR, so a projects root that itself
+# lives in a dot directory (say ~/.local/projects) still resolves. Prints the
+# flat path when neither depth has the clone, so the caller can name it.
+repo_path() {
+  local name="$1" p="$PROJECTS_DIR/$1" d rel
+  if [ ! -d "$p/.git" ]; then
+    for d in "$PROJECTS_DIR"/*/"$name"; do
+      rel="${d#"$PROJECTS_DIR"/}"
+      case "$rel" in .*|../"$name"|worktrees/"$name") continue ;; esac
+      [ -d "$d/.git" ] || continue
+      p="$d"; break
+    done
+  fi
+  printf '%s\n' "$p"
+}
 
 preview_cmd='jira issue view {1} --plain --comments 5 2>&1 | sed "s/[[:space:]]*$//"'
 
@@ -70,7 +93,7 @@ pick_repo() {
     basename "$(dirname "$top")"
     return
   fi
-  fd -H -d 2 -t d '^\.git$' "$PROJECTS_DIR" --exclude worktrees 2>/dev/null \
+  fd -H -d 3 -t d '^\.git$' "$PROJECTS_DIR" --exclude worktrees 2>/dev/null \
     | xargs -n1 dirname | xargs -n1 basename | sort \
     | fzf --prompt 'repo> ' --height 40% || die "no repo picked"
 }
@@ -78,7 +101,7 @@ pick_repo() {
 worktree() {
   local key="$1" summary="$2" repo clone branch
   repo="$(pick_repo)"
-  clone="$PROJECTS_DIR/$repo"
+  clone="$(repo_path "$repo")"
   [ -d "$clone" ] || die "no clone at $clone"
   git -C "$clone" fetch -q origin 2>/dev/null || true
   branch="$(git -C "$clone" for-each-ref --format='%(refname:lstrip=2)' refs/heads refs/remotes/origin \

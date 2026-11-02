@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Bring the team's Claude Code plugins and pi's team skills up to date with the claude-components
+# clone; /start-day runs it right after repos-sync has fast-forwarded that clone.
+#
+#   team-plugins-sync
+#
+# 1. `claude plugin marketplace update ecfx-components` (the marketplace is the local clone).
+# 2. Every installed <name>@ecfx-components whose cached `version` differs from its clone folder's
+#    `folderVersion` (`claude plugin list --json`): `claude plugin update <id> --scope <scope>`,
+#    a user install from $HOME, a project or local one from its `projectPath` (a project folder
+#    that is gone is skipped), with --json: an `up_to_date` outcome (a plugin read straight
+#    from its folder can list a stale version) counts as nothing to do, and the versions
+#    reported are the ones claude gives. Never -y: a plugin whose update needs a marketplace command
+#    confirmed fails, with the reason, instead of being accepted unseen. Running sessions keep
+#    the old version; new sessions load the new one.
+# 3. `plink`, so pi regenerates its team skills and agents from the clone.
+# Stdin is closed for every call. Prints one line per update or failure, then a summary line.
+# Exits 0 whatever happens.
+set -uo pipefail
+
+MARKET="${TEAM_PLUGINS_MARKET:-ecfx-components}"
+
+case "${1:-}" in -h|--help) sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+last_line() { printf '%s\n' "$1" | sed '/^[[:space:]]*$/d' | tail -1; }
+lines="" updated=0 failed=0 err=""
+
+if ! err="$(claude plugin marketplace update "$MARKET" </dev/null 2>&1 >/dev/null)"; then
+  lines="$lines- marketplace refresh failed: $(last_line "$err")"$'\n'
+fi
+
+if ! list="$(claude plugin list --json </dev/null 2>/dev/null)" || ! jq -e 'type == "array"' <<<"$list" >/dev/null 2>&1; then
+  lines="$lines- could not read the plugin list (claude plugin list --json); no plugin updated"$'\n'
+  list='[]'
+fi
+
+while IFS=$'\t' read -r id scope path ver fver; do
+  [ -n "$id" ] || continue
+  dir="$HOME"; where=""
+  if [ "$scope" != user ]; then
+    [ "$path" != - ] && [ -d "$path" ] || continue
+    dir="$path"; where=" ($scope $(basename "$path"))"
+  fi
+  if err="$(cd "$dir" && claude plugin update "$id" --scope "$scope" --json </dev/null 2>&1)"; then
+    # a plugin read straight from its folder can list a stale version yet need nothing
+    res="$(printf '%s\n' "$err" | grep '^{' | tail -1)"
+    [ "$(jq -r '.updateOutcome // empty' <<<"$res" 2>/dev/null)" != up_to_date ] || continue
+    ver="$(jq -r --arg v "$ver" '.oldVersion // $v' <<<"$res" 2>/dev/null || echo "$ver")"
+    fver="$(jq -r --arg v "$fver" '.newVersion // $v' <<<"$res" 2>/dev/null || echo "$fver")"
+    lines="$lines- ${id%@*}$where: $ver → $fver"$'\n'; updated=$((updated + 1))
+  else
+    lines="$lines- ${id%@*}$where: update failed: $(last_line "$err")"$'\n'; failed=$((failed + 1))
+  fi
+done < <(jq -r --arg m "@$MARKET" '.[] | select(.id | endswith($m))
+  | select(.folderVersion != null and .folderVersion != "" and .folderVersion != .version)
+  | [.id, .scope, (.projectPath // "-"), .version, .folderVersion] | @tsv' <<<"$list")
+
+pi="pi skills regenerated"
+if ! err="$(plink </dev/null 2>&1 >/dev/null)"; then
+  lines="$lines- plink failed: $(last_line "$err")"$'\n'; pi="pi skills not regenerated"
+fi
+
+printf '%s' "$lines"
+if [ "$updated" = 0 ] && [ "$failed" = 0 ]; then echo "team plugins: all up to date; $pi"
+else echo "team plugins: $updated updated, $failed failed; $pi; new sessions load them"; fi

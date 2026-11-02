@@ -1,6 +1,8 @@
 #!/bin/bash
-# ecfx-daily-commits: list the user's commits in ~/projects/ecfx-* repos,
-# including nested checkouts (e.g. ecfx-dashboard/src/protobufs).
+# ecfx-daily-commits: list the user's commits in the ecfx-* clones under
+# ~/projects (or PROJECTS_DIR), flat or grouped one folder deeper
+# (~/projects/ecfx/ecfx-backend), including nested checkouts
+# (e.g. ecfx-dashboard/src/protobufs).
 #
 # Usage: collect.sh [SINCE] [UNTIL]
 #   SINCE  git --since value (default: "today 00:00")
@@ -9,7 +11,7 @@ set -euo pipefail
 
 SINCE="${1:-today 00:00}"
 UNTIL="${2:-}"
-ROOT="$HOME/projects"
+ROOT="${PROJECTS_DIR:-$HOME/projects}"
 AUTHOR="Mamyr"           # matches both "Dmitry Mamyrev" and "Dzmitry Mamyrau"
 PRIMARY="Dmitry Mamyrev" # commits by other author spellings get "(authored as …)"
 
@@ -75,9 +77,11 @@ report_repo() {
   printf '\n'
 }
 
-# Top-level clones first, so a project's own checkout claims its commits before
-# a nested copy of the same repo does (ecfx-protobufs, not ".../src/protobufs").
-for d in "$ROOT"/ecfx-*/; do
+# Clones named ecfx-* at the top of $ROOT or inside a grouping folder there
+# (~/projects/ecfx/ecfx-backend). Top-level clones first, so a project's own
+# checkout claims its commits before a nested copy of the same repo does
+# (ecfx-protobufs, not ".../src/protobufs").
+for d in "$ROOT"/ecfx-*/ "$ROOT"/*/ecfx-*/; do
   d="${d%/}"
   [ -e "$d/.git" ] || continue
   report_repo "$d" "$(repo_name "$d")"
@@ -85,7 +89,7 @@ done
 
 # Then nested checkouts inside each project (separate repos like src/protobufs).
 # .git may be a directory (clone) or a file (submodule/worktree gitfile).
-for d in "$ROOT"/ecfx-*/; do
+for d in "$ROOT"/ecfx-*/ "$ROOT"/*/ecfx-*/; do
   d="${d%/}"
   [ -e "$d/.git" ] || continue
   while IFS= read -r g; do

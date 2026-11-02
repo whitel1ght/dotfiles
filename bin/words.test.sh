@@ -1,0 +1,175 @@
+#!/bin/bash
+# Tests for bin/words. CARDS_DIR, WORDS_STATE and the diary are sandboxed; macdict is a stub on
+# WORDS_MACDICT and the feed a fixture on WORDS_FEED, so nothing reaches ~/wiki or the network.
+set -uo pipefail
+
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT="$TEST_DIR/words"
+PASS=0
+FAIL=0
+
+pass() { PASS=$((PASS + 1)); echo "  ok   - $1"; }
+fail() { FAIL=$((FAIL + 1)); echo "  FAIL - $1"; echo "         $2"; }
+assert_eq() { [ "$1" = "$2" ] && pass "$3" || fail "$3" "expected [$1] got [$2]"; }
+assert_has() { case "$2" in *"$1"*) pass "$3" ;; *) fail "$3" "[$1] not in [$2]" ;; esac; }
+
+SANDBOX="$(cd "$(mktemp -d)" && pwd -P)"
+trap 'rm -rf "${SANDBOX:?}"' EXIT
+sed_edit() { if sed --version >/dev/null 2>&1; then sed -i "$1" "$2"; else sed -i '' "$1" "$2"; fi; }
+export CARDS_DIR="$SANDBOX/cards" WORDS_STATE="$SANDBOX/state" WORDS_CARDS="$TEST_DIR/cards"
+export WORDS_MACDICT="$SANDBOX/macdict"
+cat >"$WORDS_MACDICT" <<'STUB'
+#!/bin/bash
+case "$1" in
+  imbroglio) printf 'imbroglio im·bro·glio | imˈbrōlyō |\n\nnoun (plural imbroglios) an extremely confused, complicated, or embarrassing situation: the Watergate imbroglio.\n  • archaic a confused heap.\n\nORIGIN mid 18th century: Italian.\n' ;;
+  "gordian knot"|"it's"|well-being|balmy|milieu|cordial) printf '%s\n\nnoun a sense of %s: an example of %s.\n' "$1" "$1" "$1" ;;
+  oxymoron) printf 'oxymoron ox·y·mo·ron | ˌäksəˈmôrˌän |\n\nnoun a figure of speech in which apparently contradictory terms appear in\n\nconjunction (e.g. faith unfaithful kept him falsely true): that fashionable rhetorical novelty, the humblebrag, is itself an oxymoron | the oxymoron forces together two terms which are seemingly incompatible. \n\nDERIVATIVES oxymoronic\n\nadjective \n\nORIGIN mid 17th century: from Greek.\n' ;;
+  gamut) printf 'gamut gam·ut | ˈɡamət | (the gamut)\n\nnoun 1 the complete range or scope of something: the whole gamut of human emotion. 2 Music a complete scale of musical notes; the compass or range of a voice or instrument: the orchestral gamut.\n  • historical a scale consisting of seven overlapping hexachords.\n  • historical the lowest note in the gamut scale. \n\nPHRASES run the gamut experience, display, or perform the complete range of something: wines that run the gamut from dry to sweet. \n\nORIGIN late Middle English.\n' ;;
+  sunny) printf 'sunny sun·ny | ˈsənē |\n\nadjective (sunnier | ˈsənēər |) (, sunniest | ˈbä(l)mēist |) 1 (of the weather) pleasantly warm: the balmy days of late summer | the air was golden and balmy. 2 dated extremely foolish, irrational, or eccentric: this is a balmy decision.\n  • sometimes offensive having a mental illness: I think he is gone balmy again. \n\nORIGIN mid 17th century.\n' ;;
+  rectify) printf 'rectify rec·ti·fy | ˈrektəˌfī |\n\nverb (rectifies, rectifying, rectified) [with object] 1 put right; correct: mistakes made now cannot be rectified later | we are working to rectify the situation. 2 convert (alternating current) to direct current. 3 Mathematics find a straight line equal in length to (a curve): his methods. \n' ;;
+  foible) printf 'foible foi·ble | ˈfoib(ə)l |\n\nnoun 1 a minor weakness or eccentricity in someone'"'"'s character: they have to tolerate each other'"'"'s little foibles. 2 Fencing the weaker part of a sword blade, from the middle to the point. Compare with forte1 \n' ;;
+  gambol) printf 'gambol gam·bol | ˈɡambəl |\n\nverb (gambols) (, gamboling | ˈɡamb(ə)liNG |) (; British English gambols) (, British English gambolling) [no object, usually with adverbial] run or jump about playfully: the mare gamboled toward her.\n' ;;
+  *) printf 'No definition found for "%s".\n' "$1" ;;
+esac
+STUB
+chmod +x "$WORDS_MACDICT"
+
+words() { "$SCRIPT" "$@" 2>"$SANDBOX/stderr"; }
+fm() { sed -n "s/^$2: //p" "$CARDS_DIR/$1.md" | head -1; }
+ncards() { find "$CARDS_DIR" -name '*.md' 2>/dev/null | wc -l | tr -d ' '; }
+reset() { rm -rf "$CARDS_DIR" "$WORDS_STATE"; mkdir -p "$CARDS_DIR"; }
+
+echo "words add"
+reset
+S="$(words add imbroglio --date 2026-10-27 --met-in "the Watergate imbroglio dragged on" --from lookup)"; RC=$?
+assert_eq "0|1" "$RC|$(ncards)" "a word the dictionary knows is saved as one card"
+assert_eq "imbroglio|lookup|2026-10-27|learning|the Watergate imbroglio dragged on" "$(fm "$S" word)|$(fm "$S" from)|$(fm "$S" captured)|$(fm "$S" stage)|$(fm "$S" met_in)" "with its word-card keys"
+assert_eq "[word]" "$(fm "$S" tags)" "tagged word"
+S2="$(words add balmy --date 2026-10-27)"
+assert_eq "0" "$(grep -c '^met_in:' "$CARDS_DIR/$S2.md")" "no met_in key when the sentence is not known"
+rm -f "$CARDS_DIR/$S2.md"
+assert_eq '## Question: What does *imbroglio* mean? — "the Watergate imbroglio dragged on"' "$(grep '^## Question' "$CARDS_DIR/$S.md")" "the front asks the meaning, with the sentence it was met in"
+BACK="$(sed -n 's/^### Answer: //p' "$CARDS_DIR/$S.md")"
+assert_has "an extremely confused, complicated, or embarrassing situation" "$BACK" "the back is the first sense"
+case "$BACK" in *ORIGIN*|*im·bro·glio*) fail "short back" "$BACK" ;; *) pass "without the headword line or the origin" ;; esac
+[ "${#BACK}" -le 300 ] && pass "at most 300 characters" || fail "short back" "${#BACK} chars"
+back_of() { S2="$(words add "$1")"; sed -n 's/^### Answer: //p' "$CARDS_DIR/$S2.md"; rm -f "$CARDS_DIR/$S2.md"; }
+assert_eq "an extremely confused, complicated, or embarrassing situation" "$BACK" "the back is the definition alone: no part of speech, grammar note, example or sub-sense"
+assert_eq "a figure of speech in which apparently contradictory terms appear in conjunction (e.g. faith unfaithful kept him falsely true)" "$(back_of oxymoron)" "a definition the dictionary wraps mid-sentence is joined"
+assert_eq "the complete range or scope of something · Music a complete scale of musical notes; the compass or range of a voice or instrument" "$(back_of gamut)" "two numbered senses, without examples or later sections"
+assert_eq "(of the weather) pleasantly warm · dated extremely foolish, irrational, or eccentric" "$(back_of sunny)" "inflections with their pronunciation are dropped"
+assert_eq "put right; correct · convert (alternating current) to direct current" "$(back_of rectify)" "word-form notes without a pronunciation are dropped too"
+assert_eq "run or jump about playfully" "$(back_of gambol)" "including British spellings"
+assert_eq "a minor weakness or eccentricity in someone's character · Fencing the weaker part of a sword blade, from the middle to the point" "$(back_of foible)" "a sense ends at its first sentence"
+assert_eq "$S" "$(words add Imbroglio --from mw)" "a word already saved prints its slug"
+assert_eq "1" "$(ncards)" "and writes nothing"
+words add zzqqxx >/dev/null; RC=$?
+assert_eq "1|1" "$RC|$(ncards)" "a word the dictionary lacks exits 1 and saves nothing"
+assert_has "no definition for zzqqxx" "$(cat "$SANDBOX/stderr")" "and says so"
+S2="$(words add zzqqxx --back "a made-up word")"; RC=$?
+assert_eq "0|a made-up word" "$RC|$(sed -n 's/^### Answer: //p' "$CARDS_DIR/$S2.md")" "--back saves it anyway"
+assert_eq '## Question: What does *zzqqxx* mean?' "$(grep '^## Question' "$CARDS_DIR/$S2.md")" "no sentence, no quote on the front"
+
+echo "words add — odd words"
+for w in "gordian knot" "it's" "well-being"; do
+  S="$(words add "$w")"; RC=$?
+  assert_eq "0|$w" "$RC|$(fm "$S" word)" "\"$w\" is saved"
+  assert_eq "$S" "$(words add "$(echo "$w" | tr a-z A-Z)")" "and \"$w\" in capitals matches it"
+done
+
+echo "words today"
+reset
+export WORDS_FEED="$TEST_DIR/words.fixture-feed.xml"
+S="$(words today --date 2026-10-26)"; RC=$?
+assert_eq "0|disparate|mw|2026-10-26" "$RC|$(fm "$S" word)|$(fm "$S" from)|$(fm "$S" captured)" "the day's word from the feed is saved"
+assert_has "The orchestral project joins disparate musical elements" "$(fm "$S" met_in)" "with the feed's example sentence"
+assert_eq "### Answer: different from each other" "$(grep '^### Answer' "$CARDS_DIR/$S.md")" "and its short definition as the back"
+assert_eq "" "$(words today --date 2026-10-26)" "a second run the same day prints nothing"
+assert_eq "1" "$(ncards)" "and saves nothing"
+S="$(words today --date 2030-01-01)"
+assert_eq "milieu" "$(fm "$S" word)" "a date the feed does not have takes the newest word"
+reset
+WORDS_FEED="$SANDBOX/nope.xml" words today >/dev/null; RC=$?
+assert_eq "0|0" "$RC|$(ncards)" "bad feed: a missing feed exits 0 and saves nothing"
+assert_has "words today:" "$(cat "$SANDBOX/stderr")" "with one line on stderr"
+printf '<html><body>Sign in to the wifi</body></html>' >"$SANDBOX/portal.xml"
+WORDS_FEED="$SANDBOX/portal.xml" words today >/dev/null; RC=$?
+assert_eq "0|0" "$RC|$(ncards)" "bad feed: an HTML page exits 0 and saves nothing"
+
+echo "words import-diary"
+reset
+DIARY="$SANDBOX/diary"; mkdir -p "$DIARY"
+line() { printf '# %s\n\n- [X] reading any fiction book\n%s\n- [ ] drawing\n' "$1" "$2" >"$DIARY/$1.md"; }
+line 2026-08-19 '- [X] merriam-webster word of the day (balmy - warm, mild, pleasant for weather; foolish, irrational for an idea)'
+line 2026-08-20 '- [X] merriam-webster word of the day (cordial)'
+line 2026-08-21 '- [X] merriam-webster word of the day (sacrosant)'
+line 2026-08-22 '- [ ] merriam-webster word of the day (vindicate)'
+line 2026-08-23 '- [X] merriam-webster word of the day (tacit = unspoken)'
+line 2026-08-24 '- [x] merriam-webster word of the day (salvo, mostly in military context (artillery) - a volley)'
+line 2026-08-25 '- [X] merriam-webster word of the day (paTIna)'
+line 2026-08-26 '- [X] merriam-webster word of the day (milieu - setting)'
+line 2026-08-27 '- [ ] merriam-webster word of the day'
+words add milieu >/dev/null
+OUT="$(words import-diary --diary-dir "$DIARY")"; RC=$?
+assert_eq "0|imported 6, already saved 1, to check 2" "$RC|$OUT" "imports the ticked words and says how it went"
+B="$(words add balmy)"
+assert_eq "warm, mild, pleasant for weather; foolish, irrational for an idea|diary|2026-08-19" "$(sed -n 's/^### Answer: //p' "$CARDS_DIR/$B.md")|$(fm "$B" from)|$(fm "$B" captured)" "a meaning written in the diary is the back, dated by the diary day"
+assert_eq "unspoken" "$(sed -n 's/^### Answer: //p' "$CARDS_DIR/$(words add tacit).md")" "odd diary lines: an = separator"
+assert_eq "mostly in military context (artillery) - a volley" "$(sed -n 's/^### Answer: //p' "$CARDS_DIR/$(words add salvo).md")" "odd diary lines: a comma, nested parentheses and a later ' - ' stay in the meaning"
+assert_has "a sense of cordial" "$(sed -n 's/^### Answer: //p' "$CARDS_DIR/$(words add cordial).md")" "a bare word gets its back from the dictionary"
+SC="$(words add sacrosant)"
+assert_eq "(look this one up again)|[word, word-check]" "$(sed -n 's/^### Answer: //p' "$CARDS_DIR/$SC.md")|$(fm "$SC" tags)" "a word the dictionary lacks is kept, marked to check"
+assert_eq "patina" "$(fm "$(words add patina)" word)" "stress capitals become a plain lower-case word"
+assert_eq "" "$(rg -l 'vindicate' "$CARDS_DIR" 2>/dev/null)" "an unticked line is skipped"
+assert_eq "imported 0, already saved 7, to check 0" "$(words import-diary --diary-dir "$DIARY")" "a second run imports nothing"
+
+echo "words stats"
+reset
+A="$(words add balmy --date 2026-10-20)"; B="$(words add milieu --date 2026-10-20)"; C="$(words add cordial --date 2026-10-27)"
+printf '\n## Reviews\n\n- 2026-10-25 grade 2 interval 1\n- 2026-10-27 grade 2 interval 3\n' >>"$CARDS_DIR/$A.md"
+printf '\n## Reviews\n\n- 2026-10-26 grade 3 interval 25\n' >>"$CARDS_DIR/$B.md"; sed_edit 's/^interval: .*/interval: 25/' "$CARDS_DIR/$B.md"
+printf -- '---\ndue: 2026-10-30\ninterval: 3\nease: 2.5\nreps: 2\nlapses: 0\ntags: [ecfx]\n---\n\n## Question: Q?\n\n### Answer: A.\n\n## Reviews\n\n- 2026-10-28 grade 2 interval 3\n' >"$CARDS_DIR/other.md"
+assert_eq '{"total": 3, "new_today": 1, "reviewed_today": 1, "known": 1, "streak": 3}' "$(words stats --date 2026-10-27 --json)" "counts word cards only: total, new today, reviewed today, known, streak"
+assert_eq "known" "$(fm "$B" stage)" "a word whose interval reached 21 days is marked known"
+assert_eq "learning" "$(fm "$A" stage)" "the others stay learning"
+assert_eq "3" "$(words stats --date 2026-10-28 --json | jq .streak)" "the streak still counts on a day with no review yet"
+assert_eq "0" "$(words stats --date 2026-10-30 --json | jq .streak)" "a missed day ends it"
+assert_eq "Words: 1 reviewed, 1 new, 1 known of 3 · streak 3 days" "$(words stats --date 2026-10-27 --line)" "--line is one sentence for the diary"
+reset
+assert_eq "" "$(words stats --date 2026-10-27 --line)" "--line prints nothing before the first word card"
+
+echo "words pending / keep"
+reset
+mkdir -p "$WORDS_STATE"
+printf '2026-10-27T21:10 imbroglio\n2026-10-27T21:12 balmy\n2026-10-27T21:15 imbroglio\n' >"$WORDS_STATE/lookups.log"
+words add balmy >/dev/null
+assert_eq "imbroglio" "$(words pending)" "pending lists each looked-up word once, minus words already saved"
+words keep imbroglio >/dev/null; RC=$?
+assert_eq "0|book" "$RC|$(fm "$(words add imbroglio)" from)" "keep saves it, from the book"
+assert_eq "" "$(words pending)" "and nothing is pending after it"
+printf '2026-10-28T08:00 milieu\n2026-10-28T08:01 cordial\n' >>"$WORDS_STATE/lookups.log"
+assert_eq "milieu cordial" "$(words pending | paste -sd ' ' -)" "only lookups since the last keep are offered"
+words pending --clear
+assert_eq "" "$(words pending)" "--clear skips them without saving"
+assert_eq "" "$(rg -l 'word: milieu' "$CARDS_DIR" 2>/dev/null)" "nothing saved by --clear"
+rm -f "$WORDS_STATE/lookups.log" "$WORDS_STATE/pending.cursor"
+assert_eq "0|" "$(words pending >/dev/null; echo $?)|$(words pending)" "no log: nothing pending, exit 0"
+
+echo "words look"
+reset
+OUT="$(words look imbroglio)"; RC=$?
+case "$OUT" in *"ORIGIN mid 18th century"*) pass "look prints the full definition" ;; *) fail "full definition" "$OUT" ;; esac
+assert_eq "0|saved" "$RC|$(echo "$OUT" | tail -1)" "and saves the word"
+assert_eq "lookup" "$(fm "$(words add imbroglio)" from)" "from a lookup"
+assert_eq "already saved" "$(words look imbroglio | tail -1)" "a second look says already saved"
+assert_eq "0|saved" "$(words look gordian knot | tail -1 | sed 's/^/0|/')" "w gordian knot needs no quotes"
+assert_eq "gordian knot" "$(fm "$(words add gordian knot)" word)" "and add takes the words as one too"
+OUT="$(words look zzqqxx)"; RC=$?
+assert_eq "1|0" "$RC|$(rg -l 'word: zzqqxx' "$CARDS_DIR" 2>/dev/null | wc -l | tr -d ' ')" "a miss saves nothing, exit 1"
+assert_eq 'No definition found for "zzqqxx".' "$(echo "$OUT" | head -1)" "and shows the dictionary's miss"
+assert_eq "saved" "$(words look zzqqxx --back 'my own meaning' | tail -1)" "--back saves a miss"
+# Shell aliases are platform-owned; this binary test stays within its isolated CLI contract.
+
+echo
+echo "passed: $PASS  failed: $FAIL"
+[ "$FAIL" -eq 0 ]

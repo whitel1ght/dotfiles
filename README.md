@@ -21,6 +21,7 @@ proxy and keyboard setup.
 4. Configure only the local credentials and optional applications you use.
    Install packages, refresh Claude/Pi packages, configure the keyboard, and
    enable the proxy in separate reviewed steps.
+5. Review the [Ubuntu workflow and optional service lifecycle](ubuntu/README.md#daily-workflows-and-optional-user-services) before installing or activating user timers.
 
 ## Main configuration
 
@@ -30,7 +31,7 @@ proxy and keyboard setup.
 - `zsh/`, `zsh-setup.sh`: Zsh, Powerlevel10k, plugins, completions, and optional
   local environment.
 - `nvim/`, `tmux/`, `git/`: editor, terminal multiplexer, and Git configuration.
-- `bin/`: portable worktree, daily workflow, reader, clipboard, and agent helpers.
+- `bin/`: portable worktree, daily workflow, wiki/repository synchronization, friction/decision, Jira, Pi-management, reader, clipboard, and agent helpers. Links are installed individually; user credentials and runtime state remain external.
 - `claude/`, `pi/`: optional agent configuration; credentials and runtime state
   stay local.
 - `newsboat/`, `repy/`, `superfile/`, `mrglass/`: optional terminal apps.
@@ -55,6 +56,8 @@ the sing-box TUN handles routing below the application layer.
 The migration and platform-specific decisions are recorded in
 [`docs/plans/ubuntu-main-migration.md`](docs/plans/ubuntu-main-migration.md).
 Run [the Ubuntu setup guide](ubuntu/README.md) for dependency versions, Caps
-Lock mapping and validation. The source for the migration was `origin/main`
-commit `4bc05e98a23b8ef4be3310ef1b5b92f09c63e37d`; macOS-only applications and
-services were intentionally excluded.
+Lock mapping and validation. The initial Ubuntu migration source was `origin/main`
+commit `4bc05e98a23b8ef4be3310ef1b5b92f09c63e37d`. The parity refresh selectively
+audited the active portable features at `origin/main`
+`5681fa20266740813e3ad2b445b2cc52bf47e88d`; macOS-only applications and
+services remain intentionally excluded.

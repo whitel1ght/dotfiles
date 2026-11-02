@@ -1,0 +1,12 @@
+[Unit]
+Description=Back up the %i personal repository to its Git remote
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=WIKI_DIR=%h/%i
+Environment=WIKI_SYNC_STATE=%h/.local/state/%i-sync
+Environment=WIKI_SYNC_NAME=%i
+ExecStart=%h/.local/bin/wiki-sync

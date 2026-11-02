@@ -41,14 +41,19 @@ jq -Rn --arg next "$next" '{issues: [inputs | select(length > 0) | split("\t")
   + (if $next == "" then {} else {nextPageToken: $next} end)' <<<"$rows"
 printf '\n200'
 EOF
-# fzf: prints the key in $FZF_KEY, then the first row matching $FZF_PICK.
+# fzf: prints the key in $FZF_KEY, then the first row matching $FZF_PICK
+# ($FZF_PICK2 for the second picker in a run; LOG_ROWS, when set, keeps every
+# set of rows fzf was offered).
 cat > "$STUBS/fzf" <<'EOF'
 #!/bin/bash
 echo "fzf $*" >> "$LOG"
 rows="$(cat)"
-[ -n "${FZF_PICK:-}" ] || exit 130
-echo "${FZF_KEY:-}"
-grep -m1 -- "$FZF_PICK" <<<"$rows"
+[ -z "${LOG_ROWS:-}" ] || printf '%s\n' "$rows" >> "$LOG_ROWS"
+n=$(cat "$LOG.n" 2>/dev/null || echo 0); echo $((n + 1)) > "$LOG.n"
+pick="${FZF_PICK:-}"; [ "$n" -lt 1 ] || pick="${FZF_PICK2:-$pick}"
+[ -n "$pick" ] || exit 130
+case "$*" in *--expect*) echo "${FZF_KEY:-}" ;; esac
+grep -m1 -- "$pick" <<<"$rows"
 EOF
 printf '#!/bin/bash\necho "wt $*" >> "$LOG"\necho "/wt/$2/$3"\n' > "$STUBS/wt"
 printf '#!/bin/bash\necho "clipboard-copy $(cat)" >> "$LOG"\n' > "$STUBS/clipboard-copy"
@@ -57,8 +62,8 @@ chmod +x "$STUBS"/*
 ROWS='ECFX-10\tIn MR\tFix the thing\nECFX-17612\tTo-Do\tA 403 on a write: "forbidden" returns null\n'
 
 run() {
-  : > "$LOG"
-  (cd "${CWD:-$SANDBOX}" && PATH="$STUBS:$PATH" LOG="$LOG" PROJECTS_DIR="$PROJ" JT_BRANCH_PREFIX=me/ \
+  : > "$LOG"; rm -f "$LOG.n"
+  (cd "${CWD:-$SANDBOX}" && PATH="$STUBS:$PATH" LOG="$LOG" PROJECTS_DIR="${RUN_PROJ:-$PROJ}" JT_BRANCH_PREFIX=me/ \
     JIRA_EMAIL=test@example.com JIRA_API_TOKEN=test-token \
     JIRA_ROWS="${JIRA_ROWS-$ROWS}" JIRA_TOTAL="${JIRA_TOTAL:-}" JT_MAX_ROWS="${JT_MAX_ROWS:-1000}" "$SCRIPT" "$@" 2>&1)
 }
@@ -120,6 +125,34 @@ g -C "$PROJ/app" branch -q me/ECFX-176120_other
 g -C "$PROJ/app" branch -D -q someone/ECFX-17612_existing
 CWD="$PROJ/app" FZF_PICK=17612 FZF_KEY=ctrl-w run >/dev/null
 assert_contains "$(cat "$LOG")" "me/ECFX-17612_a-403" "a longer key is not a match"
+echo "worktree one folder deeper"
+# As on Ubuntu: the clone is grouped as ~/projects/ecfx/<repo>; jt must offer it
+# and resolve it there, not at the flat path.
+NEST="$SANDBOX/nested-projects"; NESTROWS="$SANDBOX/nested-rows"
+mkdir -p "$NEST/ecfx"
+g init -q -b main "$NEST/ecfx/app2" && g -C "$NEST/ecfx/app2" commit -q --allow-empty -m init
+g -C "$NEST/ecfx/app2" branch -q someone/ECFX-17612_nested
+out="$(RUN_PROJ="$NEST" LOG_ROWS="$NESTROWS" CWD="$SANDBOX" FZF_PICK=17612 FZF_PICK2=app2 FZF_KEY=ctrl-w run)"
+assert_contains "$(cat "$NESTROWS")" "app2" "the picker offers a clone one folder deeper"
+assert_contains "$(cat "$LOG")" "wt add app2 ECFX-17612 someone/ECFX-17612_nested" \
+  "ctrl-w reads the branch from the nested clone"
+assert_eq "/wt/app2/ECFX-17612" "$out" "and prints the worktree path"
+out="$(RUN_PROJ="$NEST" CWD="$NEST/ecfx/app2" FZF_PICK=17612 FZF_KEY=ctrl-w run)"
+assert_contains "$(cat "$LOG")" "wt add app2 ECFX-17612 someone/ECFX-17612_nested" "works from inside a nested clone"
+
+echo "worktree under a projects root that itself sits in a dot directory"
+# $HOME/.local/projects style: the dot is in the root, not below it, so the fd
+# discovery must still offer and resolve the grouped clones.
+DROOT="$SANDBOX/.local/projects"
+mkdir -p "$DROOT/ecfx"
+g init -q -b main "$DROOT/ecfx/app2" && g -C "$DROOT/ecfx/app2" commit -q --allow-empty -m init
+g -C "$DROOT/ecfx/app2" branch -q someone/ECFX-17612_dot
+DROTTED="$SANDBOX/dot-rows"
+out="$(RUN_PROJ="$DROOT" LOG_ROWS="$DROTTED" CWD="$SANDBOX" FZF_PICK=17612 FZF_PICK2=app2 FZF_KEY=ctrl-w run)"
+assert_contains "$(cat "$DROTTED")" "app2" "the picker offers a clone under a root with a dot component"
+assert_contains "$(cat "$LOG")" "wt add app2 ECFX-17612 someone/ECFX-17612_dot" "and ctrl-w resolves it there"
+assert_eq "/wt/app2/ECFX-17612" "$out" "printing the worktree path"
+
 CWD="$PROJ/app/.git" FZF_PICK=ECFX-10 FZF_KEY=ctrl-w run >/dev/null
 assert_contains "$(cat "$LOG")" "wt add app ECFX-10 me/ECFX-10_fix-the-thing" "works from anywhere inside the repo"
 

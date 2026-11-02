@@ -1,9 +1,7 @@
 ---
 name: handle-ticket
-description: >-
-  Drive a Jira ticket from "handed to me" to "reviewed MR pushed" — multi-agent investigation and brainstorming, a single approach gate, a feature branch off master, multi-agent implementation, the project's own checks, full browser verification of dashboard/admin UI changes via the Chrome extension, a draft MR, then a multi-agent review whose findings are evaluated and fixed locally instead of posted. Use when the user says "handle ticket ECFX-15234", "handle this ticket", "take this ticket", "work this ticket end-to-end", or pastes ticket text with a number and asks you to do it.
+description: Drive a Jira ticket from "handed to me" to "reviewed MR pushed" — multi-agent investigation and brainstorming, a single approach gate, a feature branch off master, multi-agent implementation, the project's own checks, full browser verification of dashboard/admin UI changes via the Chrome extension, a draft MR, then a multi-agent review whose findings are evaluated and fixed locally instead of posted. Use when the user says "handle ticket ECFX-15234", "handle this ticket", "take this ticket", "work this ticket end-to-end", or pastes ticket text with a number and asks you to do it.
 ---
-
 
 # Handle Ticket
 
@@ -31,9 +29,10 @@ read ticket → multi-agent investigate + brainstorm → [ask only if genuinely 
                            report
 ```
 
-**One gate, one review cycle, one MR.** Everything after the approach gate runs
-unattended. Do not invent extra checkpoints — the user chose a single pause
-deliberately.
+**One gate, one review cycle, and one MR unless the approved approach names
+several.** Open exactly the MRs the approach lists; ask before opening any MR it
+does not list. Everything after the approach gate runs unattended. Do not
+invent extra checkpoints — the user chose a single pause deliberately.
 
 ## When to invoke
 
@@ -92,31 +91,32 @@ them decide.
 
 ### P3. Fetch the ticket
 
-Jira lives at `https://ecfxdev.atlassian.net`, authenticated with `JIRA_EMAIL` /
-`JIRA_API_TOKEN` from the shell environment (sourced from
-`~/.config/mrglass/secrets.env`).
+Jira is read through `jira-issue`, which calls `jira-api`. On Ubuntu the
+wrapper uses only `JIRA_EMAIL` and `JIRA_API_TOKEN` already exported in the
+process environment. Supply them through your private environment/secret manager;
+never put credentials in this repository, print tokens, or search secret files.
 
 ```bash
-JIRA_BASE="https://ecfxdev.atlassian.net"
-curl -s -w '\n%{http_code}' -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
-  -H "Accept: application/json" \
-  "$JIRA_BASE/rest/api/3/issue/ECFX-15234?fields=summary,description,status,issuetype,priority,labels,components,assignee,reporter,comment,issuelinks,parent"
+jira-issue ECFX-15234 --fields summary,issuetype,status,priority,labels,components,assignee,reporter,parent,issuelinks,comment,description
 ```
 
-Walk the ADF `description` into plain text (`type: "text"` nodes; break on
-`paragraph`). Extract: summary, type, status, priority, labels, components,
-description, recent comments, linked issues, parent epic.
+`jira-issue` prints one `Field: value` line per field, with the description and
+comments already rendered as plain text, so nothing needs walking. Extract:
+summary, type, status, priority, labels, components, description, recent
+comments, linked issues, parent epic.
 
-**If the API returns 401/403/404** — the token expires periodically, and it was
-returning 401 when this skill was written — say so once, plainly, and continue
-from the user's pasted text. Do not retry-loop, do not hunt for other
-credentials, and do not stop: the paste is usually sufficient. Only stop if
-there is no paste *and* no API access.
+**If it exits non-zero** (Jira's message is on stderr: 401/403/404 — the token
+expires periodically, and it was returning 401 when this skill was written) — say
+so once, plainly, and continue from the user's pasted text. Do not retry-loop, do
+not hunt for other credentials, and do not stop: the paste is usually sufficient.
+Only stop if there is no paste *and* no API access.
 
 Note the issue type. A **Story/Task** is feature work — the flow below fits. A
 **Bug** with EMLs in `/workspace/shared/<TICKET>/` should go to
 `/fix-jira-bug` instead; say so and ask before continuing. An **Epic** is not a
 unit of work — ask which child ticket is meant.
+
+**Model selection (Pi).** Every request includes a `<subagent_models>` block with the live selected ∩ available exact `provider/id` list. Before each child launch, select a difficulty-, cost-, and capability-appropriate model solely from that block and pass it explicitly as `model`; do not use registry discovery, omit the model, or rely on fallback. If the list is empty, launch nothing and ask the user to repair the session model pool. Read `~/.pi/agent/model-selection.md` for the Pi session contract.
 
 ## Phase 1 — Investigate and brainstorm (multi-agent, parallel)
 
@@ -148,8 +148,6 @@ Sequential spawning wastes wall-clock for no benefit.
 | Receipt / notice processing | `java-micronaut-dev` + read `/receipt-processor-guardrails` |
 | Auth, tenancy, crypto, PII | `security-compliance-reviewer` |
 | Infra / deployment | `aws-cloud-architect`, `prod-readiness` |
-
-**Model selection (Pi).** Every request includes a `<subagent_models>` block containing the live selected ∩ available exact `provider/id` list. Before every child launch, choose a difficulty-, cost-, and capability-appropriate model solely from the current block and pass it explicitly as `model`. Named specialist agents select the prompt and read-only tools; use `worker` with their concrete guidance for implementation. Do not use the broader `subagent({ action: "models" })` registry as eligibility, call a model gate, omit `model`, reuse stale availability, or rely on automatic fallback. Nested panels and review skills make the same choice from their own current request. If the list is empty, launch nothing and ask the user to repair the session model pool. See `~/.pi/agent/model-selection.md`.
 
 Each agent brief must carry: the ticket summary and description, the file paths
 you found in orientation, the absolute repo path, and — critically — **"read
@@ -264,7 +262,7 @@ Whoever writes the code:
 ## Phase 5 — Project checks
 
 Run **the project's own checks**, discovered rather than assumed. Look at
-`AGENTS.md`, `package.json` scripts, the Gradle tasks, the Makefile — in that
+`CLAUDE.md`, `package.json` scripts, the Gradle tasks, the Makefile — in that
 order — and run what the project actually defines.
 
 Known defaults:
@@ -298,7 +296,7 @@ servers.
 | App | URL | Notes |
 |---|---|---|
 | `ecfx-dashboard` | `http://localhost:4000` | Vite (`npm run dev` → `dev.sh`) |
-| `ecfx-admin` | `http://localhost:5000` | Flask; often `:5001` because macOS AirPlay squats on 5000. Use **`localhost`, never `127.0.0.1`** — the admin app's session/auth depends on it. |
+| `ecfx-admin` | `http://localhost:5000` | Flask; if port 5000 is occupied, confirm the app's configured port instead of assuming. Use **`localhost`, never `127.0.0.1`** — the admin app's session/auth depends on it. |
 
 Confirm it's up before testing. If it isn't, say which app and URL you expected
 and ask the user to start it rather than guessing at ports or launching it
@@ -379,6 +377,9 @@ Close the tab when you're done.
 
 ## Phase 7 — Draft MR
 
+When the approved approach lists several MRs, run Phases 7–10 once per MR, in
+the approach's order, each on its own Phase 3 branch as the approach names it.
+
 Commit, push, open as **draft**. Draft matters: the review cycle in Phase 8 is
 still going to push commits, and human reviewers should not be pinged into a
 moving target.
@@ -399,8 +400,8 @@ EOF
 git push -u origin dmitry/ECFX-15234_short-slug
 ```
 
-Use `/commit-msg` if you want the message generated, and `/mr-description` for
-the body. Then:
+Run `/mr-description` for the body first; `glab mr create` is blocked without it.
+Use `/commit-msg` if you want the commit message generated. Then:
 
 ```bash
 glab mr create --draft \
@@ -415,8 +416,6 @@ Capture the MR IID and URL from the output — Phase 8 needs both.
 ## Phase 8 — Multi-agent review, findings **not** posted
 
 Invoke `/mr-review-multi-agent` against the MR you just opened.
-
-On Pi, tell it to choose and pass an explicit model for every reviewer from that invocation's current `<subagent_models>` block. Do not carry Phase 1 model choices forward.
 
 > ⚠️ **The review must not be posted to the MR.** That skill's default is to
 > auto-post one consolidated comment plus a verdict action and a status label.
@@ -495,7 +494,7 @@ git commit -m "ECFX-15234: address review findings
 
 <one line per fix — what changed and which finding it answers>"
 git push
-glab mr update <iid> --ready
+~/.local/bin/mr-ship <repo> <iid>   # ready, assigned to me, the team requested as reviewers
 ```
 
 Update the MR description with anything the review changed materially — a
@@ -505,8 +504,7 @@ Optionally transition the Jira ticket to *In MR* / *In Review* and attach the
 MR link, if the API credentials worked in P3:
 
 ```bash
-curl -s -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
-  "$JIRA_BASE/rest/api/3/issue/ECFX-15234/transitions?includeUnavailableTransitions=true"
+jira-api GET "issue/ECFX-15234/transitions?includeUnavailableTransitions=true"
 ```
 
 Look the transition ID up — never hardcode it. If the credentials are dead,

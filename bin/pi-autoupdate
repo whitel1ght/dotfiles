@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# Update pi and its extensions before an interactive pi starts, so it never opens on an
+# "update available" notice. The zsh `pi` function (zsh/.zshrc) runs it, so every pi alias gets it.
+#
+#   pi-autoupdate [pi arguments...]
+#   pi-autoupdate chord-check
+#
+# Runs `pi update --all` (stdin closed, output to ~/.local/state/pi-autoupdate/last.log) unless
+# the arguments are not an interactive session (a subcommand such as update, install or list;
+# -p/--print, -h/--help, -v/--version, --mode json|rpc) or an update succeeded in the last
+# $PI_UPDATE_EVERY seconds (600). An update past $PI_UPDATE_TIMEOUT seconds (120) is stopped.
+# Prints one line ("pi: pi and its extensions are up to date" / "pi: update failed …, starting
+# anyway" / "… timed out …"); a failure never stops pi from starting. Always exits 0.
+#
+# After a successful update (and on demand with `chord-check`) it also heals the release trees
+# that a pi update leaves without @earendil-works/chord; see "chord guard" below.
+set -uo pipefail
+
+STATE="${PI_AUTOUPDATE_STATE:-$HOME/.local/state/pi-autoupdate}"
+EVERY="${PI_UPDATE_EVERY:-600}"
+TIMEOUT="${PI_UPDATE_TIMEOUT:-120}"
+PI_BIN="${PI_BIN:-pi}"
+
+# chord guard knobs (overridable so the test suite can sandbox every side effect)
+RELEASES="${PI_RELEASES:-$HOME/.pi/agent/install/releases}"
+CHORD_REGISTRY="${PI_CHORD_REGISTRY:-https://registry.npmjs.org/@earendil-works/chord}"
+CHORD_TIMEOUT="${PI_CHORD_TIMEOUT:-120}"
+CHORD_CHECK_TIMEOUT="${PI_CHORD_CHECK_TIMEOUT:-20}"
+CHORD_REGISTRY_TIMEOUT="${PI_CHORD_REGISTRY_TIMEOUT:-10}"
+NODE_BIN="${NODE_BIN:-node}"
+NPM_BIN="${NPM_BIN:-npm}"
+CURL_BIN="${CURL_BIN:-curl}"
+
+prev=""
+for a in "$@"; do
+  case "$a" in
+    -p | --print | -h | --help | -v | --version) exit 0 ;;
+    json | rpc) [ "$prev" != --mode ] || exit 0 ;;
+  esac
+  prev="$a"
+done
+case "${1:-}" in install | remove | uninstall | update | list | config | auth | mcp) exit 0 ;; esac
+
+# --- chord guard -------------------------------------------------------------------------------
+# pi-subagents starts background subagent children as a detached node process and aliases pi's
+# host packages into it. Its exemption rule
+# (~/.pi/agent/npm/node_modules/pi-subagents/src/runs/background/runner-aliases.js:140-142) is:
+# only a stable 0.x host (`/^0\.(\d+)\.\d+$/`) whose minor is below 85 may omit chord; every
+# other host, all 1.x included, must resolve @earendil-works/chord and
+# @earendil-works/chord/context or the child dies before it starts. pi-coding-agent 1.x neither
+# declares nor locks chord, and the updater owns the release tree, so a reinstall drops a
+# hand-installed chord again. Heal it after each successful update and on `chord-check`. Every
+# failure here only warns: pi must always start.
+needs_chord() {
+  local v="$1"
+  [[ "$v" =~ ^0\.([0-9]+)\.[0-9]+$ ]] || return 0 # any other version (1.x, prerelease): required
+  [ "${BASH_REMATCH[1]}" -ge 85 ]                  # 0.85.0 and later: required, 0.0-0.84: exempt
+}
+
+chord_log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$STATE/chord.log" 2>/dev/null; }
+warn() { printf '\rpi: %s\n' "$*" >&2; }
+sha_of() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1; }
+
+# Run a command in $1 with a $2-second deadline, stdin closed, output discarded. Returns the
+# command's status, or 124 when the deadline had to kill it (same job-control pattern as the
+# update above; npm has no timeout flag of its own).
+run_in() {
+  local dir="$1" limit="$2" pid deadline
+  shift 2
+  set -m
+  (cd "$dir" && exec "$@") </dev/null >/dev/null 2>&1 &
+  pid=$!
+  set +m
+  deadline=$(($(date +%s) + limit))
+  while kill -0 "$pid" 2>/dev/null && [ "$(date +%s)" -lt "$deadline" ]; do sleep 0.2; done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    return 124
+  fi
+  wait "$pid"
+}
+
+# True when the registry serves this exact version, so the heal never installs a guess.
+registry_has() {
+  local body
+  body="$("$CURL_BIN" -fsS --max-time "$CHORD_REGISTRY_TIMEOUT" "$CHORD_REGISTRY/$1" 2>/dev/null)" || return 1
+  case "$body" in *"\"$1\""*) return 0 ;; *) return 1 ;; esac
+}
+
+chord_guard() {
+  local releases="$1" release version before after
+  [ -d "$releases" ] || return 0
+  mkdir -p "$STATE" 2>/dev/null || return 0
+  for release in "$releases"/*/; do
+    [ -f "${release}package.json" ] || continue
+    version="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${release}package.json" | head -1)"
+    [ -n "$version" ] || continue
+    if ! needs_chord "$version"; then
+      chord_log "$version exempt (a pre-0.85 host may omit chord)"
+      continue
+    fi
+    # Resolvability is what the runner needs: the import must work from the release root.
+    if run_in "$release" "$CHORD_CHECK_TIMEOUT" "$NODE_BIN" --input-type=module \
+      -e 'await import("@earendil-works/chord")'; then
+      chord_log "$version ok"
+      continue
+    fi
+    if ! registry_has "$version"; then
+      chord_log "$version missing, no @earendil-works/chord@$version on the registry, skipped"
+      warn "no @earendil-works/chord@$version on the registry; async subagents stay broken in $release"
+      continue
+    fi
+    before="$(sha_of "${release}package.json") $(sha_of "${release}package-lock.json")"
+    if ! run_in "$release" "$CHORD_TIMEOUT" "$NPM_BIN" i --no-save --package-lock=false \
+      --no-audit --no-fund "@earendil-works/chord@$version"; then
+      chord_log "$version missing, npm install of @earendil-works/chord@$version failed, skipped"
+      warn "could not install @earendil-works/chord@$version into $release; async subagents stay broken there"
+      continue
+    fi
+    after="$(sha_of "${release}package.json") $(sha_of "${release}package-lock.json")"
+    if [ "$before" != "$after" ]; then
+      # The updater owns these two files; a rewritten manifest means the heal is not clean.
+      chord_log "$version installed but npm rewrote the release manifests, not a clean heal"
+      warn "npm rewrote package.json/package-lock.json in $release; check that tree by hand"
+      continue
+    fi
+    chord_log "$version installed @earendil-works/chord@$version (manifests unchanged)"
+  done
+}
+
+case "${1:-}" in
+  chord-check)
+    (chord_guard "$RELEASES") || true
+    exit 0
+    ;;
+esac
+
+mkdir -p "$STATE"
+last="$(cat "$STATE/last-ok" 2>/dev/null || echo 0)"
+[ $(($(date +%s) - ${last:-0})) -ge "$EVERY" ] || exit 0
+
+printf 'pi: checking for updates…' >&2
+set -m
+"$PI_BIN" update --all </dev/null >"$STATE/last.log" 2>&1 &
+pid=$!
+set +m
+deadline=$(($(date +%s) + TIMEOUT))
+while kill -0 "$pid" 2>/dev/null && [ "$(date +%s)" -lt "$deadline" ]; do sleep 0.2; done
+if kill -0 "$pid" 2>/dev/null; then
+  kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+  printf '\rpi: update timed out after %ss, starting anyway (log: %s)\n' "$TIMEOUT" "$STATE/last.log" >&2
+  exit 0
+fi
+if ! wait "$pid"; then
+  printf '\rpi: update failed (%s), starting anyway\n' "$(sed '/^[[:space:]]*$/d' "$STATE/last.log" | tail -1)" >&2
+  exit 0
+fi
+date +%s >"$STATE/last-ok"
+printf '\rpi: pi and its extensions are up to date\n' >&2
+(chord_guard "$RELEASES") || true
+exit 0

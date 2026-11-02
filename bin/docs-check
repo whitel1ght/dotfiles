@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+"""Keep the system pages in step with the system repos.
+
+Each page names the paths it documents on one line:
+
+    <!-- covers: bin/localai bin/webui decisions:src/* -->
+
+(shell-style globs relative to the repo root; * also crosses /; an entry
+without "repo:" means dotfiles). Pages live in two folders: the tools manual
+and the system part pages (SYSTEM_PAGES, default ~/wiki/work/system, minus
+README.md and map.md). The system repos are dotfiles, decisions and articles.
+
+  docs-check commit-msg <file>  git commit-msg hook: if staged changes touch a
+                                covered path, each page covering it must have
+                                been edited since; otherwise the commit stops
+                                and names the page. A message line "Docs: none"
+                                skips every rule; "Docs: internal" skips only
+                                the tools page, the system page stays required.
+                                Off trunk, a system page is also satisfied by a
+                                line "- `repo:branch` ..." under its ## Unfinished,
+                                and so is any tools page for the paths that
+                                system page covers.
+                                New files must be covered by some page and new
+                                Brewfile entries named in some page. Tests, docs,
+                                READMEs and lock files never need a page.
+  docs-check post-merge         after a merge, print the pages whose ## Unfinished
+                                names the merged branch (to be moved into the body).
+  docs-check coverage           every bin/ script (tests excluded) is mentioned
+                                somewhere in the manual, and every covers entry
+                                still matches a tracked file.
+
+SYSTEM_DOCS overrides the manual folder (default ~/wiki/tools), SYSTEM_REPOS
+the repo roots ("name=path:name=path"). Missing page folders never block a
+commit, and a commit in any other repo is never checked.
+"""
+
+import fnmatch
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+DOCS = Path(os.environ.get("SYSTEM_DOCS", "~/wiki/tools")).expanduser()
+SYSTEM = Path(os.environ.get("SYSTEM_PAGES", "~/wiki/work/system")).expanduser()
+DEFAULT_REPOS = "dotfiles=~/projects/dotfiles:decisions=~/projects/decisions:articles=~/projects/articles"
+REPOS = {
+    name: Path(path).expanduser().resolve()
+    for name, path in (e.split("=", 1) for e in os.environ.get("SYSTEM_REPOS", DEFAULT_REPOS).split(":") if "=" in e)
+}
+NOT_PARTS = {"README.md", "map.md"}
+COVERS = re.compile(r"<!--\s*covers:(.*?)-->", re.DOTALL)
+OPT_OUT = re.compile(r"(?im)^docs:\s*(none|internal)\s*$")
+TRUNK = {"main", "master"}
+BRANCH_ENTRY = re.compile(r"^\s*-\s+`([^`:\s]+):([^`\s]+)`")
+BREW_LINE = re.compile(r'^\s*(brew|cask|tap|mas)\s+"([^"]+)"')
+MERGE_SUBJECT = re.compile(r"^(?:merge (\S+?):|commit \(merge\): Merge branch '([^']+)')")
+EXEMPT = ["*.test.*", "tests/**", "*/tests/**", "docs/**", "README.md", "*/README.md", ".gitignore",
+          "*.lock", "*.lock.json", "LICENSE"]
+RECENT = 24 * 3600  # a deleted file has no mtime; the page must be this fresh
+
+
+def exempt(path: str) -> bool:
+    return any(fnmatch.fnmatch(path, g) for g in EXEMPT)
+
+
+def git(*args: str) -> list[str]:
+    out = subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout
+    return [line for line in out.splitlines() if line]
+
+
+def repo_name() -> str | None:
+    try:
+        common = git("rev-parse", "--path-format=absolute", "--git-common-dir")[0]
+    except (subprocess.CalledProcessError, IndexError):
+        return None
+    root = Path(common).resolve().parent
+    return next((name for name, path in REPOS.items() if path == root), None)
+
+
+def parse_entry(entry: str) -> tuple[str, str]:
+    repo, sep, glob = entry.partition(":")
+    return (repo, glob) if sep else ("dotfiles", entry)
+
+
+def pages() -> dict[Path, list[tuple[str, str]]]:
+    files = sorted(DOCS.glob("*.md")) + [p for p in sorted(SYSTEM.glob("*.md")) if p.name not in NOT_PARTS]
+    found = {}
+    for page in files:
+        match = COVERS.search(page.read_text(errors="replace"))
+        found[page] = [parse_entry(e) for e in match.group(1).split()] if match else []
+    return found
+
+
+def page_kind(page: Path) -> str:
+    return "system" if page.parent == SYSTEM else "tools"
+
+
+def covered_by(repo: str, path: str, globs: list[tuple[str, str]]) -> bool:
+    return any(r == repo and fnmatch.fnmatch(path, g) for r, g in globs)
+
+
+def covering(repo: str, path: str) -> list[Path]:
+    return [page for page, globs in pages().items() if covered_by(repo, path, globs)]
+
+
+def opt_out(msg: str) -> str:
+    match = OPT_OUT.search(msg)
+    return match.group(1).lower() if match else ""
+
+
+def current_branch() -> str | None:
+    try:
+        branch = git("symbolic-ref", "--short", "-q", "HEAD")[0]
+    except (subprocess.CalledProcessError, IndexError):
+        return None
+    return None if branch in TRUNK else branch
+
+
+def unfinished_entries(page: Path) -> list[tuple[str, str]]:
+    found = []
+    in_section = False
+    for line in page.read_text(errors="replace").splitlines():
+        if line.startswith("## "):
+            in_section = line.strip() == "## Unfinished"
+        elif in_section:
+            match = BRANCH_ENTRY.match(line)
+            if match:
+                found.append((match.group(1), match.group(2)))
+    return found
+
+
+def added_uncovered(staged_added: list[str], repo: str) -> list[str]:
+    all_globs = [g for globs in pages().values() for g in globs]
+    return [
+        p for p in staged_added
+        if not exempt(p) and not covered_by(repo, p, all_globs)
+    ]
+
+
+def brewfile_unmentioned() -> list[str]:
+    diff = git("diff", "--cached", "-U0", "--", "Brewfile")
+    names = [m.group(2).rsplit("/", 1)[-1] for line in diff if line.startswith("+")
+             for m in [BREW_LINE.match(line[1:])] if m]
+    text = "\n".join(p.read_text(errors="replace") for p in pages())
+    return [n for n in names if n not in text]
+
+
+def commit_msg(msg_file: str) -> int:
+    repo = repo_name()
+    if repo is None:
+        return 0
+    skip = opt_out(Path(msg_file).read_text(errors="replace"))
+    if skip == "none":
+        return 0
+    staged = git("diff", "--cached", "--name-only")
+    added = git("diff", "--cached", "--name-only", "--diff-filter=A")
+    top = Path(git("rev-parse", "--show-toplevel")[0])
+    branch = current_branch()
+    now = time.time()
+    stale = {}
+    all_pages = pages()
+    on_branch = {page for page in all_pages
+                 if branch and page_kind(page) == "system" and (repo, branch) in unfinished_entries(page)}
+    branch_paths = {p for p in staged if any(covered_by(repo, p, all_pages[page]) for page in on_branch)}
+    for page, globs in all_pages.items():
+        if skip == "internal" and page_kind(page) == "tools":
+            continue
+        if page in on_branch:
+            continue
+        hits = [p for p in staged if not exempt(p) and covered_by(repo, p, globs)]
+        if page_kind(page) == "tools":
+            hits = [p for p in hits if p not in branch_paths]
+        if not hits:
+            continue
+        newest = max((top / p).stat().st_mtime if (top / p).exists() else now - RECENT for p in hits)
+        if page.stat().st_mtime < newest:
+            stale[page] = hits
+    have_pages = DOCS.is_dir() or SYSTEM.is_dir()
+    uncovered = added_uncovered(added, repo) if have_pages else []
+    brew = brewfile_unmentioned() if have_pages else []
+    if not (stale or uncovered or brew):
+        return 0
+    if stale:
+        print("docs-check: this commit changes what the system documents.", file=sys.stderr)
+        for page, hits in stale.items():
+            print(f"  update {page} [{page_kind(page)}]  (covers {', '.join(hits)})", file=sys.stderr)
+            if branch and page_kind(page) == "system":
+                print(f"    or, for work still on this branch, add - `{repo}:{branch}` <what it changes>"
+                      " under ## Unfinished", file=sys.stderr)
+    for path in uncovered:
+        print(f"  new file {path} is covered by no page: add it to a page's covers line", file=sys.stderr)
+    for name in brew:
+        print(f"  new Brewfile entry {name} is mentioned in no page: say what it is for", file=sys.stderr)
+    print("Edit the page(s), then commit again. Or opt out with one line in the commit message:\n"
+          "  'Docs: none'      no behaviour change at all (typo, formatting, tests only)\n"
+          "  'Docs: internal'  behaviour changed but not how it is used: the system page\n"
+          "                    is still required, the tools page is not", file=sys.stderr)
+    return 1
+
+
+def post_merge() -> int:
+    repo = repo_name()
+    if repo is None:
+        return 0
+    try:
+        subject = git("reflog", "-1", "--format=%gs")[0]
+    except (subprocess.CalledProcessError, IndexError):
+        return 0
+    match = MERGE_SUBJECT.match(subject)
+    if not match:
+        return 0
+    for page in pages():
+        if (repo, match.group(1) or match.group(2)) in unfinished_entries(page):
+            print(page)
+    return 0
+
+
+def coverage_problems(tracked: list[str]) -> list[str]:
+    """Problems `coverage` prints; tracked is the dotfiles checkout's ls-files."""
+    manual = pages()
+    text = "\n".join(p.read_text(errors="replace") for p in manual)
+    problems = []
+    for path in tracked:
+        name = Path(path).name
+        if path.startswith("bin/") and "/" not in path[4:] and not name.endswith((".test.sh", ".bak")):
+            if not re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text):
+                problems.append(f"undocumented script: {path}")
+    tracked_by = {"dotfiles": tracked}
+    for page, globs in manual.items():
+        for repo, g in globs:
+            if repo not in tracked_by:
+                root = REPOS.get(repo)
+                tracked_by[repo] = git("-C", str(root), "ls-files") if root and root.is_dir() else None
+            if tracked_by[repo] is not None and not any(fnmatch.fnmatch(p, g) for p in tracked_by[repo]):
+                label = g if repo == "dotfiles" else f"{repo}:{g}"
+                problems.append(f"{page.name}: covers entry matches nothing: {label}")
+    return problems
+
+
+def coverage() -> int:
+    problems = coverage_problems(git("ls-files"))
+    for line in problems:
+        print(line)
+    return 1 if problems else 0
+
+
+def main() -> int:
+    if len(sys.argv) >= 3 and sys.argv[1] == "commit-msg":
+        return commit_msg(sys.argv[2])
+    if len(sys.argv) == 2 and sys.argv[1] == "post-merge":
+        return post_merge()
+    if len(sys.argv) == 2 and sys.argv[1] == "coverage":
+        return coverage()
+    print(__doc__.strip(), file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

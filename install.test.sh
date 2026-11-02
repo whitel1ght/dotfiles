@@ -58,6 +58,11 @@ assert_link "$XDG_DIR/newsboat/config" "$TEST_DIR/newsboat/config" 'links Newsbo
 assert_link "$XDG_DIR/mrglass/config.yaml" "$TEST_DIR/mrglass/config.yaml" 'links mrglass config'
 assert_link "$HOME_DIR/.local/bin/proxyctl" "$TEST_DIR/bin/proxyctl" 'keeps Ubuntu proxyctl'
 assert_link "$HOME_DIR/.local/bin/clipboard-copy" "$TEST_DIR/bin/clipboard-copy" 'links Linux clipboard helper'
+for helper in wiki-sync repos-sync team-plugins-sync system-check jira-api jira-issue \
+    day-status friction friction-cards decisions decide run-day-inbox-answer pi-autoupdate; do
+    assert_link "$HOME_DIR/.local/bin/$helper" "$TEST_DIR/bin/$helper" "links $helper"
+done
+assert_link "$HOME_DIR/.local/bin/decide" "$TEST_DIR/bin/decide" 'preserves source decide symlink target'
 assert_link "$HOME_DIR/.local/bin/wt" "$TEST_DIR/bin/wt" 'links worktree helper'
 [ "$(readlink "$HOME_DIR/.local/bin/notes")" = "$SANDBOX/foreign-notes" ] \
     && pass 'preserves a foreign helper symlink' || fail 'preserves a foreign helper symlink' 'foreign link changed'
@@ -71,6 +76,15 @@ assert_link "$HOME_DIR/.local/bin/wt" "$TEST_DIR/bin/wt" 'links worktree helper'
 for rel in .zshrc.local .gitconfig.local .config/mrglass/secrets.env .config/sing-box/secrets.env; do
     [ -f "$HOME_DIR/$rel" ] && pass "seeds $rel" || fail "seeds $rel" 'file absent'
 done
+# Pi's settings.json is per-host state (Pi writes changelog markers into it), so
+# the installer seeds a real file instead of linking it.
+[ -f "$HOME_DIR/.pi/agent/settings.json" ] && [ ! -L "$HOME_DIR/.pi/agent/settings.json" ] \
+    && pass 'seeds the Pi settings as a regular file' \
+    || fail 'seeds the Pi settings as a regular file' 'file absent or a symlink'
+[ "$(stat -c %a "$HOME_DIR/.pi/agent/settings.json")" = 664 ] \
+    && pass 'Pi settings mode is 664' || fail 'Pi settings mode is 664' 'wrong mode'
+assert_link "$HOME_DIR/.pi/agent/models.json" "$TEST_DIR/pi/models.json" \
+    'still links the other Pi config items'
 [ "$(stat -c %a "$HOME_DIR/.zshrc.local")" = 600 ] && pass '.zshrc.local mode is 600' || fail '.zshrc.local mode is 600' 'wrong mode'
 [ "$(stat -c %a "$HOME_DIR/.gitconfig.local")" = 644 ] && pass '.gitconfig.local mode is 644' || fail '.gitconfig.local mode is 644' 'wrong mode'
 [ "$(stat -c %a "$HOME_DIR/.config/mrglass/secrets.env")" = 600 ] && pass 'mrglass secrets mode is 600' || fail 'mrglass secrets mode is 600' 'wrong mode'
@@ -93,10 +107,14 @@ fi
 
 printf 'export NOTES_USER=real-user\n' >> "$HOME_DIR/.zshrc.local"
 before="$(sha256sum "$HOME_DIR/.zshrc.local")"
+pi_before="$(sha256sum "$HOME_DIR/.pi/agent/settings.json")"
 out2="$(run_install)"
 after="$(sha256sum "$HOME_DIR/.zshrc.local")"
+pi_after="$(sha256sum "$HOME_DIR/.pi/agent/settings.json")"
 [ "$before" = "$after" ] && pass 'rerun preserves existing local values' \
     || fail 'rerun preserves existing local values' 'local file changed'
+[ "$pi_before" = "$pi_after" ] && pass 'rerun leaves the per-host Pi settings alone' \
+    || fail 'rerun leaves the per-host Pi settings alone' 'Pi settings changed'
 [ ! -e "$HOME_DIR/.tmux.conf.backup.1" ] && pass 'rerun does not create redundant backups' \
     || fail 'rerun does not create redundant backups' 'extra backup appeared'
 [ "$(readlink "$HOME_DIR/.local/bin/notes")" = "$SANDBOX/foreign-notes" ] \
