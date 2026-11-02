@@ -29,8 +29,9 @@ read ticket → multi-agent investigate + brainstorm → [ask only if genuinely 
                            report
 ```
 
-**One gate, one review cycle, one MR.** Everything after the approach gate runs
-unattended. Do not invent extra checkpoints — the user chose a single pause
+**One gate, one review cycle, and one MR unless the approved approach names
+several.** Open exactly the MRs the approach lists; ask before opening any MR it
+does not list. Everything after the approach gate runs unattended. Do not invent extra checkpoints — the user chose a single pause
 deliberately.
 
 ## When to invoke
