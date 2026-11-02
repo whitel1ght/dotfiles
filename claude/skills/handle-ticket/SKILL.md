@@ -321,7 +321,9 @@ an earlier session.
 Write the plan down before touching the browser — from the ticket's acceptance
 criteria and the approach you got approved at the gate, not from what the code
 happens to do. A plan derived from the implementation only proves the code does
-what it does.
+what it does. The plan also always covers layout (input heights and label
+alignment consistent with neighbouring controls, checked on a screenshot), a
+reset for any filters, and undo or cancel for every change action.
 
 Each step is a **URL**, an **action**, and an **observable result**. "Check the
 page works" is not a test step. "Save with the date range cleared → expect an

@@ -61,6 +61,9 @@ Global instructions applied across all projects. Keep this short — project-lev
 - UI checks run in my Chrome through the Claude in Chrome extension tools (load them with
   `ToolSearch` first). When they do not load or answer "Browser extension is not connected",
   stop and tell me; never switch to Playwright or a terminal browser pane unless I ask.
+- Before calling UI work done, open it in the browser and take a screenshot; check that
+  inputs and labels line up, that filters have a reset, and that every change can be undone
+  or cancelled.
 
 ## Tests and tooling
 

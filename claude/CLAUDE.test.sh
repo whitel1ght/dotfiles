@@ -64,6 +64,7 @@ has "$replies" '`mr-review-response` skill, unasked' "F-051 replies through mr-r
 has "$replies" '"post it" or "post both" posts exactly what was shown' "F-051 a yes posts what was shown"
 has "$(section "$MD" Evidence)" "check the latest decision on that topic" "F-017 steps follow the latest decision"
 has "$(section "$MD" Worktrees)" "Double-quote every variable" "F-030 quoted variables in worktree sessions"
+has "$(section "$MD" Browser)" "Before calling UI work done, open it in the browser" "F-020 UI done-check"
 
 echo "CLAUDE.md — a finished dotfiles branch is landed by the agent"
 tooling=$(section "$MD" "Tests and tooling")
