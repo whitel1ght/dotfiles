@@ -53,6 +53,8 @@ Global instructions applied across all projects. Keep this short — project-lev
 - A mockup or design is a proposal, not a decision: in a plan, contract or summary, list what
   comes only from a mockup under open questions, with whose mockup it is, until someone
   confirms it.
+- Before giving manual steps, check the latest decision on that topic in this conversation;
+  never give steps for a tool or approach the plan has since dropped.
 
 ## Browser
 
