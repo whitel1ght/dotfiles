@@ -17,6 +17,8 @@ Global instructions applied across all projects. Keep this short — project-lev
   keep python, jq or sed for bulk transforms (many files, JSON, CSV).
 - When a step is denied or blocked, never reach for a destructive git or `rm` command to
   get past it; stop and ask me.
+- Messages sent as me to other people (Slack replies, DMs, notes) are
+  five sentences or fewer; lead with the answer, and put evidence in an attachment or a link.
 
 ## Questions
 

@@ -21,6 +21,7 @@ has "$prefs" "Edit and Write accept only a file opened with the Read tool" "F-01
 has "$prefs" "since the last context summary" "F-016 Read again after a context summary"
 has "$prefs" "For an exact replacement in one file use the Edit tool" "F-045 Edit over python or sed"
 has "$prefs" "never reach for a destructive git or \`rm\` command" "F-004 no destructive step past a block"
+has "$prefs" "five sentences or fewer" "F-100 short messages to people"
 questions=$(section "$MD" Questions)
 has "$questions" "goes to the decisions deck through \`ask_user\`, in every session" "every question goes to the decisions deck"
 has "$questions" "Never use the question form (AskUserQuestion)" "F-014 no question form"
