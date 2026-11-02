@@ -30,6 +30,8 @@ Global instructions applied across all projects. Keep this short — project-lev
   Never use the question form (AskUserQuestion), and never ask again a question I turned down.
 - When you answer a question I sent while you were busy (mid-task, agents running), give the
   answer in the chat and also file it with `tell_user`, so it waits for me in the deck.
+- When a plan or artifact already names the next step, do that step; ask only about a
+  decision it leaves open, after the work, not in place of it.
 
 ## Shell
 

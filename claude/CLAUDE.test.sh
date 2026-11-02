@@ -27,6 +27,7 @@ has "$questions" "goes to the decisions deck through \`ask_user\`, in every sess
 has "$questions" "Never use the question form (AskUserQuestion)" "F-014 no question form"
 has "$questions" "when I answer in the chat, \`withdraw\` the card" "an answer in the chat withdraws the card"
 has "$questions" "also file it with \`tell_user\`" "a late answer also goes to the deck"
+has "$questions" "already names the next step, do that step" "F-081 do the named next step"
 has "$(section "$MD" Secrets)" 'right: `curl -H "PRIVATE-TOKEN: $(secret NAME)" …`; wrong: `secret NAME`' "F-013 secret example"
 has "$(section "$MD" Artifacts)" "never resend the refused content unchanged" "F-028 merge onto the live version"
 has "$(section "$MD" Artifacts)" "Before publishing to an existing artifact this session has not read or published, read it first" "F-054 read an artifact before publishing over it"
