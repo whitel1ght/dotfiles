@@ -4,6 +4,7 @@
 # + Open WebUI + the articles server (if installed). Everything together holds ~13 GB, so stop it when done.
 #
 #   localai          start everything and open Open WebUI in the browser
+#   localai save     only what saving articles needs: LM Studio + Gemma + the articles server
 #   localai stop     stop Open WebUI, unload all models, stop the LM Studio server
 #   localai status   what is up and what is loaded
 set -euo pipefail
@@ -32,19 +33,18 @@ load() {
   fi
 }
 
-cmd_start() {
+start_server() {
   [ -x "$LMS" ] || die "lms not found at $LMS (open LM Studio once to install it)"
   echo "LM Studio server"
   local out
   out="$("$LMS" server start 2>&1)" || { echo "$out" >&2; die "LM Studio server did not start"; }
   echo "Models"
-  # Same load flags as the CodeCompanion and minuet configs expect.
-  load "$CHAT_MODEL" -c 32768 --parallel 1
-  load "$COMPLETE_MODEL" -c 4096
-  echo "Open WebUI"
-  if [ -n "${LOCALAI_NO_BROWSER:-}" ]; then "$WEBUI" start; else "$WEBUI"; fi
-  # Optional extra: a failure here is reported, never fatal for the rest.
-  local articles_up=""
+}
+
+# Optional extra: a failure here is reported, never fatal for the rest.
+# Sets articles_up (global) for the caller.
+start_articles() {
+  articles_up=""
   if command -v "$ARTICLES" >/dev/null; then
     echo "Articles"
     if "$ARTICLES" start; then
@@ -53,6 +53,27 @@ cmd_start() {
       echo "  articles did not start (see above); everything else is up" >&2
     fi
   fi
+}
+
+# Only what saving a page needs: the summary model and the articles server.
+cmd_save() {
+  start_server
+  load "$CHAT_MODEL" -c 32768 --parallel 1
+  start_articles
+  echo
+  echo "Saving articles: summary model + articles server only (no Open WebUI, no autocomplete model)."
+  [ -z "$articles_up" ] || echo "Saved articles: http://127.0.0.1:8765"
+  echo "Stop with: localai stop"
+}
+
+cmd_start() {
+  start_server
+  # Same load flags as the CodeCompanion and minuet configs expect.
+  load "$CHAT_MODEL" -c 32768 --parallel 1
+  load "$COMPLETE_MODEL" -c 4096
+  echo "Open WebUI"
+  if [ -n "${LOCALAI_NO_BROWSER:-}" ]; then "$WEBUI" start; else "$WEBUI"; fi
+  start_articles
   cat <<EOF
 
 Ready. Chat and voice: http://127.0.0.1:8080
@@ -93,8 +114,9 @@ cmd_status() {
 
 case "${1:-start}" in
   start) cmd_start ;;
+  save) cmd_save ;;
   stop) cmd_stop ;;
   status) cmd_status ;;
-  -h | --help | help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h | --help | help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1 (try 'localai help')" ;;
 esac

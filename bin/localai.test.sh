@@ -46,6 +46,18 @@ assert_contains "$out" "Saved articles: http://127.0.0.1:8765" "start: prints th
 first="$(head -1 "$CALLS")"
 assert_contains "$first" "server start" "start: server comes up before any load"
 
+# save: summary model and the articles server only.
+: >"$CALLS"
+out="$("$SCRIPT" save 2>&1)"; code=$?
+calls="$(cat "$CALLS")"
+[ "$code" -eq 0 ] && pass "save: exits zero" || fail "save: exits zero" "exit $code: $out"
+assert_contains "$calls" "lms server start" "save: starts the LM Studio server"
+assert_contains "$calls" "lms load gemma-4-e4b-it-mlx -c 32768 --parallel 1 -y" "save: loads the summary model"
+assert_not_contains "$calls" "qwen" "save: never loads the autocomplete model"
+assert_not_contains "$calls" "webui" "save: never starts Open WebUI"
+assert_contains "$calls" "articles start" "save: starts the articles server"
+assert_contains "$out" "localai stop" "save: says how to stop"
+
 # The API reports the chat model loaded: only the other one is loaded.
 mkdir -p "$SANDBOX/www/api/v0/models"
 echo '{"id":"gemma-4-e4b-it-mlx","state": "loaded"}' >"$SANDBOX/www/api/v0/models/gemma-4-e4b-it-mlx"
