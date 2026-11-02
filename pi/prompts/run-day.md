@@ -110,7 +110,9 @@ planned pause in the day:
 - `review` = someone else's MR to review or re-review. An agent drafts the review (step 2,
   review items); posting it is one decision. Never for an MR we already approved (D-011): when
   `glab api "projects/<urlencoded path>/merge_requests/<iid>/approvals" | jq -r '.approved_by[].user.username'`
-  lists `whitel1ght`, class it `me` with `already approved`.
+  lists `whitel1ght`, class it `me` with `already approved`. The gate is `review-gate <project path> <iid>`
+  (exit 0 go ahead, 1 approved by us, 3 unknown); run it before every review or re-review dispatch
+  (steps 2, 5 and 11).
 - `me` = syncs, meetings, merges, decisions, replies to people. A review is not a reply: it is `review`.
 - `wait` = blocked on others.
 
@@ -176,7 +178,9 @@ For each `auto` item:
 7. End the turn. A `[pi-sub]` wake-up starts the next one when the agent finishes, fails, is
    stopped, or goes quiet for 10 minutes — never wait, sleep or poll for it.
 
-Review items, in plan order under the same cap of 3: read `source_branch`, `sha`, `title` and
+Review items, in plan order under the same cap of 3: first `review-gate <project path> <iid>`; exit 1
+(already approved by us, D-011): re-class the item `me` with `already approved`, dispatch nothing; exit 3
+(unknown): leave it queued. Exit 0: read `source_branch`, `sha`, `title` and
 `author.username` from `glab api "projects/<urlencoded path>/merge_requests/<iid>"`;
 `wt add <repo> review-<iid> <source branch>` (reuse it when it exists), then
 `git -C <worktree> fetch -q origin` and `git -C <worktree> checkout -q --detach <sha>`. Fill
@@ -296,7 +300,9 @@ session can address it, set `needs_you=yes`, and stop there.
 
 When the summary starts with `[approved by you — reply only, never review]` (`changes-since` marks
 it `approved_by_me`: someone else's MR we already approved), never start a review round or a
-re-review on that MR, now or later (D-011). If it asks us something, draft the answer and file it
+re-review on that MR, now or later (D-011). Before starting any review round or re-review without that
+marker, run `review-gate <project path> <iid>`: exit 1 means the same (class `me`, `already approved`,
+reply only), exit 3 means do not start it this time. If it asks us something, draft the answer and file it
 as a decision (step 9: `Post this reply on <repo>!<iid>?`, options `Post it` and `No`); otherwise
 do nothing. Stop there.
 
@@ -543,7 +549,7 @@ the end of the dispatch in step 2, and on a `[daily-idle] no agent running: …`
 than 3 agents run (ticket, review and round agents all count), fill the free slots in this order:
 
 1. Queued `auto` and `review` items, in plan order (step 2).
-2. Open `wait` and `me` items whose state moved: a `wait` item whose blocker cleared is dispatched;
+2. Open `wait` and `me` items whose state moved: a `wait` item whose blocker cleared is dispatched (a `review` item only after `review-gate <project path> <iid>` exits 0; 1: class `me`, `already approved`; 3: leave it);
    for a merge item with a green pipeline and approvals and no decision open, file the merge
    decision with the MR link.
 3. The sprint: the user's tickets first, then the team's unassigned To-Do tickets, highest rank
