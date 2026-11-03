@@ -26,7 +26,11 @@ const STDERR_CHARS = 200;
 
 export type Send = (text: string) => void;
 
-/** `ps -E -p <pid> -o command=`: the command line plus its environment. */
+/**
+ * Prints a pid's environment (and, where the platform gives it, its command
+ * line) as one string for the ownership check; "" when the pid is gone or its
+ * environment cannot be read.
+ */
 export type PsRunner = (pid: number) => string;
 
 export type StopOpts = {
@@ -45,10 +49,30 @@ export type WatcherOpts = {
   onError?: (e: unknown) => void;
 };
 
-const defaultPs: PsRunner = (pid) => {
+/** macOS: `ps -E -p <pid> -o command=` — the command line plus its environment. */
+export const darwinPs: PsRunner = (pid) => {
   const r = spawnSync("ps", ["-E", "-p", String(pid), "-o", "command="], { encoding: "utf8" });
   return r.status === 0 ? (r.stdout ?? "") : "";
 };
+
+/**
+ * Linux: `/proc/<pid>/environ`, NUL-separated, printed as one space-separated
+ * line. procps' `ps` has no `-E`, so this is the only portable read here.
+ */
+export const procPs: PsRunner = (pid) => {
+  try {
+    return readFileSync(`/proc/${pid}/environ`, "utf8").replaceAll("\0", " ");
+  } catch {
+    return ""; // gone, or not ours to read
+  }
+};
+
+/** The ownership probe for `platform`. */
+export function psForPlatform(platform: NodeJS.Platform): PsRunner {
+  return platform === "darwin" ? darwinPs : procPs;
+}
+
+export const defaultPs: PsRunner = psForPlatform(process.platform);
 
 function agentDir(id: string): string {
   return join(stateDir(), id);

@@ -18,11 +18,15 @@ import {
 import {
   addSleep,
   checkLimits,
+  darwinPs,
+  defaultPs,
   deliverPending,
   flagText,
   formatDur,
   idleText,
   ownsPid,
+  procPs,
+  psForPlatform,
   stop,
   wakeText,
   Watcher,
@@ -246,6 +250,62 @@ test("ownsPid against a real process on this machine", async () => {
     if (child?.pid) process.kill(child.pid, "SIGKILL");
     cleanup(root);
   }
+});
+
+test("psForPlatform picks the probe the platform actually has", () => {
+  // procps' ps rejects -E, and macOS has no /proc: each platform gets its own.
+  assert.equal(psForPlatform("darwin"), darwinPs);
+  assert.equal(psForPlatform("linux"), procPs);
+  assert.equal(defaultPs, psForPlatform(process.platform));
+});
+
+test("procPs owns a pid by its /proc environ", { skip: process.platform !== "linux" }, async () => {
+  const root = sandbox();
+  let child: ReturnType<typeof spawnSleeper> | undefined;
+  try {
+    child = spawnSleeper("20261014-101500-proc1");
+    await waitFor("sleeper to be alive", () => isAlive(child!.pid!));
+    assert.match(procPs(child.pid!), /\bPI_SUB_ID=20261014-101500-proc1\b/);
+    assert.equal(ownsPid(child.pid!, "20261014-101500-proc1", procPs), true);
+    assert.equal(ownsPid(child.pid!, "20261014-101500-proc2", procPs), false);
+    // A plain process without the marker is never ours.
+    const plain = spawn(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], { stdio: "ignore" });
+    await waitFor("plain sleeper to be alive", () => isAlive(plain.pid!));
+    assert.equal(ownsPid(plain.pid!, "20261014-101500-proc1", procPs), false);
+    plain.kill("SIGKILL");
+    await waitFor("plain sleeper to die", () => !isAlive(plain.pid!));
+  } finally {
+    if (child?.pid) process.kill(child.pid, "SIGKILL");
+    cleanup(root);
+  }
+});
+
+test("darwinPs owns a pid by its ps -E environment", { skip: process.platform !== "darwin" }, async () => {
+  const root = sandbox();
+  let child: ReturnType<typeof spawnSleeper> | undefined;
+  try {
+    child = spawnSleeper("20261014-101500-ps1");
+    await waitFor("sleeper to be alive", () => isAlive(child!.pid!));
+    assert.match(darwinPs(child.pid!), /\bPI_SUB_ID=20261014-101500-ps1\b/);
+    assert.equal(ownsPid(child.pid!, "20261014-101500-ps1", darwinPs), true);
+    assert.equal(ownsPid(child.pid!, "20261014-101500-ps2", darwinPs), false);
+  } finally {
+    if (child?.pid) process.kill(child.pid, "SIGKILL");
+    cleanup(root);
+  }
+});
+
+test("both probes print nothing for a pid that is gone", async () => {
+  const plain = spawn(process.execPath, ["-e", "setTimeout(() => {}, 5000)"], {
+    stdio: "ignore",
+    env: { ...process.env, PI_SUB_ID: "20261014-101500-dead" },
+  });
+  await waitFor("sleeper to be alive", () => isAlive(plain.pid!));
+  plain.kill("SIGKILL");
+  await waitFor("sleeper to die", () => !isAlive(plain.pid!));
+  // A reused pid must never look owned, so a dead one reads as empty.
+  assert.equal(procPs(plain.pid!), "");
+  assert.equal(darwinPs(plain.pid!), "");
 });
 
 test("deliverPending: exit recorded while owner was down, delivered once", () => {
@@ -739,7 +799,7 @@ test("Watcher does not re-enter the timeout stop while one is in flight", async 
     const watcher = new Watcher("sess-a", () => {}, () => {}, {
       pollMs: 40,
       graceMs: 1200,
-      ps: (pid) => {
+      ps: (_pid) => {
         psCalls++;
         return `node -e sleeper PI_SUB_ID=${m.id}`;
       },
