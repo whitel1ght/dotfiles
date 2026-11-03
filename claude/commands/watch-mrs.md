@@ -30,9 +30,12 @@ straight to "Wait". Exit 2 means GitLab is unreachable: say so and wait.
 directory and the **worktree**. Handle every MR in the summary, in parallel.
 
 1. **Worktree.**
-   - `(clean)`: use it.
+   - `(clean)`, `(clean, fast-forwarded N commits)` or `(clean, N unpushed commits)`: use
+     it. `check` has already fetched and fast-forwarded it to the remote branch.
    - `DIRTY`: that's my own work in progress, so leave the MR alone this time. Don't ack
      it, so it comes back next check, and tell me in one line.
+   - `STALE`: the worktree has diverged from the remote branch (pushed from another
+     machine on top of local commits), or the fetch failed. Treat it like `DIRTY`.
    - `none (clone <path>)`: create one with `wt add <repo> <TICKET> <branch>` (it
      prints the path), then use it.
 2. **Fixer.** One subagent per MR, all in one message, each with `model: "sonnet"`. For
