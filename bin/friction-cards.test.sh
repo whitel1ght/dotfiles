@@ -39,11 +39,23 @@ case "$cmd" in
       shift
     done
     if [ -f "$SANDBOX/add.fail" ] && grep -qx "$key" "$SANDBOX/add.fail"; then echo "deck refused $key" >&2; exit 1; fi
+    case "$opts" in *"|"*) ;; *) echo "decisions: give 2 to 9 non-empty --option values" >&2; exit 1 ;; esac
     if [ -f "$SANDBOX/add.rewrite" ]; then "$FRICTION_LEDGER" set "$key" --proposal-file "$SANDBOX/add.rewrite" --date 2026-10-12 >/dev/null; fi
     n=$(( $(ls "$STDINS" | wc -l) + 1 ))
     cat >"$STDINS/$n"
     printf 'add key=%s source=%s opts=%s q=%s stdin=%s\n' "$key" "$src" "$opts" "$q" "$n" >>"$CALLS"
     jq --arg id "D-$n" --arg k "$key" --arg s "$src" --arg q "$q" '. + [{id: $id, key: $k, status: "open", source: $s, question: $q}]' "$DECK" >"$DECK.new" && mv "$DECK.new" "$DECK"
+    echo "D-$n" ;;
+  note)
+    key="" src="" q=""
+    while [ $# -gt 0 ]; do
+      case "$1" in --key) key="$2"; shift ;; --source) src="$2"; shift ;; --question) q="$2"; shift ;; esac
+      shift
+    done
+    n=$(( $(ls "$STDINS" | wc -l) + 1 ))
+    cat >"$STDINS/$n"
+    printf 'add key=%s source=%s opts=(note) q=%s stdin=%s\n' "$key" "$src" "$q" "$n" >>"$CALLS"
+    jq --arg id "D-$n" --arg k "$key" --arg s "$src" --arg q "$q" '. + [{id: $id, key: $k, status: null, source: $s, question: $q}]' "$DECK" >"$DECK.new" && mv "$DECK.new" "$DECK"
     echo "D-$n" ;;
   list) echo "list $*" >>"$CALLS"; cat "$DECK" ;;
   withdraw) echo "withdraw $*" >>"$CALLS" ;;
@@ -178,10 +190,10 @@ groups "k:tool:l|tool|2" "k:tool:m|tool|2" "k:tool:n|tool|2"
 before="$(adds)"
 sync >/dev/null
 assert_eq "$((before + 3))" "$(adds)" "each result is filed"
-assert_has "source=coach:landed opts=OK " "$(call_for F-011)" "landed: OK"
+assert_has "source=coach:landed opts=(note) " "$(call_for F-011)" "landed: one answer, so filed as a note to mark seen"
 assert_has "git revert abc1234" "$(stdin_for F-011)" "landed context says how to undo it"
 assert_has "opts=Retry|Ignore " "$(call_for F-012)" "retryable failure: Retry and Ignore"
-assert_has "source=coach:failed opts=OK " "$(call_for F-013)" "a failure the user must fix: OK"
+assert_has "source=coach:failed opts=(note) " "$(call_for F-013)" "a failure the user must fix: a note"
 assert_has "tests failed" "$(stdin_for F-012)" "failed context gives the reason"
 assert_eq "2026-10-20" "$(fld F-011 result_reported_on)" "the entry gets result_reported_on"
 sync >/dev/null

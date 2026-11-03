@@ -146,7 +146,9 @@ file_card() { # item JSON, date, result(0|1)
   while IFS= read -r o; do opts+=(--option "$o"); done < <(options_for "$card" "$retry")
   ctx="$(card_context <<<"$item")"
   errf="$(mktemp)"
-  if ! new="$("$FRICTIONS_BIN" add --key "$id" --source "coach:$card" --question "$q" "${opts[@]}" <<<"$ctx" 2>"$errf")"; then
+  # the deck takes 2-9 options; a card with one answer (OK) is information: a note, marked seen
+  local how=(add "${opts[@]}"); [ "${#opts[@]}" -ge 4 ] || how=(note)
+  if ! new="$("$FRICTIONS_BIN" "${how[0]}" --key "$id" --source "coach:$card" --question "$q" "${how[@]:1}" <<<"$ctx" 2>"$errf")"; then
     echo "friction-cards: could not file the card for $id: $(one_line "$(tail -1 "$errf")")" >&2
     rm -f "$errf"; return 1
   fi
