@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# Stop the local ECFX Docker stack when no check needs it, and start it again
+# when one does. Containers are stopped, never removed, so a resume is a plain
+# `docker start` and every volume keeps its data.
+#
+#   ecfx-docker status             what runs, what pause stopped, who is busy
+#   ecfx-docker pause [--force]    stop every ECFX container, unless a check runs
+#   ecfx-docker resume [NAME...]   start them again (default: what pause stopped)
+#   ecfx-docker busy-on LABEL      a check is running; pause refuses until busy-off
+#   ecfx-docker busy-off LABEL     that check is done
+#
+# A container is ECFX's when its compose project starts with "ecfx": the backend
+# clone's stack (ecfx_postgres, ecfx_rabbit, ecfx_redis, pushpin), a worktree
+# stack (project ecfx-<ticket>), and the workspace's `ecfx-dev infra` compose
+# (project ecfx-workspace). TestContainers' ephemeral containers are left alone:
+# they belong to the suite that started them, and the daemon stays up for it.
+#
+# Idle means no busy label and no test or build process on the box, so pause
+# never pulls Postgres out from under a running suite. The backend's Spock tests
+# provision their own containers through TestContainers, so a stopped dev stack
+# does not block them; resume is for a check that wants the real services.
+set -euo pipefail
+
+STATE_DIR="${ECFX_DOCKER_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/ecfx-docker}"
+BUSY_DIR="$STATE_DIR/busy"
+PAUSED_FILE="$STATE_DIR/paused"
+
+# A test or build run in flight. The Gradle daemon is deliberately absent: it
+# idles for hours and would pin the stack up forever.
+CHECK_RE='GradleWorkerMain|GradleTestExecutor|org\.gradle\.process\.internal\.worker|[v]itest|[p]ytest|surefire'
+
+ecfx_ps() { # $1 = running | exited
+    if [ "$1" = running ]; then
+        docker ps --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}\t{{.Status}}'
+    else
+        docker ps --all --filter status=exited --filter status=created \
+            --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}\t{{.Status}}'
+    fi | awk -F'\t' '$2 ~ /^ecfx/'
+}
+
+busy_labels() {
+    local f found=1
+    [ -d "$BUSY_DIR" ] || return 1
+    for f in "$BUSY_DIR"/*; do
+        [ -e "$f" ] || continue
+        basename -- "$f"
+        found=0
+    done
+    return $found
+}
+
+check_running() { # echoes the offending command line
+    local pid args
+    for pid in $(pgrep -f "$CHECK_RE" 2>/dev/null || true); do
+        [ "$pid" = "$$" ] && continue
+        [ "$pid" = "$PPID" ] && continue
+        args="$(ps -o args= -p "$pid" 2>/dev/null || true)"
+        [ -n "$args" ] || continue
+        # Agent processes carry their task text on the command line, which can
+        # name a test runner that is not actually running; the runners they
+        # spawn still match.
+        case "$args" in *ecfx-docker*|*pgrep*|*pi-subagents*|*pi-coding-agent*|*runner-peer-preload*|*claude*) continue ;; esac
+        printf '%s' "$args"
+        return 0
+    done
+    return 1
+}
+
+# why_busy — the reason the stack must stay up, empty when it is idle.
+why_busy() {
+    local labels check
+    if labels="$(busy_labels)"; then
+        printf 'check marked busy: %s' "$(printf '%s' "$labels" | tr '\n' ' ')"
+        return 0
+    fi
+    if check="$(check_running)"; then
+        printf 'test or build running: %s' "$(printf '%s' "$check" | cut -c1-120)"
+        return 0
+    fi
+    return 1
+}
+
+cmd_status() {
+    local line reason
+    printf 'running:\n'
+    if [ -n "$(ecfx_ps running)" ]; then
+        ecfx_ps running | while IFS=$'\t' read -r name project service status; do
+            printf '  %-24s %-18s %s\n' "$name" "$project/$service" "$status"
+        done
+    else
+        printf '  (none)\n'
+    fi
+    printf 'stopped by pause:\n'
+    if [ -s "$PAUSED_FILE" ]; then
+        sed 's/^/  /' "$PAUSED_FILE"
+    else
+        printf '  (none)\n'
+    fi
+    if reason="$(why_busy)"; then
+        printf 'busy: %s\n' "$reason"
+    else
+        printf 'busy: no\n'
+    fi
+}
+
+cmd_pause() {
+    local force=0 reason names count
+    [ "${1:-}" = --force ] && force=1
+    if [ "$force" = 0 ] && reason="$(why_busy)"; then
+        printf 'not stopping — %s\n' "$reason"
+        printf 'ecfx-docker pause --force stops it anyway\n'
+        return 1
+    fi
+    names="$(ecfx_ps running | cut -f1)"
+    mkdir -p "$STATE_DIR"
+    if [ -z "$names" ]; then
+        : > "$PAUSED_FILE"
+        printf 'nothing running\n'
+        return 0
+    fi
+    printf '%s\n' "$names" > "$PAUSED_FILE"
+    count="$(printf '%s\n' "$names" | wc -l | tr -d ' ')"
+    # shellcheck disable=SC2086
+    docker stop -t 30 $names > /dev/null
+    printf 'stopped %s: %s\n' "$count" "$(printf '%s' "$names" | tr '\n' ' ')"
+}
+
+cmd_resume() {
+    local names
+    if [ "$#" -gt 0 ]; then
+        names="$*"
+    elif [ -s "$PAUSED_FILE" ]; then
+        names="$(tr '\n' ' ' < "$PAUSED_FILE")"
+    else
+        printf 'nothing to resume: no pause snapshot, and no container names given\n'
+        printf 'ecfx-docker status lists what is stopped\n'
+        return 1
+    fi
+    # shellcheck disable=SC2086
+    docker start $names > /dev/null
+    mkdir -p "$STATE_DIR"
+    : > "$PAUSED_FILE"
+    printf 'started: %s\n' "$names"
+    ecfx_ps running | awk -F'\t' '{printf "  %-24s %s\n", $1, $4}'
+}
+
+cmd_busy_on() {
+    [ -n "${1:-}" ] || { printf 'usage: ecfx-docker busy-on LABEL\n' >&2; return 2; }
+    mkdir -p "$BUSY_DIR"
+    : > "$BUSY_DIR/$1"
+    printf 'busy: %s\n' "$1"
+}
+
+cmd_busy_off() {
+    [ -n "${1:-}" ] || { printf 'usage: ecfx-docker busy-off LABEL\n' >&2; return 2; }
+    rm -f -- "$BUSY_DIR/$1"
+    printf 'not busy: %s\n' "$1"
+}
+
+case "${1:-status}" in
+    status) cmd_status ;;
+    pause) shift || true; cmd_pause "${1:-}" ;;
+    resume) shift || true; cmd_resume "$@" ;;
+    busy-on) cmd_busy_on "${2:-}" ;;
+    busy-off) cmd_busy_off "${2:-}" ;;
+    *) printf 'usage: ecfx-docker status|pause [--force]|resume [NAME...]|busy-on LABEL|busy-off LABEL\n' >&2; exit 2 ;;
+esac

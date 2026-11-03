@@ -1,7 +1,7 @@
 ---
 description: Watch my open MRs and address every new review finding with cheap subagents, in a loop
 argument-hint: [check interval in seconds, default 3600] [--since 2026-09-20T00:00:00Z]
-allowed-tools: Bash(~/.local/bin/mr-watch:*), Bash(wt add:*), Bash(git -C:*)
+allowed-tools: Bash(~/.local/bin/mr-watch:*), Bash(wt add:*), Bash(git -C:*), Bash(~/.local/bin/ecfx-docker:*), Bash(ecfx-docker:*)
 disable-model-invocation: true
 ---
 
@@ -82,7 +82,12 @@ Read it, but don't post anything: its step 5 is done for you.
    concrete reason when it's wrong or out of scope. Commit per finding or tight group,
    in the repo's commit style. Don't push.
 3. Run the tests covering what you changed. Record the exact commands and counts.
-   Never write "verified" for something you did not run.
+   Never write "verified" for something you did not run. The local Docker stack is kept
+   stopped to save memory, and TestContainers brings its own containers, so most suites
+   need nothing from it. When your checks do need the real services (a running app,
+   `make migrate`, a database the suite does not provision), run
+   `ecfx-docker busy-on <MR ref>` and then `ecfx-docker resume` before them, and
+   `ecfx-docker busy-off <MR ref>` once they are done.
 4. Write <round>/response.md: the reply template from the skill, with one table row per
    finding. The "Round N pushed" line uses the upstream head as old and your last
    commit as new.
@@ -97,8 +102,10 @@ anything you couldn't do.
 
 ## Wait
 
-Once every MR in the round is replied to, held or skipped, start the next wait in the
-background (Bash with `run_in_background`) and end your turn:
+Once every MR in the round is replied to, held or skipped, stop the local Docker stack
+again with `~/.local/bin/ecfx-docker pause` — it refuses while a check is still running,
+which is the point, so leave the stack up then and say so in one line — and start the
+next wait in the background (Bash with `run_in_background`) and end your turn:
 
 ```bash
 ~/.local/bin/mr-watch wait --every <interval>
