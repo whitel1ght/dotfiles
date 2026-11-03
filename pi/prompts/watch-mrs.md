@@ -100,12 +100,13 @@ Read it, but don't post anything: its step 5 is done for you.
    concrete reason when it's wrong or out of scope. Commit per finding or tight group,
    in the repo's commit style. Don't push.
 3. Run the tests covering what you changed. Record the exact commands and counts.
-   Never write "verified" for something you did not run. The local Docker stack is kept
-   stopped to save memory, and TestContainers brings its own containers, so most suites
-   need nothing from it. When your checks do need the real services (a running app,
-   `make migrate`, a database the suite does not provision), run
-   `ecfx-docker busy-on <MR ref>` and then `ecfx-docker resume` before them, and
-   `ecfx-docker busy-off <MR ref>` once they are done.
+   Never write "verified" for something you did not run. Docker is kept off to save
+   memory: `pause` stops the ECFX containers and quits Docker Desktop. A suite that
+   provisions its own containers (backend Spock through TestContainers) still needs the
+   daemon, so run `ecfx-docker busy-on <MR ref>` and then `ecfx-docker daemon-up` before
+   it; add `ecfx-docker resume` when your checks need the real services (a running app,
+   `make migrate`, a database the suite does not provision). Finish with
+   `ecfx-docker busy-off <MR ref>` — until then nothing can be paused.
 4. Write <round>/response.md: the reply template from the skill, with one table row per
    finding. The "Round N pushed" line uses the upstream head as old and your last
    commit as new.
@@ -121,7 +122,8 @@ anything you couldn't do.
 ## Wait
 
 Once every MR in the round is replied to, held or skipped, stop the local Docker stack
-again with `~/.local/bin/ecfx-docker pause` — it refuses while a check is still running,
+again with `~/.local/bin/ecfx-docker pause` — it stops the ECFX containers and quits
+Docker Desktop, and it refuses while a check is still running,
 which is the point, so leave the stack up then and say so in one line — then start the
 next wait with `bg_start` and end your turn:
 
