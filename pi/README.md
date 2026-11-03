@@ -46,12 +46,9 @@ new sessions, not the model of an already running session.
 The model-cycling/session pool in `settings.json` is separate from the default.
 Currently it contains only:
 
-- `openai/gpt-5.6-sol`
-- `openai/gpt-5.6-terra`
-- `openai/gpt-6-astra`
-- `openai/gpt-6-luna`
-- `openai/gpt-6-sol`
 - `openai/gpt-6.1-sol`
+- `openai/gpt-6-luna`
+- `openai/gpt-6-astra`
 
 LongCat is not in that pool. Use `/scoped-models` to change the live session pool;
 edit `enabledModels` for the persistent selection. The default model setting
