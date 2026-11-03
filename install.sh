@@ -167,7 +167,7 @@ create_symlink "$DOTFILES_DIR/git/config/git/ignore" "$XDG_CONFIG_HOME/git/ignor
 # Portable command links. Do not link tests, macOS-only helpers, or the proxy
 # script indirectly: the Ubuntu branch's bin/proxyctl is deliberately retained.
 [ "$DRY_RUN" = 1 ] || mkdir -p "$HOME/.local/bin"
-for name in cards changes-since clean-worktrees clipboard-copy coach-fix coach-mine cs cs-add \
+for name in art cards changes-since clean-worktrees clipboard-copy coach-fix coach-mine cs cs-add \
     daily-stats day-note day-plan day-status decide decisions dev diary-links \
     drills docs-check ecfx-daily-commits end-day friction friction-cards friction-ledger \
     friction-mine frictions ideas jira-api jira-issue jt mr-ship mr-watch \

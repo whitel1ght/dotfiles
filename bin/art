@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# Open a published claude.ai artifact from its source in ~/artifacts.
+#
+#   art                fzf picker: enter opens the local page in the browser,
+#                      ctrl-o the published claude.ai page, ctrl-y copies its link
+#   art <query>        the artifact whose name or title matches (fzf if several)
+#   art --url <query>  open the published page instead of the local file
+#   art --list         name<TAB>title, one per artifact
+#
+# pi's artifacts are here too, as pi/<project>/<slug> (pi/extensions/artifacts-home
+# links each project's .pi/artifacts into ~/artifacts/pi/); they have no published
+# page, only the local one.
+#
+# The local page needs no claude.ai account (see ~/artifacts/README.md); the
+# published one opens only for the account that owns it.
+#
+# Env: ARTIFACTS_DIR (default ~/artifacts), OPEN_CMD (default open), COPY_CMD
+# (default pbcopy where it exists, otherwise the dotfiles' clipboard-copy).
+set -euo pipefail
+
+A="${ARTIFACTS_DIR:-$HOME/artifacts}"
+OPEN="${OPEN_CMD:-open}"
+COPY="${COPY_CMD:-$(command -v pbcopy || command -v clipboard-copy || echo pbcopy)}"
+
+title_of() {
+  sed -n 's:.*<title>\(.*\)</title>.*:\1:p' "$1" | head -1 \
+    | sed -e 's/&#39;/'"'"'/g' -e 's/&quot;/"/g' -e 's/&amp;/\&/g'
+}
+
+list() {
+  local d f name page title
+  for d in "$A"/*/; do
+    name="$(basename "$d")"
+    page="$d$name.html"
+    [ -f "$page" ] || continue
+    title="$(title_of "$page")"
+    printf '%s\t%s\n' "$name" "${title:-$name}"
+  done
+  for f in "$A"/pi/*/*.html; do
+    [ -f "$f" ] || continue
+    name="${f#"$A"/}"
+    name="${name%.html}"
+    title="$(title_of "$f")"
+    printf '%s\t%s\n' "$name" "${title:-$(basename "$name")}"
+  done
+}
+
+page_of() {
+  case "$1" in
+    pi/*) printf '%s/%s.html' "$A" "$1" ;;
+    *) printf '%s/%s/%s.html' "$A" "$1" "$1" ;;
+  esac
+}
+url_of() { case "$1" in pi/*) ;; *) head -1 "$A/$1/url" 2>/dev/null ;; esac; }
+
+preview() {
+  local name="$1" page
+  page="$(page_of "$name")"
+  list | awk -F'\t' -v n="$name" '$1 == n { print $2 }'
+  echo
+  echo "link:     $(url_of "$name")"
+  echo "file:     ${page/#$HOME/\~}"
+  echo "size:     $(du -h "$page" | cut -f1)"
+  echo "changed:  $(date -r "$page" '+%F %H:%M')"
+}
+
+open_one() {  # open_one NAME local|url
+  local name="$1" target
+  if [ "$2" = url ]; then
+    target="$(url_of "$name")"
+    [ -n "$target" ] || { echo "art: $name has no published link (pi artifacts are local only)" >&2; exit 1; }
+  else
+    target="$(page_of "$name")"
+  fi
+  "$OPEN" "$target"
+}
+
+pick() {  # pick QUERY MODE
+  local out key line name
+  out="$(list | fzf --delimiter='\t' --with-nth=1,2 --tabstop=28 --layout=reverse --no-info \
+      --query="$1" --border rounded --border-label ' artifacts ' \
+      --color 'border:#bb9af7,label:#7aa2f7:bold' \
+      --header 'enter open locally · ctrl-o published page · ctrl-y copy link' \
+      --preview "'$0' --preview {1}" --preview-window 'right,45%,wrap' \
+      --expect=ctrl-o,ctrl-y; exit "${PIPESTATUS[1]}")" || return 0  # esc: nothing to do
+  key="" line="$out"
+  if [ "$(printf '%s\n' "$out" | wc -l)" -gt 1 ]; then
+    key="$(printf '%s\n' "$out" | head -1)"
+    line="$(printf '%s\n' "$out" | tail -1)"
+  fi
+  name="${line%%$'\t'*}"
+  [ -n "$name" ] || return 0
+  case "$key" in
+    ctrl-o) open_one "$name" url ;;
+    ctrl-y)
+      if url_of "$name" | tr -d '\n' | "$COPY"; then echo "copied $(url_of "$name")"; fi
+      ;;
+    *) [ "$2" = url ] && open_one "$name" url || open_one "$name" local ;;
+  esac
+}
+
+mode=local
+case "${1:-}" in
+  --list) list; exit 0 ;;
+  --preview) preview "$2"; exit 0 ;;
+  --url) mode=url; shift ;;
+  -h|--help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+
+query="${*:-}"
+if [ -z "$query" ]; then
+  pick "" "$mode"
+  exit 0
+fi
+matches="$(list | grep -iF -- "$query" || true)"
+case "$(printf '%s' "$matches" | grep -c . || true)" in
+  0) echo "art: no artifact matches '$query' (art --list shows them)" >&2; exit 1 ;;
+  1) open_one "${matches%%$'\t'*}" "$mode" ;;
+  *) pick "$query" "$mode" ;;
+esac

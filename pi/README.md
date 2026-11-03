@@ -100,16 +100,22 @@ Pi/provider authentication stays outside the repo. MCP configuration uses
 `~/.pi/agent/mcp-auth.json`. Claude Bridge is no longer installed or required
 by the active model-selection policy.
 
-### Optional decisions deck MCP
+### decisions deck MCP
 
-The daily ask/follow-up workflow can use the `decisions` MCP server, but the
-standalone decisions runtime is not installed by this configuration and the
-server is deliberately absent from the default `mcp-servers.json`. Until you
-have installed and verified `~/.local/bin/decisions mcp` on this machine, Pi
-uses the normal chat fallback; no missing executable is launched at session
-start. To opt in on a machine with that runtime, add this entry to its personal
-MCP config (or to this repo only after intentionally choosing repo-wide
-activation):
+The `decisions` MCP server is registered in `mcp-servers.json` so Pi receives an
+answer as a tool result instead of only when a command is run. It needs the
+standalone runtime at `~/.local/share/decisions/bin/decisions`; a machine
+without it starts a server that fails its handshake at session start, and the
+decisions tools are simply absent. Install the runtime first
+(`ubuntu/README.md` has the cargo command), then verify it answers an
+initialize request:
+
+```sh
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"1"}}}' \
+  | ~/.local/bin/decisions mcp
+```
+
+The registered block:
 
 ```json
 "decisions": {
