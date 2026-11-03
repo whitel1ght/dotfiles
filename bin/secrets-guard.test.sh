@@ -21,12 +21,31 @@ allows() { run "$2"; local code=$?; [ "$code" -eq 0 ] && pass "$1" || fail "$1" 
 ERR="$(mktemp)"
 trap 'rm -f "$ERR"' EXIT
 
+NL=$'\n'
+
 echo "the folder"
 blocks "cat of the file" 'cat ~/.secrets/secrets.env'
 blocks "absolute path" "head /Users/x/.secrets/recovery.md"
 blocks "listing the folder" 'ls -la $HOME/.secrets'
 blocks "search into it" 'rg --hidden token ~/.secrets'
 blocks "copying it out" 'cp ~/.secrets/secrets.env /tmp/x'
+blocks "quoted HOME path" 'cat "$HOME/.secrets/secrets.env"'
+blocks "rg over the folder" 'rg foo ~/.secrets'
+blocks "escaped pattern but folder operand" "rg '\\.secrets' ~/.secrets"
+blocks "glob naming it" "rg -g '*.secrets*' x"
+blocks "pattern file in it" 'rg -f ~/.secrets/x y'
+blocks "hidden search from home" "rg --hidden '\\.secrets' ~"
+blocks "path-shaped pattern" "rg '/Users/x/.secrets/secrets.env' f"
+blocks "unescaped pattern" "rg '.secrets' f"
+blocks "pattern with a path before the escape" "rg '/Users/x/\\.secrets' f"
+blocks "quoted folder operand" "rg foo '~/.secrets'"
+blocks "bash -c carrying the pattern" "bash -c \"rg '\\.secrets' x; cat ~/.secrets/a\""
+blocks "eval carrying the pattern" "eval \"cat ~/.secrets/a; rg '\\.secrets' x\""
+blocks "heredoc carrying the pattern" "rg '\\.secrets' x <<EOF${NL}~/.secrets/a${NL}EOF"
+blocks "second command still reads it" "rg -n '\\.secrets' x; cat ~/.secrets/a"
+allows "diff scan for leaked paths" "git diff main | rg -n -i '\\.secrets'"
+allows "grep scan, double quotes" 'git diff | grep -n "\.secrets"'
+allows "two names in one pattern" "rg -n '\\.secrets|jira\\.env' file.md"
 run 'cat ~/.secrets/secrets.env'
 case "$(cat "$ERR")" in *secret*) pass "says why" ;; *) fail "says why" "$(cat "$ERR")" ;; esac
 
@@ -46,7 +65,6 @@ allows "inside a quoted pattern" "rg -n 'a|box/secrets|b' ."
 allows "inside a double-quoted message" 'die "missing; run: secrets"'
 
 echo "heredoc bodies"
-NL=$'\n'
 TAB=$'\t'
 allows "prose line in a cat body" "cat > f <<'EOF'${NL}   secret Done, Later${NL}EOF"
 allows "; secret in a python body" "python3 - <<'PY'${NL}x = 1; secret presentation${NL}PY"
