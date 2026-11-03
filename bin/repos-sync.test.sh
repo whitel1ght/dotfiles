@@ -119,6 +119,34 @@ SPIKE="$(sub_head)"; run
 assert_eq "$SPIKE" "$(sub_head)" "a submodule moved on purpose (not behind) stays where it is"
 assert_has "dash: submodule sub not updated: it is on a commit that is not behind the recorded one" "$OUT" "and says why"
 
+echo "repos-sync — MR worktrees"
+rm -rf "${P:?}"/* "${WT:?}"/*; remote mrs
+SM="$SANDBOX/src-mrs"; MB="$REMOTES/ecfx/mrs.git"
+push_on() { # BRANCH N: N new commits on the remote's BRANCH (created from main when new)
+  local i
+  git -C "$SM" checkout -q "$1" 2>/dev/null || git -C "$SM" checkout -q -b "$1" main
+  for i in $(seq 1 "$2"); do echo "$1 $i $RANDOM" >>"$SM/f.txt"; git -C "$SM" commit -qam "$1 $i"; done
+  git -C "$SM" push -q "$MB" "$1"; git -C "$SM" checkout -q main
+}
+for b in ECFX-2 ECFX-3 ECFX-4 ECFX-5; do push_on "$b" 1; done
+git -C "$P/mrs" fetch -q
+for b in ECFX-2 ECFX-3 ECFX-4 ECFX-5; do git -C "$P/mrs" worktree add -q "$WT/$b" "$b"; done
+git -C "$P/mrs" worktree add -q -b ECFX-6 "$WT/ECFX-6" main
+for b in ECFX-2 ECFX-3 ECFX-4; do push_on "$b" 1; done
+echo local >>"$WT/ECFX-3/f.txt"; git -C "$WT/ECFX-3" commit -qam local
+echo "mine" >>"$WT/ECFX-4/f.txt"
+run
+assert_eq "$(git -C "$P/mrs" rev-parse origin/ECFX-2)" "$(git -C "$WT/ECFX-2" rev-parse HEAD)" "a clean MR worktree behind its remote branch is fast-forwarded"
+assert_has "mrs: worktree ECFX-2 fast-forwarded 1 commit(s)" "$OUT" "and reported"
+assert_eq "local" "$(git -C "$WT/ECFX-3" log -1 --format=%s)" "a diverged MR worktree is not moved"
+assert_has "worktree ECFX-3 not moved: 1 behind origin and 1 local commit(s) not on it" "$OUT" "and says why"
+assert_eq "mine" "$(tail -1 "$WT/ECFX-4/f.txt")" "a dirty MR worktree keeps its changes"
+assert_eq "1" "$(git -C "$WT/ECFX-4" rev-list --count HEAD..@{u})" "and is not moved"
+assert_has "worktree ECFX-4 not moved: 1 behind origin, uncommitted changes" "$OUT" "and says why"
+assert_lacks "ECFX-5" "$OUT" "an up-to-date MR worktree gets no mention"
+assert_lacks "ECFX-6" "$OUT" "nor one whose branch has no remote"
+assert_has "1 GitLab repos: 0 updated, 0 up to date, 1 left alone" "$OUT" "a repo with a worktree left alone counts as left alone"
+
 echo "repos-sync — a slow fetch"
 rm -rf "$P"/*; remote slow
 mkdir -p "$SANDBOX/slowbin"; printf '#!/bin/bash\nsleep 30\n' >"$SANDBOX/slowbin/ssh"; chmod +x "$SANDBOX/slowbin/ssh"
