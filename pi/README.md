@@ -128,36 +128,58 @@ installed by Pi setup.
 
 ## Delegation
 
-Delegation uses the explicitly pinned **`npm:pi-subagents@0.76.0`** package, not the retired custom runtime. `pi/settings.json` declares this package so a package refresh installs the implementation described here.
-It is declared in object form with empty `skills` and `prompts` filters
-(`{"source": "npm:pi-subagents@0.76.0", "skills": [], "prompts": []}`), so its
-bundled skills and prompts stay disabled and the shared skills and local prompt
-templates remain authoritative.
+Delegation is **`extensions/pi-sub/`**, which registers `subagent`, `subagent_stop`,
+`subagent_result`, `subagent_adopt` and `subagent_handoff`, and hides
+`acp_delegate*` (still registered by `npm:billion-context`, kept for context
+compression) from the main model. `bin/pi-contract` fails when a prompt names a tool
+this install does not have. Nothing is installed from npm for it: the pinned
+`pi-subagents` package and the `subagents.modelScope` policy are gone from
+`pi/settings.json`.
 
 1. `extensions/session-models/` injects `<subagent_models>` before each parent
    model request: the exact IDs in **selected scoped models ∩ available models**.
    Availability is registry/auth configuration, not a provider health check.
-2. The parent chooses the least expensive suitable model from that live list
-   and passes an explicit `provider/id` on each `subagent` launch.
-3. `subagents.modelScope` uses `allow: ["scoped"]`, `enforce: true`, and
-   `strict: true` to reject out-of-pool launches, including inherited models.
-   If the session has no scope, only its available parent model is eligible.
-4. A failed launch is inspected before an explicit retry. There is no model
-   questionnaire, ping probe, fixed ranking, or automatic provider fallback.
+   On the first request of a session it also verifies that the section really is
+   in the outgoing payload, and raises an error notification if Pi dropped it.
+2. The parent chooses the least expensive suitable model from that live list and
+   passes it as `model` on every `subagent` launch. `model` is required and must be
+   in the live list; there are no per-role defaults.
+3. Each child is a bare `pi --mode json` process (no session, extensions, skills,
+   context files or memory) launched detached, so it survives the window closing.
+   Its state lives in `~/.local/state/pi-sub/<id>/`. When it finishes, fails or is
+   stopped, a `[pi-sub]` message wakes the owning session and starts a turn; it is
+   delivered once, even across reopenings. A child quiet for `idle_minutes` (10)
+   flags the session; one past `max_minutes` (60) is stopped.
+4. `ctrl+space` or `/agents` opens the agents window (list, activity log, stop,
+   flag to main). `subagent_handoff()` / `subagent_adopt({ from })` move agents to
+   a new session; agents of a session that is gone show up as orphans to adopt or
+   stop. There is no resume, model questionnaire, ping probe or provider fallback.
 
-Agent names define expertise and tools, not model routing. `scout`, `reviewer`,
-`oracle`, and most specialists are read-only; `worker` handles implementation
-with the needed specialist guidance in its brief. `text` has no tools. Tool
-restrictions are not an operating-system sandbox.
+A role is a file in `~/.pi/agent/agents/<role>.md`: its body is appended to the
+child's system prompt and its `tools:` line is the allowlist. `worker` implements;
+`reviewer`, `researcher`, `planner`, `oracle` and the named specialists are
+read-only; `text` has no tools. Tool restrictions are not an operating-system
+sandbox. See [model-selection.md](model-selection.md) for the selection rules and
+[extensions/pi-sub/README.md](extensions/pi-sub/README.md) for the mechanics.
 
-`extensions/subagent/config.json` makes the tool eager and disables missions,
-scheduled runs, and Orca progress tabs. No shared child extension allowlist is
-configured: upstream discovery applies unless an agent declares its own policy.
-See [model-selection.md](model-selection.md) for the full selection rules.
+The `/orchestrate`, `/review-local` and `/watch-mrs` templates use `subagent` and
+the live model pool (`/start-day` and `/fix-friction` name it too). Delegation
+still requires operator approval through the request or applicable workflow
+instructions. This branch has no `prompts/run-day.md` — main does — so the daily
+extension's pointer at `~/.pi/agent/prompts/run-day.md` (`extensions/daily/index.ts`)
+resolves to nothing here; `/run-day` in pi has no playbook until that prompt is
+taken from main.
 
-The `/orchestrate`, `/review-local`, and `/watch-mrs` templates use the named
-upstream tool and live model pool. Delegation still requires operator approval
-through the request or applicable workflow instructions.
+### Linux notes
+
+- Node 24 lives under nvm here, so a bare non-login shell has no `node` on `PATH`.
+  Run the tests and `bin/pi-contract` through `zsh -ic '…'` (or with nvm's node
+  first on `PATH`).
+- A child's ownership is proved from `/proc/<pid>/environ`, not `ps -E`: procps-ng
+  rejects `-E` (`error: unsupported SysV option`), and `/proc` is readable only by
+  the owner. `psForPlatform` picks the probe, so the macOS `ps -E` path is
+  untouched. A pid that is gone, or belongs to someone else, reads as unowned and
+  is never signalled.
 
 ## Extensions and packages
 
@@ -169,7 +191,7 @@ Local components:
 | `daily/` | Daily run-state injection, diary edit guard and the `/run-day` event/inbox watcher; shares parser modules with Claude Code |
 | `secrets-guard/` | Blocks Pi file tools from reading or writing `~/.secrets` and the Jira environment file; Bash guards run separately through `claude-hooks` |
 | `artifacts-home/` | Keeps Pi artifacts under `~/artifacts/pi/` by linking the project artifact path |
-| [session-models](extensions/session-models/README.md) | Live model-pool injection; does not launch children or call providers |
+| [session-models](extensions/session-models/README.md) | Live model-pool injection plus a runtime check that it reached the request; does not launch children or call providers |
 | `mcp-env/` | Expands environment references and registers MCP servers; skips servers with missing variables |
 | `inline-files/` | Expands `@path` into file contents when the model has no tools |
 | [pi-recap](packages/pi-recap/README.md) | Vendored recap widget and `/recap`; uses Pi's model registry for requests |
@@ -180,9 +202,9 @@ reports its state. It does not inherit the startup default or subagent pool.
 
 `settings.json` also declares packages for web search/access, todo lists,
 questions, browser artifacts, context display, memory, background tasks,
-Superpowers skills, Ponytail, pi-lens, and Billion Context. Except for the
-pinned subagent package, npm declarations are unversioned. `pi list` shows
-configured packages; `pi config` controls discovered resources.
+Superpowers skills, Ponytail, pi-lens, and Billion Context. npm declarations are
+unversioned. `pi list` shows configured packages; `pi config` controls discovered
+resources.
 
 ### Daily workflow and local search
 
@@ -205,29 +227,37 @@ collection and does not copy wiki data into this repository.
 
 ## Retired setup
 
-`archive/subagents/` preserves the old custom runtime outside extension discovery.
-Do not load it alongside upstream `pi-subagents`. The old `subagents.json`,
-`subagent-models.json`, `subagent-model-guide.md`, and `subagents-research.md`
-remain historical material, not active routing configuration. Their Claude
-Bridge references do not enable that provider. The linker removes only retired
-links owned by this checkout, preserving real files and foreign links.
-See [archive/README.md](archive/README.md) for rollback notes.
+The old custom subagent runtime (`archive/subagents/`) is deleted, as are
+`subagents.json`, `subagent-models.json`, `subagent-model-guide.md`,
+`subagents-research.md` and `agents.test.mjs`; both are still in this branch's
+history. `model-selection.md` is the live policy. The npm `pi-subagents` package
+is no longer declared or installed, and `bin/pi-autoupdate` no longer guards the
+release tree for `@earendil-works/chord` — pi-sub children import nothing from it.
+`plink` still removes their stale links, only links owned by this checkout,
+preserving real files and foreign links.
 
 ## Verification
 
-From the repo root, with Node.js 24 (native TypeScript test support) and the
-configured subagent package installed:
+From the repo root, with Node.js 24 (native TypeScript test support; under nvm
+here, so through `zsh -ic`):
 
 ```sh
 ./bin/plink.test.sh
-PI_SUBAGENTS_PACKAGE="$HOME/.pi/agent/npm/node_modules/pi-subagents" \
-  node --test pi/agents.test.mjs
-for extension in artifacts-home daily inline-files mcp-env secrets-guard session-models; do
+for extension in artifacts-home daily inline-files mcp-env pi-sub secrets-guard session-models; do
   (cd "pi/extensions/$extension" && npm test) || break
 done
+./bin/pi-contract
+./bin/pi-autoupdate.test.sh
+./ubuntu/install-missing.test.sh
 git diff --check
 ```
 
-These checks cover linking, agent discovery, and local extension behavior; they
-do not prove remote provider authentication, model health, or successful live
-subagent execution. The vendored recap package currently has no test script.
+`pi-contract` is the only check that runs a real `pi`: it boots one in a throwaway
+config dir with a probe extension and asserts, against the captured provider
+payload, that the injected prompt sections land, that every tool the prompts name
+exists, and that pi-sub children launch bare, outlive their launcher and wake the
+owning session exactly once. Run it after any `pi update`. Point it at this
+checkout with `DOTFILES=$PWD ./bin/pi-contract`.
+The other checks cover linking and local extension behavior; none of them prove
+remote provider authentication or model health. The vendored recap package
+currently has no test script.
