@@ -122,6 +122,8 @@ jq -e --arg p "$TEST_DIR/claude/daily" '.env.CLAUDE_CODE_PLUGIN_DIRS | split(":"
     && pass "Claude watches the daily plugin folder" || fail "Claude watches the daily plugin folder" "$(jq -c .env "$settings" 2>&1)"
 jq -e '.enabledPlugins["daily@dmitry-dotfiles"] == false' "$settings" >/dev/null \
     && pass "the marketplace copy of daily is off" || fail "the marketplace copy of daily is off" "$(jq -c .enabledPlugins "$settings" 2>&1)"
+jq -e '.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE == "50"' "$settings" >/dev/null \
+    && pass "Claude auto-compacts at 50%" || fail "Claude auto-compacts at 50%" "$(jq -c .env "$settings" 2>&1)"
 
 # An empty trailing PATH element means "current directory" — a real hazard.
 pathv="$( . "$SANDBOX/.zshrc.local" 2>/dev/null; echo "${PATH:-}" )"
@@ -146,7 +148,8 @@ echo "idempotence"
 echo "export NOTES_USER=real-value" >> "$SANDBOX/.zshrc.local"
 jq '.hooks.PreToolUse += [{matcher: "Bash", hooks: [{type: "command", command: "/other/pre-hook"}]}]
     | .hooks.PostToolUse += [{matcher: "Write", hooks: [{type: "command", command: "/other/post-hook"}]}]
-    | .env.CLAUDE_CODE_PLUGIN_DIRS = "/other/plugin:~/elsewhere/claude/daily/:/x/worktrees/dotfiles/w/claude/daily:\(.env.CLAUDE_CODE_PLUGIN_DIRS)"' \
+    | .env.CLAUDE_CODE_PLUGIN_DIRS = "/other/plugin:~/elsewhere/claude/daily/:/x/worktrees/dotfiles/w/claude/daily:\(.env.CLAUDE_CODE_PLUGIN_DIRS)"
+    | .env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = "70"' \
     "$SANDBOX/.claude/settings.json" > "$SANDBOX/s.json" && mv "$SANDBOX/s.json" "$SANDBOX/.claude/settings.json"
 before="$(shasum -a 256 < "$SANDBOX/.zshrc.local")"
 out2="$(run_install)"
@@ -170,6 +173,9 @@ n="$(jq '[.permissions.deny[] | select(. == "Read(~/.secrets/**)")] | length' "$
 dirs="$(jq -r '.env.CLAUDE_CODE_PLUGIN_DIRS' "$SANDBOX/.claude/settings.json")"
 [ "$dirs" = "/other/plugin:$TEST_DIR/claude/daily" ] && pass "re-run keeps other plugin folders and lists daily once" \
     || fail "re-run keeps other plugin folders and lists daily once" "got $dirs"
+pct="$(jq -r '.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' "$SANDBOX/.claude/settings.json")"
+[ "$pct" = "70" ] && pass "re-run keeps a hand-set auto-compact threshold" \
+    || fail "re-run keeps a hand-set auto-compact threshold" "got $pct"
 
 # --- a missing template must warn, not crash ------------------------------
 echo "missing template"

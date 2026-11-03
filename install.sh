@@ -405,6 +405,15 @@ else
     rm -f "$tmp"; log_warn "Could not point Claude at the daily plugin folder in $settings"
 fi
 
+# Auto-compact at 50% of the context window instead of near the limit. Only
+# set when missing, so a value changed by hand survives a re-run.
+tmp="$(mktemp)"
+if jq '.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE //= "50"' "$settings" > "$tmp"; then
+    mv "$tmp" "$settings"
+else
+    rm -f "$tmp"; log_warn "Could not set the auto-compact threshold in $settings"
+fi
+
 # macdict backs repy's "Define Word"; reaches the macOS dictionaries via ctypes,
 # so it needs no venv or third-party package.
 if [ -f "$DOTFILES_DIR/bin/macdict" ]; then
