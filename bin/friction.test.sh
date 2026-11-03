@@ -31,6 +31,13 @@ assert_eq "a:other:decade and cafebabe stay" "$(sig a other 'decade and cafebabe
 assert_eq "a:other:at <ts> and <ts> then <ts>" "$(sig a other 'at 2026-10-15T09:12:03+03:00 and 2026-10-15 then 09:12:03')" "ISO dates and times -> <ts>"
 assert_eq "a:retry:attempt <n> of <n> after <n>ms" "$(sig a retry 'attempt 2 of 3 after 1500ms')" "remaining digit runs -> <n>"
 assert_eq "a:other:<path>" "$(sig a other '/usr/bin/env')" "a path alone"
+
+echo "friction sig — families"
+WT_FAMILY="claude:tool_error:bash: the worktree isolation check refused the command"
+assert_eq "$WT_FAMILY" "$(sig claude tool_error 'Bash: This session is isolated in the worktree /Users/d/w/x, but this command is too complex to verify that it stays inside the worktree.')" "a worktree refusal collapses to its family"
+assert_eq "$WT_FAMILY" "$(sig claude tool_error 'Bash: This session is isolated in the worktree /Users/d/w/x, but this command runs git -C against another repository.')" "so does another wording of it"
+assert_eq "claude:tool_error:skill: an inline shell command in a skill failed" "$(sig claude tool_error 'Skill: Shell command failed for pattern "!`git status --short`": [stderr] fatal')" "inline skill shell failures share one family"
+assert_eq "claude:tool_error:edit: <tool_use_error>string to replace not found in file." "$(sig claude tool_error 'Edit: <tool_use_error>String to replace not found in file.')" "other messages keep their own signature"
 assert_eq "120" "$(sig a other "$(printf 'x%.0s' $(seq 200))" | cut -d: -f3 | tr -d '\n' | wc -c | tr -d ' ')" "norm is cut to 120 chars"
 assert_eq "same" "$([ "$(sig s k 'retry 1 of ECFX-1')" = "$(sig s k 'retry 9 of ECFX-77')" ] && echo same || echo different)" "messages differing only in numbers and keys share a sig"
 

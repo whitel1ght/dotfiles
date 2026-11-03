@@ -32,6 +32,9 @@ JQDEF='def sig_norm:
   | gsub("\\b(?=[0-9a-f]*\\d)[0-9a-f]{7,}\\b"; "<hex>")
   | gsub("\\d+"; "<n>")
   | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ")
+  | if test("^[a-z_]+: this session is isolated in the worktree") then sub(":.*"; ": the worktree isolation check refused the command")
+    elif test("^skill: shell command failed for pattern") then "skill: an inline shell command in a skill failed"
+    else . end
   | .[0:120];
 def sig($source; $kind; $msg): "\($source):\($kind):\($msg | sig_norm)";'
 
