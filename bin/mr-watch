@@ -25,6 +25,9 @@
 #   - it's newer than my last note on the MR and than the MR's last acked round
 #   - its discussion isn't resolved
 # Before an MR's first acked round, the floor is --since, or a week ago.
+# Each MR's worktree is reported clean or DIRTY; a clean one with an upstream is
+# fetched and fast-forwarded first (the branch may have been pushed from another
+# machine), and reported STALE if it diverged or the fetch failed.
 # A failed per-MR lookup is logged as tool_error and skipped, not an outage: only
 # the probe and the MR list write the shared outage marker.
 # Nothing is marked seen until ack or reply, so a round that fails is found again.
@@ -55,7 +58,28 @@ worktree_of() { # project-path branch
   [ -n "$wt" ] || { echo "none (clone $clone)"; return; }
   local dirty
   dirty=$(git -C "$wt" status --porcelain | wc -l | tr -d ' ')
-  echo "$wt ($([ "$dirty" -eq 0 ] && echo clean || echo "DIRTY: $dirty changed files"))"
+  [ "$dirty" -eq 0 ] || { echo "$wt (DIRTY: $dirty changed files)"; return; }
+  echo "$wt ($(sync_worktree "$wt"))"
+}
+
+# A clean worktree may be behind: the branch was pushed from another machine.
+# Fast-forward it; never touch one that has diverged.
+sync_worktree() {
+  local wt="$1" up counts ahead behind
+  up=$(git -C "$wt" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null) || { echo clean; return; }
+  git -C "$wt" fetch -q 2>/dev/null || { echo "STALE: fetch failed"; return; }
+  counts=$(git -C "$wt" rev-list --left-right --count 'HEAD...@{u}')
+  ahead=${counts%%[[:space:]]*}; behind=${counts##*[[:space:]]}
+  if [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ]; then
+    echo "STALE: diverged from $up, $ahead ahead, $behind behind"
+  elif [ "$behind" -gt 0 ]; then
+    git -C "$wt" merge -q --ff-only '@{u}' >/dev/null 2>&1 \
+      && echo "clean, fast-forwarded $behind commits" || echo "STALE: fast-forward failed"
+  elif [ "$ahead" -gt 0 ]; then
+    echo "clean, $ahead unpushed commits"
+  else
+    echo clean
+  fi
 }
 
 check() {

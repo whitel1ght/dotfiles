@@ -115,6 +115,32 @@ sed -i '' 's/"iid":20,/"iid":20,/; s/2026-09-24T10:00:00Z/2026-09-23T10:00:00Z/'
 out="$(run check --since 2026-09-20T00:00:00Z)"
 assert_contains "$out" "worktree: none (clone $PROJ/web)" "says when the branch has no worktree"
 
+# Give feat/a an upstream, then move the remote from another clone (as if pushed from another machine).
+git init -q --bare "$SANDBOX/api-origin.git"
+git -C "$SANDBOX/wt-a" remote add origin "$SANDBOX/api-origin.git" 2>/dev/null || true
+git -C "$SANDBOX/wt-a" push -q -u origin feat/a
+git clone -q -b feat/a "$SANDBOX/api-origin.git" "$SANDBOX/other"
+git -C "$SANDBOX/other" commit -q --allow-empty -m "pushed elsewhere"
+git -C "$SANDBOX/other" push -q
+out="$(run check --since 2026-09-20T00:00:00Z)"
+assert_contains "$out" "worktree: $SANDBOX/wt-a (clean, fast-forwarded 1 commits)" "fast-forwards a worktree that is behind its upstream"
+assert_eq "$(git -C "$SANDBOX/other" rev-parse HEAD)" "$(git -C "$SANDBOX/wt-a" rev-parse HEAD)" "the worktree is at the pushed commit"
+out="$(run check --since 2026-09-20T00:00:00Z)"
+assert_contains "$out" "worktree: $SANDBOX/wt-a (clean)" "an up-to-date worktree is plain clean"
+git -C "$SANDBOX/wt-a" commit -q --allow-empty -m "local only"
+out="$(run check --since 2026-09-20T00:00:00Z)"
+assert_contains "$out" "worktree: $SANDBOX/wt-a (clean, 1 unpushed commits)" "reports commits not on the remote"
+git -C "$SANDBOX/other" commit -q --allow-empty -m "pushed elsewhere again"
+git -C "$SANDBOX/other" push -q
+out="$(run check --since 2026-09-20T00:00:00Z)"
+assert_contains "$out" "worktree: $SANDBOX/wt-a (STALE: diverged from origin/feat/a, 1 ahead, 1 behind)" "flags a worktree that diverged from its upstream"
+assert_eq "local only" "$(git -C "$SANDBOX/wt-a" log -1 --format=%s)" "leaves a diverged worktree untouched"
+git -C "$SANDBOX/wt-a" reset -q --hard origin/feat/a
+mv "$SANDBOX/api-origin.git" "$SANDBOX/api-origin.moved"
+out="$(run check --since 2026-09-20T00:00:00Z)"
+assert_contains "$out" "worktree: $SANDBOX/wt-a (STALE: fetch failed)" "a failed fetch is stale, not clean"
+mv "$SANDBOX/api-origin.moved" "$SANDBOX/api-origin.git"
+
 echo "mr-watch — ack and reply"
 rm -rf "$STATE/rounds"
 run check --since 2026-09-20T00:00:00Z >/dev/null

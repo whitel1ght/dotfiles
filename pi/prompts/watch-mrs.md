@@ -31,9 +31,12 @@ straight to "Wait". Exit 2 means GitLab is unreachable: say so and wait.
 directory and the **worktree**. Handle every MR in the summary, in parallel.
 
 1. **Worktree.**
-   - `(clean)`: use it.
+   - `(clean)`, `(clean, fast-forwarded N commits)` or `(clean, N unpushed commits)`: use
+     it. `check` has already fetched and fast-forwarded it to the remote branch.
    - `DIRTY`: that's my own work in progress, so leave the MR alone this time. Don't ack
      it, so it comes back next check, and tell me in one line.
+   - `STALE`: the worktree has diverged from the remote branch (pushed from another
+     machine on top of local commits), or the fetch failed. Treat it like `DIRTY`.
    - `none (clone <path>)`: create one with `wt add <repo> <TICKET> <branch>` (it
      prints the path), then use it.
 
@@ -45,7 +48,7 @@ directory and the **worktree**. Handle every MR in the summary, in parallel.
    If the list is empty, stop the watch loop: launch nothing, ack nothing, start no wait,
    and tell me. See `~/.pi/agent/model-selection.md`.
 
-2. **Fixer.** In one turn, make one `subagent` call per non-DIRTY MR:
+2. **Fixer.** In one turn, make one `subagent` call per MR that is not DIRTY or STALE:
    `subagent({ role: "worker", model: "<live exact id>", task: "<filled brief>",
    cwd: "<worktree>", label: "<repo>!<iid>" })`. One call per MR in the same turn is what runs
    them concurrently, and each call carries its own `cwd`, so fixers land in different
