@@ -50,7 +50,21 @@ ENABLE_CORRECTION="true"
 # before anything that wraps widgets, so it sits ahead of zsh-autosuggestions.
 plugins=(git fzf-tab zsh-autosuggestions brew sudo)
 
+# oh-my-zsh updates itself every 13 days without asking; under the p10k instant
+# prompt it also stays silent.
+zstyle ':omz:update' mode auto
+
 source $ZSH/oh-my-zsh.sh
+
+# The theme and plugins in $ZSH_CUSTOM (powerlevel10k, fzf-tab, autosuggestions,
+# syntax highlighting) are git clones that oh-my-zsh's updater skips. The
+# autoupdate plugin (TamCore, installed by zsh-setup.sh) pulls them on the same
+# 13-day cycle. It is sourced here instead of listed in plugins=() so its
+# per-plugin lines go to a log: any output during startup trips the instant
+# prompt's warning, and QUIET only hides its header.
+ZSH_CUSTOM_AUTOUPDATE_QUIET=true
+[[ -r $ZSH_CUSTOM/plugins/autoupdate/autoupdate.plugin.zsh ]] &&
+    source $ZSH_CUSTOM/plugins/autoupdate/autoupdate.plugin.zsh >>"$ZSH_CACHE_DIR/custom-update.log" 2>&1
 
 # -----------------------------------------------------------------------------
 # ALIASES

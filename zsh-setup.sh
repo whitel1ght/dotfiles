@@ -54,9 +54,12 @@ fi
 # Plugins .zshrc requires. zsh-autosuggestions is named in the plugins array and
 # zsh-syntax-highlighting is sourced by path at the end of .zshrc, so a machine
 # without them gets "plugin not found" and a source error on every shell start.
+# autoupdate keeps every clone under custom/ (this one included) up to date; its
+# folder must be named exactly "autoupdate".
 for plugin_spec in \
     "zsh-autosuggestions https://github.com/zsh-users/zsh-autosuggestions.git" \
-    "zsh-syntax-highlighting https://github.com/zsh-users/zsh-syntax-highlighting.git"
+    "zsh-syntax-highlighting https://github.com/zsh-users/zsh-syntax-highlighting.git" \
+    "autoupdate https://github.com/TamCore/autoupdate-oh-my-zsh-plugins.git"
 do
     plugin_name="${plugin_spec%% *}"
     plugin_url="${plugin_spec#* }"
