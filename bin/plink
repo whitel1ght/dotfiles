@@ -243,15 +243,47 @@ done
 [ -d "$PI_SRC/modules" ] && \
     link_item "$PI_SRC/modules" "$HOME/.agents/modules"
 
+# Team skills: generated from the claude-components clone Claude Code loads its
+# plugins from, so pi follows `git pull` there instead of keeping hand forks.
+# pi/settings.json lists skills-team; pi/gen/pi_skills.py explains the rewrite.
+CC_SRC="${CLAUDE_COMPONENTS_DIR:-$HOME/projects/claude-components}"
+if [ ! -d "$CC_SRC/plugins" ]; then
+    log_warn "claude-components not found at $CC_SRC; team skills not regenerated"
+elif [ "$DRY_RUN" = 1 ]; then
+    log_info "would regenerate team skills from $CC_SRC into $PI_DEST/skills-team"
+    CHANGED=$((CHANGED + 1))
+elif python3 "$PI_SRC/gen/pi_skills.py" --src "$CC_SRC" --out "$PI_DEST/skills-team" >/dev/null; then
+    log_info "regenerated team skills from $CC_SRC ($(git -C "$CC_SRC" rev-parse --short HEAD 2>/dev/null || echo '?'))"
+else
+    log_error "team skill generation failed"
+    FAILURES=$((FAILURES + 1))
+fi
+
 # Slash commands. The shared source is claude/commands; pi/prompts holds the
 # Pi-specific ports of the ones whose subagent mechanics differ.
 if [ -d "$PI_SRC/prompts" ]; then
     link_item "$PI_SRC/prompts" "$PI_DEST/prompts"
 fi
 
-# Pi agent metadata and tool restrictions differ from skill frontmatter.
-[ -d "$PI_SRC/agents" ] && \
+# Agents: the team's come from the same claude-components clone, written with
+# pi's header (pi/gen/pi_agents.py); the pi-only ones in pi/agents are linked in
+# beside them. Without the clone, agents/ links straight to pi/agents, unless an
+# earlier run already generated it, which is kept rather than lose the team ones.
+if [ -d "$CC_SRC/plugins" ] && [ -f "$PI_SRC/gen/pi_agents.py" ]; then
+    if [ "$DRY_RUN" = 1 ]; then
+        log_info "would regenerate agents from $CC_SRC and $PI_SRC/agents into $PI_DEST/agents"
+        CHANGED=$((CHANGED + 1))
+    elif out="$(python3 "$PI_SRC/gen/pi_agents.py" --src "$CC_SRC" --local "$PI_SRC/agents" --out "$PI_DEST/agents" 2>&1)"; then
+        log_info "${out#pi_agents: }"
+    else
+        log_error "agent generation failed: $out"
+        FAILURES=$((FAILURES + 1))
+    fi
+elif [ -f "$PI_DEST/agents/.generated.json" ]; then
+    log_warn "claude-components not found; keeping the generated $PI_DEST/agents"
+elif [ -d "$PI_SRC/agents" ]; then
     link_item "$PI_SRC/agents" "$PI_DEST/agents"
+fi
 
 [ -d "$PI_SRC/extensions" ] && link_item "$PI_SRC/extensions" "$PI_DEST/extensions"
 

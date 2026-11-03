@@ -16,6 +16,7 @@
     "npm:billion-context",
     "npm:pi-playwright"
   ],
+  "skills": ["skills-team"],
   "theme": "dark/dark",
   "enabledModels": [
     "openai/gpt-6.1-sol",

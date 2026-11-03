@@ -32,14 +32,15 @@ old link recorded beside it. Edit `pi/settings.json` for the shared declaration
 
 | Agent-directory item | Source in this repo |
 | --- | --- |
-| `settings.json` | seeded from `pi/settings.json`: shared packages, scoped `subagents` policy, theme; provider/model and machine keys are per-host |
+| `settings.json` | seeded from `pi/settings.json`: shared packages, `skills`, theme; provider/model and machine keys are per-host |
 | `models.json` | `pi/models.json`: local models and OpenCode Go overrides |
 | `mcp-servers.json` | `pi/mcp-servers.json`: MCP definitions with environment references |
 | `APPEND_SYSTEM.md`, `model-selection.md` | `pi/`: global assistant rules and delegation policy |
 | `AGENTS.md` | `claude/CLAUDE.md`: shared personal instructions |
-| `skills/` | `pi/skills/`: skills |
+| `skills/` | `pi/skills/`: pi-only skills (handle-ticket, jira-cli, qa-comment, …) |
+| `skills-team/` | **generated** by `plink` from `~/projects/claude-components` (see below); not in git |
 | `~/.agents/modules/` | `pi/modules/`: shared context files the skills and agents reference |
-| `agents/` | `pi/agents/`: Pi-specific named subagent definitions |
+| `agents/` | **generated** by `plink`: the team agents from claude-components with pi's header, plus the pi-only ones in `pi/agents/` linked in |
 | `prompts/` | `pi/prompts/`: slash-command templates |
 | `extensions/` | `pi/extensions/`: local extensions and package configuration |
 | `packages/` | `pi/packages/`: vendored packages |
@@ -180,6 +181,35 @@ taken from main.
   the owner. `psForPlatform` picks the probe, so the macOS `ps -E` path is
   untouched. A pid that is gone, or belongs to someone else, reads as unowned and
   is never signalled.
+
+## Team skills and agents
+
+The team's skills and agents live in `claude-components`, which Claude Code loads
+as a plugin marketplace. pi gets them **generated**, not copied: `plink` runs
+[`gen/pi_skills.py`](gen/pi_skills.py), which copies every
+`plugins/*/skills/<name>/` folder from the clone into `~/.pi/agent/skills-team/`
+and rewrites the few Claude-only parts (`!`cmd`` context lines, `plugin:name`
+prefixes, `${CLAUDE_SKILL_DIR}` / `${CLAUDE_PLUGIN_ROOT}`, `~/.claude/docs/`), plus
+a short "In pi" note on skills that launch subagents. `settings.json` lists
+`skills-team`. To pick up team changes:
+
+```sh
+git -C ~/projects/claude-components pull && plink
+```
+
+Agents come the same way: [`gen/pi_agents.py`](gen/pi_agents.py) writes every
+`plugins/*/agents/*.md` into `~/.pi/agent/agents/` with pi's header (read-only
+tools unless listed in `EDITORS`, the delegation keys pi-sub expects) above the
+team body, rewritten like the skills; agents needing Claude-only MCP tools are
+skipped. The pi-only agents in `pi/agents/` are linked in beside them; a file
+there named like a team agent is refused.
+
+On this host the clone is `~/projects/ecfx/claude-components`, so
+`~/projects/claude-components` is a symlink to it (or set
+`CLAUDE_COMPONENTS_DIR`); without either, `plink` warns and leaves the previous
+generation in place.
+
+Tests: `python3 -m unittest discover -s pi/gen` (28 tests), `bin/plink.test.sh`.
 
 ## Extensions and packages
 

@@ -179,6 +179,42 @@ run_plink --bogus >/dev/null 2>&1
 DOTFILES_DIR=/nonexistent HOME="$HOME_DIR" PI_AGENT_DIR="$DEST" bash "$SCRIPT" >/dev/null 2>&1
 [ $? -eq 1 ] && pass "missing source exits 1" || fail "missing source exits 1" "wrong status"
 
+
+# --- team skills, generated from a claude-components clone
+CC="$SANDBOX/claude-components"
+mkdir -p "$DOT/pi/gen" "$CC/.claude-plugin" "$CC/plugins/shared/skills/shipit"
+cp "$TEST_DIR/../pi/gen/pi_skills.py" "$DOT/pi/gen/"
+printf '{"name":"x","plugins":[{"name":"shared","source":"./plugins/shared"}]}\n' > "$CC/.claude-plugin/marketplace.json"
+printf -- '---\nname: Ship It\ndescription: d\n---\nbody\n' > "$CC/plugins/shared/skills/shipit/SKILL.md"
+rm -rf "$DEST/skills-team"
+CLAUDE_COMPONENTS_DIR="$CC" run_plink -n >/dev/null
+[ ! -e "$DEST/skills-team" ] && pass "dry run does not generate team skills" \
+    || fail "dry run does not generate team skills" "skills-team was created"
+CLAUDE_COMPONENTS_DIR="$CC" run_plink >/dev/null
+grep -qx 'name: shipit' "$DEST/skills-team/shipit/SKILL.md" 2>/dev/null \
+    && pass "generates team skills from claude-components" \
+    || fail "generates team skills from claude-components" "no $DEST/skills-team/shipit/SKILL.md"
+out="$(CLAUDE_COMPONENTS_DIR="$SANDBOX/nope" run_plink 2>&1)"; status=$?
+[ "$status" -eq 0 ] && pass "missing claude-components does not fail plink" \
+    || fail "missing claude-components does not fail plink" "exit $status"
+case "$out" in *"claude-components not found"*) pass "says why team skills were skipped" ;;
+    *) fail "says why team skills were skipped" "$out" ;; esac
+
+# --- agents: team ones generated, pi-only ones linked in
+cp "$TEST_DIR/../pi/gen/pi_agents.py" "$DOT/pi/gen/"
+mkdir -p "$CC/plugins/shared/agents"
+printf -- '---\nname: git-expert\ndescription: d\nmodel: opus\ncolor: red\n---\nbody\n' > "$CC/plugins/shared/agents/git-expert.md"
+CLAUDE_COMPONENTS_DIR="$CC" run_plink >/dev/null
+[ -d "$DEST/agents" ] && [ ! -L "$DEST/agents" ] && pass "agents/ becomes a generated folder" \
+    || fail "agents/ becomes a generated folder" "$(ls -ld "$DEST/agents")"
+grep -qx 'tools: read, bash, grep, find, ls' "$DEST/agents/git-expert.md" 2>/dev/null \
+    && pass "generates team agents with pi's header" || fail "generates team agents with pi's header" "no git-expert.md"
+[ "$(readlink "$DEST/agents/reviewer.md")" = "$DOT/pi/agents/reviewer.md" ] \
+    && pass "links the pi-only agents in" || fail "links the pi-only agents in" "$(ls -l "$DEST/agents" 2>&1)"
+CLAUDE_COMPONENTS_DIR="$SANDBOX/nope" run_plink >/dev/null 2>&1
+[ -f "$DEST/agents/git-expert.md" ] && [ ! -L "$DEST/agents" ] \
+    && pass "a missing clone keeps the generated agents" || fail "a missing clone keeps the generated agents" "replaced"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
