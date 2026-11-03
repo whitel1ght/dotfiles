@@ -122,7 +122,7 @@ duplicating security or production expertise.
 
 State the selected panel and the reason before spawning. The user can veto.
 
-**Model selection (Pi).** Every request includes a `<subagent_models>` block containing the live selected ∩ available exact `provider/id` list. Before every expert launch, choose a difficulty-, cost-, and capability-appropriate model solely from the current block and pass it explicitly as `model`. The named specialist agent selects the prompt and read-only tools; use `worker` with specialist guidance for any implementation. Do not use the broader `subagent({ action: "models" })` registry as eligibility, call a model gate, omit `model`, reuse stale availability from a parent or earlier round, or rely on automatic fallback. If the list is empty, launch nothing and ask the user to repair the session model pool. See `~/.pi/agent/model-selection.md`.
+**Model selection (Pi).** Every request includes a `<subagent_models>` block containing the live selected ∩ available exact `provider/id` list. Before every expert launch, choose a difficulty-, cost-, and capability-appropriate model solely from the current block and pass it explicitly as `model`. The named specialist agent selects the prompt and read-only tools; use `worker` with specialist guidance for any implementation. Do not treat the wider registry as eligibility, call a model gate, omit `model`, reuse stale availability from a parent or earlier round, or rely on automatic fallback. If the list is empty, launch nothing and ask the user to repair the session model pool. See `~/.pi/agent/model-selection.md`.
 
 ### 3. Round 1 — independent review (parallel)
 
