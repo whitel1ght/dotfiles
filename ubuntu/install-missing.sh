@@ -18,7 +18,6 @@ FZF_ARM64_SHA256='0a15108bbf20f563e620cb7527515b7db6fcf6ecfec2a2540a58585b9f02c3
 KEYD_VERSION='2.6.0'
 KEYD_COMMIT='7c0aecb'
 KEYD_SHA256='697089681915b89d9e98caf93d870dbd4abce768af8a647d54650a6a90744e26'
-PI_SUBAGENTS_VERSION='0.76.0'
 
 APPLY=0
 CONFIGURE_KEYBOARD=0
@@ -41,7 +40,8 @@ Usage:
 
 The installer adds apt build/runtime dependencies, installs pinned tmux/fzf
 under ~/.local/opt/dotfiles-toolchain with links in ~/.local/bin, builds pinned
-keyd without starting it, and installs only the pinned pi-subagents package.
+keyd without starting it, and checks that Pi's delegation comes from this
+repo's pi-sub extension rather than an npm package.
 Existing distro tmux/fzf packages are not removed or overwritten.
 
 Keyboard activation is a separate, explicit option. Identify the laptop device
@@ -126,7 +126,7 @@ Ubuntu missing-dependency plan
   tmux:         $TMUX_VERSION (verified source archive SHA-256 $TMUX_SHA256)
   fzf:          $FZF_VERSION (verified release binary SHA-256 for this architecture)
   keyd:         v$KEYD_VERSION (verified source archive SHA-256 $KEYD_SHA256)
-  Pi:           npm:pi-subagents@$PI_SUBAGENTS_VERSION only (unless --skip-pi)
+  Pi:           repo pi-sub extension, linked by bin/plink (unless --skip-pi)
   tool location: $TOOL_ROOT and $USER_BIN
 EOF
     if [ "$CONFIGURE_KEYBOARD" -eq 1 ]; then
@@ -336,38 +336,32 @@ install_keyd() {
     log 'installed keyd service files; service remains disabled unless keyboard configuration was explicitly requested'
 }
 
-pi_package_version() {
-    local package_json="$PI_DIR/npm/node_modules/pi-subagents/package.json"
-    [ -r "$package_json" ] || return 1
-    if command -v node >/dev/null 2>&1; then
-        node -e 'const p=require(process.argv[1]); process.stdout.write(`${p.name}@${p.version}`)' "$package_json"
-    else
-        sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/pi-subagents@\1/p' "$package_json" | head -n1
-    fi
-}
-
-install_pi_package() {
-    local installed pi_bin settings_file
-    [ "$SKIP_PI" -eq 0 ] || { log 'Pi package install skipped by --skip-pi'; return 0; }
+check_pi_delegation() {
+    local pi_bin settings_file extension
+    [ "$SKIP_PI" -eq 0 ] || { log 'Pi delegation check skipped by --skip-pi'; return 0; }
     settings_file="$PI_DIR/settings.json"
-    installed="$(pi_package_version || true)"
-    if [ "$installed" = "pi-subagents@$PI_SUBAGENTS_VERSION" ] && \
-        [ -r "$settings_file" ] && grep -Fq "npm:pi-subagents@$PI_SUBAGENTS_VERSION" "$settings_file"; then
-        log "pi-subagents@$PI_SUBAGENTS_VERSION is installed and declared in Pi settings"
-        return 0
-    fi
+    extension="$PI_DIR/extensions/pi-sub"
 
     if [ -x "$PI_DIR/bin/pi" ]; then
         pi_bin="$PI_DIR/bin/pi"
     elif command -v pi >/dev/null 2>&1; then
         pi_bin="$(command -v pi)"
     else
-        die 'Pi is not installed; install Pi from its official instructions before installing pi-subagents'
+        die 'Pi is not installed; install Pi from its official instructions before linking pi-sub'
     fi
-    log "installing only npm:pi-subagents@$PI_SUBAGENTS_VERSION through Pi (this updates the user's Pi package settings)"
-    (cd "$HOME_DIR" && "$pi_bin" install "npm:pi-subagents@$PI_SUBAGENTS_VERSION")
-    installed="$(pi_package_version || true)"
-    [ "$installed" = "pi-subagents@$PI_SUBAGENTS_VERSION" ] || die "Pi install completed but expected package was not found under $PI_DIR/npm/node_modules"
+    log "found Pi at $pi_bin"
+
+    # Delegation lives in this repo now: plink links pi/extensions into the agent dir.
+    if [ ! -e "$extension/index.ts" ]; then
+        die "$extension is missing; run bin/plink so Pi loads the repo's pi-sub extension"
+    fi
+    log 'pi-sub extension is in place'
+
+    # Two delegation runtimes in one session is the failure this installer used to cause.
+    if [ -r "$settings_file" ] && grep -Fq 'pi-subagents' "$settings_file"; then
+        die "$settings_file still declares npm:pi-subagents; remove it (pi remove npm:pi-subagents@0.76.0) so only pi-sub loads"
+    fi
+    log 'no npm pi-subagents package declared in Pi settings'
 }
 
 activate_keyboard() {
@@ -380,17 +374,9 @@ activate_keyboard() {
 }
 
 run_validation() {
-    local failed=0 node_version
+    local failed=0
     export PATH="$USER_BIN:$PATH"
     "$SCRIPT_DIR/check-dependencies.sh" || failed=1
-
-    node_version="$(node --version 2>/dev/null | sed 's/^v//' || true)"
-    if version_ge "$node_version" 24.0.0 && [ -d "$PI_DIR/npm/node_modules/pi-subagents" ]; then
-        log 'running pinned Pi subagent agent-discovery tests with Node 24+'
-        PI_SUBAGENTS_PACKAGE="$PI_DIR/npm/node_modules/pi-subagents" node --test "$REPO_ROOT/pi/agents.test.mjs" || failed=1
-    else
-        log 'Pi agent-discovery test skipped; it requires Node 24+ and the installed package'
-    fi
     return "$failed"
 }
 
@@ -418,7 +404,7 @@ main() {
     install_tmux
     install_fzf
     install_keyd
-    install_pi_package
+    check_pi_delegation
     activate_keyboard
     log 'installation steps finished; checking the configured dependency set'
     run_validation || die 'some checks still fail; review the output above'
