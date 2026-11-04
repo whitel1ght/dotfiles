@@ -28,12 +28,15 @@
 # Each MR's worktree is reported clean or DIRTY; a clean one with an upstream is
 # fetched and fast-forwarded first (the branch may have been pushed from another
 # machine), and reported STALE if it diverged or the fetch failed.
+# A failed per-MR lookup is logged as tool_error and skipped, not an outage: only
+# the probe and the MR list write the shared outage marker.
 # Nothing is marked seen until ack or reply, so a round that fails is found again.
 set -euo pipefail
 
 STATE_DIR="${MR_WATCH_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/mr-watch}"
 PROJECTS_DIR="${PROJECTS_DIR:-$HOME/projects}"
 BOT_RE='^(project|group)_[0-9]+_bot'
+HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
 
 # repo_path NAME — where the clone of NAME lives: $PROJECTS_DIR/NAME, or one
 # folder deeper when the clones are grouped there (~/projects/ecfx/ecfx-backend;
@@ -57,6 +60,11 @@ repo_path() {
   printf '%s\n' "$p"
 }
 
+
+friction_log() { command -v friction >/dev/null 2>&1 && friction "$@" >/dev/null 2>&1 || true; }
+down() { "$HERE/glab-gate" down --source mr-watch "GitLab unavailable" || true; return 2; }
+lookup_failed() { friction_log --source mr-watch tool_error "$1 lookup failed for $2"; }
+glab_held() { local rc=0; "$HERE/glab-gate" check || rc=$?; [ "$rc" -eq 1 ]; }
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 ignore_re() {
   local re="$BOT_RE" u
@@ -102,8 +110,10 @@ check() {
   default_floor=$(iso $(($(date +%s) - 7 * 86400)))
   [ "${1:-}" = --since ] && [ -n "${2:-}" ] && default_floor="$2"
   local me mrs
-  me=$(glab api user | jq -r .username) || return 2
-  mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || return 2
+  glab_held && return 2
+  me=$(glab api user | jq -r .username) || { down; return 2; }
+  mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { down; return 2; }
+  "$HERE/glab-gate" up || true
   mkdir -p "$STATE_DIR/seen" "$STATE_DIR/rounds"
   local found=0 re stamp
   re=$(ignore_re); stamp=$(date +%Y%m%dT%H%M%S)
@@ -113,9 +123,9 @@ check() {
     floor=$(cat "$STATE_DIR/seen/$key" 2>/dev/null || echo "$default_floor")
     [[ "$updated" > "$floor" ]] || continue
     local approvals disc picked
-    approvals=$(glab api "projects/$pid/merge_requests/$iid/approvals") || return 2
+    approvals=$(glab api "projects/$pid/merge_requests/$iid/approvals") || { lookup_failed approvals "$ref"; continue; }
     jq -e '.approved and (.approved_by | length > 0)' <<<"$approvals" >/dev/null && continue
-    disc=$(glab api --paginate "projects/$pid/merge_requests/$iid/discussions?per_page=100" | jq -s 'add') || return 2
+    disc=$(glab api --paginate "projects/$pid/merge_requests/$iid/discussions?per_page=100" | jq -s 'add') || { lookup_failed discussions "$ref"; continue; }
     picked=$(jq --arg me "$me" --arg re "$re" --arg floor "$floor" '
       def human: (.system | not) and .author.username != $me and (.author.username | test($re) | not);
       ([.[].notes[] | select(.system | not) | select(.author.username == $me) | .created_at] | max // "") as $mine

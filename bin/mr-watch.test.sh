@@ -18,6 +18,8 @@ SANDBOX="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$SANDBOX"' EXIT
 STUBS="$SANDBOX/stubs"; FIX="$SANDBOX/fixtures"; STATE="$SANDBOX/state"; PROJ="$SANDBOX/projects"
 mkdir -p "$STUBS" "$FIX" "$PROJ"
+# The outage marker (glab-gate) lives in the friction dir: keep it out of the real one.
+export FRICTION_DIR="$SANDBOX/friction-state"
 
 note() { # id author created [system] [resolvable] [resolved] [inline-path]
     printf '{"id":%s,"author":{"username":"%s"},"created_at":"%s","system":%s,"resolvable":%s,"resolved":%s,"body":"body %s","position":%s}' \
@@ -53,7 +55,9 @@ echo '{"approved":true,"approved_by":[]}' > "$FIX/approvals-50"
 
 cat > "$STUBS/glab" <<'EOF'
 #!/bin/bash
+echo "$*" >> "$FIX/glab.log"
 [ -n "${GLAB_DOWN:-}" ] && exit 1
+[ -n "${GLAB_FAIL:-}" ] && case "$*" in *"$GLAB_FAIL"*) exit 1 ;; esac
 if [ "$2" = --method ]; then
     body="${6#body=@}"; [ "$body" = - ] && body=/dev/stdin
     printf '%s %s\n' "$4" "$(tr '\n' ' ' < "$body")" >> "$FIX/posts.log"; echo '{}'; exit 0
@@ -238,6 +242,70 @@ done
 echo "mr-watch — GitLab down"
 GLAB_DOWN=1 run check >/dev/null; rc=$?
 assert_eq 2 "$rc" "exits 2 when GitLab is unreachable"
+
+echo "mr-watch — friction capture"
+cat > "$STUBS/friction" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$*" >> "$FIX/friction.log"
+[ -n "${FRICTION_FAIL:-}" ] && exit 1
+exit 0
+STUB
+chmod +x "$STUBS/friction"
+rm -f "$FIX/friction.log" "$FIX/glab.log" "$FRICTION_DIR/gitlab-down"
+GLAB_DOWN=1 run check >/dev/null; rc=$?
+assert_eq 2 "$rc" "still exits 2 with friction present"
+assert_eq "--source mr-watch service_down GitLab unavailable" "$(cat "$FIX/friction.log")" "GitLab down records service_down for mr-watch"
+GLAB_DOWN=1 run check >/dev/null; rc=$?
+assert_eq 2 "$rc" "a second down poll still exits 2"
+assert_eq 1 "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "two consecutive down polls record one friction line"
+assert_eq 1 "$(wc -l < "$FIX/glab.log" | tr -d ' ')" "inside the 15-minute window the second poll makes no glab call"
+out=$(run check); rc=$?
+assert_eq "2|" "$rc|$out" "a poll inside the window exits 2 even when GitLab is back, silently"
+printf '%s\n' "$(($(date +%s) - 901))" > "$FRICTION_DIR/gitlab-down"
+run check --since 2026-09-20T00:00:00Z >/dev/null
+[ ! -e "$FRICTION_DIR/gitlab-down" ]; assert_eq 0 "$?" "a successful poll after the window clears the marker"
+GLAB_DOWN=1 run check >/dev/null
+assert_eq 2 "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "a down poll after a successful one records again"
+rm -f "$FRICTION_DIR/gitlab-down"
+out=$(FRICTION_FAIL=1 GLAB_DOWN=1 run check); rc=$?
+assert_eq 2 "$rc" "a failing friction leaves exit 2"
+assert_eq "" "$out" "and output empty"
+rm -f "$FIX/friction.log" "$FRICTION_DIR/gitlab-down"
+mkdir -p "$SANDBOX/waitstubs"
+cat > "$SANDBOX/waitstubs/sleep" <<'STUB'
+#!/bin/bash
+n=$(($(cat "$FIX/sleeps" 2>/dev/null || echo 0) + 1)); echo "$n" > "$FIX/sleeps"
+[ "$n" -ge 3 ] && kill -TERM "$PPID"
+exit 0
+STUB
+chmod +x "$SANDBOX/waitstubs/sleep"
+rm -f "$FIX/sleeps"
+{ GLAB_DOWN=1 PATH="$SANDBOX/waitstubs:$PATH" run wait --every 1 >/dev/null; } 2>/dev/null
+assert_eq 3 "$(cat "$FIX/sleeps")" "wait slept three times, so polled twice"
+assert_eq 1 "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "wait records one friction line over two down polls"
+[ -e "$FRICTION_DIR/gitlab-down" ]; assert_eq 0 "$?" "wait keeps the outage marker between down polls"
+echo "mr-watch — one MR failing is not an outage"
+OLD_STATE="$STATE"
+for what in approvals discussions; do
+    STATE="$SANDBOX/state-$what"
+    rm -rf "$FIX/friction.log" "$FIX/glab.log" "$FRICTION_DIR"
+    out=$(GLAB_FAIL="merge_requests/10/$what" run check --since 2026-09-20T00:00:00Z); rc=$?
+    assert_eq 0 "$rc" "a failing $what lookup on one MR still exits 0 when another has notes"
+    assert_contains "$out" "grp/api!50" "the other MRs are still processed ($what)"
+    assert_lacks "$out" "grp/api!10" "the failing MR yields no round ($what)"
+    [ ! -e "$FRICTION_DIR/gitlab-down" ]; assert_eq 0 "$?" "no outage marker for one MR ($what)"
+    assert_eq "--source mr-watch tool_error $what lookup failed for grp/api!10" "$(cat "$FIX/friction.log")" "exactly one tool_error line and no service_down ($what)"
+    [ ! -e "$STATE/seen/1-10" ]; assert_eq 0 "$?" "its seen floor is untouched, so the next poll retries it ($what)"
+    rm -f "$FIX/friction.log"
+    out=$(run check --since 2026-09-20T00:00:00Z); rc=$?
+    assert_contains "$out" "grp/api!10" "the next poll picks it up again ($what)"
+done
+STATE="$OLD_STATE"
+rm -rf "$FIX/friction.log" "$FRICTION_DIR"
+rm "$STUBS/friction"
+out=$(GLAB_DOWN=1 PATH="$STUBS:$(dirname "$(command -v jq)"):/usr/bin:/bin" FIX="$FIX" MR_WATCH_STATE="$STATE" PROJECTS_DIR="$PROJ" "$SCRIPT" check 2>&1); rc=$?
+assert_eq 2 "$rc" "a missing friction leaves exit 2"
+assert_eq "" "$out" "and output empty without it"
 
 echo
 echo "passed: $PASS  failed: $FAIL"
