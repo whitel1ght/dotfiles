@@ -22,7 +22,10 @@ review.md or a source file yourself. The fixers read those.
 Define `<start>` once here, as the UTC time of this first `check` (`date -u +%Y%m%dT%H%M%SZ`);
 every later round reuses it for the watch session's state paths.
 
-Mention any held rounds in one line each. If `check` exits 1, nothing is new: go
+Post every held round with `~/.local/bin/mr-watch reply <round>` once the commit SHAs its
+`response.md` cites are on the MR's branch; one line each on what you posted. Skip one
+only when a newer round for the same MR supersedes it (ack it and say so) or it waits on
+a decision that is mine (see the end of "Each round"). If `check` exits 1, nothing is new: go
 straight to "Wait". Exit 2 means GitLab is unreachable: say so and wait.
 
 ## Each round
@@ -70,13 +73,12 @@ directory and the **worktree**. Handle every MR in the summary, in parallel.
    from the current live list. Still failing: that finding becomes Deferred with the reason.
 4. **Push**: `git -C <wt> push`. Never force. If the push is rejected, stop on this MR:
    ack the round, hold its reply and tell me.
-5. **Reply.**
-   - Every finding Fixed, Already closed or Reply: post it with
-     `~/.local/bin/mr-watch reply <round>`. That posts `response.md` as one note, the
-     `threads.tsv` lines into their inline threads, and acks the round.
-   - Any finding Not changed or Deferred: don't post. Run `~/.local/bin/mr-watch ack
-     <round>`, then flag it to me in the chat: the MR, and each declined or deferred
-     finding with its one-line reason. When I say to post it, run `mr-watch reply <round>`.
+5. **Reply.** Post every round's reply with `~/.local/bin/mr-watch reply <round>`,
+   including rounds with Not changed or Deferred findings: reviewers need the fixes
+   reported, and the reply carries the reason for each declined or deferred one. That
+   posts `response.md` as one note, the `threads.tsv` lines into their inline threads,
+   and acks the round. Then list each Not changed or Deferred finding to me in the chat
+   with its one-line reason.
 
 Stop to ask me only when something is mine to decide: a finding that asks for a product
 or scope change, or a reviewer asking me personally. Hold that round and carry on with
