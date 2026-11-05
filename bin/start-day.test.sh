@@ -382,6 +382,30 @@ err=$(printf '%s\n' '- [ ] ecfx-14260 backend!6718: reply to @bob, then merge' '
 assert_eq 0 "$rc" "children, later mentions and keyless lines are not duplicates ($err)"
 rm -f "$DIARY/$(date +%F).md"
 
+echo "start-day — carry-over shows the last day's agent notes"
+reset
+ago() { date -v-"$1"d +%F 2>/dev/null || date -d "$1 days ago" +%F; }
+last=$(ago 1)
+printf '%s\n' '### ECFX' '- [ ] ECFX-17482 dashboard fix' > "$DIARY/$last.md"
+mkdir -p "$DIARY/.agent"
+printf '%s\n' '<!-- written by day-agent, do not edit -->' "# agent notes $last" '## ecfx-17482' \
+  '- mr: dashboard!2289 https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2289' '- 11:40 done: merged dec5a42eb2' > "$DIARY/.agent/$last.md"
+out=$(run collect --since 2026-09-20T00:00:00Z)
+assert_contains "$out" "Agent notes from $last:" "the carry-over names the agent notes' day"
+assert_contains "$out" "## ecfx-17482" "the carry-over shows the agent file's sections"
+assert_contains "$out" "- 11:40 done: merged dec5a42eb2" "the carry-over shows the agent entries"
+assert_lacks "$out" "do not edit" "the <!-- lines of the agent file are dropped"
+rm -rf "$DIARY/.agent" "$DIARY/$last.md"
+
+echo "start-day — carry-over without agent notes"
+reset
+last=$(ago 3)
+printf '%s\n' '### ECFX' '- [ ] ECFX-17482 dashboard fix' > "$DIARY/$last.md"
+out=$(run collect --since 2026-09-20T00:00:00Z)
+assert_contains "$out" "(no agent notes)" "a day without an agent file says so"
+assert_contains "$out" "- [ ] ECFX-17482 dashboard fix" "the diary dump is still printed"
+rm -f "$DIARY/$last.md"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
