@@ -55,6 +55,8 @@ assert_eq "# agent notes $DATE
 run note ecfx-17482 note "line one
 line two"
 assert_eq "- 09:12 note: line one line two" "$(grep 'line one' "$AGENT")" "newlines in TEXT fold to spaces"
+run note ecfx-9 note "$(printf 'tab\there\rcr  and  gaps')"
+assert_eq "- 09:12 note: tab here cr and gaps" "$(tail -n 1 "$AGENT")" "tabs and CRs fold to single spaces"
 for k in progress done note blocked with-you handed-back carried; do
   run note ecfx-5 "$k" "x"; assert_eq "0" "$?" "kind $k accepted"
 done
@@ -90,6 +92,11 @@ assert_eq "- mr: backend!7 https://x/7" "$(tail -n 1 "$AGENT")" "another MR is a
 run mr ecfx-17482 nonsense https://x/7; assert_eq "2" "$?" "a bad REPO!IID exits 2"
 run mr "bad key" backend!7 https://x/7; assert_eq "2" "$?" "mr with a bad KEY exits 2"
 assert_contains "$(errs)" "day-agent: bad key" "and says so"
+
+run mr ecfx-17482 backend!8 "https://x/a b"; assert_eq "2" "$?" "a URL with a space exits 2"
+assert_contains "$(errs)" "day-agent: bad url" "and says so"
+run mr ecfx-17482 backend!8 "$(printf 'https://x/a\tb')"; assert_eq "2" "$?" "a URL with a tab exits 2"
+assert_eq "4" "$(wc -l < "$AGENT" | tr -d ' ')" "bad URLs write nothing"
 
 echo "day-agent - show and mrs"
 reset
@@ -129,6 +136,20 @@ printf '# %s\n- [ ] a <!-- p7 -->\n' "$DATE" > "$DIARY/$DATE.md"
 assert_eq "p3" "$(run id)" "a diary with no block is ignored"
 run note p12 note "x"
 assert_eq "p13" "$(run id)" "two-digit ids count numerically"
+
+echo "day-agent - concurrency"
+reset
+i=0; while [ "$i" -lt 20 ]; do run note ecfx-1 note "n$i" & i=$((i + 1)); done; wait
+assert_eq "20" "$(grep -c '^- 09:12 note: n' "$AGENT")" "20 parallel notes on one key leave exactly 20 entries"
+assert_eq "1" "$(grep -c '^## ecfx-1$' "$AGENT")" "and one section"
+assert_eq "no" "$([ -e "$AGENT.lock" ] && echo yes || echo no)" "the lock is released"
+assert_eq "0" "$(ls "$DIARY/.agent" | grep -c tmp)" "no temp files are left"
+mkdir "$AGENT.lock"
+(DAY_AGENT_LOCK_TRIES=3 DIARY_DIR="$DIARY" DAY_AGENT_DATE="$DATE" "$SCRIPT" note ecfx-1 note x 2>"$SANDBOX/stderr"); rc=$?
+assert_eq "1" "$rc" "a held lock gives exit 1"
+assert_contains "$(errs)" "day-agent: busy" "and says busy"
+assert_eq "yes" "$([ -d "$AGENT.lock" ] && echo yes || echo no)" "and the other holder's lock is left alone"
+rmdir "$AGENT.lock"
 
 echo "day-agent - usage"
 run >/dev/null; assert_eq "2" "$?" "no arguments exit 2"

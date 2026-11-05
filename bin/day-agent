@@ -19,6 +19,23 @@ DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
 DATE="${DAY_AGENT_DATE:-$(date +%F)}"
 FILE="$DIARY_DIR/.agent/$DATE.md"
 
+LOCK="$FILE.lock"
+held=0
+trap '[ "$held" = 1 ] && rmdir "$LOCK" 2>/dev/null; rm -f "$FILE.tmp.$$"' EXIT
+
+# One writer at a time: mkdir is atomic and portable (macOS has no flock).
+lock() {
+  [ "$held" = 1 ] && return 0
+  mkdir -p "$(dirname "$FILE")"
+  local i=0
+  until mkdir "$LOCK" 2>/dev/null; do
+    i=$((i + 1))
+    if [ "$i" -gt "${DAY_AGENT_LOCK_TRIES:-100}" ]; then echo "day-agent: busy" >&2; exit 1; fi
+    sleep 0.05
+  done
+  held=1
+}
+
 usage() {
   echo "usage: day-agent path | init | note KEY KIND TEXT | mr KEY REPO!IID URL | show [KEY] | mrs | id" >&2
   exit 2
@@ -26,6 +43,7 @@ usage() {
 bad() { echo "day-agent: $*" >&2; exit 2; }
 
 init() {
+  lock
   [ -f "$FILE" ] && return 0
   mkdir -p "$(dirname "$FILE")"
   printf '# agent notes %s\n' "$DATE" > "$FILE.tmp.$$"
@@ -43,6 +61,7 @@ norm_key() {
 # section at the end of the file. With DEDUPE, skip when the section already has a
 # line starting with it. Text goes in through ENVIRON, so awk leaves it untouched.
 insert() {
+  lock
   init
   AK="$1" AL="$2" AD="${3:-}" awk '
     BEGIN { key = "## " ENVIRON["AK"]; line = ENVIRON["AL"]; dd = ENVIRON["AD"] }
@@ -77,6 +96,7 @@ case "$cmd" in
     [[ "$2" =~ ^[A-Za-z0-9._-]+![0-9]+$ ]] || bad "bad repo!iid $2"
     ref="${2#ecfx-}"
     [ -n "$3" ] || bad "empty url"
+    [[ "$3" =~ [[:space:]] ]] && bad "bad url"
     insert "$key" "- mr: $ref $3" "- mr: $ref "
     ;;
   show)
