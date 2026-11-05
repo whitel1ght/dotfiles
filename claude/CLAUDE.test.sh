@@ -18,6 +18,7 @@ has() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3" "[$2] missing" ;; esac; }
 echo "CLAUDE.md and ship-mr — a draft means unfinished work"
 gitlab=$(section "$MD" "GitLab and Jira APIs")
 has "$gitlab" "An MR stays in draft only while its work is unfinished" "the rule itself"
+has "$gitlab" "A finished MR ships without asking" "shipping takes no card (D-447)"
 has "$gitlab" "Depends on:" "a dependency goes in the description"
 for ship in "$DIR/commands/ship-mr.md" "$DIR/../pi/prompts/ship-mr.md"; do
   doc=$(tr '\n' ' ' < "$ship" | tr -s ' ')

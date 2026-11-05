@@ -38,7 +38,9 @@ the user edits the diary too. `day-plan` opens today's diary in a tmux popup whe
   `decisions/NNNN-<slug>.md` (create; on an existing one only `status: superseded`). Never `state.md` mid-day (step 8).
 - Never edit project code yourself.
 - Never merge, mark ready, transition Jira, post to Slack or comment on an MR without the user's
-  yes. Asking means a decision (step 9); a review round is one decision per round (step 5).
+  yes. Asking means a decision (step 9); a review round is one decision per round (step 5). The
+  one exception is the ship step (step 3): a finished MR of the user's goes ready without asking
+  (D-447).
 - Questions for the user go into the decision queue (step 9): never ask the question in the thread,
   never wait for the answer. The only question asked in the thread is the triage go-ahead (step 1).
 - MR numbers are markdown links with the repo in the text, never a bare `!2202`:
@@ -107,8 +109,8 @@ planned pause in the day:
 
 - `auto` = ticket work an agent can do (fix, implement, address review, write tests): the ticket
   says what done looks like, and the repo has tests to prove it.
-- A line or child that only ships a finished draft (`ship <repo>!<iid>`) is `me`: file the Ship
-  decision (step 3) instead of dispatching.
+- A line or child that only ships a finished draft (`ship <repo>!<iid>`) is not `me`: run the ship
+  step (step 3), with no ticket brief.
 - `review` = someone else's MR to review or re-review. An agent drafts the review (step 2,
   review items); posting it is one decision. Never for an MR we already approved (D-011): when
   `glab api "projects/<urlencoded path>/merge_requests/<iid>/approvals" | jq -r '.approved_by[].user.username'`
@@ -230,25 +232,23 @@ An agent's report is a claim, not evidence. Before any `[X]`:
 All good: run `day-agent mr <key> <repo>!<iid> <url>`, apply the report's `memory:` block (step 4),
 and set `mr=` and `agent=-` on the run-state line. If the MR is still a draft (`.draft` in the MR
 call above), the line is not done: a draft means unfinished work, and this work is finished. Mark
-it `[/]`, run `day-agent note <key> progress "finished, waiting on Ship it"` (old format:
-`· progress: finished, waiting on Ship it`), and file the Ship decision below. Otherwise run
+it `[/]`, run `day-agent note <key> progress "finished, shipping"` (old format:
+`· progress: finished, shipping`), and run the ship step below. Otherwise run
 `day-agent note <key> done "<evidence: merged <sha> (repo!iid), or why>"` and tick `[X]` (old
 format: with the MR suffix and link of the Markers rule). Either way, run Keep busy (step 11).
 
-**Ship decision.** An MR stays in draft only while its work is unfinished; waiting on another MR, a
-deploy or a release does not count. Undrafting requests the team's reviewers, so it takes the
-user's yes: file a decision (step 9), question `Ship <repo>!<iid>?`, options `The agent ships it`
-(recommended), `You ship it`, `It stays a draft: work is left`, with what the MR does, its pipeline
-and any dependency in the context. On the answer:
-- `The agent ships it`: spawn a background agent in the item's worktree (counts toward the cap,
-  `agent=<id>`) to read `~/.pi/agent/prompts/ship-mr.md` and follow it on that MR. It may run
-  `mr-ship` for this MR, nothing else outside its brief. Its report says `shipped`: run
-  `day-agent note <key> done "shipped <repo>!<iid>, reviewers requested"` and tick `[X]`. It says
-  `left in draft: <the unfinished work>`: treat it as a failed check, with that reason.
-- `You ship it`: the line stays `[/]`, run `day-agent note <key> note "the user ships <repo>!<iid>"`.
-- `It stays a draft: work is left`: the line stays `[/]`, run
-  `day-agent note <key> progress "<the work left, from the answer>"`, and dispatch that work when
-  it is an agent's.
+**Ship step.** An MR stays in draft only while its work is unfinished; waiting on another MR, a
+deploy or a release does not count. A finished MR ships without asking (D-447). An item with
+`owner=external:<KEY>` is never shipped: the user is working it. Spawn a background agent in the
+item's worktree (counts toward the cap, `agent=<id>`) to read `~/.pi/agent/prompts/ship-mr.md` and
+follow it on that MR. It may run `mr-ship` for this MR, nothing else outside its brief. Then:
+- Its report says `shipped`: run `day-agent note <key> done "shipped <repo>!<iid>, reviewers requested"`
+  and tick `[X]`.
+- It says `left in draft: <the unfinished work>`: treat it as a failed check, with that reason.
+- The harness refuses the agent or its push, write or `mr-ship`: do not retry another way. The line
+  stays `[/]`; file a decision (step 9), question `Ship <repo>!<iid>?`, options
+  `You run /ship-mr yourself` and `It stays a draft: work is left`, with the refusal quoted in the
+  context.
 
 A ticket has one top-level line on the plan, and never a second for a key already on the plan
 (put the new action on its line, or as a new child under it). Indented `  - [ ]` children under
