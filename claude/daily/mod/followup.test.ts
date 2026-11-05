@@ -88,3 +88,11 @@ test('files named with @ and images are explained only when the text has them', 
   expect(followupPrompt([{ ...message, followup: 'look [image: /a/1.png]' }])).toContain(note)
   expect(followupPrompt([{ ...card, followup: 'and @src/app.rs?' }])).toContain(note)
 })
+
+test('a path outside the working directory is explained too', async () => {
+  for (const followup of ['see @~/wiki/index.md', 'see @/etc/hosts', 'see @../dotfiles/README.md']) {
+    const prompt = followupPrompt([{ ...message, followup }])
+    expect(prompt).toContain('read them with your file tool')
+    expect(prompt).toContain('unless it starts with / or ~/')
+  }
+})

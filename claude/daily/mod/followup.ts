@@ -55,7 +55,7 @@ export function pendingFollowups(cards: readonly Card[], session: string | Reado
 
 // A mod's prompt gets no `@file` or image expansion from the harness, so the deck sends paths.
 const NAMES_FILES = /(^|\s)@\S|\[image: /
-const READ_FILES = ' A path after an @ is relative to your working directory (it may end in a line range such as #L10-20), and [image: …] gives an image file by its absolute path: read them with your file tool first.'
+const READ_FILES = ' A path after an @ is relative to your working directory unless it starts with / or ~/ (it may end in a line range such as #L10-20), and [image: …] gives an image file by its absolute path: read them with your file tool first.'
 
 export function followupPrompt(items: readonly Card[]): string {
   return items
