@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# The only writer of the hidden per-day agent notes file.
+#
+#   day-agent path                      print the file path
+#   day-agent init                      create the file if missing
+#   day-agent note KEY KIND TEXT        append "- HH:MM KIND: TEXT" to the ## KEY section
+#   day-agent mr KEY REPO!IID URL       add "- mr: repo!iid URL" unless that MR is already there
+#   day-agent show [KEY]                print the file, or one section (exit 1 when missing)
+#   day-agent mrs                       print key<TAB>repo!iid<TAB>url for every mr line
+#   day-agent id                        print the next free p<N>
+#
+# KEY is a ticket key (ecfx-123) or a comment id (p3). KIND is one of
+# progress done note blocked with-you handed-back carried.
+# The file is $DIARY_DIR/.agent/<date>.md (DIARY_DIR defaults to ~/wiki/diary).
+# DAY_AGENT_DATE and DAY_AGENT_NOW (HH:MM) override the clock, for tests.
+set -euo pipefail
+
+DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
+DATE="${DAY_AGENT_DATE:-$(date +%F)}"
+FILE="$DIARY_DIR/.agent/$DATE.md"
+
+usage() {
+  echo "usage: day-agent path | init | note KEY KIND TEXT | mr KEY REPO!IID URL | show [KEY] | mrs | id" >&2
+  exit 2
+}
+bad() { echo "day-agent: $*" >&2; exit 2; }
+
+init() {
+  [ -f "$FILE" ] && return 0
+  mkdir -p "$(dirname "$FILE")"
+  printf '# agent notes %s\n' "$DATE" > "$FILE.tmp.$$"
+  mv "$FILE.tmp.$$" "$FILE"
+}
+
+norm_key() {
+  local k
+  k=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  [[ "$k" =~ ^([a-z][a-z0-9]*-[0-9]+|p[0-9]+)$ ]] || bad "bad key $1"
+  printf '%s' "$k"
+}
+
+# insert KEY LINE [DEDUPE]: put LINE at the end of the ## KEY section, creating the
+# section at the end of the file. With DEDUPE, skip when the section already has a
+# line starting with it. Text goes in through ENVIRON, so awk leaves it untouched.
+insert() {
+  init
+  AK="$1" AL="$2" AD="${3:-}" awk '
+    BEGIN { key = "## " ENVIRON["AK"]; line = ENVIRON["AL"]; dd = ENVIRON["AD"] }
+    function flush() { if (insec && !done) { if (!dup) print line; done = 1 } }
+    /^## / { flush(); insec = ($0 == key); if (insec) found = 1 }
+    { print }
+    insec && dd != "" && index($0, dd) == 1 { dup = 1 }
+    END {
+      if (!found) { print key; print line }
+      else flush()
+    }
+  ' "$FILE" > "$FILE.tmp.$$"
+  mv "$FILE.tmp.$$" "$FILE"
+}
+
+cmd="${1:-}"
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  path) [ $# -eq 0 ] || usage; echo "$FILE" ;;
+  init) [ $# -eq 0 ] || usage; init ;;
+  note)
+    [ $# -eq 3 ] || usage
+    key=$(norm_key "$1")
+    case "$2" in progress|done|note|blocked|with-you|handed-back|carried) ;; *) bad "unknown kind $2" ;; esac
+    text=$(printf '%s' "$3" | tr '\n\r\t' '   ' | sed 's/  */ /g; s/^ //; s/ $//')
+    [ -n "$text" ] || bad "empty text"
+    insert "$key" "- ${DAY_AGENT_NOW:-$(date +%H:%M)} $2: $text"
+    ;;
+  mr)
+    [ $# -eq 3 ] || usage
+    key=$(norm_key "$1")
+    [[ "$2" =~ ^[A-Za-z0-9._-]+![0-9]+$ ]] || bad "bad repo!iid $2"
+    ref="${2#ecfx-}"
+    [ -n "$3" ] || bad "empty url"
+    insert "$key" "- mr: $ref $3" "- mr: $ref "
+    ;;
+  show)
+    [ $# -le 1 ] || usage
+    [ -f "$FILE" ] || exit 1
+    if [ $# -eq 0 ]; then cat "$FILE"; exit 0; fi
+    key=$(norm_key "$1")
+    out=$(AK="$key" awk '
+      /^## / { insec = ($0 == "## " ENVIRON["AK"]) }
+      insec { print; found = 1 }
+      END { exit !found }
+    ' "$FILE") || exit 1
+    printf '%s\n' "$out"
+    ;;
+  mrs)
+    [ $# -eq 0 ] || usage
+    [ -f "$FILE" ] || exit 0
+    awk '
+      /^## / { key = substr($0, 4); sub(/[ \t]+$/, "", key); next }
+      /^- mr: / { n = split($0, f, " "); if (n >= 4) printf "%s\t%s\t%s\n", key, f[3], f[4] }
+    ' "$FILE"
+    ;;
+  id)
+    [ $# -eq 0 ] || usage
+    diary="$DIARY_DIR/$DATE.md"
+    {
+      if [ -f "$diary" ]; then
+        sed -n '/<!-- start-day:start -->/,/<!-- start-day:end -->/p' "$diary" | grep -Eo '<!-- p[0-9]+ -->' || true
+      fi
+      if [ -f "$FILE" ]; then grep -Eo '^## p[0-9]+' "$FILE" || true; fi
+    } | { grep -Eo '[0-9]+' || true; } | awk 'BEGIN { m = 0 } { if ($1 + 0 > m) m = $1 + 0 } END { print "p" m + 1 }'
+    ;;
+  *) usage ;;
+esac
