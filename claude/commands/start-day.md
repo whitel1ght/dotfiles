@@ -109,9 +109,9 @@ Group the items by what they unblock, in this order:
   first, at most three.
 
 Separately, **Merge**: one item per ticket whose MRs are ready to merge now, naming each
-MR in merge order ("merge backend !6390, then admin !273"). A ticket that still has review
-notes to answer goes in First instead, with the merge as its last step ("reply to @bob on
-backend !870, then merge it"). Leave out "Waiting on dependencies" unless one of those MRs unblocks something
+MR in merge order ("merge backend!6390, then admin!273"). A ticket that still has review
+notes to answer goes in First instead, with the merge as its last step ("reply to Bob on
+backend!870, then merge it"). Leave out "Waiting on dependencies" unless one of those MRs unblocks something
 already in First or Today, in which case say so in one short line.
 
 Before writing, check that every one of these made it in or was dropped on purpose: each
@@ -130,7 +130,7 @@ up (a to-do marked "waiting on author", Slack, Jira) until its author pushes or 
 Write it in my diary style, as a short list I can read at a glance: lowercase ticket
 keys, plain words, one checkbox per ticket, starting with its key: `- [ ] <key> <few words>`,
 what it is or what's next. Each line is at most 100 characters; children are shorter.
-No `·`, no links, no `[↗]`, no `[label]: url` lines. Name an MR as plain `repo!iid`
+No `·` on a ticket line, no links, no `[↗]`, no `[label]: url` lines. Name an MR as plain `repo!iid`
 ("backend!870"), never linked, and a person by first name. A line without a ticket ends
 with `<!-- pN -->`: run `day-agent id` for each one, then `day-agent note <pN> note "<what
 it is>"` at once, so the next id is a new one. Keep it to what fits in a day, usually 6 to

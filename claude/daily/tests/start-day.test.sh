@@ -64,6 +64,8 @@ for f in "$C" "$P"; do
   has "$f" "day-agent note <key> carried" "$side: carried facts go to the agent file"
   has "$f" "at most 100 characters" "$side: plan lines are short"
   has "$f" "<!-- pN -->" "$side: keyless lines carry a comment id"
+  lacks "$f" "backend !6390" "$side: merge example uses repo!iid"
+  lacks "$f" "@bob" "$side: examples name people without @"
   has "$f" "day-agent id" "$side: the id comes from day-agent"
   lacks "$f" "trailing \`[↗][label]\` ref" "$side: no [↗] refs in the plan"
   lacks "$f" "inline \`[dashboard!940](url)\`" "$side: no inline MR links in the plan"
