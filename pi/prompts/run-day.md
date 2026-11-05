@@ -587,7 +587,8 @@ than 3 agents run (ticket, review and round agents all count), fill the free slo
 1. Queued `auto` and `review` items, in plan order (step 2).
 2. Open children, in plan order, under every open item whatever its class. First tick each child
    that is already done (check its MR, pipeline, Slack or Jira state and the item's agent
-   section, `day-agent show <key>`, where progress notes live; old format: the parent's `· progress:`
+   section, `day-agent show <key>`, where progress notes live;
+   exit 1 means no notes yet, not an error; old format: the parent's `· progress:`
    suffix; step 3). Then, for each child still open: if an agent can do it alone
    (draft a reply, a description or a follow-up ticket, fix code, run a read-only check), dispatch
    it as step 2, the brief naming that child as the task. Anything it would post, file or send

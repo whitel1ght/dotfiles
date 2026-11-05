@@ -15,7 +15,16 @@ has "$F" "**Unplanned**" "adds under the Unplanned group"
 has "$F" "~/.local/state/run-day/inbox/" "processes waiting inbox messages first"
 has "$F" "<!-- start-day:start -->" "compares against the plan block only"
 has "$F" "Ask which to add" "asks before adding anything"
-has "$F" "· note:" "gives added lines evidence for the tick guard"
+has "$F" "· note:" "old-format days: added lines keep the · note: evidence for the old tick guard"
+for f in "$F" "$TEST_DIR/../../../pi/prompts/end-day.md"; do
+  side="$(basename "$(dirname "$f")")"
+  has "$f" "~/.local/bin/day-agent mrs" "$side: unreported check reads the MRs from the agent file"
+  has "$f" "~/.local/bin/day-agent note <key> done" "$side: Unplanned evidence goes to the agent file before the tick"
+  has "$f" "~/.local/bin/day-agent mr <key>" "$side: Unplanned MR link goes to the agent file"
+  has "$f" "On a day with no agent file the old rules apply" "$side: old-format days keep the old Unplanned rules"
+  has "$f" "no \`done\` entry" "$side: names the new tick guard"
+done
+has "$F" "Bash(~/.local/bin/day-agent:*)" "claude: allows day-agent"
 has "$F" "Bash(awk:*)" "allows the awk and rg pipeline"
 
 echo "== memory step =="

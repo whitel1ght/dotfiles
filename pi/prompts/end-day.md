@@ -143,7 +143,10 @@ DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$AR
 PLAN="$(awk '/<!-- start-day:start -->/{f=1;next} /<!-- start-day:end -->/{f=0} f' ~/wiki/diary/$DAY.md)"
 printf '%s\n' "$PLAN" | rg -oi '\b[a-z]{2,10}-[0-9]{2,6}\b' | tr 'A-Z' 'a-z' | sort -u
 printf '%s\n' "$PLAN" | rg -o 'merge_requests/[0-9]+' | sort -u
+if test -f ~/wiki/diary/.agent/$DAY.md; then DAY_AGENT_DATE="$DAY" ~/.local/bin/day-agent mrs | rg -o '^\S+|merge_requests/[0-9]+' | sort -u; fi
 ```
+
+On a new-format day (the agent file `~/wiki/diary/.agent/$DAY.md` exists) the MR links no longer sit on the plan lines, so the last command adds the keys and MR numbers of `day-agent mrs` (one `key<TAB>repo!iid<TAB>url` line per MR) to the two lists; count them with the plan's. On a day with no agent file the plan block alone gives both lists.
 
 Compare the digest's four sections with those two lists. A digest item is **unreported** when its
 ticket key is not among the plan's keys and, for an MR, its `merge_requests/<n>` is not among the
@@ -155,13 +158,7 @@ If nothing is unreported, say so in one line. Otherwise show a short list, one l
 `<key or topic> - <one-line summary> - <evidence: MR link or commit>`. Ask which to add, then stop
 and wait for my answer (yes or no per item), and do not continue until answered. Do not go on to
 "Consolidate memory", and do not add anything, before the answer arrives. For each yes, add one
-line under the plan block's `**Unplanned**` group (create the group as the last group, just
-above `<!-- start-day:end -->`, when it is missing):
-`- [X] <key> <summary> · MR <repo>!<iid>  [↗][<repo>!<iid>]` (the URL goes in a
-`[<repo>!<iid>]: <url>` line above the end marker; an inline `[<repo>!<iid>](<url>)` is fine too),
-or `· note: <summary>` when there is no MR, because the diary's tick guard refuses an `[X]` without
-an MR link, `merged` or `· note:`. Use `[/]` for work that is clearly unfinished. After the edits
-run `~/.local/bin/diary-links ~/wiki/diary/$DAY.md`. Never add a line I did not approve and never
+line under the plan block's `**Unplanned**` group (create the group as the last group, just above `<!-- start-day:end -->`, when it is missing). On a new-format day the line is short and carries no evidence: `- [X] <key> <few words, at most 80 characters>`, or `- [X] <few words> <!-- pN -->` with the next free id from `DAY_AGENT_DATE="$DAY" ~/.local/bin/day-agent id` when there is no key; the evidence goes to the agent file, run before the tick: `DAY_AGENT_DATE="$DAY" ~/.local/bin/day-agent mr <key> <repo>!<iid> <url>` when there is an MR, and `DAY_AGENT_DATE="$DAY" ~/.local/bin/day-agent note <key> done "<evidence: merged <sha> (repo!iid), or the summary>"` (the key is the `pN` id for a keyless line), because the diary's tick guard refuses a top-level `[X]` with no `done` entry. Use `[/]` and kind `progress` for work that is clearly unfinished. On a day with no agent file the old rules apply: `- [X] <key> <summary> · MR <repo>!<iid>  [↗][<repo>!<iid>]` (the URL goes in a `[<repo>!<iid>]: <url>` line above the end marker; an inline `[<repo>!<iid>](<url>)` is fine too), or `· note: <summary>` when there is no MR, because the old tick guard refuses an `[X]` without an MR link, `merged` or `· note:`; `[/]` for unfinished work. After the edits run `~/.local/bin/diary-links ~/wiki/diary/$DAY.md`. Never add a line I did not approve and never
 edit a line outside the block.
 
 ## Consolidate memory

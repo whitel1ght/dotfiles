@@ -167,6 +167,7 @@ for doc in "$F" "$P"; do
   has "$doc" "day-agent mrs" "$n: the repo of an item comes from the agent file"
   has "$doc" "run state's \`mr=\`" "$n: or from the run state"
   has "$doc" 'day-agent show <key>' "$n: Keep busy reads the item's agent section"
+  has "$doc" 'exit 1 means no notes yet, not an error' "$n: an empty agent section is not an error"
   has "$doc" "above the end marker" "$n: sprint group goes above the end marker"
   lacks "$doc" "above the link definitions" "$n: no link definitions on the new path"
   has "$doc" 'day-agent note <key> note "left in the sprint"' "$n: a left sprint ticket is noted in the agent file"
