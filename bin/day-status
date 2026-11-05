@@ -131,8 +131,10 @@ mrs_for() {
   if [[ $runmr =~ ^([^[:space:]!]+/[^[:space:]!]+)!([0-9]+)$ ]]; then
     p="${BASH_REMATCH[1]}"; iid="${BASH_REMATCH[2]}"
     r=$(printf '%s' "${p##*/}" | tr 'A-Z' 'a-z'); r="${r#ecfx-}"
-    seen="$seen$r!$iid "
-    out="$out$(mr_json "$p" "$iid" "$r!$iid")"$'\n'
+    case "$seen" in
+      *" $r!$iid "*) ;;
+      *) seen="$seen$r!$iid "; out="$out$(mr_json "$p" "$iid" "$r!$iid")"$'\n' ;;
+    esac
   fi
   refs=$(mr_refs "$text" "$runmr")
   for ref in $refs; do

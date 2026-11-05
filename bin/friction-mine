@@ -10,7 +10,7 @@
 # Sources, each dir overridable for tests:
 #   FRICTION_DIR        <date>.jsonl written by `friction`        (~/.local/state/friction)
 #   RUN_DAY_DIR         <date>.md and done/<date>.md run state    (~/.local/state/run-day)
-#   DIARY_DIR           <date>.md diary, .agent/<date>.md                           (~/wiki/diary)
+#   DIARY_DIR           <date>.md diary, .agent/<date>.md         (~/wiki/diary)
 #   PI_SUB_STATE_DIR    */{meta,exit}.json, events.jsonl          (~/.local/state/pi-sub)
 #   CLAUDE_PROJECTS_DIR */<sid>.jsonl transcripts                 (~/.claude/projects)
 #   PI_SESSIONS_DIR     **/*.jsonl transcripts                    (~/.pi/agent/sessions)

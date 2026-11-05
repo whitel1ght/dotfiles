@@ -230,6 +230,20 @@ assert_eq "opened" "$(jq -r '.[0].mrs[0].state' <<<"$js")" "agent-file MR: state
 assert_eq "observability!80" "$(jq -r '.[1].mrs[0].ref' <<<"$js")" "agent-file MR for a keyless <!-- p3 --> line"
 assert_eq 0 "$(grep -c 'scope=created_by_me' "$LOG")" "no glab lookup of my open MRs"
 assert_contains "$(cat "$LOG")" "projects/ecfx%2Fecfx-backend/merge_requests/7001" "project path taken from the agent-file url"
+echo "new-format day: the run state and the agent file name the same MR"
+cat > "$DIARY/2026-11-07.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [/] ecfx-20020 few words
+<!-- start-day:end -->
+FIXTURE
+printf '# agent notes 2026-11-07\n## ecfx-20020\n- mr: observability!81 https://gitlab.com/ecfx/ecfx-observability/-/merge_requests/81\n' > "$DIARY/.agent/2026-11-07.md"
+cat > "$STATE/2026-11-07.md" <<'FIXTURE'
+# run-day 2026-11-07
+max_agents: 3
+- ecfx-20020 | class=auto | agent=a1 | round=- | worktree=- | mr=ecfx/ecfx-observability!81 | retries=0 | needs_you=no | owner=main
+FIXTURE
+js=$(run --date 2026-11-07 --json)
+assert_eq 1 "$(jq -r '.[0].mrs | length' <<<"$js")" "same MR in run state and agent file: one row"
 echo "new-format day: an item without an agent-file MR keeps the key search"
 cat > "$DIARY/2026-11-06.md" <<'FIXTURE'
 <!-- start-day:start -->

@@ -91,7 +91,7 @@ for name in names:
         if state == "done":
             urls = " ".join([raw] + [defs.get(r, "") for r in REF.findall(raw)])
             if agent_urls and not raw[:1].isspace():
-                k = KEY.search(body) or PID.search(m.group(2))
+                k = PID.search(m.group(2)) or KEY.search(body)
                 if k:
                     key = k.group(1).lower()
                     urls += " " + " ".join(agent_urls.get(key, []))
