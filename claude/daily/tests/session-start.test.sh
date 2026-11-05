@@ -182,6 +182,50 @@ rm -f "$RUN_DAY_STATE_DIR/2026-10-08.md"
 export FRICTION_LEDGER_BIN="$SANDBOX/no-such-friction-ledger"
 unset SYSTEM_MAP
 
+echo "== agent notes =="
+printf '# run-day 2026-10-08\n- ecfx-1 | class=auto | needs_you=no\n' > "$RUN_DAY_STATE_DIR/2026-10-08.md"
+cat > "$WIKI_DIR/diary/2026-10-08.md" <<'D'
+<!-- start-day:start -->
+#### Plan
+- [/] ecfx-18169 fix the 3 majors
+<!-- start-day:end -->
+D
+before="$(bash "$HOOK" </dev/null)"
+assert_lacks "$before" "Agent notes" "no agent file: no agent section"
+mkdir -p "$WIKI_DIR/diary/.agent"
+printf '# agent notes 2026-10-08\n## ecfx-18169\n- 09:12 progress: N1 fixed, pushed at 811e370a3\n' > "$WIKI_DIR/diary/.agent/2026-10-08.md"
+ctx="$(bash "$HOOK" </dev/null | jq -r '.hookSpecificOutput.additionalContext')"
+assert_contains "$ctx" "## Agent notes ($WIKI_DIR/diary/.agent/2026-10-08.md)" "agent notes under their heading with the path"
+assert_contains "$ctx" "- 09:12 progress: N1 fixed, pushed at 811e370a3" "agent notes carry the entry"
+case "$ctx" in *"fix the 3 majors"*"## Agent notes"*"## Run state"*) pass "agent notes sit between the plan block and the run state" ;; *) fail "agent notes order" "$ctx" ;; esac
+assert_lacks "$ctx" "[agent notes truncated]" "a small agent file is not cut"
+{ echo '# agent notes 2026-10-08'; for i in $(seq 1 200); do echo "- 10:00 note: agent entry number $i with padding"; done; } > "$WIKI_DIR/diary/.agent/2026-10-08.md"
+ctx="$(bash "$HOOK" </dev/null | jq -r '.hookSpecificOutput.additionalContext')"
+assert_contains "$ctx" "fix the 3 majors" "10 KB agent file: plan block whole"
+assert_contains "$ctx" "- ecfx-1 | class=auto | needs_you=no" "10 KB agent file: run state whole"
+assert_contains "$ctx" "[agent notes truncated]" "10 KB agent file: cut is marked"
+assert_contains "$ctx" "- 10:00 note: agent entry number 1 " "10 KB agent file: head kept"
+assert_lacks "$ctx" "agent entry number 200" "10 KB agent file: tail dropped"
+body="${ctx#*## Agent notes (*)
+}"; body="${body%%
+
+## Run state*}"
+[ "${#body}" -le 2100 ] && pass "agent notes capped near 2000 (${#body})" || fail "agent cap" "length ${#body}"
+last="$(printf '%s\n' "$body" | tail -2 | head -1)"
+case "$last" in "- 10:00 note: agent entry number "*" with padding") pass "cut ends on a full entry" ;; *) fail "cut on a full line" "[$last]" ;; esac
+[ "${#ctx}" -le 6000 ] && pass "agent notes: within the cap" || fail "agent cap total" "length ${#ctx}"
+mv "$WIKI_DIR/diary/.agent/2026-10-08.md" "$SANDBOX/agent.md"
+printf '# run-day 2026-10-08\n- ecfx-1 | class=auto | needs_you=no\n' > "$RUN_DAY_STATE_DIR/2026-10-08.md"
+base="$(bash "$HOOK" </dev/null | jq -r '.hookSpecificOutput.additionalContext | length')"
+{ printf '# run-day 2026-10-08\n- ecfx-1 | class=auto | needs_you=no\n- pad: '; head -c $((5950 - base)) /dev/zero | tr '\0' x; echo; } > "$RUN_DAY_STATE_DIR/2026-10-08.md"
+mv "$SANDBOX/agent.md" "$WIKI_DIR/diary/.agent/2026-10-08.md"
+ctx="$(bash "$HOOK" </dev/null | jq -r '.hookSpecificOutput.additionalContext')"
+assert_contains "$ctx" "- pad: xxxxxxxxxx" "tight budget: run state whole"
+assert_contains "$ctx" "[agent notes truncated]" "tight budget: only the marker is left of the notes"
+assert_lacks "$ctx" "agent entry number 1 " "tight budget: no notes body"
+[ "${#ctx}" -le 6000 ] && pass "tight budget: within the cap" || fail "tight cap" "length ${#ctx}"
+rm -f "$RUN_DAY_STATE_DIR/2026-10-08.md" "$WIKI_DIR/diary/.agent/2026-10-08.md"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

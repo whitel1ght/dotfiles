@@ -36,6 +36,8 @@ function ideasDue(): Promise<boolean> {
 
 const MAX_CHARS = 6000;
 const BLOCK_MAX = 3000;
+const AGENT_MAX = 2000;
+const AGENT_MARK = "[agent notes truncated]";
 
 type Paths = {
   stateDir: string;
@@ -134,7 +136,29 @@ export function runStateSection(): string | null {
     block = `${cut(block, room)}\n[plan block truncated]`;
   }
 
-  return cut(`${head}${blockHead}${block}${stateText}`, MAX_CHARS);
+  const agentText = agentNotes(p.diary, MAX_CHARS - head.length - blockHead.length - [...block].length - stateText.length);
+  return cut(`${head}${blockHead}${block}${agentText}${stateText}`, MAX_CHARS);
+}
+
+/** The agent notes section, cut on a full line to AGENT_MAX and to the `avail` characters the budget leaves. */
+function agentNotes(diary: string, avail: number): string {
+  const file = agentPath(diary);
+  if (!existsSync(file)) return "";
+  const notes = readFileSync(file, "utf8").replace(/\n+$/, "");
+  if (!notes.trim()) return "";
+  const agentHead = `\n\n## Agent notes (${file})\n`;
+  let room = Math.min(AGENT_MAX, avail - [...agentHead].length);
+  const chars = [...notes];
+  if (chars.length <= room) return agentHead + notes;
+  room -= AGENT_MARK.length + 1;
+  let kept = "";
+  if (room >= 100) {
+    const h = chars.slice(0, room + 1).join("");
+    const i = h.lastIndexOf("\n");
+    kept = i < 0 ? "" : h.slice(0, i);
+  }
+  if (kept) return `${agentHead}${kept}\n${AGENT_MARK}`;
+  return avail >= AGENT_MARK.length + 1 ? `\n${AGENT_MARK}` : "";
 }
 
 let directionsCache: { key: string; text: string } | null = null;
