@@ -178,6 +178,18 @@ run busy-off 'backend!6842' > /dev/null
 out="$(run status)"
 assert_contains "$out" "busy: no" "busy-off clears it"
 
+echo "ecfx-docker — a busy label that is an MR ref"
+reset_stack
+run busy-on 'ecfx/ecfx-backend!6889' > /dev/null
+out="$(run status)"
+assert_contains "$out" "busy: check marked busy: ecfx_ecfx-backend!6889" "the slash becomes an underscore, not a directory"
+assert_eq 0 "$(find "$STATE/busy" -mindepth 1 -type d | wc -l)" "nothing nested was created"
+out="$(run pause)"; rc=$?
+assert_eq 1 "$rc" "and it still holds pause"
+run busy-off 'ecfx/ecfx-backend!6889' > /dev/null
+out="$(run status)"
+assert_contains "$out" "busy: no" "busy-off clears it by the same ref"
+
 echo "ecfx-docker — pause while a test process runs"
 reset_stack
 echo 4242 > "$FIX/pgrep.txt"

@@ -90,11 +90,17 @@ busy_labels() {
     local f found=1
     [ -d "$BUSY_DIR" ] || return 1
     for f in "$BUSY_DIR"/*; do
-        [ -e "$f" ] || continue
+        [ -f "$f" ] || continue
         basename -- "$f"
         found=0
     done
     return $found
+}
+
+# busy_path — a label's marker file. Labels are usually MR refs, whose "/" would
+# ask for a directory, so it becomes "_".
+busy_path() {
+    printf '%s/%s\n' "$BUSY_DIR" "${1//\//_}"
 }
 
 check_running() { # echoes the offending command line
@@ -223,14 +229,14 @@ cmd_daemon_up() {
 cmd_busy_on() {
     [ -n "${1:-}" ] || { printf 'usage: ecfx-docker busy-on LABEL\n' >&2; return 2; }
     mkdir -p "$BUSY_DIR"
-    : > "$BUSY_DIR/$1"
-    printf 'busy: %s\n' "$1"
+    : > "$(busy_path "$1")"
+    printf 'busy: %s\n' "$(basename "$(busy_path "$1")")"
 }
 
 cmd_busy_off() {
     [ -n "${1:-}" ] || { printf 'usage: ecfx-docker busy-off LABEL\n' >&2; return 2; }
-    rm -f -- "$BUSY_DIR/$1"
-    printf 'not busy: %s\n' "$1"
+    rm -f -- "$(busy_path "$1")"
+    printf 'not busy: %s\n' "$(basename "$(busy_path "$1")")"
 }
 
 case "${1:-status}" in
