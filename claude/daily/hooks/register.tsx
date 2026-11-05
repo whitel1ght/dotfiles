@@ -190,16 +190,18 @@ const busy = { nudged: false, inTurn: false }
 let ask = { asked: false, nudged: false }
 
 // Every session: the user's follow-ups on its answer cards come back as a prompt, once each
-// (mod/followup.ts). A failing or missing decide is no follow-ups.
-const followups = { delivered: new Map<string, number>(), isChecking: false }
+// (mod/followup.ts). A failing or missing decide is no follow-ups. /clear gives the session a new
+// id while its decisions server keeps stamping the old one, so every id it has had still counts.
+const followups = { delivered: new Map<string, number>(), ids: new Set<string>(), isChecking: false }
 
 async function deliverFollowups($: EngineInterface) {
   if (followups.isChecking) return
   followups.isChecking = true
   try {
     const ran = await $.process.run(['/bin/sh', '-c', DECIDE_LIST], { timeoutMs: 10_000 })
+    followups.ids.add(await $.session.id())
     if (ran.exitCode !== 0) return
-    const due = pendingFollowups(parseCards(ran.stdout), await $.session.id(), followups.delivered)
+    const due = pendingFollowups(parseCards(ran.stdout), followups.ids, followups.delivered)
     if (due.length === 0) return
     const sent = await $.prompt.submit({ text: followupPrompt(due) }).then(
       () => true,
@@ -593,6 +595,7 @@ async function watchInbox($: EngineInterface) {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     warm.startedAt = await $.clock.now()
+    followups.ids.add(await $.session.id())
     try {
       await $.command.register({ name: 'day-plan', description: "Open today's plan in nvim in a tmux popup" })
     } catch (err) {
