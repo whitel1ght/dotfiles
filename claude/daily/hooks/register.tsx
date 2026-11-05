@@ -724,7 +724,7 @@ export const register: Register = on => {
       const current = (await readOr($, e.file_path)) ?? ''
       const after = applyEdit(current, e as unknown as EditInput)
       if (after === null) return next(e)
-      const verdict = checkTicks(current, after, msg => friction($, 'guard', msg, 'daily-guard'))
+      const verdict = checkTicks(current, after, null, msg => friction($, 'guard', msg, 'daily-guard'))
       return verdict.ok ? next(e) : { deny: denyMessage(verdict.lines) }
     }).catch(($, e, next) => next(e))
   }

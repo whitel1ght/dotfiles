@@ -271,7 +271,7 @@ export function guardVerdict(
   }
   if (after === null) return undefined;
 
-  const result = checkTicks(before, after, onBlock);
+  const result = checkTicks(before, after, null, onBlock);
   return result.ok ? undefined : denyMessage(result.lines);
 }
 
