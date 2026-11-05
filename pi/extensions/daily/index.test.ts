@@ -213,13 +213,26 @@ test("cuts a 10 KB agent file on a full line and keeps the plan block and run st
   assert.ok(section.length <= 6000);
   assert.match(section, /ecfx-1002 address review/);
   assert.match(section, /export order settled/);
-  assert.match(section, /\n\[agent notes truncated\]\n/);
+  assert.match(section, /\n\[agent notes truncated: run day-agent show\]\n/);
   assert.match(section, /agent entry number 1 /);
   assert.doesNotMatch(section, /agent entry number 200/);
   const body = section.slice(section.indexOf("## Agent notes"), section.indexOf("\n\n## Run state"));
   const entries = body.split("\n").filter((l) => l.startsWith("- 10:00"));
   assert.ok(entries.every((l) => /with padding$/.test(l)));
   assert.ok(body.length <= 2200);
+  cleanup(root);
+});
+
+test("multibyte characters at the agent-notes cut stay whole", () => {
+  const { root } = sandbox();
+  const lines = Array.from({ length: 200 }, (_, i) => `- 10:00 note: ·↗·↗·↗·↗·↗·↗ entry ${i + 1} ↗·↗·↗·↗·↗·↗·`);
+  writeAgent(root, [`# agent notes ${DAY}`, ...lines].join("\n") + "\n");
+  const section = runStateSection()!;
+  assert.match(section, /\n\[agent notes truncated: run day-agent show\]\n/);
+  const entries = section.split("\n").filter((l) => l.startsWith("- 10:00"));
+  assert.ok(entries.length > 0);
+  assert.ok(entries.every((l) => /^- 10:00 note: ·↗·↗·↗·↗·↗·↗ entry \d+ ↗·↗·↗·↗·↗·↗·$/.test(l)));
+  assert.doesNotMatch(section, /\uFFFD/);
   cleanup(root);
 });
 
@@ -231,7 +244,7 @@ test("agent notes get only what the budget leaves, down to the marker", () => {
   const section = runStateSection()!;
   assert.ok(section.length <= 6000);
   assert.match(section, /pad: xxxxxxxxxx/);
-  assert.match(section, /\n\[agent notes truncated\]\n/);
+  assert.match(section, /\n\[agent notes truncated: run day-agent show\]\n/);
   assert.doesNotMatch(section, /- 10:00 note/);
   cleanup(root);
 });

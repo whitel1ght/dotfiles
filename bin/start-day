@@ -447,6 +447,13 @@ case "${1:-}" in
       echo "start-day: one line per ticket; $dups is on more than one line. Merge them into one item (steps as sentences or indented child checkboxes) and save again." >&2
       exit 1
     fi
+    if [ -f "$DIARY_DIR/.agent/$(date +%F).md" ]; then
+      bad=$(printf '%s\n' "$plan" | grep -m1 -E '^[[:space:]]*-[[:space:]]\[.\].*( · |\[↗\])|^\[[^]]+\]:[[:space:]]*[^[:space:]]' || true)
+      if [ -n "$bad" ]; then
+        echo "start-day: this day keeps its links in the agent file; no ' · ', '[↗]' or '[label]: url' in plan lines. Offending line: $bad" >&2
+        exit 1
+      fi
+    fi
     file=$(printf '%s\n' "$plan" | "$HERE/end-day" save "$(date +%F)" --plan)
     "$HERE/diary-links" "$file" || echo "start-day: diary-links failed on $file" >&2
     if [ -s "$STATE_DIR/pending" ]; then mv "$STATE_DIR/pending" "$STATE_DIR/last-run"; fi ;;

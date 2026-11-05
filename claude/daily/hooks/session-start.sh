@@ -13,7 +13,7 @@ DIARY="$WIKI/diary/$TODAY.md"
 MAX_CHARS=6000
 BLOCK_MAX=3000
 AGENT_MAX=2000
-AGENT_MARK="[agent notes truncated]"
+AGENT_MARK="[agent notes truncated: run day-agent show]"
 AGENT_FILE="$WIKI/diary/.agent/$TODAY.md"
 # Claude Code drops additionalContext past ~10k characters. The run context (at most MAX_CHARS)
 # always goes in whole; the map takes what is left, then the directions; each cut is marked.

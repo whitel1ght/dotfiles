@@ -99,3 +99,9 @@ test('description fallback prefers a live agent among several with the same key'
   ])
   expect(rows.find(r => r.key === 'ecfx-18169')?.agent?.id).toBe('live')
 })
+
+test('panelGroups drops a trailing <!-- pN --> from the row text', async () => {
+  const md = '<!-- start-day:start -->\n**Today**\n- [ ] reply to Levi <!-- p3 -->\n- [ ] ecfx-1 words <!-- p4 -->  \n<!-- start-day:end -->\n'
+  const texts = panelGroups(joinRows(parseItems(md), [], [])).flatMap(g => g.rows.map(r => r.text))
+  expect(texts).toEqual(['reply to Levi', 'ecfx-1 words'])
+})

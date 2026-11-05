@@ -382,6 +382,27 @@ err=$(printf '%s\n' '- [ ] ecfx-14260 backend!6718: reply to @bob, then merge' '
 assert_eq 0 "$rc" "children, later mentions and keyless lines are not duplicates ($err)"
 rm -f "$DIARY/$(date +%F).md"
 
+echo "start-day save — a new-format day refuses old-style lines"
+reset
+mkdir -p "$DIARY/.agent"
+printf '# agent notes %s\n' "$(date +%F)" > "$DIARY/.agent/$(date +%F).md"
+err=$(printf '%s\n' '- [ ] ecfx-1 thing · waiting on Levi' | save); rc=$?
+assert_eq 1 "$rc" "a ' · ' line is refused on a new-format day"
+assert_contains "$err" "ecfx-1 thing · waiting on Levi" "and the refusal names the line"
+err=$(printf '%s\n' '- [ ] ecfx-1 thing' '  - [ ] step  [↗][dashboard!1]' | save); rc=$?
+assert_eq 1 "$rc" "a child with [↗] is refused"
+assert_contains "$err" "[↗][dashboard!1]" "and the refusal names it"
+err=$(printf '%s\n' '- [ ] ecfx-1 thing' '' '[dashboard!1]: https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/1' | save); rc=$?
+assert_eq 1 "$rc" "a [label]: url line is refused"
+[ ! -e "$DIARY/$(date +%F).md" ] && pass "nothing is filed when refused" || fail "nothing is filed when refused" "diary was written"
+err=$(printf '%s\n' '**Now**' '- [ ] ecfx-1 thing' '  - [ ] step' '- [ ] reply to Levi <!-- p3 -->' | save); rc=$?
+assert_eq 0 "$rc" "a clean plan is saved on a new-format day ($err)"
+rm -f "$DIARY/$(date +%F).md"
+rm -f "$DIARY/.agent/$(date +%F).md"
+err=$(printf '%s\n' '- [ ] ecfx-1 thing · waiting on Levi' | save); rc=$?
+assert_eq 0 "$rc" "the same plan saves on an old-format day ($err)"
+rm -f "$DIARY/$(date +%F).md"
+
 echo "start-day — carry-over shows the last day's agent notes"
 reset
 ago() { date -v-"$1"d +%F 2>/dev/null || date -d "$1 days ago" +%F; }

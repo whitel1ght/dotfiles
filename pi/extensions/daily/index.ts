@@ -37,7 +37,7 @@ function ideasDue(): Promise<boolean> {
 const MAX_CHARS = 6000;
 const BLOCK_MAX = 3000;
 const AGENT_MAX = 2000;
-const AGENT_MARK = "[agent notes truncated]";
+const AGENT_MARK = "[agent notes truncated: run day-agent show]";
 
 type Paths = {
   stateDir: string;
