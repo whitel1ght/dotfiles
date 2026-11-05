@@ -116,8 +116,8 @@ planned pause in the day:
 - `me` = syncs, meetings, merges, decisions, replies to people. A review is not a reply: it is `review`.
 - `wait` = blocked on others.
 
-Get what you need for each auto item from the plan line (ticket key; MR links name the repo) and
-`jira-issue <KEY>` (summary, status, assignee, description). If you cannot tell the repo, class it `me` and
+Get what you need for each auto item from the plan line (the ticket key), the repo from `day-agent mrs` or the run state's `mr=` (no agent file: from the
+MR links on the plan line), and `jira-issue <KEY>` (summary, status, assignee, description). If you cannot tell the repo, class it `me` and
 say why. Anything spanning repos or changing a contract between services is **one** item on the
 heavy route (step 2, last paragraph), not two agents.
 
@@ -174,7 +174,7 @@ For each `auto` item:
    each set back to `-` once its report is processed. While an item is parked on an outage
    (section 6) append ` | waiting=<gitlab|jira>` as the tenth field; drop it on resume.
 
-6. Set the diary line to `- [/]` and run `~/.local/bin/diary-links ~/wiki/diary/$(date +%F).md`.
+6. Set the diary line's marker to `[/]` (old format, no agent file: then run `~/.local/bin/diary-links ~/wiki/diary/$(date +%F).md`).
 7. End the turn. A `[pi-sub]` wake-up starts the next one when the agent finishes, fails, is
    stopped, or goes quiet for 10 minutes — never wait, sleep or poll for it.
 
@@ -198,10 +198,10 @@ verdict is approve; recommended), `Change it first (add a note with n)`, `Post n
 `glab api --method POST "projects/<urlencoded path>/merge_requests/<iid>/notes" -F "body=@<review file>"`,
 and for approve
 `glab api --method POST "projects/<urlencoded path>/merge_requests/<iid>/approve" -f sha=<reviewed sha>`
-(GitLab refuses when the author pushed since the review: the item goes back as a re-review); tick `[X]` with `· review posted`
-(`· review posted, approved`), `needs_you=no`, apply the `memory:` block. On change: apply the note
+(GitLab refuses when the author pushed since the review: the item goes back as a re-review); run `day-agent note <key> done "review posted"` (`"review posted, approved"`), tick `[X]` (old format: `· review posted` suffix,
+`· review posted, approved`), `needs_you=no`, apply the `memory:` block. On change: apply the note
 or send a fresh worker with the note, then a new decision. On post nothing:
-`[X] · note: review not posted, user's call`. Then Keep busy (step 11).
+`day-agent note <key> done "review not posted, user's call"`, then `[X]` (old format: `· note: review not posted, user's call` suffix). Then Keep busy (step 11).
 
 Heavy route (multi-repo or contract change): follow `/orchestrate`'s heavy route as one item — plan
 it under `~/projects/worktrees/.plans/<KEY>/` with the superpowers skills, then dispatch one agent
@@ -359,7 +359,8 @@ do nothing. Stop there.
    decision is still open: withdraw and close the old decision first. Then come back to step 5,
    which files a new decision for the revised reply.
    no → push and post nothing, leave the commits in the worktree, `needs_you=no`. Set the item `[!]`
-   with `· note: review round declined by user` only if the user says to.
+   and run `day-agent note <key> note "review round declined by user"` only if the user says to
+   (old format: a `· note: review round declined by user` suffix).
 
 ## 6. Other events
 
@@ -398,7 +399,7 @@ Then:
   to the item's run-state line, run `wait-for <service> --detach --key <KEY>` (no-op if one is waiting) and move on.
   A sub-agent that hits it reports back; park its item the same way and set its `agent=` or `round=` to `-` (step 3).
   An item with `waiting=<service>` and no live `~/.local/state/wait-for/<service>.lock` (a pid that is a running
-  `wait-for`) was given up on: treat it as `gave up` (`needs_you=yes`, `· blocked: <service> down`).
+  `wait-for`) was given up on: treat it as `gave up` (`needs_you=yes`, `day-agent note <key> blocked "<service> down"`; old format: `· blocked: <service> down`).
 - `inbox: N new` → step 7.
 - `[daily-idle] no agent running: …` → step 11.
 
@@ -497,8 +498,9 @@ block. `decision` and `clarify` messages also carry `decision: D-<n>` and have n
      above `<!-- start-day:end -->`.
    - A second message for the same key is handled in file order, each in full: the later marker and
      evidence win, except never downgrade `[X]`; both memory blocks are applied.
-4. Apply the memory block (step 4; not for `service`, `decision` or `clarify`), then `diary-links`, then `mv` the file to
-   `inbox/done/$T/` (today's date, not the message's).
+4. Apply the memory block (step 4; not for `service`, `decision` or `clarify`), then `mv` the file to
+   `inbox/done/$T/` (today's date, not the message's). Old format (no agent file): run `diary-links`
+   before the `mv`.
 
 Only file it after steps 3 and 4 both succeeded. On failure, leave the file in place and tell the user —
 never retry in a loop. When the queue is empty, print one line per message: file name, what
@@ -506,8 +508,8 @@ changed (MR numbers as links).
 
 ## 8. Finish
 
-When no item is `[ ]` or `[/]` any more, or every open item is the user's (`me`, `wait`, a
-`[/] · with you: <KEY>` line) and Keep busy (step 11) found nothing, or the user says so: process the inbox once more, then summarise the day: what shipped, what is blocked, what
+When no item is `[ ]` or `[/]` any more, or every open item is the user's (`me`, `wait`, an item whose
+run-state line says `owner=external:<KEY>`) and Keep busy (step 11) found nothing, or the user says so: process the inbox once more, then summarise the day: what shipped, what is blocked, what
 is deferred, what needs the user.
 
 While any item is `[ ]` or `[/]`, never say the queue is clear, nothing is left, or the day is
@@ -584,8 +586,9 @@ than 3 agents run (ticket, review and round agents all count), fill the free slo
 
 1. Queued `auto` and `review` items, in plan order (step 2).
 2. Open children, in plan order, under every open item whatever its class. First tick each child
-   that is already done (check its MR, pipeline, Slack or Jira state and the parent's own
-   `· progress:` note; step 3). Then, for each child still open: if an agent can do it alone
+   that is already done (check its MR, pipeline, Slack or Jira state and the item's agent
+   section, `day-agent show <key>`, where progress notes live; old format: the parent's `· progress:`
+   suffix; step 3). Then, for each child still open: if an agent can do it alone
    (draft a reply, a description or a follow-up ticket, fix code, run a read-only check), dispatch
    it as step 2, the brief naming that child as the task. Anything it would post, file or send
    under the user's name, and any query against production, goes into a decision first (step 9).
@@ -606,8 +609,10 @@ jt --list -u
    `To-Do` or `In Progress`, epics, and tickets an agent cannot finish alone: read each candidate with
    `jira-issue <KEY>`; it needs a description that says what done looks like, and one repo you can
    name. Take as many as there are free slots. For each: add
-   `- [ ] <key> <summary> (sprint: yours|unassigned)` under a `**From the sprint**` group (create
-   it after the last group, above the link definitions), track it `class=auto`, and dispatch it as
+   `- [ ] <key> <summary>` under a `**From the sprint**` group (create it after the last group,
+   above the end marker `<!-- start-day:end -->`), run `day-agent note <key> note "sprint: yours"`
+   (or `unassigned`) (old format: a `(sprint: yours|unassigned)` suffix on the line, and the group
+   goes above the `[<repo>!<iid>]: <url>` definitions), track it `class=auto`, and dispatch it as
    step 2.
    - An unassigned ticket is not the user's yet: add `## Not yours yet` to its brief with
      `Commit locally; do not push and do not open an MR.`, and file a decision (step 9):
@@ -616,10 +621,12 @@ jt --list -u
      `jira-api GET myself | jq -r .accountId`, then
      `jira-api PUT "issue/<KEY>/assignee" '{"accountId":"<id>"}'`, and start a fresh `worker` in its
      worktree to push and open the Draft MR. On `Leave it`: stop the agent and mark the line
-     `[>] · note: left in the sprint`.
+     `[>]` and run `day-agent note <key> note "left in the sprint"` (old format: a
+     `· note: left in the sprint` suffix).
      Its report before `Take it` (also from the Wake check): run step 3's diff and test checks
-     without the MR and pipeline parts, since there is none yet. Passing: `agent=-` and the line
-     `[/] · ready locally, waiting on Take it` (no tick, no retry); the fresh worker after
+     without the MR and pipeline parts, since there is none yet. Passing: `agent=-`, the line `[/]` and
+     `day-agent note <key> progress "ready locally, waiting on Take it"` (old format: a
+     `· ready locally, waiting on Take it` suffix; no tick, no retry); the fresh worker after
      `Take it` pushes and opens the Draft MR, and its report gets the full step 3.
    - `jt` fails: say so in one line and try again at the next Keep busy.
 5. Nothing in steps 1-4: Finish (step 8), naming what each step found empty.
