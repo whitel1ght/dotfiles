@@ -266,6 +266,41 @@ out=$(GLAB_LOG="$LOG" GLAB_MINE="$mine" run --date 2026-11-06)
 assert_contains "$(grep 'ECFX-20001' <<<"$out")" "backend!7001 opened" "no agent-file MR: key search still finds it"
 assert_eq 1 "$(grep -c 'scope=created_by_me' "$LOG")" "no agent-file MR: list endpoint called once"
 
+echo "new-format day: the trailing <!-- pN --> is not part of the text field"
+cat > "$DIARY/2026-11-09.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [ ] reply to Levi <!-- p3 -->
+- [ ] ecfx-20040 words <!-- p4 -->
+<!-- start-day:end -->
+FIXTURE
+printf '# agent notes 2026-11-09\n## p3\n- 09:12 note: x\n' > "$DIARY/.agent/2026-11-09.md"
+js=$(run --date 2026-11-09 --json)
+assert_eq "reply to Levi" "$(jq -r '.[0].text' <<<"$js")" "text drops a trailing <!-- p3 -->"
+assert_eq "ecfx-20040 words" "$(jq -r '.[1].text' <<<"$js")" "text drops a trailing comment on a keyed line too"
+echo "new-format day: <!-- pN --> keys a line only at the end of the line"
+cat > "$DIARY/2026-11-10.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [ ] call back <!-- p5 --> after lunch
+<!-- start-day:end -->
+FIXTURE
+printf '# agent notes 2026-11-10\n## p5\n- mr: observability!80 https://gitlab.com/ecfx/ecfx-observability/-/merge_requests/80\n' > "$DIARY/.agent/2026-11-10.md"
+js=$(run --date 2026-11-10 --json)
+assert_eq 0 "$(jq -r '.[0].mrs | length' <<<"$js")" "a comment followed by text does not key the line"
+echo "new-format day: an agent-file repo written ECFX-dashboard dedupes against run-state mr=ecfx/ecfx-dashboard!N"
+cat > "$DIARY/2026-11-11.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [/] ecfx-20050 few words
+<!-- start-day:end -->
+FIXTURE
+printf '# agent notes 2026-11-11\n## ecfx-20050\n- mr: ECFX-dashboard!7001 https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/7001\n' > "$DIARY/.agent/2026-11-11.md"
+cat > "$STATE/2026-11-11.md" <<'FIXTURE'
+# run-day 2026-11-11
+max_agents: 3
+- ecfx-20050 | class=auto | agent=a1 | round=- | worktree=- | mr=ecfx/ecfx-dashboard!7001 | retries=0 | needs_you=no | owner=main
+FIXTURE
+js=$(run --date 2026-11-11 --json)
+assert_eq 1 "$(jq -r '.[0].mrs | length' <<<"$js")" "ECFX-dashboard and ecfx/ecfx-dashboard name one MR"
+
 echo "plan order is kept when an earlier item is slower"
 cat > "$DIARY/2026-10-29.md" <<'FIXTURE'
 <!-- start-day:start -->

@@ -2,13 +2,14 @@
 # The only writer of the hidden per-day agent notes file.
 #
 #   day-agent path                      print the file path
-#   day-agent init                      create the file if missing
+#   day-agent init                      create the file if missing (the only command that does)
 #   day-agent note KEY KIND TEXT        append "- HH:MM KIND: TEXT" to the ## KEY section
 #   day-agent mr KEY REPO!IID URL       add "- mr: repo!iid URL" unless that MR is already there
 #   day-agent show [KEY]                print the file, or one section (exit 1 when missing)
 #   day-agent mrs                       print key<TAB>repo!iid<TAB>url for every mr line
 #   day-agent id                        print the next free p<N>
 #
+# note and mr exit 3 when the file is missing: that day is old format.
 # KEY is a ticket key (ecfx-123) or a comment id (p3). KIND is one of
 # progress done note blocked with-you handed-back carried.
 # The file is $DIARY_DIR/.agent/<date>.md (DIARY_DIR defaults to ~/wiki/diary).
@@ -67,8 +68,8 @@ norm_key() {
 # section at the end of the file. With DEDUPE, skip when the section already has a
 # line starting with it. Text goes in through ENVIRON, so awk leaves it untouched.
 insert() {
+  [ -f "$FILE" ] || { echo "day-agent: no agent file for $DATE (old-format day)" >&2; exit 3; }
   lock
-  init
   AK="$1" AL="$2" AD="${3:-}" awk '
     BEGIN { key = "## " ENVIRON["AK"]; line = ENVIRON["AL"]; dd = ENVIRON["AD"] }
     function flush() { if (insec && !done) { if (!dup) print line; done = 1 } }
@@ -100,7 +101,7 @@ case "$cmd" in
     [ $# -eq 3 ] || usage
     key=$(norm_key "$1")
     [[ "$2" =~ ^[A-Za-z0-9._-]+![0-9]+$ ]] || bad "bad repo!iid $2"
-    ref="${2#ecfx-}"
+    ref=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]'); ref="${ref#ecfx-}"
     [ -n "$3" ] || bad "empty url"
     [[ "$3" =~ [[:space:]] ]] && bad "bad url"
     insert "$key" "- mr: $ref $3" "- mr: $ref "

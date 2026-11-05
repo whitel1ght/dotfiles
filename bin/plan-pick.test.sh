@@ -119,5 +119,12 @@ assert_eq "0" "$rc" "no rows exits 0"
 assert_eq "plan-pick: nothing to pick" "$err" "no rows says nothing to pick"
 assert_eq "" "$(cat "$LOG")" "no rows never starts fzf"
 
+# a <!-- pN --> followed by text does not key the line
+printf '# x\n<!-- start-day:start -->\n- [ ] call back <!-- p5 --> after lunch\n<!-- start-day:end -->\n' > "$DIARY/2026-01-03.md"
+printf '# agent notes 2026-01-03\n## p5\n- mr: admin!77 https://gitlab.com/ecfx/ecfx-admin/-/merge_requests/77\n' > "$DIARY/.agent/2026-01-03.md"
+export DAY_AGENT_DATE=2026-01-03
+err=$("$SCRIPT" 2>&1 >/dev/null); rc=$?
+assert_eq "plan-pick: nothing to pick" "$err" "mid-line <!-- p5 --> is not a key: no MR row"
+
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

@@ -49,7 +49,8 @@ LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 REF = re.compile(r"\[↗\]\[([^\]]+)\]")
 DEF = re.compile(r"^\[([^\]]+)\]:\s*(\S+)\s*$")
 KEY = re.compile(r"(?<![A-Za-z0-9])([A-Za-z]{2,10}-\d{2,6})(?!\d)")
-PID = re.compile(r"<!-- (p\d+) -->")
+PID = re.compile(r"<!-- (p\d+) -->\s*$")
+PCOM = re.compile(r"\s*<!-- p\d+ -->")
 STATE = {" ": "open", "/": "open", "x": "done", "X": "done", "!": "blocked", ">": "deferred"}
 days = 0
 items = {"planned": 0, "done": 0, "blocked": 0, "deferred": 0, "open": 0}
@@ -84,8 +85,9 @@ for name in names:
         items["planned"] += 1
         items[state] += 1
         if state == "deferred":
-            shown = re.sub(r"\s+", " ", REF.sub("", LINK.sub(r"\1", body))).strip()
-            key = re.sub(r"\s+", " ", re.sub(r"https?://\S+", "", shown)).lower()
+            shown = re.sub(r"\s+", " ", REF.sub("", LINK.sub(r"\1", PCOM.sub("", body)))).strip()
+            tk = KEY.search(shown)
+            key = tk.group(1).lower() if tk else re.sub(r"\s+", " ", re.sub(r"https?://\S+", "", shown)).lower()
             entry = deferred.setdefault(key, {"text": shown, "days": set()})
             entry["days"].add(day)
         if state == "done":

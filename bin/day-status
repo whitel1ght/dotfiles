@@ -199,9 +199,10 @@ while IFS= read -r line; do
     fi
   fi
   title="${text%% · *}"
+  [[ $title =~ ^(.*[^[:space:]])?[[:space:]]*\<!--\ p[0-9]+\ --\>[[:space:]]*$ ]] && title="${BASH_REMATCH[1]}"
   amrs=""
   if [ -n "$agent_rows" ]; then
-    if [[ $text =~ \<!--\ (p[0-9]+)\ --\> ]]; then akey="${BASH_REMATCH[1]}"
+    if [[ $text =~ \<!--\ (p[0-9]+)\ --\>[[:space:]]*$ ]]; then akey="${BASH_REMATCH[1]}"
     else akey=$(printf '%s' "$key" | tr 'A-Z' 'a-z'); fi
     amrs=$(agent_mrs_for "$akey")
   fi

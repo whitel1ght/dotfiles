@@ -23,6 +23,7 @@ AGENT="$DIARY/.agent/$DATE.md"
 run() { (DIARY_DIR="$DIARY" DAY_AGENT_DATE="$DATE" DAY_AGENT_NOW="${NOW:-09:12}" "$SCRIPT" "$@" 2>"$SANDBOX/stderr"); }
 errs() { cat "$SANDBOX/stderr"; }
 reset() { rm -rf "${DIARY:?}"; mkdir -p "$DIARY"; }
+fresh() { reset; run init; }
 
 echo "day-agent - path and init"
 reset
@@ -39,11 +40,19 @@ assert_eq "# agent notes $DATE
 
 echo "day-agent - note"
 reset
+run note ecfx-1 note "x" >/dev/null; rc=$?
+assert_eq "3" "$rc" "note with no agent file exits 3"
+assert_contains "$(errs)" "day-agent: no agent file for $DATE (old-format day)" "and says old-format day"
+assert_eq "no" "$([ -e "$AGENT" ] && echo yes || echo no)" "and creates no file"
+run mr ecfx-1 backend!1 https://x/1 >/dev/null; rc=$?
+assert_eq "3" "$rc" "mr with no agent file exits 3"
+assert_eq "no" "$([ -e "$AGENT" ] && echo yes || echo no)" "and creates no file either"
+fresh
 run note ECFX-17482 progress "O2, N1 fixed, pushed at 811e370a3"; rc=$?
 assert_eq "0" "$rc" "note exits 0"
 assert_eq "# agent notes $DATE
 ## ecfx-17482
-- 09:12 progress: O2, N1 fixed, pushed at 811e370a3" "$(cat "$AGENT")" "note inits the file, lowercases KEY and creates the section"
+- 09:12 progress: O2, N1 fixed, pushed at 811e370a3" "$(cat "$AGENT")" "note lowercases KEY and creates the section"
 NOW=10:05 run note p3 note "replied to Levi in Slack"
 NOW=11:40 run note ecfx-17482 done "merged dec5a42eb2"
 assert_eq "# agent notes $DATE
@@ -72,14 +81,14 @@ assert_contains "$(errs)" "day-agent: bad key" "and says so"
 run note ecfx-5 note "x" "y" >/dev/null; assert_eq "2" "$?" "too many arguments exit 2"
 run note ECFX x "y" >/dev/null; assert_eq "2" "$?" "a key without a number exits 2"
 assert_eq "$((n))" "$(wc -l < "$AGENT" | tr -d ' ')" "refused calls write nothing"
-reset
+fresh
 run note ecfx-1 note 'a/b & c \ "d"'
 assert_eq '- 09:12 note: a/b & c \ "d"' "$(sed -n 3p "$AGENT")" "TEXT with / & backslash and quotes is written as typed"
 run note ecfx-2 note '\1 \n & /'
 assert_eq '- 09:12 note: \1 \n & /' "$(sed -n 5p "$AGENT")" "backslash sequences are not interpreted"
 
 echo "day-agent - mr"
-reset
+fresh
 run mr ecfx-17482 ecfx-dashboard!2289 https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2289; rc=$?
 assert_eq "0" "$rc" "mr exits 0"
 assert_eq "# agent notes $DATE
@@ -89,6 +98,8 @@ run mr ECFX-17482 dashboard!2289 https://x/y
 assert_eq "3" "$(wc -l < "$AGENT" | tr -d ' ')" "the same repo!iid twice adds one line"
 run mr ecfx-17482 backend!7 https://x/7
 assert_eq "- mr: backend!7 https://x/7" "$(tail -n 1 "$AGENT")" "another MR is added"
+run mr ecfx-17482 ECFX-Dashboard!22 https://x/22
+assert_eq "- mr: dashboard!22 https://x/22" "$(tail -n 1 "$AGENT")" "an uppercase repo is lowercased before ecfx- is stripped"
 run mr ecfx-17482 nonsense https://x/7; assert_eq "2" "$?" "a bad REPO!IID exits 2"
 run mr "bad key" backend!7 https://x/7; assert_eq "2" "$?" "mr with a bad KEY exits 2"
 assert_contains "$(errs)" "day-agent: bad key" "and says so"
@@ -96,11 +107,12 @@ assert_contains "$(errs)" "day-agent: bad key" "and says so"
 run mr ecfx-17482 backend!8 "https://x/a b"; assert_eq "2" "$?" "a URL with a space exits 2"
 assert_contains "$(errs)" "day-agent: bad url" "and says so"
 run mr ecfx-17482 backend!8 "$(printf 'https://x/a\tb')"; assert_eq "2" "$?" "a URL with a tab exits 2"
-assert_eq "4" "$(wc -l < "$AGENT" | tr -d ' ')" "bad URLs write nothing"
+assert_eq "5" "$(wc -l < "$AGENT" | tr -d ' ')" "bad URLs write nothing"
 
 echo "day-agent - show and mrs"
 reset
 run show >/dev/null; assert_eq "1" "$?" "show exits 1 when there is no file"
+fresh
 run note p3 note "hello"
 NOW=10:00 run note ecfx-1 done "ok"
 run mr ecfx-1 dashboard!1 https://x/1
@@ -118,7 +130,8 @@ assert_eq "## ecfx-1
 run show ecfx-404 >/dev/null; assert_eq "1" "$?" "show of a missing section exits 1"
 assert_eq "p3	backend!2	https://x/2
 ecfx-1	dashboard!1	https://x/1" "$(run mrs)" "mrs prints key, repo!iid and url separated by tabs"
-reset
+fresh
+rm -f "$AGENT"
 run mrs >/dev/null; assert_eq "0" "$?" "mrs with no file exits 0"
 assert_eq "" "$(run mrs)" "and prints nothing"
 
@@ -128,6 +141,7 @@ assert_eq "p1" "$(run id)" "id with no diary and no file is p1"
 run id >/dev/null; assert_eq "0" "$?" "and exits 0"
 printf '# %s\n<!-- start-day:start -->\n- [ ] reply to Levi <!-- p1 -->\n<!-- start-day:end -->\n' "$DATE" > "$DIARY/$DATE.md"
 assert_eq "p2" "$(run id)" "id sees <!-- p1 --> in the diary block"
+run init
 run note p2 note "x"
 assert_eq "p3" "$(run id)" "id sees ## p2 in the agent file"
 printf '# %s\n<!-- start-day:start -->\n- [ ] a <!-- p1 -->\n<!-- start-day:end -->\n- [ ] later <!-- p9 -->\n' "$DATE" > "$DIARY/$DATE.md"
@@ -138,7 +152,7 @@ run note p12 note "x"
 assert_eq "p13" "$(run id)" "two-digit ids count numerically"
 
 echo "day-agent - concurrency"
-reset
+fresh
 i=0; while [ "$i" -lt 20 ]; do run note ecfx-1 note "n$i" & i=$((i + 1)); done; wait
 assert_eq "20" "$(grep -c '^- 09:12 note: n' "$AGENT")" "20 parallel notes on one key leave exactly 20 entries"
 assert_eq "1" "$(grep -c '^## ecfx-1$' "$AGENT")" "and one section"
@@ -165,7 +179,7 @@ run frobnicate >/dev/null; assert_eq "2" "$?" "an unknown subcommand exits 2"
 assert_contains "$(errs)" "usage" "with usage"
 
 echo "day-agent - grammar"
-reset
+fresh
 NOW=09:12 run note ecfx-17482 progress "O2, N1 fixed"
 run mr ecfx-17482 ecfx-dashboard!2289 https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2289
 NOW=11:40 run note ecfx-17482 with-you "waiting on you"

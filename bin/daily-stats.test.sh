@@ -156,6 +156,27 @@ assert_eq '{"ecfx-admin":["https://gitlab.com/ecfx/ecfx-admin/-/merge_requests/3
 assert_eq '{"planned":5,"done":4,"blocked":0,"deferred":0,"open":1}' "$(jqf '.items' "$out" | jq -c '{planned,done,blocked,deferred,open}')" "items counted from the plan lines as before"
 rm -f "$DIARY/2026-10-20.md" "$DIARY/.agent/2026-10-20.md"
 
+echo "daily-stats — repeat deferral with fresh words"
+day 2026-10-21 <<'EOF2'
+- [>] ecfx-31000 first words <!-- p2 -->
+- [>] call back <!-- p5 --> after lunch
+EOF2
+day 2026-10-22 <<'EOF2'
+- [>] ecfx-31000 other words entirely
+- [>] call back <!-- p5 --> after lunch
+EOF2
+out=$(out_only 2026-10-21 2026-10-22)
+assert_eq '[{"text":"call back after lunch","times":2},{"text":"ecfx-31000 first words","times":2}]' "$(jqf '.repeat_deferred' "$out")" "same ticket with different words repeats; the pN comment is not shown"
+echo "daily-stats — a pN comment followed by text does not key a done line"
+day 2026-10-23 <<'EOF2'
+- [x] reply to Levi <!-- p3 --> and Bill
+EOF2
+mkdir -p "$DIARY/.agent"
+printf '# agent notes 2026-10-23\n## p3\n- mr: admin!305 https://gitlab.com/ecfx/ecfx-admin/-/merge_requests/305\n' > "$DIARY/.agent/2026-10-23.md"
+out=$(out_only 2026-10-23 2026-10-23)
+assert_eq '{}' "$(jqf '.done_mr_links' "$out")" "mid-line <!-- p3 --> is not a key"
+rm -f "$DIARY/2026-10-2"[123].md "$DIARY/.agent/2026-10-23.md"
+
 echo "daily-stats — help"
 assert_contains "$("$SCRIPT" --help)" "daily-stats <from YYYY-MM-DD> <to YYYY-MM-DD>" "--help prints the usage line"
 
