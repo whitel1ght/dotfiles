@@ -150,6 +150,13 @@ assert_eq "1" "$rc" "a held lock gives exit 1"
 assert_contains "$(errs)" "day-agent: busy" "and says busy"
 assert_eq "yes" "$([ -d "$AGENT.lock" ] && echo yes || echo no)" "and the other holder's lock is left alone"
 rmdir "$AGENT.lock"
+mkdir "$AGENT.lock"
+old=$(date -v-60S +%Y%m%d%H%M.%S 2>/dev/null || date -d '60 seconds ago' +%Y%m%d%H%M.%S)
+touch -t "$old" "$AGENT.lock"
+run note ecfx-1 note "after stale"; rc=$?
+assert_eq "0" "$rc" "a lock 60 s old is broken"
+assert_eq "- 09:12 note: after stale" "$(tail -n 1 "$AGENT")" "and the note is written"
+assert_eq "no" "$([ -e "$AGENT.lock" ] && echo yes || echo no)" "and the lock is released after"
 
 echo "day-agent - usage"
 run >/dev/null; assert_eq "2" "$?" "no arguments exit 2"
