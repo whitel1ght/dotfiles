@@ -181,6 +181,10 @@ for doc in "$F" "$P"; do
   lacks "$doc" 'with `· note: review round declined by user`' "$n: no declined-round suffix"
   has "$doc" 'day-agent id' "$n: unplanned keyless lines get an id from day-agent id"
   has "$doc" '<!-- pN -->' "$n: unplanned keyless lines carry a pN id"
+  lacks "$doc" "set the few words to what was done" "$n: a tick leaves the plan words alone"
+  lacks "$doc" "O2 fixed, N1 next" "$n: the example words say what is next, not what happened"
+  has "$doc" "\`day-agent\` exiting 3 means an old-format day" "$n: exit 3 means the old suffix rule"
+  has "$doc" "is the line's \`<!-- pN -->\` id when it has one, else its lowercase ticket key (" "$n: the inbox step names the key before day-agent mr"
   s3=$(section "$doc" '^## 3\.' | tr '\n' ' ')
   a=${s3%%A ticket has one top-level line*}; b=${s3%%On a day with no agent file*}
   [ ${#a} -lt ${#b} ] && pass "$n: shared ticket and children rules come before the old-format clause" || fail "$n: shared rules before the old-format clause" "A ticket has one top-level line follows the old-format label"

@@ -72,6 +72,7 @@ for f in "$C" "$P"; do
 done
 
 has "$C" "Bash(~/.local/bin/day-agent:*)" "claude: allows day-agent"
+has "$C" "Bash(day-agent:*)" "claude: allows the bare day-agent the text calls"
 has "$C" "Bash(~/.local/bin/words:*)" "claude: allows words"
 
 has "$C" "Bash(~/.local/bin/drills:*)" "claude: allows drills"

@@ -246,12 +246,13 @@ line: they go to the hidden agent file through `day-agent` (`day-agent note <key
 kind one of `progress done note blocked with-you handed-back carried`; `day-agent mr <key>
 <repo>!<iid> <url>`), where `<key>` is the line's `<!-- pN -->` id when it has one, else its
 lowercase ticket key. The plan line only changes its marker and its few words (what is next, for
-example `[/] ecfx-17482 O2 fixed, N1 next`), stays under 100 characters, and carries no ` · `, no
+example `[/] ecfx-17482 N1 next`), stays under 100 characters, and carries no ` · `, no
 `[↗]` and no `[label]: url` definition. Edit one line at a time. To tick a top-level line, first run
 `day-agent note <key> done "<evidence: merged <sha> (repo!iid), deployed <tag>, or why it is done
 without a merge>"`, then write `[X]`: the `daily` extension refuses a top-level `[X]` with no `done`
 entry in that key's section — that refusal is correct, add the evidence, do not work around it. A
 `me` item you tick on the user's word gets the evidence `the user said: <what>`.
+`day-agent` exiting 3 means an old-format day, so use the old suffix rule instead.
 On a day with no agent file (`~/wiki/diary/.agent/<date>.md` missing) the old suffix rules apply
 instead, as follows. Old format: evidence goes after the first ` · ` on the line: an MR link,
 `merged`, or `note: <why>`; e.g. `· draft MR dashboard!2240  [↗][dashboard!2240]` or
@@ -434,6 +435,7 @@ block. `decision` and `clarify` messages also carry `decision: D-<n>` and have n
    evidence goes to the agent file and the plan line only changes its marker and its few words
    (step 3); on a day with no agent file the old suffix rules of step 3 apply, as the old-format
    lines below say. The *summary clip* is the summary's first sentence, ≤100 chars, ` · `→` - `.
+   `<key>` is the line's `<!-- pN -->` id when it has one, else its lowercase ticket key (step 3).
    When the message has an `mr`, run `day-agent mr <key> <repo>!<iid> <url>` (new format) and the run-state `mr=` becomes `<group>/<repo>!<iid>` (from the url,
    as in step 5). A key with no run-state line (a `me` item, or one added later): skip every
    run-state edit, apply only the diary line and the memory block.
@@ -441,7 +443,8 @@ block. `decision` and `clarify` messages also carry `decision: D-<n>` and have n
      run-state worktree exists, the MR pipeline when `mr` is set, the tests the summary names. Name
      what cannot be checked (no worktree, no MR) to the user as unverified. Passes or cannot run:
      run `day-agent note <key> done "<evidence: merged <sha> (repo!iid), or the summary clip>"`
-     first, then tick `[X]` and set the few words to what was done. Old format: `[X]` with
+     first, then tick `[X]`, leaving the few words as they are (the evidence lives in the agent
+     file). Old format: `[X]` with
      `· MR <repo>!<iid>  [↗][<repo>!<iid>]` when `mr` is set, else `· note: <summary clip>`
      (replacing any `· with you:` / `· progress:` suffix). Either way `owner=main`,
      `needs_you=no`. A check fails: no tick, keep `[/]`, `needs_you=yes`, tell the user what
