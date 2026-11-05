@@ -130,6 +130,29 @@ assert_eq '{"ecfx-admin":["https://gitlab.com/ecfx/ecfx-admin/-/merge_requests/3
 assert_eq '[{"text":"ecfx-5 later dashboard!7","times":2}]' "$(jqf '.repeat_deferred' "$out")" "trailing refs are not part of a deferred item's text"
 rm -f "$DIARY/2026-10-1"[234].md
 
+echo "daily-stats — new-format day (agent file)"
+mkdir -p "$DIARY/.agent"
+day 2026-10-20 <<'EOF2'
+- [x] ecfx-17482 few words
+- [ ] ecfx-17500 open one
+- [X] reply to Levi <!-- p3 -->
+- [x] ecfx-17600 done without an MR
+EOF2
+cat > "$DIARY/.agent/2026-10-20.md" <<'EOF2'
+# agent notes 2026-10-20
+## ecfx-17482
+- mr: dashboard!2289 https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2289
+- 11:40 done: merged dec5a42eb2
+## ecfx-17500
+- mr: backend!6800 https://gitlab.com/ecfx/ecfx-backend/-/merge_requests/6800
+## p3
+- mr: admin!305 https://gitlab.com/ecfx/ecfx-admin/-/merge_requests/305
+EOF2
+out=$(out_only 2026-10-20 2026-10-20)
+assert_eq '{"ecfx-admin":["https://gitlab.com/ecfx/ecfx-admin/-/merge_requests/305"],"ecfx-dashboard":["https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2289"]}' "$(jqf '.done_mr_links' "$out")" "agent urls of done lines (ticket and <!-- pN -->) are listed; the open item's is not"
+assert_eq '{"planned":4,"done":3,"blocked":0,"deferred":0,"open":1}' "$(jqf '.items' "$out" | jq -c '{planned,done,blocked,deferred,open}')" "items counted from the plan lines as before"
+rm -f "$DIARY/2026-10-20.md" "$DIARY/.agent/2026-10-20.md"
+
 echo "daily-stats — help"
 assert_contains "$("$SCRIPT" --help)" "daily-stats <from YYYY-MM-DD> <to YYYY-MM-DD>" "--help prints the usage line"
 

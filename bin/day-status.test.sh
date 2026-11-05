@@ -207,6 +207,41 @@ assert_lacks "$out" "MR unknown" "run-state full path: not unknown"
 assert_contains "$out" "a1" "run-state full path: agent shown"
 assert_contains "$(cat "$LOG")" "projects/ecfx%2Fecfx-observability/merge_requests/81" "glab got the run-state path"
 
+echo "new-format day: MRs come from the agent file, not from the plan line or glab's list"
+mkdir -p "$DIARY/.agent"
+cat > "$DIARY/2026-11-05.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [/] ecfx-20010 few words
+- [ ] reply to Levi <!-- p3 -->
+<!-- start-day:end -->
+FIXTURE
+cat > "$DIARY/.agent/2026-11-05.md" <<'FIXTURE'
+# agent notes 2026-11-05
+## ecfx-20010
+- mr: backend!7001 https://gitlab.com/ecfx/ecfx-backend/-/merge_requests/7001
+- 09:12 progress: pushed
+## p3
+- mr: observability!80 https://gitlab.com/ecfx/ecfx-observability/-/merge_requests/80
+FIXTURE
+: > "$LOG"
+js=$(GLAB_LOG="$LOG" GLAB_MINE="$mine" run --date 2026-11-05 --json)
+assert_eq "backend!7001" "$(jq -r '.[0].mrs[0].ref' <<<"$js")" "agent-file MR for a ticket line"
+assert_eq "opened" "$(jq -r '.[0].mrs[0].state' <<<"$js")" "agent-file MR: state from glab"
+assert_eq "observability!80" "$(jq -r '.[1].mrs[0].ref' <<<"$js")" "agent-file MR for a keyless <!-- p3 --> line"
+assert_eq 0 "$(grep -c 'scope=created_by_me' "$LOG")" "no glab lookup of my open MRs"
+assert_contains "$(cat "$LOG")" "projects/ecfx%2Fecfx-backend/merge_requests/7001" "project path taken from the agent-file url"
+echo "new-format day: an item without an agent-file MR keeps the key search"
+cat > "$DIARY/2026-11-06.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [/] ecfx-20001 few words
+<!-- start-day:end -->
+FIXTURE
+printf '# agent notes 2026-11-06\n## ecfx-20001\n- 09:12 progress: started\n' > "$DIARY/.agent/2026-11-06.md"
+: > "$LOG"
+out=$(GLAB_LOG="$LOG" GLAB_MINE="$mine" run --date 2026-11-06)
+assert_contains "$(grep 'ECFX-20001' <<<"$out")" "backend!7001 opened" "no agent-file MR: key search still finds it"
+assert_eq 1 "$(grep -c 'scope=created_by_me' "$LOG")" "no agent-file MR: list endpoint called once"
+
 echo "plan order is kept when an earlier item is slower"
 cat > "$DIARY/2026-10-29.md" <<'FIXTURE'
 <!-- start-day:start -->

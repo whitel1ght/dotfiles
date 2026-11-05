@@ -181,6 +181,28 @@ assert_eq "service_down" "$(f "$(grp 'diary:service_down:(slack unavailable)')" 
 assert_eq "auth" "$(f "$(grp 'diary:auth:google calendar not connected')" .kind)" "not connected, sentence by sentence"
 assert_eq "1" "$(f "$(grp 'diary:auth:outlook not connected')" .count)" "yesterday's diary is not read"
 
+echo "friction-mine — diary, new-format day (agent file)"
+mkdir -p "$DY/.agent"
+cat >"$DY/.agent/$D.md" <<'EOT'
+# agent notes 2026-10-15
+## ecfx-17482
+- mr: dashboard!2289 https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2289
+- 09:12 progress: pushed at 811e370a3
+- 10:20 blocked: waiting on ECFX-17999 (schema change)
+## p3
+- 10:05 note: replied to Levi in Slack
+- 10:30 note: skipped by user, comment already answered
+EOT
+OUT=$(mine --date $D)
+g=$(grp "diary:blocked:waiting on <key> (schema change)")
+assert_eq "blocked|ECFX-17482" "$(f "$g" '[.kind,.keys[0]]|join("|")')" "agent file: blocked entry, key from the section, upper-cased"
+assert_eq "1" "$(f "$g" .count)" "agent file: exactly one blocked record"
+g=$(grp "diary:other:skipped by user, comment already answered")
+assert_eq "other|P3" "$(f "$g" '[.kind,.keys[0]]|join("|")')" "agent file: note: skipped by user (prefix match) is other"
+assert_eq "" "$(jq -r '.groups[]|select(.sig|test("replied to Levi|pushed at"))' <<<"$OUT")" "agent file: other notes and progress are not friction"
+rm -rf "$DY/.agent"
+OUT=$(mine --date $D)
+
 echo "friction-mine — pi-sub"
 assert_eq "timeout" "$(f "$(grp 'pi-sub:timeout:agent timed out')" .kind)" "exit by=timeout -> timeout"
 assert_eq "tool_error" "$(f "$(grp 'pi-sub:tool_error:agent failed: spawn pi enoent')" .kind)" "failed -> tool_error (UTC 21:30 the day before is local the 15th)"
