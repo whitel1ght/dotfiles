@@ -99,7 +99,7 @@ options_for() { # card retryable(true|false): the card's answers, one per line
     suggestion) printf '%s\n' Apply Ignore Later ;;
     rule) printf '%s\n' "Apply: add the rule" Ignore Later ;;
     nochange) printf '%s\n' Ignore Later ;;
-    secret) printf '%s\n' "Done (I did the steps)" Later Ignore ;;
+    secret) printf '%s\n' "Done (you did the steps)" Later Ignore ;;
     landed) printf '%s\n' OK ;;
     failed) if [ "${2:-false}" = true ]; then printf '%s\n' Retry Ignore; else printf '%s\n' OK; fi ;;
     *) die "no answers for card kind: $1" ;;

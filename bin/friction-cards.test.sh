@@ -170,7 +170,7 @@ groups "k:restated:rule|restated|2" "k:secret:key|secret|2"
 propose F-009 "$SANDBOX/p8.md"; propose F-010 "$SANDBOX/p1.md"
 sync >/dev/null
 assert_has "opts=Apply: add the rule|Ignore|Later" "$(call_for F-009)" "rule options"
-assert_has "source=coach:secret opts=Done (I did the steps)|Later|Ignore" "$(call_for F-010)" "secret-card options"
+assert_has "source=coach:secret opts=Done (you did the steps)|Later|Ignore" "$(call_for F-010)" "secret-card options"
 
 echo "sync: closing cards"
 D1="$(jq -r '.[] | select(.key == "F-001") | .id' "$DECK")"
