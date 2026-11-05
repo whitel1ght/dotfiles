@@ -509,6 +509,9 @@ fi
 if [ -f "$DOTFILES_DIR/bin/day-agent" ]; then
     create_symlink "$DOTFILES_DIR/bin/day-agent" "$HOME/.local/bin/day-agent"
 fi
+if [ -f "$DOTFILES_DIR/bin/plan-pick" ]; then
+    create_symlink "$DOTFILES_DIR/bin/plan-pick" "$HOME/.local/bin/plan-pick"
+fi
 
 # friction-ledger keeps the friction ledger in the wiki; /end-day's reflect step calls it.
 if [ -f "$DOTFILES_DIR/bin/friction-ledger" ]; then
