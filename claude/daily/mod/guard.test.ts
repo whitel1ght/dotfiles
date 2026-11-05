@@ -163,8 +163,8 @@ test('new format: keyless lines need a pN done entry, lines with no key or id ar
   const ticked = P3.replace('[ ]', '[X]')
   expect(checkTicks(DIARY_NEW, newEdit(P3, ticked), AGENT).ok).toBe(false)
   const withDone = `${AGENT}- 10:30 done: replied\n`
-  expect(checkTicks(DIARY_NEW, newEdit(P3, ticked), withDone, null).ok).toBe(true)
-  expect(checkTicks(DIARY_NEW, newEdit(P3, `${P3}\n- [X] something with no key`), withDone, null).ok).toBe(false)
+  expect(checkTicks(DIARY_NEW, newEdit(P3, ticked), withDone).ok).toBe(true)
+  expect(checkTicks(DIARY_NEW, newEdit(P3, `${P3}\n- [X] something with no key`), withDone).ok).toBe(false)
 })
 
 test('new format: children are not tick-guarded', async () => {

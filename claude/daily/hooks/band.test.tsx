@@ -232,6 +232,14 @@ test('the owning session gets the inbox and event prompts', async ($, on) => {
   expect(s.prompts.some(p => p.startsWith('[daily-event] review | backend!6576'))).toBe(true)
 })
 
+test('an MR named only in the agent file makes its comment a prompt', async ($, on) => {
+  const comment = JSON.stringify({ kind: 'comment', repo: 'ecfx/ecfx-dashboard', mr: 2289, ticket: 'ECFX-9', summary: 'nit', url: 'u' })
+  const agent = '# agent notes 2026-10-08\n## ecfx-9\n- mr: dashboard!2289 https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2289\n'
+  const s = await start($, on, { day: { exitCode: 0, stdout: `${comment}\n`, stderr: '' }, files: { '/home/t/wiki/diary/.agent/2026-10-08.md': agent } })
+  await s.clock.advance(180_000)
+  expect(s.prompts.some(p => p.startsWith('[daily-event] comment | dashboard!2289'))).toBe(true)
+})
+
 test('another session counts the inbox for its status line but runs no changes-since and gets no prompt or toast', async ($, on) => {
   const s = await start($, on, { ...pinged, owner: 'sess-other' })
   await s.clock.advance(180_000)

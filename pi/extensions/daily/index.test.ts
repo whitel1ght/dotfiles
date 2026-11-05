@@ -68,6 +68,21 @@ function tick(diary: string, oldText: string, newText: string, active = true) {
   return guardVerdict("edit", { path: diary, edits: [{ oldText, newText }] }, DAY, active);
 }
 
+test("new-format day: a tick needs a done entry in the agent file", () => {
+  const { root, diary } = sandbox();
+  const agent = join(root, "wiki", "diary", ".agent", `${DAY}.md`);
+  mkdirSync(join(root, "wiki", "diary", ".agent"), { recursive: true });
+  writeFileSync(agent, `# agent notes ${DAY}\n## ecfx-1001\n- 09:12 progress: working\n`);
+  const refused = tick(diary, "- [ ] ecfx-1001 fix the export", "- [x] ecfx-1001 fix the export");
+  assert.ok(refused);
+  assert.match(refused, /day-agent note/);
+  writeFileSync(agent, `# agent notes ${DAY}\n## ecfx-1001\n- 11:40 done: merged abc1234\n`);
+  assert.equal(tick(diary, "- [ ] ecfx-1001 fix the export", "- [x] ecfx-1001 fix the export"), undefined);
+  writeFileSync(agent, "");
+  assert.ok(tick(diary, "- [ ] ecfx-1001 fix the export", "- [x] ecfx-1001 fix the export"));
+  cleanup(root);
+});
+
 test("refuses a newly ticked [x] with no evidence", () => {
   const { root, diary } = sandbox();
   const verdict = tick(diary, "- [ ] ecfx-1001 fix the export", "- [x] ecfx-1001 fix the export");

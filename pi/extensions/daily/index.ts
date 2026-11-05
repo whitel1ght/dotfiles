@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // The Claude Code plugin's harness-free parsers, imported in place so both
 // harnesses read and write byte-identical state. Only the glue is pi-specific.
+import { agentPath } from "./mod/agentfile.ts";
 import { extractBlock } from "./mod/diary.ts";
 import { applyEdit, checkTicks, denyMessage, isTodaysDiary } from "./mod/guard.ts";
 import type { OnBlock } from "./mod/guard.ts";
@@ -271,8 +272,9 @@ export function guardVerdict(
   }
   if (after === null) return undefined;
 
-  const result = checkTicks(before, after, null, onBlock);
-  return result.ok ? undefined : denyMessage(result.lines);
+  const agent = existsSync(agentPath(path)) ? readFileSync(agentPath(path), "utf8") : null;
+  const result = checkTicks(before, after, agent, onBlock);
+  return result.ok ? undefined : denyMessage(result.lines, result.format);
 }
 
 /** changes-since --cursor run-day, without blocking pi; a timeout reports exit 124. */
