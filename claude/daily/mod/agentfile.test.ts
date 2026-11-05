@@ -40,7 +40,12 @@ test('commentId reads the trailing marker', async () => {
   expect(commentId('- [ ] x')).toBe('')
 })
 
-test('itemKey prefers the ticket key, then the comment id', async () => {
+test('itemKey prefers the comment id, then the ticket key', async () => {
   const items = parseItems(DIARY_NEW)
   expect(items.map(itemKey)).toEqual(['ecfx-17482', 'ecfx-18778', 'p3'])
+})
+
+test('a commented line keys by its id even when its words name a ticket', async () => {
+  const items = parseItems('<!-- start-day:start -->\n- [ ] ask about ecfx-17500 later <!-- p4 -->\n<!-- start-day:end -->\n')
+  expect(items.map(itemKey)).toEqual(['p4'])
 })

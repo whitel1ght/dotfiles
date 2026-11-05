@@ -244,6 +244,16 @@ max_agents: 3
 FIXTURE
 js=$(run --date 2026-11-07 --json)
 assert_eq 1 "$(jq -r '.[0].mrs | length' <<<"$js")" "same MR in run state and agent file: one row"
+echo "new-format day: a <!-- pN --> line keys by its id even when its words name a ticket"
+cat > "$DIARY/2026-11-08.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [ ] ask about ecfx-20001 later <!-- p4 -->
+<!-- start-day:end -->
+FIXTURE
+printf '# agent notes 2026-11-08\n## p4\n- mr: observability!80 https://gitlab.com/ecfx/ecfx-observability/-/merge_requests/80\n## ecfx-20001\n- mr: backend!7001 https://gitlab.com/ecfx/ecfx-backend/-/merge_requests/7001\n' > "$DIARY/.agent/2026-11-08.md"
+js=$(run --date 2026-11-08 --json)
+assert_eq "observability!80" "$(jq -r '.[0].mrs[0].ref' <<<"$js")" "pN first: the p4 section's MR, not the ticket's"
+assert_eq 1 "$(jq -r '.[0].mrs | length' <<<"$js")" "pN first: one MR"
 echo "new-format day: an item without an agent-file MR keeps the key search"
 cat > "$DIARY/2026-11-06.md" <<'FIXTURE'
 <!-- start-day:start -->

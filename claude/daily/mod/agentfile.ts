@@ -67,5 +67,5 @@ export function commentId(line: string): string {
 }
 
 export function itemKey(item: Item): string {
-  return ticketKey(item.text) || commentId(item.line)
+  return commentId(item.line) || ticketKey(item.text)
 }
