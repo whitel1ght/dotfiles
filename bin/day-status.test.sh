@@ -207,6 +207,100 @@ assert_lacks "$out" "MR unknown" "run-state full path: not unknown"
 assert_contains "$out" "a1" "run-state full path: agent shown"
 assert_contains "$(cat "$LOG")" "projects/ecfx%2Fecfx-observability/merge_requests/81" "glab got the run-state path"
 
+echo "new-format day: MRs come from the agent file, not from the plan line or glab's list"
+mkdir -p "$DIARY/.agent"
+cat > "$DIARY/2026-11-05.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [/] ecfx-20010 few words
+- [ ] reply to Levi <!-- p3 -->
+<!-- start-day:end -->
+FIXTURE
+cat > "$DIARY/.agent/2026-11-05.md" <<'FIXTURE'
+# agent notes 2026-11-05
+## ecfx-20010
+- mr: backend!7001 https://gitlab.com/ecfx/ecfx-backend/-/merge_requests/7001
+- 09:12 progress: pushed
+## p3
+- mr: observability!80 https://gitlab.com/ecfx/ecfx-observability/-/merge_requests/80
+FIXTURE
+: > "$LOG"
+js=$(GLAB_LOG="$LOG" GLAB_MINE="$mine" run --date 2026-11-05 --json)
+assert_eq "backend!7001" "$(jq -r '.[0].mrs[0].ref' <<<"$js")" "agent-file MR for a ticket line"
+assert_eq "opened" "$(jq -r '.[0].mrs[0].state' <<<"$js")" "agent-file MR: state from glab"
+assert_eq "observability!80" "$(jq -r '.[1].mrs[0].ref' <<<"$js")" "agent-file MR for a keyless <!-- p3 --> line"
+assert_eq 0 "$(grep -c 'scope=created_by_me' "$LOG")" "no glab lookup of my open MRs"
+assert_contains "$(cat "$LOG")" "projects/ecfx%2Fecfx-backend/merge_requests/7001" "project path taken from the agent-file url"
+echo "new-format day: the run state and the agent file name the same MR"
+cat > "$DIARY/2026-11-07.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [/] ecfx-20020 few words
+<!-- start-day:end -->
+FIXTURE
+printf '# agent notes 2026-11-07\n## ecfx-20020\n- mr: observability!81 https://gitlab.com/ecfx/ecfx-observability/-/merge_requests/81\n' > "$DIARY/.agent/2026-11-07.md"
+cat > "$STATE/2026-11-07.md" <<'FIXTURE'
+# run-day 2026-11-07
+max_agents: 3
+- ecfx-20020 | class=auto | agent=a1 | round=- | worktree=- | mr=ecfx/ecfx-observability!81 | retries=0 | needs_you=no | owner=main
+FIXTURE
+js=$(run --date 2026-11-07 --json)
+assert_eq 1 "$(jq -r '.[0].mrs | length' <<<"$js")" "same MR in run state and agent file: one row"
+echo "new-format day: a <!-- pN --> line keys by its id even when its words name a ticket"
+cat > "$DIARY/2026-11-08.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [ ] ask about ecfx-20001 later <!-- p4 -->
+<!-- start-day:end -->
+FIXTURE
+printf '# agent notes 2026-11-08\n## p4\n- mr: observability!80 https://gitlab.com/ecfx/ecfx-observability/-/merge_requests/80\n## ecfx-20001\n- mr: backend!7001 https://gitlab.com/ecfx/ecfx-backend/-/merge_requests/7001\n' > "$DIARY/.agent/2026-11-08.md"
+js=$(run --date 2026-11-08 --json)
+assert_eq "observability!80" "$(jq -r '.[0].mrs[0].ref' <<<"$js")" "pN first: the p4 section's MR, not the ticket's"
+assert_eq 1 "$(jq -r '.[0].mrs | length' <<<"$js")" "pN first: one MR"
+echo "new-format day: an item without an agent-file MR keeps the key search"
+cat > "$DIARY/2026-11-06.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [/] ecfx-20001 few words
+<!-- start-day:end -->
+FIXTURE
+printf '# agent notes 2026-11-06\n## ecfx-20001\n- 09:12 progress: started\n' > "$DIARY/.agent/2026-11-06.md"
+: > "$LOG"
+out=$(GLAB_LOG="$LOG" GLAB_MINE="$mine" run --date 2026-11-06)
+assert_contains "$(grep 'ECFX-20001' <<<"$out")" "backend!7001 opened" "no agent-file MR: key search still finds it"
+assert_eq 1 "$(grep -c 'scope=created_by_me' "$LOG")" "no agent-file MR: list endpoint called once"
+
+echo "new-format day: the trailing <!-- pN --> is not part of the text field"
+cat > "$DIARY/2026-11-09.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [ ] reply to Levi <!-- p3 -->
+- [ ] ecfx-20040 words <!-- p4 -->
+<!-- start-day:end -->
+FIXTURE
+printf '# agent notes 2026-11-09\n## p3\n- 09:12 note: x\n' > "$DIARY/.agent/2026-11-09.md"
+js=$(run --date 2026-11-09 --json)
+assert_eq "reply to Levi" "$(jq -r '.[0].text' <<<"$js")" "text drops a trailing <!-- p3 -->"
+assert_eq "ecfx-20040 words" "$(jq -r '.[1].text' <<<"$js")" "text drops a trailing comment on a keyed line too"
+echo "new-format day: <!-- pN --> keys a line only at the end of the line"
+cat > "$DIARY/2026-11-10.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [ ] call back <!-- p5 --> after lunch
+<!-- start-day:end -->
+FIXTURE
+printf '# agent notes 2026-11-10\n## p5\n- mr: observability!80 https://gitlab.com/ecfx/ecfx-observability/-/merge_requests/80\n' > "$DIARY/.agent/2026-11-10.md"
+js=$(run --date 2026-11-10 --json)
+assert_eq 0 "$(jq -r '.[0].mrs | length' <<<"$js")" "a comment followed by text does not key the line"
+echo "new-format day: an agent-file repo written ECFX-dashboard dedupes against run-state mr=ecfx/ecfx-dashboard!N"
+cat > "$DIARY/2026-11-11.md" <<'FIXTURE'
+<!-- start-day:start -->
+- [/] ecfx-20050 few words
+<!-- start-day:end -->
+FIXTURE
+printf '# agent notes 2026-11-11\n## ecfx-20050\n- mr: ECFX-dashboard!7001 https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/7001\n' > "$DIARY/.agent/2026-11-11.md"
+cat > "$STATE/2026-11-11.md" <<'FIXTURE'
+# run-day 2026-11-11
+max_agents: 3
+- ecfx-20050 | class=auto | agent=a1 | round=- | worktree=- | mr=ecfx/ecfx-dashboard!7001 | retries=0 | needs_you=no | owner=main
+FIXTURE
+js=$(run --date 2026-11-11 --json)
+assert_eq 1 "$(jq -r '.[0].mrs | length' <<<"$js")" "ECFX-dashboard and ecfx/ecfx-dashboard name one MR"
+
 echo "plan order is kept when an earlier item is slower"
 cat > "$DIARY/2026-10-29.md" <<'FIXTURE'
 <!-- start-day:start -->

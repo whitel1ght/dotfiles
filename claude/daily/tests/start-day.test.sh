@@ -59,8 +59,20 @@ for f in "$C" "$P"; do
   has "$f" "~/.local/bin/drills open" "$side: the drill window opens after the quiz"
   has "$f" "do not wait for the drill window" "$side: and the session does not wait for it"
   awk '/^\*\*Quiz\.\*\*/{a=NR} /^\*\*Drills\.\*\*/{b=NR} /^### Monthly tool review/{c=NR} END{exit !(a&&b&&c&&a<b&&b<c)}' "$f" && pass "$side: drills come after the quiz" || fail "$side: drills order" "wrong order in $f"
+  has "$f" "day-agent init" "$side: the agent file is created before save"
+  has "$f" "day-agent mr <key>" "$side: MRs go to the agent file"
+  has "$f" "day-agent note <key> carried" "$side: carried facts go to the agent file"
+  has "$f" "at most 100 characters" "$side: plan lines are short"
+  has "$f" "<!-- pN -->" "$side: keyless lines carry a comment id"
+  lacks "$f" "backend !6390" "$side: merge example uses repo!iid"
+  lacks "$f" "@bob" "$side: examples name people without @"
+  has "$f" "day-agent id" "$side: the id comes from day-agent"
+  lacks "$f" "trailing \`[↗][label]\` ref" "$side: no [↗] refs in the plan"
+  lacks "$f" "inline \`[dashboard!940](url)\`" "$side: no inline MR links in the plan"
 done
 
+has "$C" "Bash(~/.local/bin/day-agent:*)" "claude: allows day-agent"
+has "$C" "Bash(day-agent:*)" "claude: allows the bare day-agent the text calls"
 has "$C" "Bash(~/.local/bin/words:*)" "claude: allows words"
 
 has "$C" "Bash(~/.local/bin/drills:*)" "claude: allows drills"

@@ -7,7 +7,7 @@ argument-hint: <KEY>
 
 Move an item out of this day's session so a side session can finish it, without losing context.
 Run it in the main session (the one running `/run-day`). Writes the hand-off note, the run state and
-the diary — asks nothing. Never write `~/wiki` beyond the item's diary line, and never touch the
+the diary — asks nothing. Never write `~/wiki` beyond the item's diary line and the `day-agent` note, and never touch the
 worktree's files.
 
 Only when the user explicitly asks to work this item themselves; never on your own initiative.
@@ -70,11 +70,13 @@ MR: <url or none>
      decide withdraw "$id" handed off && decide close "$id"
    done
    ```
-5. Diary: set the item to `[/]` with ` · with you: <KEY>` as the first evidence on the line, keeping
-   any MR evidence after it, for example
-   `- [/] ecfx-18169 fix the 3 majors · with you: ECFX-18169 · draft MR dashboard!2231  [↗][dashboard!2231]`.
-   Edit only that line and keep its trailing refs last, then
-   `~/.local/bin/diary-links ~/wiki/diary/$(date +%F).md`.
+5. Diary: set the item to `[/]` and run `day-agent note <key> with-you "<KEY>"` (`<key>` is the
+   line's `<!-- pN -->` id when it has one, else the lowercase ticket key). The MR link is already
+   in the agent file; the plan line keeps only its marker and its few words. Edit only that line.
+   Old format (no `~/wiki/diary/.agent/<date>.md`): put ` · with you: <KEY>` first in the line's
+   evidence, keeping any MR evidence after it, for example
+   `- [/] ecfx-18169 fix the 3 majors · with you: ECFX-18169 · draft MR dashboard!2231  [↗][dashboard!2231]`;
+   keep its trailing refs last, then run `~/.local/bin/diary-links ~/wiki/diary/$(date +%F).md`.
 
 6. Open the side session, and tell the user to run `/report-back done` (or `handback`) in it when
    they stop. Run, with the literal key and the absolute worktree path from the run-state line

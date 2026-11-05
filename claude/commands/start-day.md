@@ -2,7 +2,7 @@
 description: Plan the working day from overnight reviews, tickets, Slack, meetings and yesterday's leftovers, filed in the diary
 argument-hint: [--since 2026-09-24T15:00:00Z]
 model: sonnet
-allowed-tools: Bash(~/.local/bin/start-day:*), Bash(~/.local/bin/sync-tickets:*), Bash(~/.local/bin/clean-worktrees:*), Bash(~/.local/bin/friction-ledger:*), Bash(~/.local/bin/cards:*), Bash(~/.local/bin/words:*), Bash(~/.local/bin/drills:*), Bash(~/.local/bin/friction-cards:*), Bash(date:*), Bash(rg:*)
+allowed-tools: Bash(~/.local/bin/start-day:*), Bash(~/.local/bin/day-agent:*), Bash(day-agent:*), Bash(~/.local/bin/sync-tickets:*), Bash(~/.local/bin/clean-worktrees:*), Bash(~/.local/bin/friction-ledger:*), Bash(~/.local/bin/cards:*), Bash(~/.local/bin/words:*), Bash(~/.local/bin/drills:*), Bash(~/.local/bin/friction-cards:*), Bash(date:*), Bash(rg:*)
 disable-model-invocation: true
 ---
 
@@ -72,6 +72,9 @@ not connected at the end, and carry on with the other.
 
 ## 3. Write the plan
 
+First run `~/.local/bin/day-agent init`. It creates today's agent file, the hidden place for
+everything the plan line leaves out.
+
 **One item per ticket.** Gather everything a ticket needs today (review notes to answer,
 a merge, a pipeline to fix, a Slack question about it) into one item, and put that item in
 the most urgent group any of its actions belongs to: Merge, then First, then Today, then If
@@ -106,9 +109,9 @@ Group the items by what they unblock, in this order:
   first, at most three.
 
 Separately, **Merge**: one item per ticket whose MRs are ready to merge now, naming each
-MR in merge order ("merge backend !6390, then admin !273"). A ticket that still has review
-notes to answer goes in First instead, with the merge as its last step ("reply to @bob on
-backend !870, then merge it"). Leave out "Waiting on dependencies" unless one of those MRs unblocks something
+MR in merge order ("merge backend!6390, then admin!273"). A ticket that still has review
+notes to answer goes in First instead, with the merge as its last step ("reply to Bob on
+backend!870, then merge it"). Leave out "Waiting on dependencies" unless one of those MRs unblocks something
 already in First or Today, in which case say so in one short line.
 
 Before writing, check that every one of these made it in or was dropped on purpose: each
@@ -124,10 +127,24 @@ waiting on their author, already approved or drafts, and carry-over items alread
 Someone else's MR whose last review from me is unaddressed stays out wherever it shows
 up (a to-do marked "waiting on author", Slack, Jira) until its author pushes or replies.
 
-Write it in my diary style: lowercase ticket keys, short plain phrases, one checkbox per
-ticket, starting with its key. Name the MR or person so I know where to go. Keep it to what fits in a day,
-usually 6 to 14 items. These examples are made up to show the shape; every line you
-write must come from what you gathered:
+Write it in my diary style, as a short list I can read at a glance: lowercase ticket
+keys, plain words, one checkbox per ticket, starting with its key: `- [ ] <key> <few words>`,
+what it is or what's next. Each line is at most 100 characters; children are shorter.
+No `·` on a ticket line, no links, no `[↗]`, no `[label]: url` lines. Name an MR as plain `repo!iid`
+("backend!870"), never linked, and a person by first name. A line without a ticket ends
+with `<!-- pN -->`: run `day-agent id` for each one, then `day-agent note <pN> note "<what
+it is>"` at once, so the next id is a new one. Keep it to what fits in a day, usually 6 to
+14 items.
+
+Everything else goes to the agent file, not the plan line. For each MR a line names or
+owns, run `~/.local/bin/day-agent mr <key> <repo>!<iid> <url>`. For each carried-over
+item, take its facts from the carry-over's `Agent notes from <last>:` section and the
+last diary, and run `~/.local/bin/day-agent note <key> carried "<the facts still true:
+blocked reason, who has it, last state>"`. The plan line gets fresh words for today, not
+yesterday's line.
+
+These examples are made up to show the shape; every line you write must come from what
+you gathered:
 
 ```markdown
 #### Plan
@@ -135,24 +152,24 @@ write must come from what you gathered:
 **Meetings:** 10:00 standup · 14:30 retrieve v2 sync
 
 **Merge**
-- [ ] ecfx-1020 merge dashboard !940
-- [ ] ecfx-1007 merge backend !870, then admin !871
+- [ ] ecfx-1020 merge dashboard!940
+- [ ] ecfx-1007 merge backend!870, then admin!871
 
 **First**
-- [ ] reply to @anna in DM: which firms get the new export
-- [ ] ecfx-1003 backend !812: address @bob's review (2 unresolved), then merge (dave approved)
-- [ ] ecfx-1009 backend !830 and dashboard !941: QA sent it back
-  - [ ] fix the failed pipeline on backend !830
-  - [ ] answer @erin's question in #qa about the empty state
+- [ ] reply to Anna: which firms get the new export <!-- p1 -->
+- [ ] ecfx-1003 answer Bob's review on backend!812, then merge
+- [ ] ecfx-1009 QA sent it back
+  - [ ] fix the failed pipeline on backend!830
+  - [ ] answer Erin in #qa about the empty state
   - [ ] re-test on staging, move back to In QA
-- [ ] review @carol's ecfx-1011 backend !820 (retry cap)
+- [ ] ecfx-1011 review Carol's backend!820 (retry cap)
 
 **Today**
-- [ ] ecfx-1004 finish calendar timezone fix, open MR; @anna asked for it by Friday
-- [ ] ecfx-1008 new: storage policy not saved on practice groups — investigate
+- [ ] ecfx-1004 finish calendar timezone fix, open MR
+- [ ] ecfx-1008 storage policy not saved on practice groups: investigate
 
 **If time**
-- [ ] ecfx-1012 QA (claude-components qa flow): Roles page read-only for built-in roles, API write refused
+- [ ] ecfx-1012 QA (claude-components qa flow): Roles page read-only for built-in roles
 - [ ] ecfx-1015 pick up: keep filters after selecting documents
 ```
 
@@ -255,7 +272,8 @@ Print the plan in the chat, then save it:
 PLAN
 ```
 
-Link an MR as plain text with a trailing `[↗][label]` ref, or inline `[dashboard!940](url)`; `save` converts inline links to trailing refs with the URLs listed below the plan.
+The plan has no links: the MR urls are in the agent file, and the plan picker (`` ` g ``) opens
+the plan's tickets and MRs.
 
 This puts it at the top of today's `### ECFX` section, creating today's diary entry from
 my template if needed. Running it again the same day replaces the plan and nothing else.

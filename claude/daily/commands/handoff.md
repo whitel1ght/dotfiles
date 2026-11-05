@@ -1,14 +1,14 @@
 ---
 description: For the /run-day session — hand a tracked ticket over to a Claude session the user drives ("hand off 18384", "I'll take ECFX-18384 myself"); opens it in a tmux window. Only when the user explicitly asks to work this item themselves; never on your own initiative.
 argument-hint: KEY
-allowed-tools: Bash(diary-links:*), Bash(git -C:*), Bash(mkdir:*), Bash(date:*), Bash(ls:*), Bash(handoff-open:*), Read, Edit, Write, TaskStop
+allowed-tools: Bash(diary-links:*), Bash(day-agent:*), Bash(git -C:*), Bash(mkdir:*), Bash(date:*), Bash(ls:*), Bash(handoff-open:*), Read, Edit, Write, TaskStop
 ---
 
 # Hand off a ticket
 
 Arguments: $ARGUMENTS
 
-Run this in the main session (the one running `/run-day`). It moves one ticket from a background agent to a Claude session you drive yourself. The write rules of `/run-day` hold: here you edit only the diary plan block, the run-state file and the hand-off note. Never write to `~/wiki` beyond the diary line, and never touch the worktree's files.
+Run this in the main session (the one running `/run-day`). It moves one ticket from a background agent to a Claude session you drive yourself. The write rules of `/run-day` hold: here you edit only the diary plan block, the run-state file, the hand-off note and (through `day-agent`) the agent file. Never write to `~/wiki` beyond the diary line and the `day-agent` note, and never touch the worktree's files.
 
 Only when the user explicitly asks to work this item themselves; never on your own initiative.
 
@@ -54,7 +54,7 @@ MR: <url or none>
      decide withdraw "$id" handed off && decide close "$id"
    done
    ```
-6. Diary: set the item's line to `[/]` and put `· with you: <KEY>` first in its evidence, keeping any MR evidence after it (for example `- [/] ecfx-18169 fix the 3 majors · with you: ECFX-18169 · draft MR dashboard!2231  [↗][dashboard!2231]`). Edit only that line, keep its trailing refs last, then run `diary-links ~/wiki/diary/$(date +%F).md`.
+6. Diary: set the item's line to `[/]` and run `day-agent note <key> with-you "<KEY>"` (`<key>` is the line's `<!-- pN -->` id when it has one, else the lowercase ticket key). The MR link is already in the agent file; the plan line keeps only its marker and its few words. Edit only that line. Old format (no `~/wiki/diary/.agent/<date>.md`): put `· with you: <KEY>` first in the line's evidence, keeping any MR evidence after it (for example `- [/] ecfx-18169 fix the 3 majors · with you: ECFX-18169 · draft MR dashboard!2231  [↗][dashboard!2231]`), keep its trailing refs last, then run `diary-links ~/wiki/diary/$(date +%F).md`.
 7. Open the side session, and tell the user to run `/daily:report-back done` (or `handback`) in it when they stop. Run, with the literal key and the absolute worktree path from the run-state line (a leading `~` becomes `$HOME`):
 
 ```bash

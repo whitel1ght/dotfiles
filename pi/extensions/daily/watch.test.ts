@@ -62,6 +62,17 @@ function setup(
   return { root, stateDir, calls, watcher: new DayWatcher(deps) };
 }
 
+test("a comment on an MR named only in the agent file wakes the session", async () => {
+  const stdout = ev({ kind: "comment", repo: "ecfx-dashboard", mr: 2289, ticket: "ECFX-9", summary: "nit" });
+  const { root, calls, watcher } = setup({ changes: [{ code: 0, stdout, stderr: "" }] });
+  mkdirSync(join(root, "diary", ".agent"), { recursive: true });
+  writeFileSync(join(root, "diary", ".agent", `${DAY}.md`), `# agent notes ${DAY}\n## ecfx-9\n- mr: dashboard!2289 https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2289\n`);
+  await watcher.checkEvents();
+  assert.deepEqual(calls.wakes, ["[daily-event] comment | dashboard!2289 | ECFX-9 | nit | u"]);
+  assert.deepEqual(calls.notes, []);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test("does nothing while no run is active", async () => {
   const { root, calls, watcher } = setup({ runState: false, changes: [{ code: 0, stdout: ev({ kind: "comment" }), stderr: "" }] });
   await watcher.checkEvents();

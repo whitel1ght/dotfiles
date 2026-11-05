@@ -4,6 +4,7 @@
 // The session that runs the day starts it with the run_day_watch tool (index.ts).
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
+import { agentMrKeys, agentPath } from "./mod/agentfile.ts";
 import { mrKeyFromRef, mrKeysOf, parseItems, ticketKey } from "./mod/diary.ts";
 import { classify, formatNote, formatPrompt, parseEvents } from "./mod/events.ts";
 import { inboxPrompt, messageFiles, nextInbox } from "./mod/inbox.ts";
@@ -83,6 +84,7 @@ export class DayWatcher {
       const ctx = {
         mrKeys: new Set([
           ...items.flatMap((i) => mrKeysOf(i.line)),
+          ...agentMrKeys(readOr(agentPath(p.diary))),
           ...runs.flatMap((r) => r.mrs.map(mrKeyFromRef)).filter((k) => k !== ""),
         ]),
         ticketKeys: new Set(items.map((i) => ticketKey(i.text)).filter((k) => k !== "")),

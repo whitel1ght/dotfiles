@@ -1,6 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
+import { agentMrKeys, agentPath } from '../mod/agentfile.ts'
 import { mrKeyFromRef, mrKeysOf, parseItems, ticketKey } from '../mod/diary.ts'
 import { classify, formatNote, formatPrompt, formatToast, isTimeout, parseEvents } from '../mod/events.ts'
 import { EMPTY_INBOX, inboxPrompt, nextInbox, parseListing } from '../mod/inbox.ts'
@@ -77,7 +78,8 @@ async function load($: EngineInterface) {
   const state = await readOr($, day.statePath)
   if (state === null) return { day, active: false as const }
   const diary = (await readOr($, day.diaryPath)) ?? ''
-  return { day, active: true as const, items: parseItems(diary), runs: parseRunState(state), dayEnded: diary.includes(REPORT_MARK) }
+  const agent = await readOr($, agentPath(day.diaryPath))
+  return { day, active: true as const, agent, items: parseItems(diary), runs: parseRunState(state), dayEnded: diary.includes(REPORT_MARK) }
 }
 
 type DayCtx = Extract<NonNullable<Awaited<ReturnType<typeof load>>>, { active: true }>
@@ -509,6 +511,7 @@ async function watch($: EngineInterface) {
     const eventCtx = {
       mrKeys: new Set([
         ...ctx.items.flatMap(i => mrKeysOf(i.line)),
+        ...agentMrKeys(ctx.agent ?? ''),
         ...ctx.runs.flatMap(r => r.mrs.map(mrKeyFromRef)).filter(k => k !== ''),
       ]),
       ticketKeys: new Set(ctx.items.map(i => ticketKey(i.text)).filter(k => k !== '')),
@@ -724,8 +727,9 @@ export const register: Register = on => {
       const current = (await readOr($, e.file_path)) ?? ''
       const after = applyEdit(current, e as unknown as EditInput)
       if (after === null) return next(e)
-      const verdict = checkTicks(current, after, msg => friction($, 'guard', msg, 'daily-guard'))
-      return verdict.ok ? next(e) : { deny: denyMessage(verdict.lines) }
+      const agent = await readOr($, agentPath(e.file_path))
+      const verdict = checkTicks(current, after, agent, msg => friction($, 'guard', msg, 'daily-guard'))
+      return verdict.ok ? next(e) : { deny: denyMessage(verdict.lines, verdict.format) }
     }).catch(($, e, next) => next(e))
   }
 }

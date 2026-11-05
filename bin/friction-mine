@@ -10,7 +10,7 @@
 # Sources, each dir overridable for tests:
 #   FRICTION_DIR        <date>.jsonl written by `friction`        (~/.local/state/friction)
 #   RUN_DAY_DIR         <date>.md and done/<date>.md run state    (~/.local/state/run-day)
-#   DIARY_DIR           <date>.md diary                           (~/wiki/diary)
+#   DIARY_DIR           <date>.md diary, .agent/<date>.md         (~/wiki/diary)
 #   PI_SUB_STATE_DIR    */{meta,exit}.json, events.jsonl          (~/.local/state/pi-sub)
 #   CLAUDE_PROJECTS_DIR */<sid>.jsonl transcripts                 (~/.claude/projects)
 #   PI_SESSIONS_DIR     **/*.jsonl transcripts                    (~/.pi/agent/sessions)
@@ -147,6 +147,17 @@ f="$DIARY_DIR/$date_.md"
     (if test("· note: skipped by user") then rec("diary"; "other"; capture("· note: (?<r>skipped by user.*?)(  \\[↗\\]|$)").r; $key; $ev; "high") else empty end),
     ([$l | match("\\([^()]*unavailable[^()]*\\)"; "g").string][] | rec("diary"; "service_down"; .; $key; $ev; "high")),
     ([$l | match("[A-Z][\\w-]*( [A-Z][\\w-]*)* not connected"; "g").string][] | rec("diary"; "auth"; .; $key; $ev; "high"))' | emit
+
+# agent file of a new-format day: `- HH:MM blocked: <r>` and `- HH:MM note: skipped by user…` under a `## key`
+f="$DIARY_DIR/.agent/$date_.md"
+[ -f "$f" ] && awk '/^## / { key = substr($0, 4); sub(/[ \t]+$/, "", key); next }
+  { print NR "\t" key "\t" $0 }' "$f" | jq -cR --arg f "$f" "$DEF"'
+  split("\t") as $p
+  | ($p[2:] | join("\t")) as $l
+  | ("\($f):\($p[0])") as $ev
+  | ($p[1] | ascii_upcase) as $key
+  | (if ($l | test("^- [0-9]{2}:[0-9]{2} blocked: .+$")) then rec("diary"; "blocked"; ($l | capture("^- [0-9]{2}:[0-9]{2} blocked: (?<r>.+)$").r); $key; $ev; "high") else empty end),
+    (if ($l | test("^- [0-9]{2}:[0-9]{2} note: skipped by user")) then rec("diary"; "other"; ($l | capture("^- [0-9]{2}:[0-9]{2} note: (?<r>skipped by user.*)$").r); $key; $ev; "high") else empty end)' | emit
 
 # pi-sub agents started that day
 if [ -d "$PI_SUB_STATE_DIR" ]; then
