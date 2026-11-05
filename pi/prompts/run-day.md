@@ -225,7 +225,7 @@ An agent's report is a claim, not evidence. Before any `[X]`:
   GitLab matches `?sha=` on full shas only, so a short sha returns an empty array and a watcher loop
   silently polls nothing until it times out.
 
-All good: tick `[X]` with `· draft MR <repo>!<iid>  [↗][<repo>!<iid>]`, apply the report's
+All good: run `day-agent mr <key> <repo>!<iid> <url>` and `day-agent note <key> done "<evidence: merged <sha> (repo!iid), or why>"` (for an unmerged draft MR: `draft MR <repo>!<iid>, pipeline <status>, tests rerun`), tick `[X]` (old format: with the draft MR suffix and link of the Markers rule), apply the report's
 `memory:` block (step 4), set `mr=` and `agent=-` on the run-state line, and run Keep busy
 (step 11).
 
@@ -235,24 +235,35 @@ it are the ticket's steps. The tick guard and panel read only the parent, so the
 its own marker and evidence, and you keep the children true as well (2026-11-05, D-407): when a
 step is done, whoever did it (an agent's report, a posted reply or description, a merge, an
 answered decision, the user's word, or a check showing it already happened), tick that child
-`[X]` with ` · <evidence>` in the same turn you mark the parent. A child that turns out not to
-apply gets `[>] · note: <why>`. Never leave a done step unticked: start-day carries every
+`[X]` in the same turn you mark the parent (old format: with ` · <evidence>`; new format: the evidence
+goes to the agent file, children are not guarded). A child that turns out not to apply gets `[>]`
+(old format: with `· note: <why>`; new format: `day-agent note <key> note "<why>"`). Never leave a done step unticked: start-day carries every
 unticked child into tomorrow's plan.
 
 Markers: `[ ]` not started · `[/]` in progress · `[X]` done (an older `[x]` counts too) ·
-`[!]` blocked, needs the user · `[>]` deferred. Evidence goes after the first ` · ` on the line:
-an MR link, `merged`, or `note: <why>`; e.g. `· draft MR dashboard!2240  [↗][dashboard!2240]`
-or `· blocked: <reason>`.
-Links are trailing refs: the label stays plain text, `  [↗][<repo>!<iid>]` ends the line, and the
-URL sits once in a `[<repo>!<iid>]: <url>` definition just above `<!-- start-day:end -->`. An inline
-`[<repo>!<iid>](<url>)` is fine too: `diary-links` converts it.
-Edit one line at a time, then run `diary-links` (no output when fine) after every diary edit.
-The `daily` extension refuses a bare `[X]` — that refusal is correct, add the evidence, do not work
-around it. A `me` item you tick on the user's word gets `· note: <what the user said>`.
+`[!]` blocked, needs the user · `[>]` deferred. Notes, evidence and MR links never go on the plan
+line: they go to the hidden agent file through `day-agent` (`day-agent note <key> <kind> "<text>"`,
+kind one of `progress done note blocked with-you handed-back carried`; `day-agent mr <key>
+<repo>!<iid> <url>`), where `<key>` is the line's `<!-- pN -->` id when it has one, else its
+lowercase ticket key. The plan line only changes its marker and its few words (what is next, for
+example `[/] ecfx-17482 O2 fixed, N1 next`), stays under 100 characters, and carries no ` · `, no
+`[↗]` and no `[label]: url` definition. Edit one line at a time. To tick a top-level line, first run
+`day-agent note <key> done "<evidence: merged <sha> (repo!iid), deployed <tag>, or why it is done
+without a merge>"`, then write `[X]`: the `daily` extension refuses a top-level `[X]` with no `done`
+entry in that key's section — that refusal is correct, add the evidence, do not work around it. A
+`me` item you tick on the user's word gets the evidence `the user said: <what>`.
+On a day with no agent file (`~/wiki/diary/.agent/<date>.md` missing) the old suffix rules apply
+instead, as follows. Old format: evidence goes after the first ` · ` on the line: an MR link,
+`merged`, or `note: <why>`; e.g. `· draft MR dashboard!2240  [↗][dashboard!2240]` or
+`· blocked: <reason>`. Links are trailing refs: the label stays plain text, the `[↗]` ref ends the
+line, and the URL sits once in a `[<repo>!<iid>]: <url>` definition just above
+`<!-- start-day:end -->`. An inline `[<repo>!<iid>](<url>)` is fine too: `diary-links` converts it.
+After every diary edit run `diary-links` (no output when fine). The old guard refuses a bare `[X]`
+too; a `me` item you tick on the user's word gets `· note: <what the user said>`.
 
 Failed or wrong work: one retry, one tier up in `<subagent_models>`: a fresh `worker` in the same
 worktree whose brief quotes the failure and names the earlier result file; `retries=1`,
-`agent=<new id>`. Second failure → `[!]` with `· blocked: <reason>`, `needs_you=yes` and `agent=-`
+`agent=<new id>`. Second failure → `[!]` (new format: `day-agent note <key> blocked "<reason>"`; old format: `· blocked: <reason>`), `needs_you=yes` and `agent=-`
 in the run state. The extension notifies the user when `needs_you` flips; you do not send anything
 yourself. Then run Keep busy (step 11).
 
@@ -418,25 +429,33 @@ block. `decision` and `clarify` messages also carry `decision: D-<n>` and have n
    (`ecfx-1816` does not match `ecfx-18169`); the run-state line has the same key. A key that is
    not on the plan, or an empty key, makes the message off-plan work whatever its `kind` (except
    `handback`). Never downgrade an `[X]`.
-3. Apply by kind. The *summary clip* is the summary's first sentence, ≤100 chars, ` · `→` - `.
-   When the message has an `mr`, the run-state `mr=` becomes `<group>/<repo>!<iid>` (from the url,
+3. Apply by kind. On a new-format day (the agent file exists) every note, MR link and piece of
+   evidence goes to the agent file and the plan line only changes its marker and its few words
+   (step 3); on a day with no agent file the old suffix rules of step 3 apply, as the old-format
+   lines below say. The *summary clip* is the summary's first sentence, ≤100 chars, ` · `→` - `.
+   When the message has an `mr`, run `day-agent mr <key> <repo>!<iid> <url>` (new format) and the run-state `mr=` becomes `<group>/<repo>!<iid>` (from the url,
    as in step 5). A key with no run-state line (a `me` item, or one added later): skip every
    run-state edit, apply only the diary line and the memory block.
    - `done` → run the step 3 check as far as it can run: `git -C <worktree> diff --stat` when the
      run-state worktree exists, the MR pipeline when `mr` is set, the tests the summary names. Name
      what cannot be checked (no worktree, no MR) to the user as unverified. Passes or cannot run:
-     `[X]` with `· MR <repo>!<iid>  [↗][<repo>!<iid>]` when `mr` is set, else
-     `· note: <summary clip>` (replacing any `· with you:` / `· progress:` suffix); `owner=main`,
+     run `day-agent note <key> done "<evidence: merged <sha> (repo!iid), or the summary clip>"`
+     first, then tick `[X]` and set the few words to what was done. Old format: `[X]` with
+     `· MR <repo>!<iid>  [↗][<repo>!<iid>]` when `mr` is set, else `· note: <summary clip>`
+     (replacing any `· with you:` / `· progress:` suffix). Either way `owner=main`,
      `needs_you=no`. A check fails: no tick, keep `[/]`, `needs_you=yes`, tell the user what
      failed (no agent to retry).
-   - `progress` → `[/]` with `· progress: <summary clip>` (after `· with you: <KEY>` when the owner
-     is external); `owner` stays. A line already `[X]` is left entirely as it is.
-   - `handback` → `owner=main`, `agent=-`, `needs_you=no`, marker `[ ]`, suffix
-     `· handed back: <summary clip>`; tell the user it was re-queued. It goes back into the dispatch
+   - `progress` → `[/]` and `day-agent note <key> progress "<summary clip>"` (`day-agent note <key>
+     with-you "<KEY>"` while the owner is external); the few words may change to what is next;
+     `owner` stays. Old format: a `· progress:` suffix with the summary clip (after the with-you
+     suffix when the owner is external). A line already `[X]` is left entirely as it is.
+   - `handback` → `owner=main`, `agent=-`, `needs_you=no`, marker `[ ]`,
+     `day-agent note <key> handed-back "<summary clip>"` (old format: suffix
+     `· handed back: <summary clip>`); tell the user it was re-queued. It goes back into the dispatch
      queue (step 2) in plan order; when dispatched, refill the brief and append the message body
      as `## Hand-back note`. If `test -d <worktree>` fails, take the branch from the hand-off note
-     or the MR's `source_branch` and `wt add <repo> <KEY> <branch>`; no branch found → `[!]` with
-     `· blocked: worktree is gone and the branch was not found`, `needs_you=yes`, tell the user.
+     or the MR's `source_branch` and `wt add <repo> <KEY> <branch>`; no branch found → `[!]` with `day-agent note <key> blocked "worktree is gone and the branch was
+     not found"` (old format: `· blocked: …` on the line), `needs_you=yes`, tell the user.
      A `handback` for a key not on the plan, or with an empty key: tell the user, apply only its
      memory block.
    - `decision` and `clarify` make no diary change and no Unplanned line, whatever the key.
@@ -450,8 +469,8 @@ block. `decision` and `clarify` messages also carry `decision: D-<n>` and have n
    - `clarify` → answer with `decide reply <id> "<answer>"` (look it up first: code, MR, ticket;
      a cheap `researcher` subagent may help). Nothing in the thread but `<id>: answered your
      question`.
-   - `service` ending `gave up` → items with `waiting=<that service>` drop the field, get `needs_you=yes` and
-     `· blocked: <service> down` on the diary line; no resume. Otherwise every item with `waiting=<that service>` drops the field and resumes where it stopped (re-dispatch
+   - `service` ending `gave up` → items with `waiting=<that service>` drop the field, get `needs_you=yes`, `[!]` and
+     `day-agent note <key> blocked "<service> down"` (old format: `· blocked: <service> down` on the diary line); no resume. Otherwise every item with `waiting=<that service>` drops the field and resumes where it stopped (re-dispatch
      into its worktree, or redo the failed check), with no diary line change. No Unplanned line, no
      memory block; `mv` to `inbox/done/$T/`.
    - `offplan`, or `done` / `progress` for a key not on the plan or an empty key → one line
@@ -461,17 +480,21 @@ block. `decision` and `clarify` messages also carry `decision: D-<n>` and have n
 ```
 <blank line>
 **Unplanned**
-- [X] ecfx-18200 fix typo in export header · MR dashboard!2250  [↗][dashboard!2250]
-
-[dashboard!2250]: https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2250
+- [X] ecfx-18200 fix typo in export header
 <!-- start-day:end -->
 ```
 
-     The line is `- [X] <key lowercase, if any> <summary clip, 80 chars> · <evidence>`: `[/]`
-     instead when the summary says the work is unfinished (wip, started, in progress,
-     continuing); evidence is the MR ref when `mr` is set, else `note: <summary clip>`. No run-state line. The same key
-     already has an Unplanned line: update it instead. An `offplan` whose key is on the plan means
-     the plan changed after it was written: treat it as `progress`.
+     The line is `- [X] <key lowercase, if any> <few words, ≤80 chars>`, with a trailing `<!-- pN -->`
+     (the next free id from `day-agent id`) when there is no key: `[/]` instead when the summary
+     says the work is unfinished (wip, started, in progress, continuing). The details go to the agent
+     file: `day-agent mr <key> <repo>!<iid> <url>` when `mr` is set, and `day-agent note <key>
+     <done|progress> "<evidence: merged <sha> (repo!iid), or the summary clip>"`, written before an
+     `[X]` (the key is the `pN` id for a keyless line). No run-state line. The same key already has an
+     Unplanned line: update it instead. An `offplan` whose key is on the plan means the plan changed
+     after it was written: treat it as `progress`. Old format: the line is
+     `- [X] <key> <summary clip, 80 chars> · <evidence>`, the evidence is `MR <repo>!<iid>
+     [↗][<repo>!<iid>]` when `mr` is set, else `note: <summary clip>`, and the link definition sits
+     above `<!-- start-day:end -->`.
    - A second message for the same key is handled in file order, each in full: the later marker and
      evidence win, except never downgrade `[X]`; both memory blocks are applied.
 4. Apply the memory block (step 4; not for `service`, `decision` or `clarify`), then `diary-links`, then `mv` the file to

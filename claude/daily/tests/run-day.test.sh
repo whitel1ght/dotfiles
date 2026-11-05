@@ -145,6 +145,24 @@ has "$F" "follow this text, not the copy you read earlier" "the new text replace
 has "$P" "argument is \`resume updated\`" "pi playbook handles the update resume"
 has "$P" "follow this text, not the copy you read earlier" "pi: the new text replaces the old"
 
+echo "== human plan: notes, evidence and MR links go to the agent file (2026-11-05) =="
+# section_has/lacks: <file> <heading regex> <fixed string> <label>, scoped to one "## " section
+section() { awk -v h="$2" '/^## /{f=($0 ~ h)} f' "$1"; }
+for doc in "$F" "$P"; do
+  n=$(basename "$(dirname "$doc")")
+  has "$doc" "day-agent note <key> done" "$n: evidence goes to the agent file before ticking"
+  has "$doc" "day-agent note <key> progress" "$n: progress goes to the agent file"
+  has "$doc" "day-agent note <key> blocked" "$n: a block goes to the agent file"
+  has "$doc" "day-agent note <key> handed-back" "$n: a hand-back goes to the agent file"
+  has "$doc" "day-agent mr <key>" "$n: MR links go to the agent file"
+  has "$doc" "the plan line only changes its marker and its few words" "$n: plan lines stay short"
+  has "$doc" "on a day with no agent file" "$n: old-format days keep the old rules"
+  lacks "$doc" "· progress: <summary clip>" "$n: no progress suffix on the plan line"
+  lacks "$doc" '· draft MR <repo>!<iid>  [↗]' "$n: no draft MR link suffix"
+  lacks "$doc" 'run `diary-links ~/wiki/diary/$(date +%F).md`' "$n: no diary-links step on the new path"
+  if section "$doc" '^## 7\.' | grep -qF -- '· with you: <KEY>'; then fail "$n: inbox writes no with-you suffix" "[· with you: <KEY>] in section 7"; else pass "$n: inbox writes no with-you suffix"; fi
+done
+
 echo "== decision queue =="
 has "$F" "## 9. Decisions" "has a decisions section"
 has "$F" "decide add --key" "files decisions with decide add"
