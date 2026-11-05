@@ -120,6 +120,21 @@ has "$P" "templates/review-brief.md" "pi: uses the review brief"
 has "$P" "[daily-idle] no agent running" "pi: handles the idle prompt"
 has "$B" "run Keep busy of /run-day (section 11)" "busy.ts pi prompt still names section 11"
 
+echo "== child steps are run-day's to keep true and to dispatch (D-407, 2026-11-05) =="
+for doc in "$F" "$P"; do
+  n=$(basename "$(dirname "$doc")")
+  lacks "$doc" "user's breakdown" "$n: children are no longer ignored"
+  has "$doc" "children under" "$n: names child steps"
+  has "$doc" "tick that child" "$n: ticks a child when its step is done"
+  has "$doc" "start-day carries every" "$n: says why a done child must be ticked"
+  has "$doc" "2. Open children, in plan order" "$n: Keep busy walks open children"
+  has "$doc" "any query against production, goes into a decision first" "$n: prod checks wait for a decision"
+  has "$doc" "5. Nothing in steps 1-4" "$n: Finish only after children and the sprint"
+  has "$doc" "one of steps 1-4 has" "$n: the idle rule counts the children step"
+  has "$doc" "never say the queue is clear" "$n: no 'queue clear' while items are open"
+  has "$doc" "Agents have nothing to do; open and yours:" "$n: the idle line lists what is open"
+done
+
 echo "== live updates: a changed playbook resumes the day (decision 0005) =="
 U="$TEST_DIR/../mod/update.ts"
 has "$U" "export const UPDATE_ARGS = 'resume updated'" "update.ts still sends resume updated"

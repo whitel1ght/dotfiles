@@ -229,10 +229,15 @@ All good: tick `[X]` with `· draft MR <repo>!<iid>  [↗][<repo>!<iid>]`, apply
 `memory:` block (step 4), set `mr=` and `agent=-` on the run-state line, and run Keep busy
 (step 11).
 
-A ticket has one top-level line on the plan; indented `  - [ ]` children under it are the
-user's breakdown, which the tick guard and panel ignore: mark and annotate the parent line only,
-and never add a second top-level line for a key already on the plan (put the new action on its
-line instead).
+A ticket has one top-level line on the plan, and never a second for a key already on the plan
+(put the new action on its line, or as a new child under it). Indented `  - [ ]` children under
+it are the ticket's steps. The tick guard and panel read only the parent, so the parent line keeps
+its own marker and evidence, and you keep the children true as well (2026-11-05, D-407): when a
+step is done, whoever did it (an agent's report, a posted reply or description, a merge, an
+answered decision, the user's word, or a check showing it already happened), tick that child
+`[X]` with ` · <evidence>` in the same turn you mark the parent. A child that turns out not to
+apply gets `[>] · note: <why>`. Never leave a done step unticked: start-day carries every
+unticked child into tomorrow's plan.
 
 Markers: `[ ]` not started · `[/]` in progress · `[X]` done (an older `[x]` counts too) ·
 `[!]` blocked, needs the user · `[>]` deferred. Evidence goes after the first ` · ` on the line:
@@ -482,6 +487,12 @@ When no item is `[ ]` or `[/]` any more, or every open item is the user's (`me`,
 `[/] · with you: <KEY>` line) and Keep busy (step 11) found nothing, or the user says so: process the inbox once more, then summarise the day: what shipped, what is blocked, what
 is deferred, what needs the user.
 
+While any item is `[ ]` or `[/]`, never say the queue is clear, nothing is left, or the day is
+done (2026-11-05, D-407: the session said "the queue is clear" with four tickets and their release
+steps open). When agents have nothing to do, say so and then list what is open, in plan order:
+`Agents have nothing to do; open and yours:`, one line per open item with its unticked children
+joined by `;`, the MR links per the rule above.
+
 Then suggest `/end-day` and run it in this session. It consolidates `~/wiki/work/projects/<p>/state.md`
 from the `notes:` lines you collected and ends the run by moving the run state into
 `~/.local/state/run-day/done/`. Never write `state.md` yourself during the day, and do not delete
@@ -549,10 +560,18 @@ the end of the dispatch in step 2, and on a `[daily-idle] no agent running: …`
 than 3 agents run (ticket, review and round agents all count), fill the free slots in this order:
 
 1. Queued `auto` and `review` items, in plan order (step 2).
-2. Open `wait` and `me` items whose state moved: a `wait` item whose blocker cleared is dispatched (a `review` item only after `review-gate <project path> <iid>` exits 0; 1: class `me`, `already approved`; 3: leave it);
+2. Open children, in plan order, under every open item whatever its class. First tick each child
+   that is already done (check its MR, pipeline, Slack or Jira state and the parent's own
+   `· progress:` note; step 3). Then, for each child still open: if an agent can do it alone
+   (draft a reply, a description or a follow-up ticket, fix code, run a read-only check), dispatch
+   it as step 2, the brief naming that child as the task. Anything it would post, file or send
+   under the user's name, and any query against production, goes into a decision first (step 9).
+   A child that only the user can do (a merge in the UI, a deploy or release step, a meeting, QA
+   by hand) stays theirs: leave it for the Finish list.
+3. Open `wait` and `me` items whose state moved: a `wait` item whose blocker cleared is dispatched (a `review` item only after `review-gate <project path> <iid>` exits 0; 1: class `me`, `already approved`; 3: leave it);
    for a merge item with a green pipeline and approvals and no decision open, file the merge
    decision with the MR link.
-3. The sprint: the user's tickets first, then the team's unassigned To-Do tickets, highest rank
+4. The sprint: the user's tickets first, then the team's unassigned To-Do tickets, highest rank
    first. Each line is `KEY<TAB>status<TAB>summary`:
 
 ```bash
@@ -580,9 +599,9 @@ jt --list -u
      `[/] · ready locally, waiting on Take it` (no tick, no retry); the fresh worker after
      `Take it` pushes and opens the Draft MR, and its report gets the full step 3.
    - `jt` fails: say so in one line and try again at the next Keep busy.
-4. Nothing in steps 1-3: Finish (step 8), naming what each step found empty.
+5. Nothing in steps 1-4: Finish (step 8), naming what each step found empty.
 
-Never end a turn saying the rest is the user's while a slot is free and one of steps 1-3 has
+Never end a turn saying the rest is the user's while a slot is free and one of steps 1-4 has
 something. A review, a merge check or a sprint ticket is not the user's work because what comes
 out of it is posted under their name: an agent drafts it, and a decision asks before anything is
 posted.
