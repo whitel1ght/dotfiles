@@ -93,17 +93,17 @@ assert_eq "$exp" "$out" "old format --list: MRs from the line's refs, unreferenc
 export DAY_AGENT_DATE=2026-11-05
 : > "$LOG"; FZF_PICK="ecfx-17482 retrieve" "$SCRIPT"; rc=$?
 assert_eq "0" "$rc" "ticket pick exits 0"
-assert_eq "fzf --with-nth=3 --delimiter=\\t
+assert_eq "fzf --height=100% --with-nth=3 --delimiter=\\t
 jt ECFX-17482" "$(cat "$LOG")" "ticket row execs jt with the key (fzf gets with-nth and delimiter)"
 
 : > "$LOG"; FZF_PICK="dashboard!2289" "$SCRIPT"; rc=$?
 assert_eq "0" "$rc" "mr pick exits 0"
-assert_eq "fzf --with-nth=3 --delimiter=\\t
+assert_eq "fzf --height=100% --with-nth=3 --delimiter=\\t
 open https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2289" "$(cat "$LOG")" "mr row opens its url"
 
 : > "$LOG"; FZF_EXIT=130 "$SCRIPT"; rc=$?
 assert_eq "0" "$rc" "fzf cancel exits 0"
-assert_eq "fzf --with-nth=3 --delimiter=\\t" "$(cat "$LOG")" "fzf cancel runs nothing"
+assert_eq "fzf --height=100% --with-nth=3 --delimiter=\\t" "$(cat "$LOG")" "fzf cancel runs nothing"
 
 # empty plan
 export DAY_AGENT_DATE=2026-01-01

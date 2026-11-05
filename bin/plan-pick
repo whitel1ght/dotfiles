@@ -115,7 +115,7 @@ if [ "$list" = 1 ]; then
 fi
 
 rc=0
-pick=$(printf '%s' "$rows" | $FZF --with-nth=3 --delimiter='\t') || rc=$?
+pick=$(printf '%s' "$rows" | $FZF --height=100% --with-nth=3 --delimiter='\t') || rc=$?
 [ "$rc" = 0 ] && [ -n "$pick" ] || exit 0
 
 kind="${pick%%$T*}"
