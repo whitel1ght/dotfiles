@@ -25,6 +25,18 @@ for ship in "$DIR/commands/ship-mr.md" "$DIR/../pi/prompts/ship-mr.md"; do
   has "$doc" "A dependency is never a reason to stay in draft" "$ship: a dependency does not hold the ship"
   has "$doc" "Depends on: <repo>!<iid>, merge after it" "$ship: the dependency line for the description"
   has "$doc" "left in draft: <the unfinished work>" "$ship: only unfinished work is a reason in the report"
+  has "$doc" "Reading the diff yourself is not a review" "$ship: the panel is the review (D-450)"
+  has "$doc" "the review panel could not run" "$ship: no panel, no ship"
+done
+
+echo "CLAUDE.md, review-local and handle-ticket — mr-ship needs a recorded review"
+has "$gitlab" "refuses an MR with no recorded review" "the gate is stated"
+has "$gitlab" "\`--no-review\` is mine alone" "the bypass is the user's"
+for doc_file in "$DIR/commands/review-local.md" "$DIR/../pi/prompts/review-local.md" \
+    "$DIR/skills/handle-ticket/SKILL.md" "$DIR/../pi/skills/handle-ticket/SKILL.md"; do
+  doc=$(tr '\n' ' ' < "$doc_file" | tr -s ' ')
+  has "$doc" "mr-ship --reviewed <repo> <iid> <head_sha>" "$doc_file: records the review"
+  has "$doc" "\`Panel:\` line" "$doc_file: the line the record checks for"
 done
 
 echo "CLAUDE.md — coach rules"

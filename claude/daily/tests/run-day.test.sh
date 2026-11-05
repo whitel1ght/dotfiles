@@ -162,6 +162,7 @@ for doc in "$F" "$P"; do
   has "$doc" 'owner=external:<KEY>` is never shipped' "$n: a side session's MR is left alone"
   has "$doc" 'Ship <repo>!<iid>?' "$n: a refused ship agent falls back to a decision, no workaround"
   has "$doc" 'ship-mr.md' "$n: shipping follows ship-mr"
+  has "$doc" 'never `--no-review`' "$n: a ship refused for lack of a review goes to the user (D-450)"
   has "$doc" 'ship <repo>!<iid>' "$n: triage knows a ship line"
   lacks "$doc" 'draft MR <repo>!<iid>, pipeline <status>, tests rerun' "$n: an unmerged draft is no evidence of done"
   has "$doc" "the plan line only changes its marker and its few words" "$n: plan lines stay short"

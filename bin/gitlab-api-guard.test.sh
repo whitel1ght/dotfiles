@@ -100,6 +100,15 @@ allows "--ready with reviewers" "glab mr update 23 --ready --reviewer +bkeeling"
 allows "--reviewer= form" "glab mr update 23 --ready --reviewer=+bkeeling"
 allows "--draft" "glab mr update 23 --draft"
 
+echo "the review gate's bypass"
+says "mr-ship --no-review is the user's" "~/.local/bin/mr-ship backend 23 --no-review" "/ship-mr"
+blocks "inside bash -c" "bash -c 'mr-ship backend 23 --no-review'"
+blocks "after another command" "cd /tmp && mr-ship --no-review backend 23"
+allows "mr-ship" "~/.local/bin/mr-ship backend 23"
+allows "mr-ship -n" "~/.local/bin/mr-ship backend 23 -n"
+allows "recording a review" "mr-ship --reviewed backend 23 abc review.md"
+allows "the flag named in an echo" "echo mr-ship --no-review"
+
 echo "other calls"
 printf '{"tool_name":"Read","tool_input":{"file_path":"/x"}}' | "$SCRIPT" >/dev/null 2>&1
 [ $? -eq 0 ] && pass "non-Bash tools pass" || fail "non-Bash tools pass" "blocked"

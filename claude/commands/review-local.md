@@ -117,7 +117,10 @@ snippet and suggested fix, one line for everything else. Prune hard — 3 sharp 
 
 - Group findings under a heading per MR, plus **Cross-MR** for seam issues.
 - Status per MR: ✅ Would approve / 🔴 Would request changes.
-- Footer: panel, rounds, head SHA per MR, `Local review — not posted`.
+- Footer: a `Panel:` line naming the lenses that ran, rounds, the full 40-character head SHA per
+  MR, `Local review — not posted`.
 
-Print `review.md` in chat, then its path. Finally remove the worktrees:
-`git -C <checkout> worktree remove --force "$RUN/<slug>"` for each MR.
+Print `review.md` in chat, then its path. For each MR, record the review, which `mr-ship` requires
+before it ships (a local file only, nothing on GitLab):
+`~/.local/bin/mr-ship --reviewed <repo> <iid> <head_sha> "$RUN/review.md"`.
+Finally remove the worktrees: `git -C <checkout> worktree remove --force "$RUN/<slug>"` for each MR.

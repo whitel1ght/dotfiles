@@ -7,6 +7,7 @@ and a `curl` write to gitlab.com/api without `Content-Type: application/json`
 (curl then sends form encoding and GitLab misreads the body). This blocks both.
 It also blocks `glab mr update --ready` (`-r`) without `--reviewer`: undrafting
 the user's MR goes through `mr-ship`, which requests the team's reviewers.
+And it blocks `mr-ship --no-review`: that bypass of the review gate is the user's.
 
 A curl write is `-X POST|PUT|PATCH` or a `-d`/`--data*` body without `-G`;
 `--json` and `-F`/`--form` set their own content type and pass. Reads, other
@@ -45,6 +46,8 @@ TYPE_WHY = ("GitLab API write without `Content-Type: application/json`: add "
 READY_WHY = ("Undrafting an MR without reviewers is refused: for the user's own MR run "
              "`~/.local/bin/mr-ship <repo> <iid>` (marks it ready, assigns the user, requests the team: "
              "Levi, Bill, Shoha, EJ, Adam); for someone else's MR pass `--reviewer` explicitly.")
+NO_REVIEW_WHY = ("`mr-ship --no-review` is the user's bypass, not an agent's: run the review through "
+                 "`/ship-mr`, or report that the MR is left in draft and why.")
 
 
 def strip_heredocs(command: str) -> str:
@@ -171,6 +174,8 @@ def reason(command: str, depth: int = 0) -> str | None:
             why = curl_reason(args)
         elif cmd == "glab":
             why = glab_reason(args)
+        elif cmd == "mr-ship":
+            why = NO_REVIEW_WHY if "--no-review" in args else None
         elif cmd in SHELLS and "-c" in args and args.index("-c") + 1 < len(args):
             why = reason(args[args.index("-c") + 1], depth + 1)
         elif cmd == "eval" and args:

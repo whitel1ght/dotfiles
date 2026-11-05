@@ -116,7 +116,8 @@ Global instructions applied across all projects. Keep this short — project-lev
 - To undraft one of my MRs ("undraft", "mark ready", "ship it"), run `~/.local/bin/mr-ship
   <repo> <iid>`: it marks it ready, assigns me and requests the Omni engineers team (Levi,
   Bill, Shoha, EJ, Adam) as reviewers. Never a bare `glab mr update --ready`;
-  `gitlab-api-guard` blocks it without `--reviewer`.
+  `gitlab-api-guard` blocks it without `--reviewer`. `mr-ship` refuses an MR with no recorded
+  review (`/ship-mr` runs and records one); its `--no-review` is mine alone.
 - An MR stays in draft only while its work is unfinished. Waiting on another MR, a deploy or a
   release is not unfinished: the MR ships, with `Depends on: backend!6888, merge after it` in
   its description. A finished MR ships without asking, through `/ship-mr`, which reviews and

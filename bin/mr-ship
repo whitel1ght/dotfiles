@@ -1,28 +1,82 @@
 #!/bin/bash
-# mr-ship <repo> <iid> [-n] - take the user's own open MR out of draft, assign
-# it to the user (D-007) and request the standing reviewers (D-008).
+# mr-ship <repo> <iid> [-n] [--no-review] - take the user's own open MR out of
+# draft, assign it to the user (D-007) and request the standing reviewers (D-008).
 # <repo> is a GitLab path (ecfx/ecfx-dashboard) or a short name (dashboard,
 # ecfx-dashboard). -n prints the calls and makes none. Refuses an MR that is
 # not open or not the user's.
+#
+# It also refuses an MR with no recorded review, or whose reviewed commit has left
+# the MR's history (D-450). The commit only has to still be there: /ship-mr pushes
+# its fixes after the review, so the head moves on. -n reports that refusal and
+# still exits 0, because /ship-mr runs it before reviewing. --no-review is the
+# user's own bypass; gitlab-api-guard refuses it from an agent.
+#
+# mr-ship --reviewed <repo> <iid> <head_sha> <review.md> records a review: the file
+# must name the full SHA and have a "Panel:" line. It touches nothing on GitLab.
 set -uo pipefail
 
 REVIEWERS="adam.warbington,bkeeling,smtsuchi,ejjung,levisiebensecfx"
+STATE_DIR="${MR_SHIP_STATE:-$HOME/.local/state/mr-ship}"
 
-dry=0; args=()
+full_repo() {
+    case "$1" in
+        */*) echo "$1" ;;
+        ecfx-*) echo "ecfx/$1" ;;
+        *) echo "ecfx/ecfx-$1" ;;
+    esac
+}
+
+check_iid() {
+    case "$1" in ''|*[!0-9]*) echo "mr-ship: bad MR number: $1" >&2; exit 2 ;; esac
+}
+
+state_file() { echo "$STATE_DIR/${1//\//__}-$2"; }
+
+if [ "${1:-}" = --reviewed ]; then
+    [ "$#" -eq 5 ] || { echo "usage: mr-ship --reviewed <repo> <iid> <head_sha> <review.md>" >&2; exit 2; }
+    repo="$(full_repo "$2")"; iid="$3"; sha="$4"; file="$5"
+    check_iid "$iid"
+    case "$sha" in *[!0-9a-f]*) sha="" ;; esac
+    [ "${#sha}" -eq 40 ] || { echo "mr-ship: need the full 40-character head SHA, got: $4" >&2; exit 2; }
+    [ -s "$file" ] || { echo "mr-ship: no review in $file" >&2; exit 1; }
+    grep -q "$sha" "$file" || { echo "mr-ship: $file does not name $sha" >&2; exit 1; }
+    grep -q '^Panel:' "$file" || { echo "mr-ship: $file has no \"Panel:\" line, so no panel ran" >&2; exit 1; }
+    mkdir -p "$STATE_DIR" || exit 1
+    base="$(state_file "$repo" "$iid")"
+    cp "$file" "$base.md" && echo "$sha" > "$base.sha" || exit 1
+    echo "mr-ship: review of $repo!$iid recorded at ${sha:0:12}"
+    exit 0
+fi
+
+dry=0; gate=1; args=()
 for a in "$@"; do
     case "$a" in
         -n) dry=1 ;;
+        --no-review) gate=0 ;;
         *) args+=("$a") ;;
     esac
 done
-[ "${#args[@]}" -eq 2 ] || { echo "usage: mr-ship <repo> <iid> [-n]" >&2; exit 2; }
-repo="${args[0]}"; iid="${args[1]}"
-case "$repo" in
-    */*) ;;
-    ecfx-*) repo="ecfx/$repo" ;;
-    *) repo="ecfx/ecfx-$repo" ;;
-esac
-case "$iid" in ''|*[!0-9]*) echo "mr-ship: bad MR number: $iid" >&2; exit 2 ;; esac
+[ "${#args[@]}" -eq 2 ] || { echo "usage: mr-ship <repo> <iid> [-n] [--no-review]" >&2; exit 2; }
+repo="$(full_repo "${args[0]}")"; iid="${args[1]}"
+check_iid "$iid"
+
+# Prints why the MR may not ship, or nothing when its review holds.
+review_problem() {
+    local base sha commits
+    base="$(state_file "$repo" "$iid")"
+    if [ ! -s "$base.sha" ]; then
+        echo "no local review recorded for $repo!$iid: run /ship-mr (or /review-local)"
+        return
+    fi
+    sha="$(cat "$base.sha")"
+    # a page per array: the jq stream takes them all
+    if ! commits="$(glab api "projects/${repo//\//%2F}/merge_requests/$iid/commits?per_page=100" --paginate | jq -r '.[].id')"; then
+        echo "cannot read the commits of $repo!$iid, so its review cannot be checked"
+        return
+    fi
+    grep -qx "$sha" <<<"$commits" \
+        || echo "the review of $repo!$iid covers ${sha:0:12}, which is no longer in the MR: run /ship-mr (or /review-local) again"
+}
 
 me="$(glab api user | jq -r .username)" || me=""
 [ -n "$me" ] && [ "$me" != null ] || { echo "mr-ship: cannot resolve the current GitLab user" >&2; exit 1; }
@@ -31,6 +85,14 @@ state="$(jq -r .state <<<"$view")"
 author="$(jq -r .author.username <<<"$view")"
 [ "$state" = opened ] || { echo "mr-ship: $repo!$iid is $state, not open" >&2; exit 1; }
 [ "$author" = "$me" ] || { echo "mr-ship: $repo!$iid belongs to $author, not $me" >&2; exit 1; }
+
+if [ "$gate" -eq 1 ]; then
+    problem="$(review_problem)"
+    if [ -n "$problem" ]; then
+        echo "mr-ship: $problem" >&2
+        [ "$dry" -eq 1 ] || exit 1
+    fi
+fi
 
 # a "+" prefix adds to the existing assignees/reviewers instead of replacing them
 add_reviewers="+${REVIEWERS//,/,+}"

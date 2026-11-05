@@ -245,8 +245,9 @@ follow it on that MR. It may run `mr-ship` for this MR, nothing else outside its
 - Its report says `shipped`: run `day-agent note <key> done "shipped <repo>!<iid>, reviewers requested"`
   and tick `[X]`.
 - It says `left in draft: <the unfinished work>`: treat it as a failed check, with that reason.
-- The harness refuses the agent or its push, write or `mr-ship`: do not retry another way. The line
-  stays `[/]`; file a decision (step 9), question `Ship <repo>!<iid>?`, options
+- The harness refuses the agent or its push, write or `mr-ship`, the panel could not start, or
+  `mr-ship` still refuses for lack of a review: do not retry another way, and never `--no-review`. The
+  line stays `[/]`; file a decision (step 9), question `Ship <repo>!<iid>?`, options
   `You run /ship-mr yourself` and `It stays a draft: work is left`, with the refusal quoted in the
   context.
 

@@ -41,7 +41,9 @@ Only when no finding is left unfixed and all checks are green:
 ```
 
 `mr-ship` marks the MR ready, assigns you and requests the standing reviewers. It refuses
-an MR that is merged, closed or not yours.
+an MR that is merged, closed or not yours, and one whose review from step 2 is not recorded or
+whose reviewed commit has left the MR's history. Fixes pushed on top are fine; a rewritten history
+needs step 2 again. Reading the diff yourself is not a review, and `--no-review` is the user's alone.
 
 A dependency is never a reason to stay in draft. Before `mr-ship`, when the MR waits on another
 MR, a deploy or a release, put one line at the top of its description:
@@ -52,8 +54,9 @@ this command makes.
 
 ## 5. Stop conditions
 
-Do not run `mr-ship` and leave the MR in draft when a finding is unfixed or a check is red for
-any other reason. Say which finding or check, and why, in the report.
+Do not run `mr-ship` and leave the MR in draft when a finding is unfixed, a check is red for
+any other reason, or the review panel could not run. Say which finding or check, and why, in the
+report.
 
 ## 6. Report
 
