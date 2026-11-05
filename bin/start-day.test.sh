@@ -166,6 +166,23 @@ assert_contains "$out" "ecfx/ecfx-backend!8001 waits on ecfx/ecfx-backend!8000 (
 assert_lacks "$out" "- ecfx/ecfx-backend!8000 " "the draft MR itself is never listed as its own line"
 assert_lacks "$out" "u8000" "the draft MR's own line never appears"
 
+echo "start-day — My draft MRs: every open draft, however old"
+drafts() { printf '%s\n' "$1" | awk '/^## My draft MRs/{f=1;next} /^## /{if(f)exit} f'; }
+reset
+cat > "$FIX/mrs.json" <<EOF
+[{"project_id":1,"iid":5568,"references":{"full":"ecfx/ecfx-backend!5568"},"title":"Draft: feat(ECFX-5412): old one","source_branch":"a","target_branch":"master","draft":true,"web_url":"u5568","updated_at":"2026-08-19T10:00:00Z"},
+ $(mr 1 8001 "ecfx/ecfx-backend!8001" "ready one" "b" "master" false "u8001")]
+EOF
+detail mergeable 8001
+out=$(drafts "$(run collect --since 2026-11-01T00:00:00Z)")
+assert_contains "$out" "- ecfx/ecfx-backend!5568 feat(ECFX-5412): old one — updated 2026-08-19" "an idle draft is listed, without the Draft: prefix"
+assert_lacks "$out" "ready one" "a ready MR is not a draft"
+reset
+echo '[]' > "$FIX/mrs.json"
+assert_contains "$(drafts "$(run collect --since 2026-11-01T00:00:00Z)")" "(none)" "no drafts says so"
+reset
+assert_contains "$(GLAB_DOWN=1 drafts "$(GLAB_DOWN=1 run collect --since 2026-11-01T00:00:00Z)")" "(GitLab unavailable)" "GitLab down says so, not (none)"
+
 echo "start-day — Ready to merge: checking is re-polled then resolved"
 reset
 cat > "$FIX/mrs.json" <<EOF

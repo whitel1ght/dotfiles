@@ -25,6 +25,8 @@ unknown() { # file, allowed-keys
 echo "== ticket-brief =="
 f="$T/ticket-brief.md"
 for k in $BRIEF_KEYS; do has "$f" "{{$k}}" "has {{$k}}"; done
+has "$f" "Draft means the work is unfinished" "a draft means unfinished work"
+has "$f" 'Depends on: <repo>!<iid>, merge after it' "a dependency goes in the MR description"
 [ -z "$(unknown "$f" "$BRIEF_KEYS")" ] && pass "no unknown placeholders" || fail "unknown placeholders" "$(unknown "$f" "$BRIEF_KEYS")"
 has "$f" "memory:" "ends with the memory block"
 has "$f" "decision: {title, context, decision, consequences} | none" "memory block has the decision field"

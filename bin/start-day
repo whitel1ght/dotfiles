@@ -196,6 +196,17 @@ def topo($compids; $byid):
 JQ
 )
 
+# Every open draft, however old: "My open MRs" details only what moved lately, so a
+# finished draft that stops moving would never come up again.
+collect_my_drafts() {
+  section "My draft MRs"
+  local mrs="${MY_MRS_JSON:-}"
+  [ -n "$mrs" ] || { echo "(GitLab unavailable)"; return; }
+  [ "$(jq '[.[] | select(.draft)] | length' <<<"$mrs")" -gt 0 ] || { echo "(none)"; return; }
+  jq -r '.[] | select(.draft)
+    | "- \(.references.full) \(.title | sub("^draft: *"; ""; "i")) — updated \((.updated_at // "?")[0:10])"' <<<"$mrs"
+}
+
 collect_ready_to_merge() {
   section "Ready to merge"
   local mrs
@@ -432,7 +443,7 @@ case "${1:-}" in
     # team plugins after repos-sync, so they update from the clone it just fast-forwarded
     ( "${START_DAY_REPOS_SYNC:-$HERE/repos-sync}" >"$repos_out" 2>&1
       "${START_DAY_TEAM_PLUGINS_SYNC:-$HERE/team-plugins-sync}" >"$plugins_out" 2>&1 ) </dev/null & repos_pid=$!
-    collect_carryover; collect_my_mrs; collect_ready_to_merge; collect_review_queue; collect_gitlab_todos; collect_jira; collect_qa_candidates
+    collect_carryover; collect_my_mrs; collect_my_drafts; collect_ready_to_merge; collect_review_queue; collect_gitlab_todos; collect_jira; collect_qa_candidates
     wait "$repos_pid" || true
     section "Repos (fetched from GitLab)"
     if [ -s "$repos_out" ]; then cat "$repos_out"; else echo "(repos-sync printed nothing)"; fi

@@ -67,6 +67,10 @@ for f in "$C" "$P"; do
   lacks "$f" "backend !6390" "$side: merge example uses repo!iid"
   lacks "$f" "@bob" "$side: examples name people without @"
   has "$f" "day-agent id" "$side: the id comes from day-agent"
+  has "$f" '## My draft MRs' "$side: reads the draft list"
+  has "$f" 'ship <repo>!<iid>' "$side: a finished draft becomes a ship line"
+  has "$f" 'undraft X once Y' "$side: no step waits on a dependency to undraft"
+  lacks "$f" 'already approved or drafts' "$side: drafts are no longer left out wholesale"
   lacks "$f" "trailing \`[↗][label]\` ref" "$side: no [↗] refs in the plan"
   lacks "$f" "inline \`[dashboard!940](url)\`" "$side: no inline MR links in the plan"
 done

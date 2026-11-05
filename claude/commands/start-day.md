@@ -123,9 +123,19 @@ ticket are one item.
 
 Leave out what isn't mine to move: a note marked "I replied since" is waiting on the
 reviewer even if its thread is still unresolved. Also leave out MRs that are idle,
-waiting on their author, already approved or drafts, and carry-over items already done.
+waiting on their author or already approved, and carry-over items already done.
 Someone else's MR whose last review from me is unaddressed stays out wherever it shows
 up (a to-do marked "waiting on author", Slack, Jira) until its author pushes or replies.
+
+`## My draft MRs` lists every open draft of mine, however old. A draft means unfinished work
+and nothing else, so decide each one from its ticket and the carry-over:
+- Finished (all that is left is waiting on another MR, a deploy, a release or a review): plan
+  `<key> ship <repo>!<iid>` under **First**, as a child step when the ticket already has a line.
+  It ships now, with the dependency in its description.
+- Unfinished and on the plan: nothing more. Unfinished and parked: it stays out.
+- Can't tell: leave it out and name it in the closing message. Hands-off items stay out.
+
+Never plan a step like `undraft X once Y`: an MR that only waits on Y ships now.
 
 Write it in my diary style, as a short list I can read at a glance: lowercase ticket
 keys, plain words, one checkbox per ticket, starting with its key: `- [ ] <key> <few words>`,

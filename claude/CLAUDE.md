@@ -117,6 +117,9 @@ Global instructions applied across all projects. Keep this short — project-lev
   <repo> <iid>`: it marks it ready, assigns me and requests the Omni engineers team (Levi,
   Bill, Shoha, EJ, Adam) as reviewers. Never a bare `glab mr update --ready`;
   `gitlab-api-guard` blocks it without `--reviewer`.
+- An MR stays in draft only while its work is unfinished. Waiting on another MR, a deploy or a
+  release is not unfinished: the MR ships, with `Depends on: backend!6888, merge after it` in
+  its description. Undrafting still takes my yes: when I haven't asked for it, file a card.
 - When an API merge fails, report it and leave the merge to me; no retries with other flags.
 - Never move a Jira ticket backwards (e.g. Done → In QA) without asking.
 

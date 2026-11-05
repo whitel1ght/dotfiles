@@ -15,6 +15,17 @@ fail() { FAIL=$((FAIL + 1)); echo "  FAIL - $1"; echo "         $2"; }
 section() { awk -v h="## $2" '$0 == h {on=1; next} /^## /{on=0} on' "$1" | tr '\n' ' ' | tr -s ' '; }
 has() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3" "[$2] missing" ;; esac; }
 
+echo "CLAUDE.md and ship-mr — a draft means unfinished work"
+gitlab=$(section "$MD" "GitLab and Jira APIs")
+has "$gitlab" "An MR stays in draft only while its work is unfinished" "the rule itself"
+has "$gitlab" "Depends on:" "a dependency goes in the description"
+for ship in "$DIR/commands/ship-mr.md" "$DIR/../pi/prompts/ship-mr.md"; do
+  doc=$(tr '\n' ' ' < "$ship" | tr -s ' ')
+  has "$doc" "A dependency is never a reason to stay in draft" "$ship: a dependency does not hold the ship"
+  has "$doc" "Depends on: <repo>!<iid>, merge after it" "$ship: the dependency line for the description"
+  has "$doc" "left in draft: <the unfinished work>" "$ship: only unfinished work is a reason in the report"
+done
+
 echo "CLAUDE.md — coach rules"
 prefs=$(section "$MD" Preferences)
 has "$prefs" "Edit and Write accept only a file opened with the Read tool" "F-016/F-022 only the Read tool counts"
