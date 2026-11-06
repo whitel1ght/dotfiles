@@ -45,6 +45,9 @@ the user edits the diary too. `day-plan` opens today's diary in a tmux popup whe
   post about someone else's).
 - Questions for the user go into the decision queue (step 9): never ask the question in the thread,
   never wait for the answer. The only question asked in the thread is the triage go-ahead (step 1).
+- When the user asks for testing steps for a ticket, answer with the numbered steps first, taken from
+  the plan or the hand-off note, and report agent status after them. If they don't exist yet, write
+  them from the ticket and the diff, or say in the first line what is missing.
 - MR numbers are markdown links with the repo in the text, never a bare `!2202`:
   `[dashboard!2202](https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2202)`. Known paths:
   `ecfx/ecfx-backend`, `ecfx/ecfx-dashboard`, `ecfx/ecfx-admin`, `ecfx/ecfx-protobufs`,
