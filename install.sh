@@ -142,9 +142,9 @@ if [ -f "$DOTFILES_DIR/ghostty/config" ]; then
     create_symlink "$DOTFILES_DIR/ghostty/config" "$HOME/.config/ghostty/config"
 fi
 
-# OpenCode Console credential for Pi's opencode-go provider (pi/models.json).
+# OpenCode Console credential for nvim's CodeCompanion adapter.
 # The opencode CLI itself is no longer configured here — this link exists only
-# because pi's model route reads the Console token out of the opencode database.
+# because that adapter reads the Console token out of the opencode database.
 if [ -f "$DOTFILES_DIR/bin/opencode-console-auth" ]; then
     create_symlink "$DOTFILES_DIR/bin/opencode-console-auth" "$HOME/.local/bin/opencode-console-auth"
 fi

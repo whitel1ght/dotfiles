@@ -475,7 +475,7 @@ personal links.
 
 `pi/` contains the [Pi](https://pi.dev) configuration, linked per item into
 `~/.pi/agent/` by `plink`. Authentication, sessions, and installed packages stay
-machine-local. The default model is `opencode-go/longcat-2.5`; delegation uses
+machine-local. The default model is `qwen-token-plan/qwen3.8-max`; delegation uses
 pinned upstream `pi-subagents` with named agents and strict session-model scope,
 not Claude Bridge.
 

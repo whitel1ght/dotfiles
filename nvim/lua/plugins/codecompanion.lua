@@ -49,7 +49,7 @@ return {
             schema = { model = { default = 'gemma-4-e4b-it-mlx' } },
           })
         end,
-        -- Same endpoint and auth helper as the opencode-go provider in pi/models.json.
+        -- OpenCode Go endpoint; bin/opencode-console-auth reads the Console token.
         opencode_go = function()
           local auth = vim.fn.expand('~/.local/bin/opencode-console-auth')
           return require('codecompanion.adapters').extend('openai_compatible', {
