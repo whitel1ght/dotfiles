@@ -787,6 +787,11 @@ if [ -f "$DOTFILES_DIR/bin/img-preview" ]; then
     create_symlink "$DOTFILES_DIR/bin/img-preview" "$HOME/.local/bin/img-preview"
 fi
 
+# dot-land lands a finished dotfiles branch: fast-forward main, push, clean up.
+if [ -f "$DOTFILES_DIR/bin/dot-land" ]; then
+    create_symlink "$DOTFILES_DIR/bin/dot-land" "$HOME/.local/bin/dot-land"
+fi
+
 # wiki-commit commits an agent's edits to wiki pages with an Agent-edit trailer.
 if [ -f "$DOTFILES_DIR/bin/wiki-commit" ]; then
     create_symlink "$DOTFILES_DIR/bin/wiki-commit" "$HOME/.local/bin/wiki-commit"

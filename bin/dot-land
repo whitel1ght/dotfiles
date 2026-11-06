@@ -1,0 +1,87 @@
+#!/bin/bash
+# Land a finished dotfiles branch: fast-forward main, push, remove its worktree and branch.
+#
+#   dot-land [--install] <branch>
+#
+# Exit codes: 0 landed; 1 refused or failed (the message says what stands); 2 usage;
+# 3 main had moved, so the branch was rebased and nothing landed: re-run its tests, run again.
+# Never forces anything: not the push, not the worktree removal, not an uncommitted file.
+set -uo pipefail
+
+REPO="${DOT_LAND_REPO:-$HOME/projects/dotfiles}"
+
+usage() { echo "usage: dot-land [--install] <branch>" >&2; exit 2; }
+refuse() { echo "dot-land: $1" >&2; exit 1; }
+
+INSTALL=0
+BRANCH=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --install) INSTALL=1 ;;
+        -*) usage ;;
+        *) [ -z "$BRANCH" ] || usage; BRANCH="$1" ;;
+    esac
+    shift
+done
+[ -n "$BRANCH" ] || usage
+
+[ "$BRANCH" != main ] || refuse "main is what branches land on"
+git -C "$REPO" show-ref --verify --quiet "refs/heads/$BRANCH" || refuse "no branch $BRANCH in $REPO"
+
+ON="$(git -C "$REPO" symbolic-ref --short -q HEAD || echo 'a detached HEAD')"
+[ "$ON" = main ] || refuse "$REPO is on $ON, not main"
+
+WT="$(git -C "$REPO" worktree list --porcelain | awk -v b="branch refs/heads/$BRANCH" '
+    /^worktree /{ p = substr($0, 10) } $0 == b { print p }')"
+if [ -n "$WT" ]; then
+    case "$(pwd -P)/" in
+        "$(cd "$WT" && pwd -P)"/*) refuse "this shell is inside $WT: leave it first, its removal comes last" ;;
+    esac
+    [ -z "$(git -C "$WT" status --porcelain)" ] || refuse "$WT has uncommitted changes: commit or drop them first"
+fi
+
+if ! git -C "$REPO" merge-base --is-ancestor main "$BRANCH"; then
+    [ -n "$WT" ] || refuse "main moved and $BRANCH has no worktree to rebase in"
+    if ! git -C "$WT" rebase -q main >/dev/null 2>&1; then
+        git -C "$WT" rebase --abort >/dev/null 2>&1
+        refuse "$BRANCH has a conflict with main: rebase it by hand in $WT"
+    fi
+    echo "dot-land: main moved, so $BRANCH is rebased onto it. Nothing landed: re-run its tests, then run dot-land again." >&2
+    exit 3
+fi
+
+MATCHES=()
+while IFS= read -r -d '' f; do
+    [ -n "$(git -C "$REPO" status --porcelain -- "$f")" ] || continue
+    git -C "$REPO" show "$BRANCH:$f" 2>/dev/null | cmp -s - "$REPO/$f" \
+        || refuse "$f has uncommitted changes in $REPO that differ from $BRANCH: compare them, and bring what should stay into the branch"
+    MATCHES+=("$f")
+done < <(git -C "$REPO" diff --name-only -z main "$BRANCH")
+[ "${#MATCHES[@]}" -eq 0 ] || git -C "$REPO" add -- "${MATCHES[@]}"
+
+NEEDS_INSTALL="$(git -C "$REPO" diff --name-only --diff-filter=A main "$BRANCH" -- bin | grep -v '\.test\.sh$')"
+[ -z "$(git -C "$REPO" diff --name-only main "$BRANCH" -- install.sh)" ] || NEEDS_INSTALL=1
+COUNT="$(git -C "$REPO" rev-list --count "main..$BRANCH")"
+
+git -C "$REPO" merge -q --ff-only "$BRANCH" || refuse "the fast-forward of main failed"
+SHA="$(git -C "$REPO" rev-parse --short HEAD)"
+
+git -C "$REPO" push -q origin main \
+    || refuse "main is at $SHA here but not pushed: the worktree and branch are kept, so fix the push and run dot-land again"
+
+if [ -n "$WT" ]; then
+    git -C "$REPO" worktree remove "$WT" || refuse "$SHA is pushed, but $WT could not be removed"
+fi
+git -C "$REPO" branch -q -d "$BRANCH" || refuse "$SHA is pushed, but branch $BRANCH could not be deleted"
+
+echo "landed $COUNT commit(s) from $BRANCH: main is at $SHA, pushed"
+
+if [ "$INSTALL" -eq 1 ]; then
+    if ! LOG="$(cd "$REPO" && ./install.sh 2>&1)"; then
+        printf '%s\n' "$LOG" | tail -5 >&2
+        refuse "install.sh failed; $SHA is landed and pushed"
+    fi
+    echo "install.sh ran"
+elif [ -n "$NEEDS_INSTALL" ]; then
+    echo "this adds a script or changes the installer: run ./install.sh"
+fi
