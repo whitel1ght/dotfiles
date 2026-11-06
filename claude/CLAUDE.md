@@ -19,6 +19,8 @@ Global instructions applied across all projects. Keep this short — project-lev
   get past it; stop and ask me.
 - Messages sent as me to other people (Slack replies, DMs, notes) are
   five sentences or fewer; lead with the answer, and put evidence in an attachment or a link.
+- A post in #flyway goes out without asking when it claims, moves or answers for a migration
+  on my own ticket (`flyway-migration-preflight`). Never hand it to me or put it on a card.
 
 ## Questions
 

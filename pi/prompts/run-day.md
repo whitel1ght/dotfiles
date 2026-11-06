@@ -38,9 +38,11 @@ the user edits the diary too. `day-plan` opens today's diary in a tmux popup whe
   `decisions/NNNN-<slug>.md` (create; on an existing one only `status: superseded`). Never `state.md` mid-day (step 8).
 - Never edit project code yourself.
 - Never merge, mark ready, transition Jira, post to Slack or comment on an MR without the user's
-  yes. Asking means a decision (step 9); a review round is one decision per round (step 5). The
-  one exception is the ship step (step 3): a finished MR of the user's goes ready without asking
-  (D-447).
+  yes. Asking means a decision (step 9); a review round is one decision per round (step 5). Two
+  exceptions: the ship step (step 3), where a finished MR of the user's goes ready without asking
+  (D-447), and #flyway: a post in #flyway goes out without asking when it claims, moves or answers
+  for a migration on the user's own ticket (`flyway-migration-preflight`, which also says never to
+  post about someone else's).
 - Questions for the user go into the decision queue (step 9): never ask the question in the thread,
   never wait for the answer. The only question asked in the thread is the triage go-ahead (step 1).
 - MR numbers are markdown links with the repo in the text, never a bare `!2202`:
@@ -117,7 +119,7 @@ planned pause in the day:
   lists `whitel1ght`, class it `me` with `already approved`. The gate is `review-gate <project path> <iid>`
   (exit 0 go ahead, 1 approved by us, 3 unknown; any exit other than 0, a missing command included, means do not dispatch); run it before every review or re-review dispatch
   (steps 2, 5 and 11).
-- `me` = only what the user does in person: a merge in the GitLab UI and direct communication with a teammate (a Slack message, a DM, a meeting). Everything else is agent work, asking through a decision (step 9) where approval is needed: an agent drafts a reply an MR note actually needs (step 5) and posts it on a decision, and the same goes for a filed ticket, a Jira move, a deploy or release step and a production query. An item is `me` only when every open child is. `me` with `already approved` is only a label: there is nothing to review, and it is not listed as the user's work. A review is not a reply: it is `review`.
+- `me` = only what the user does in person: a merge in the GitLab UI and direct communication with a teammate (a Slack message, a DM, a meeting; a #flyway post is not one, see the Write rules). Everything else is agent work, asking through a decision (step 9) where approval is needed: an agent drafts a reply an MR note actually needs (step 5) and posts it on a decision, and the same goes for a filed ticket, a Jira move, a deploy or release step and a production query. An item is `me` only when every open child is. `me` with `already approved` is only a label: there is nothing to review, and it is not listed as the user's work. A review is not a reply: it is `review`.
 - `steps` = an item with open children, not all of them `me`: worked child by child through step 11 item 2, never as one ticket. Step 2 does not dispatch it.
 - `wait` = blocked on others.
 

@@ -152,6 +152,9 @@ ROOT="$TEST_DIR/../../.."
 for doc in claude/commands/start-day.md pi/prompts/start-day.md claude/commands/watch-mrs.md pi/prompts/watch-mrs.md claude/CLAUDE.md; do
   has "$ROOT/$doc" "no finding, no question and no action asked of us" "$doc: a note that asks nothing gets nothing"
 done
+for doc in claude/daily/commands/run-day.md pi/prompts/run-day.md claude/daily/templates/ticket-brief.md claude/CLAUDE.md; do
+  has "$ROOT/$doc" "post in #flyway goes out without asking" "$doc: a #flyway post needs no yes"
+done
 
 echo "== live updates: a changed playbook resumes the day (decision 0005) =="
 U="$TEST_DIR/../mod/update.ts"
