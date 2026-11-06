@@ -132,7 +132,25 @@ for doc in "$F" "$P"; do
   has "$doc" "5. Nothing in steps 1-4" "$n: Finish only after children and the sprint"
   has "$doc" "one of steps 1-4 has" "$n: the idle rule counts the children step"
   has "$doc" "never say the queue is clear" "$n: no 'queue clear' while items are open"
-  has "$doc" "Agents have nothing to do; open and yours:" "$n: the idle line lists what is open"
+  has "$doc" "Agents have nothing to do; open:" "$n: the idle line lists what is open"
+  lacks "$doc" "open and yours:" "$n: the idle line does not call everything the user's"
+  lacks "$doc" "every open item is the user's" "$n: Finish names what stays open"
+  lacks "$doc" "otherwise it is \`auto\`" "$n: a child step never goes through the ticket path"
+  has "$doc" "worked child by child" "$n: an item with mixed children is class steps"
+  has "$doc" "its report ticks that child, not the parent" "$n: a child's report ticks only the child"
+  has "$doc" "If an item needs code work and you cannot tell the repo" "$n: only code work asks for a repo"
+  lacks "$doc" "replies to people" "$n: a reply on an MR is not the user's work"
+  lacks "$doc" "a deploy or release step, a meeting" "$n: a deploy step is not the user's work"
+  has "$doc" "a merge in the GitLab UI and direct communication with a teammate" "$n: me is only merges and direct communication"
+  has "$doc" "the step does not become the user's by itself" "$n: a step an agent cannot do goes to a decision"
+  has "$doc" "A correction on one item does not pause Keep busy" "$n: a correction does not stop the other items"
+  has "$doc" "says what it waits on" "$n: a waiting item is not called the user's"
+  has "$doc" "no finding, no question and no action asked of us" "$n: a note that asks nothing gets nothing"
+done
+
+ROOT="$TEST_DIR/../../.."
+for doc in claude/commands/start-day.md pi/prompts/start-day.md claude/commands/watch-mrs.md pi/prompts/watch-mrs.md claude/CLAUDE.md; do
+  has "$ROOT/$doc" "no finding, no question and no action asked of us" "$doc: a note that asks nothing gets nothing"
 done
 
 echo "== live updates: a changed playbook resumes the day (decision 0005) =="

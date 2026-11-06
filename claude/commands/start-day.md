@@ -90,7 +90,10 @@ Group the items by what they unblock, in this order:
 
 - **First**: things other people are waiting on. Replies owed on Slack. Every review
   note on my MRs marked "awaiting my reply", whether or not it's a resolvable thread: a
-  whole first review often arrives as one plain comment. MRs in my review queue marked
+  whole first review often arrives as one plain comment. That label only compares
+  timestamps, so read the note: one with no finding, no question and no action asked of us
+  (a confirmation pass, "no blockers", "ready to approve") is no plan item and gets no
+  reply. MRs in my review queue marked
   review_now or re_review, oldest first, except backend ones (see If time). A failed
   pipeline on one of my MRs.
 - **Today**: what I'm committed to. Unfinished items from the carry-over (unticked
@@ -115,7 +118,7 @@ backend!870, then merge it"). Leave out "Waiting on dependencies" unless one of 
 already in First or Today, in which case say so in one short line.
 
 Before writing, check that every one of these made it in or was dropped on purpose: each
-review note on my MRs awaiting my reply, each review_now or re_review MR, each newly
+review note on my MRs that needs a reply, each review_now or re_review MR, each newly
 assigned ticket, each unticked carry-over item, each Slack request and
 each unclaimed QA candidate. Then check that no
 ticket starts two top-level lines: several review notes, MRs or carry-over lines on one

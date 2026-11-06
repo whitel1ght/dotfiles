@@ -130,6 +130,8 @@ Global instructions applied across all projects. Keep this short — project-lev
 - Answer review findings on an MR with the `mr-review-response` skill, unasked. Show the
   drafted replies once per round as one batch; "yes", "post it" or "post both" posts
   exactly what was shown, through that skill, with no further question.
+- A note with no finding, no question and no action asked of us ("no blockers", "ready to
+  approve") gets nothing: no reply, no acknowledgement, no card, ever.
 
 ## Worktrees
 

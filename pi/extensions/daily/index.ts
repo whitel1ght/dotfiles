@@ -365,10 +365,9 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
   });
 
   // for the Keep busy prompt (watch.ts checkBusy, mod/busy.ts)
-  const activity = { lastActiveAt: Date.now(), turnRunning: false, userWrote: false };
+  const activity = { turnRunning: false, userWrote: false };
   pi.on("input", (event) => {
     if (event.source === "extension") return;
-    activity.lastActiveAt = Date.now();
     activity.userWrote = true;
   });
   pi.on("agent_start", () => {
@@ -376,7 +375,6 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
   });
   pi.on("agent_end", () => {
     activity.turnRunning = false;
-    activity.lastActiveAt = Date.now();
   });
 
   const stop = () => {

@@ -279,8 +279,7 @@ test("three blind probes in a row clear the wake with one notice; a known probe 
 });
 
 const BUSY = "[daily-idle] no agent running: run Keep busy of /run-day (section 11).";
-const quiet = (o: Partial<{ lastActiveAt: number; turnRunning: boolean; userWrote: boolean }> = {}) => ({
-  lastActiveAt: T0,
+const quiet = (o: Partial<{ turnRunning: boolean; userWrote: boolean }> = {}) => ({
   turnRunning: false,
   userWrote: false,
   ...o,
@@ -288,6 +287,7 @@ const quiet = (o: Partial<{ lastActiveAt: number; turnRunning: boolean; userWrot
 
 test("an idle day with no agent gets one Keep busy prompt per idle stretch", async () => {
   const { root, watcher } = setup();
+  assert.equal(watcher.checkBusy(T0, quiet()), null);
   assert.equal(watcher.checkBusy(T0 + 9 * MIN, quiet()), null);
   assert.equal(watcher.checkBusy(T0 + 10 * MIN, quiet()), BUSY);
   assert.equal(watcher.checkBusy(T0 + 30 * MIN, quiet()), null);
@@ -301,10 +301,21 @@ test("checkInbox says whether it sent a prompt, so the tick sends one turn at mo
   rmSync(root, { recursive: true });
 });
 
-test("the user writing starts a new idle stretch", async () => {
+test("the user writing does not hold the prompt back", async () => {
   const { root, watcher } = setup();
+  assert.equal(watcher.checkBusy(T0, quiet()), null);
+  assert.equal(watcher.checkBusy(T0 + 5 * MIN, quiet({ userWrote: true })), null);
+  assert.equal(watcher.checkBusy(T0 + 9 * MIN, quiet({ userWrote: true })), null);
+  assert.equal(watcher.checkBusy(T0 + 10 * MIN, quiet({ userWrote: true })), BUSY);
+  rmSync(root, { recursive: true });
+});
+
+test("the user writing starts a new idle stretch, at most one prompt per window", async () => {
+  const { root, watcher } = setup();
+  assert.equal(watcher.checkBusy(T0, quiet()), null);
   assert.equal(watcher.checkBusy(T0 + 10 * MIN, quiet()), BUSY);
-  assert.equal(watcher.checkBusy(T0 + 20 * MIN, quiet({ lastActiveAt: T0 + 10 * MIN, userWrote: true })), BUSY);
+  assert.equal(watcher.checkBusy(T0 + 15 * MIN, quiet({ userWrote: true })), null);
+  assert.equal(watcher.checkBusy(T0 + 20 * MIN, quiet()), BUSY);
   rmSync(root, { recursive: true });
 });
 
@@ -317,6 +328,7 @@ test("no Keep busy prompt while an agent is outstanding, a turn runs, or outside
     [{ runState: false }, quiet()],
   ] as const) {
     const { root, watcher } = setup(opts);
+    assert.equal(watcher.checkBusy(T0, a), null, JSON.stringify(opts));
     assert.equal(watcher.checkBusy(T0 + 60 * MIN, a), null, JSON.stringify(opts));
     rmSync(root, { recursive: true });
   }
@@ -324,11 +336,13 @@ test("no Keep busy prompt while an agent is outstanding, a turn runs, or outside
 
 test("an agent outstanding ends the stretch: idle again later gives a new prompt", async () => {
   const { root, stateDir, watcher } = setup();
+  assert.equal(watcher.checkBusy(T0, quiet()), null);
   assert.equal(watcher.checkBusy(T0 + 10 * MIN, quiet()), BUSY);
   writeFileSync(join(stateDir, `${DAY}.md`), WORKING);
   assert.equal(watcher.checkBusy(T0 + 20 * MIN, quiet()), null);
   writeFileSync(join(stateDir, `${DAY}.md`), RUN_STATE);
-  assert.equal(watcher.checkBusy(T0 + 40 * MIN, quiet({ lastActiveAt: T0 + 25 * MIN })), BUSY);
+  assert.equal(watcher.checkBusy(T0 + 29 * MIN, quiet()), null);
+  assert.equal(watcher.checkBusy(T0 + 30 * MIN, quiet()), BUSY);
   rmSync(root, { recursive: true });
 });
 

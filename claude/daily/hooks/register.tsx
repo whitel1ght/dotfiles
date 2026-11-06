@@ -15,7 +15,7 @@ import type { AgentRow } from '../mod/wake.ts'
 import type { InboxState, RunItem, ViewState } from '../mod/types.ts'
 import { joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts'
 import { NUDGE_TEXT, claimsSystem, claimsSystemPrompt, shouldNudge, systemMarkerPath } from '../mod/ideas.ts'
-import { BUSY_PROMPT, nextNudged, shouldNudgeBusy } from '../mod/busy.ts'
+import { BUSY_PROMPT, nextAgentAt, nextNudged, shouldNudgeBusy } from '../mod/busy.ts'
 import { CLAUDE_PLAYBOOK, UPDATE_ARGS, fingerprint, parsePrint, playbookPath, shouldResume } from '../mod/update.ts'
 import { ASK_NUDGE, BUSY_NOTE, FORM_DENY, FORM_TOOLS, isBusyPrompt, nextAsk, shouldNudgeAsk } from '../mod/ask.ts'
 import { FOLLOWUP_MS, followupPrompt, parseCards, pendingFollowups } from '../mod/followup.ts'
@@ -184,7 +184,7 @@ async function nudgeIdeas($: EngineInterface) {
 // A turn counts as running between its first step and turn.complete (a long tool call makes no
 // requests); a turn that never completes stops counting after TURN_STALE_MS.
 const TURN_STALE_MS = 30 * 60 * 1000
-const busy = { nudged: false, inTurn: false }
+const busy = { nudged: false, inTurn: false, lastAgentAt: 0 }
 
 // Every session, not only the day's: questions go to the decisions deck (mod/ask.ts).
 let ask = { asked: false, nudged: false }
@@ -226,10 +226,12 @@ async function nudgeBusy($: EngineInterface, ctx: DayCtx) {
   const now = await $.clock.now()
   const lastActiveAt = Math.max(idle.lastUserAt, idle.lastTurnEndAt, warm.lastRequestAt ?? 0)
   const turnRunning = busy.inTurn && now - lastActiveAt < TURN_STALE_MS
-  const running = (await $.agent.list().catch(() => [])).filter(a => a.status === 'running').length + (turnRunning ? 1 : 0)
-  const state = { isOwner: true, dayRunning: !ctx.dayEnded, now, lastActiveAt, outstanding: out, agentsRunning: running, nudged: busy.nudged }
+  const agents = await runningAgents($)
+  busy.lastAgentAt = nextAgentAt(busy.lastAgentAt, now, out + agents)
+  const state = { isOwner: true, dayRunning: !ctx.dayEnded, now, lastAgentAt: busy.lastAgentAt, outstanding: out, agentsRunning: agents + (turnRunning ? 1 : 0), nudged: busy.nudged }
   if (!shouldNudgeBusy(state)) return
   busy.nudged = true
+  busy.lastAgentAt = now
   void $.prompt.submit({ text: BUSY_PROMPT }).catch(() => $.ui.toast('daily idle: prompt submit failed'))
 }
 

@@ -117,12 +117,13 @@ planned pause in the day:
   lists `whitel1ght`, class it `me` with `already approved`. The gate is `review-gate <project path> <iid>`
   (exit 0 go ahead, 1 approved by us, 3 unknown; any exit other than 0, a missing command included, means do not dispatch); run it before every review or re-review dispatch
   (steps 2, 5 and 11).
-- `me` = syncs, meetings, merges, decisions, replies to people. A review is not a reply: it is `review`.
+- `me` = only what the user does in person: a merge in the GitLab UI and direct communication with a teammate (a Slack message, a DM, a meeting). Everything else is agent work, asking through a decision (step 9) where approval is needed: an agent drafts a reply an MR note actually needs (step 5) and posts it on a decision, and the same goes for a filed ticket, a Jira move, a deploy or release step and a production query. An item is `me` only when every open child is. `me` with `already approved` is only a label: there is nothing to review, and it is not listed as the user's work. A review is not a reply: it is `review`.
+- `steps` = an item with open children, not all of them `me`: worked child by child through step 11 item 2, never as one ticket. Step 2 does not dispatch it.
 - `wait` = blocked on others.
 
 Get what you need for each auto item from the plan line (the ticket key), the repo from `day-agent mrs` or the run state's `mr=` (no agent file: from the
-MR links on the plan line), and `jira-issue <KEY>` (summary, status, assignee, description). If you cannot tell the repo, class it `me` and
-say why. Anything spanning repos or changing a contract between services is **one** item on the
+MR links on the plan line), and `jira-issue <KEY>` (summary, status, assignee, description). If an item needs code work and you cannot tell the repo, class it `wait` and
+file a decision (step 9) asking which one; the answer queues it as `auto`. Anything spanning repos or changing a contract between services is **one** item on the
 heavy route (step 2, last paragraph), not two agents.
 
 Then wait for the user's go-ahead or edits.
@@ -345,6 +346,11 @@ reply only), exit 3 means do not start it this time. If it asks us something, dr
 as a decision (step 9: `Post this reply on <repo>!<iid>?`, options `Post it` and `No`); otherwise
 do nothing. Stop there.
 
+Read the note before anything else. A note with no finding, no question and no action asked of us
+(a confirmation pass, `no blockers`, `ready to approve`) gets nothing at all: no agent, no draft, no
+reply, no acknowledgement and no decision, ever, also when the digest marks it as awaiting a reply
+(D-489). A reply child for it is ticked `not needed`. Stop there.
+
 1. Take the project path and iid from the event's `url`, never from the short `<repo>!<iid>`, which
    has no group:
    `PROJECT_PATH=$(sed -E 's#.*gitlab.com/(.*)/-/merge_requests/([0-9]+).*#\1#' <<<"$URL")`,
@@ -533,15 +539,17 @@ changed (MR numbers as links).
 
 ## 8. Finish
 
-When no item is `[ ]` or `[/]` any more, or every open item is the user's (`me`, `wait`, an item whose
-run-state line says `owner=external:<KEY>`) and Keep busy (step 11) found nothing, or the user says so: process the inbox once more, then summarise the day: what shipped, what is blocked, what
+When no item is `[ ]` or `[/]` any more, or everything still open is a merge, direct communication with
+a teammate, blocked (`wait`, a child whose blocker has not cleared) or with a side session (`owner=external:<KEY>`) and Keep busy (step 11) found nothing, or the user says so: process the inbox once more, then summarise the day: what shipped, what is blocked, what
 is deferred, what needs the user.
 
 While any item is `[ ]` or `[/]`, never say the queue is clear, nothing is left, or the day is
 done (2026-11-05, D-407: the session said "the queue is clear" with four tickets and their release
 steps open). When agents have nothing to do, say so and then list what is open, in plan order:
-`Agents have nothing to do; open and yours:`, one line per open item with its unticked children
-joined by `;`, the MR links per the rule above.
+`Agents have nothing to do; open:`, one line per open item with its unticked children
+joined by `;`, the MR links per the rule above. Only a merge or direct communication with a teammate
+is called the user's: an item waiting on a pipeline, a deploy, a decision or another person
+says what it waits on.
 
 Then suggest `/end-day` and run it in this session. It consolidates `~/wiki/work/projects/<p>/state.md`
 from the `notes:` lines you collected and ends the run by moving the run state into
@@ -614,12 +622,21 @@ than 3 agents run (ticket, review and round agents all count), fill the free slo
    that is already done (check its MR, pipeline, Slack or Jira state and the item's agent
    section, `day-agent show <key>`, where progress notes live;
    exit 1 means no notes yet, not an error; old format: the parent's `· progress:`
-   suffix; step 3). Then, for each child still open: if an agent can do it alone
-   (draft a reply, a description or a follow-up ticket, fix code, run a read-only check), dispatch
-   it as step 2, the brief naming that child as the task. Anything it would post, file or send
-   under the user's name, and any query against production, goes into a decision first (step 9).
-   A child that only the user can do (a merge in the UI, a deploy or release step, a meeting, QA
-   by hand) stays theirs: leave it for the Finish list.
+   suffix; step 3). Then, for each child still open: unless it is a merge in the UI or direct
+   communication with a teammate, an agent works it (draft a reply, a description or a follow-up
+   ticket, fix code, run a check, prepare and run a deploy or release step), dispatched as step 2,
+   the brief naming that child as the task. A child that changes no code needs no worktree and no
+   Draft MR: its report ticks that child, not the parent, and step 3's diff, test and pipeline
+   checks apply only when it changed code. The parent is ticked with its last child.
+   A reply child is read first: its note may need nothing
+   (step 5), and then it is ticked `not needed`, with nothing dispatched.
+   Anything it would post, file or send under the user's name,
+   any deploy, and any query against production, goes into a decision first (step 9).
+   Leave a child whose blocker has not cleared (after a deploy, after a merge) until it clears.
+   An agent that cannot do a step (no access, refused by the harness) files a decision saying what
+   stopped it: the step does not become the user's by itself. Merges and direct communication stay
+   the user's, also a step the user said they will do themselves: leave them for the Finish list,
+   with the text drafted when it is a message to a teammate.
 3. Open `wait` and `me` items whose state moved: a `wait` item whose blocker cleared is dispatched (a `review` item only after `review-gate <project path> <iid>` exits 0; 1: class `me`, `already approved`; 3: leave it);
    for a merge item with a green pipeline and approvals and no decision open, file the merge
    decision with the MR link.
@@ -661,3 +678,6 @@ Never end a turn saying the rest is the user's while a slot is free and one of s
 something. A review, a merge check or a sprint ticket is not the user's work because what comes
 out of it is posted under their name: an agent drafts it, and a decision asks before anything is
 posted.
+A correction on one item does not pause Keep busy for the others: apply it to that item and go on
+filling slots, without asking first whether to draft (2026-11-06: after one wasted re-review the
+session stopped dispatching and asked).
