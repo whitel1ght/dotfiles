@@ -24,7 +24,7 @@ wrong or broken links are repaired. Review the dry run before applying it.
 | Agent-directory item | Source in this repo |
 | --- | --- |
 | `settings.json` | `pi/settings.json`: startup defaults, packages, scoped models, theme |
-| `models.json` | `pi/models.json`: local models and OpenCode Go overrides |
+| `models.json` | `pi/models.json`: local models |
 | `mcp-servers.json` | `pi/mcp-servers.json`: MCP definitions with environment references |
 | `APPEND_SYSTEM.md`, `model-selection.md` | `pi/`: global assistant rules and delegation policy |
 | `AGENTS.md` | `claude/CLAUDE.md`: shared personal instructions |
@@ -40,33 +40,26 @@ can override personal settings once the project is trusted.
 
 ## Models and authentication
 
-The startup default is **`opencode-go/longcat-2.5`**. Changing the default affects
+The startup default is **`qwen-token-plan/qwen3.8-max`**. Changing the default affects
 new sessions, not the model of an already running session.
 
 The model-cycling/session pool in `settings.json` is separate from the default.
-Currently it contains only:
+Currently it contains:
 
-- `openai/gpt-6.1-sol`
-- `openai/gpt-6-luna`
-- `openai/gpt-6-astra`
+- `qwen-token-plan/qwen3.8-max`
+- `qwen-token-plan/qwen3.8-flash`
+- `qwen-token-plan/deepseek-v4.1-flash`
 
-LongCat is not in that pool. Use `/scoped-models` to change the live session pool;
-edit `enabledModels` for the persistent selection. The default model setting
-alone does not make LongCat eligible for scoped subagent launches.
+Use `/scoped-models` to change the live session pool; edit `enabledModels` for the
+persistent selection.
 
-### OpenCode Go
+### OpenCode Go (removed)
 
-`models.json` overrides Pi's built-in `opencode-go` provider to use OpenCode
-Console endpoints (`opencode.ai/inference/go/...`). Credentials come from
-`bin/opencode-console-auth`, linked into `~/.local/bin/`: its `token` and `org`
-commands read OpenCode's local credential and supply the bearer token and
-`x-opencode-org-id` header. No token is committed in this repo.
-
-Sign in with `opencode auth login opencode`. If the token expires, run OpenCode
-to refresh it. Avoid a stale `opencode-go` key in Pi's `auth.json`, which can
-supersede the configured credential source. `qwen3.8-flash` and `minimax-m3`
-have full Anthropic-endpoint overrides; other models rely on Pi's registry plus
-the provider-level overrides. The standalone `longcat` provider was removed.
+The `opencode-go` override is gone from `models.json` (2026-11-06). Its `apiKey` ran
+`bin/opencode-console-auth`, so an expired Console token, or no `opencode` at all, made
+every model refresh warn `Could not refresh opencode-go`. To bring it back, restore the
+block from git history, sign in with `opencode auth login opencode`, and avoid a stale
+`opencode-go` key in Pi's `auth.json`. The helper and its `~/.local/bin` link are still here.
 
 ### Local models and secrets
 
