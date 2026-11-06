@@ -60,7 +60,10 @@ case "$cmd" in
   list) echo "list $*" >>"$CALLS"; cat "$DECK" ;;
   withdraw) echo "withdraw $*" >>"$CALLS" ;;
   close) echo "close $*" >>"$CALLS"; [ ! -f "$SANDBOX/close.fail" ] || exit 1; jq --arg id "$1" 'map(select(.id != $id))' "$DECK" >"$DECK.new" && mv "$DECK.new" "$DECK" ;;
-  count) echo "count $*" >>"$CALLS"; echo "7" ;;
+  count)
+    echo "count $*" >>"$CALLS"
+    if [ "${1:-}" = --badge ]; then printf '%s\n' "${STUB_BADGE-W 7 E 1}"
+    else [ -z "${STUB_COUNT-7}" ] || printf '%s\n' "${STUB_COUNT-7}"; fi ;;
 esac
 STUB
 chmod +x "$FRICTIONS_BIN"
@@ -406,7 +409,9 @@ assert_eq "" "$(grep 'F-024' "$CF_LOG")" "and calls no coach-fix"
 
 echo "count"
 assert_eq "7" "$("$SCRIPT" count)" "count asks the deck"
-"$SCRIPT" count --badge >/dev/null; assert_has "count --badge" "$(cat "$CALLS")" "count passes --badge on"
+assert_eq "W 7 " "$("$SCRIPT" count --badge)" "the bar shows the deck's icon and its cards to answer, with no envelope"
+assert_eq "" "$(STUB_COUNT="" STUB_BADGE="E 1" "$SCRIPT" count --badge)" "a notice alone puts nothing on the bar"
+assert_eq "" "$(STUB_COUNT="" STUB_BADGE="" "$SCRIPT" count --badge)" "an empty deck puts nothing on the bar"
 
 echo "hook: a failed retry comes back"
 lastid() { ls "$FRICTION_WIKI" | sed -n 's/^\(F-[0-9]*\)\.md$/\1/p' | sort | tail -1; }

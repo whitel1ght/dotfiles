@@ -8,7 +8,8 @@
 #                                     or closed. Runs under $COACH_STATE_DIR/.cards.lock (a
 #                                     dead holder's lock is taken over), so two syncs never
 #                                     file one card twice.
-#   friction-cards count [--badge]    the deck's waiting cards (`frictions count`)
+#   friction-cards count [--badge]    the deck's cards to answer (`frictions count`); --badge is
+#                                     the status bar's wrench and N, nothing when none
 #   friction-cards hook               the deck's on_answer command: one JSON line on stdin
 #                                     ({event, id, key, source, option, note, text, at}); returns
 #                                     at once, the work runs detached (log: $COACH_STATE_DIR/logs/
@@ -199,7 +200,16 @@ sync_locked() { # date; the caller holds the cards lock
   done < <(jq -c '.results[]' <<<"$cards")
 }
 
-cmd_count() { exec "$FRICTIONS_BIN" count "$@"; }
+# --badge is the tmux status bar: only cards that need an answer. A notice stays in the deck, so the
+# bar's one envelope is the decisions deck's. The trailing space keeps it clear of the next badge.
+cmd_count() {
+  [ "${1:-}" = --badge ] || exec "$FRICTIONS_BIN" count "$@"
+  local n line
+  n="$("$FRICTIONS_BIN" count)"
+  [ -n "$n" ] || return 0
+  line="$("$FRICTIONS_BIN" count --badge)"
+  printf '%s %s \n' "${line%% *}" "$n"
+}
 
 # --- answers, replies, the watchdog ----------------------------------------------
 
