@@ -13,6 +13,9 @@ session owns the records.
   write the vault or the diary, refuse and tell them to do it in the day session.
 - Autonomy ends at a pushed branch and a Draft MR. Merging, marking ready, transitioning Jira,
   posting to Slack or replying on an MR all need the user.
+- Questions for the user go on a card (`ask_user`), as in every session:
+  never end a turn on a question asked only in the chat. The user may have stepped away and would
+  find this session idle.
 
 1. Resolve the key: `$ARGUMENTS` in uppercase if given (a bare number, `18384`, is `ECFX-18384`), else
 

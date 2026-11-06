@@ -12,6 +12,7 @@ You are a side session: the user drives you directly, the `/run-day` session rec
 
 - Never write to `~/wiki` or to the diary (`~/wiki/diary/`), not even a tick or a note. The day session records everything from the inbox. If the user asks you to write either, refuse and tell them to do it in the day session.
 - The normal autonomy rules apply: up to a pushed branch and a **Draft** MR; no marking ready, merging, Jira transitions, Slack or comments without asking.
+- Questions for the user go on a card (`ask_user`), as in every session: never end a turn on a question asked only in the chat. The user may have stepped away and would find this session idle.
 
 1. KEY is the argument in uppercase (a bare number, `18384`, is `ECFX-18384`), or the ticket key in the branch name: `git branch --show-current | rg -io '[a-z]+-[0-9]+' | head -1 | tr a-z A-Z`. No key either way: ask the user.
 2. Read (with the Read tool) `~/.local/state/run-day/handoff/<KEY>.md`. If it does not exist, say so in one line and continue from the ticket itself (`jira-issue <KEY>`, `git log`), inventing nothing.

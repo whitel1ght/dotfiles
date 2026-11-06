@@ -63,7 +63,7 @@ MR: <url or none>
 4. Update the run-state line for `<key>`: `agent=-`, `needs_you=no`, `owner=external:<KEY>`. Leave
    every other field (`class`, `worktree`, `mr`, `retries`, ...).
 
-   Withdraw the item's open decisions; the side session asks the user directly:
+   Withdraw the item's open decisions; the side session files its own cards from here on:
 
    ```bash
    for id in $(decide list --json | jq -r --arg k "<KEY>" '.[] | select(.key == $k) | .id'); do
