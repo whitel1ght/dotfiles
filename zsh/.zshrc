@@ -117,14 +117,8 @@ alias pilm='pi --model lmstudio/qwen/qwen2.5-coder-14b --models lmstudio/qwen/qw
 # pi/local-model/wiki-search stays out until secrets are moved out of ~/wiki.
 alias pigm='pi --model lmstudio/gemma-4-e4b-it-mlx --models lmstudio/gemma-4-e4b-it-mlx -ne -ns -np -nc --no-mcp -e ~/.pi/agent/npm/node_modules/pi-web-access/dist/index.js'
 
-# Free Pi session, with Longcat as the only scoped model.
-alias pifree='pi --model opencode-go/longcat-2.5-preview-free --models opencode-go/longcat-2.5-preview-free'
-
 # Provider-scoped sessions.
 alias piopenai='pi --model openai/gpt-6.1-sol --models "openai/*"'
-
-# Longcat leads a ten-model Go pool with coding, reasoning and flash alternatives.
-alias pigo='pi --model opencode-go/longcat-2.5-preview-free --models opencode-go/longcat-2.5-preview-free,opencode-go/gpt-6-luna,opencode-go/glm-5.3,opencode-go/qwen3.8-max,opencode-go/grok-4.7,opencode-go/mimo-v2.6-pro,opencode-go/kimi-k3,opencode-go/glm-5.3-flash,opencode-go/qwen3.8-flash,opencode-go/deepseek-v4.1-flash'
 
 # Better grep
 alias grep='grep --color=auto --exclude-dir={.bzr,CVS,.git,.hg,.svn}'
