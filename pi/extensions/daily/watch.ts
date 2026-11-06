@@ -12,6 +12,7 @@ import { parseRunState } from "./mod/runstate.ts";
 import { isFullWake, outstanding, parseGraphics, parseLid, sleptBetween, WAKE_PREFIX } from "./mod/wake.ts";
 import { REPORT_MARK } from "./mod/warm.ts";
 import { PI_BUSY_PROMPT, nextAgentAt, nextNudged, shouldNudgeBusy } from "./mod/busy.ts";
+import { nextPlanLines, piPlanPrompt, untracked } from "./mod/planlines.ts";
 import { parsePrint, shouldResume } from "./mod/update.ts";
 
 export const WATCH_MS = 180_000;
@@ -50,6 +51,7 @@ export class DayWatcher {
   private blindProbes = 0;
   private busyNudged = false;
   private busyAgentAt = 0;
+  private planSeen: string[] = [];
   private updateSent = false;
   private deps: WatchDeps;
 
@@ -148,6 +150,17 @@ export class DayWatcher {
     const hasInbox = messageFiles(this.deps.listInbox()).length > 0;
     if (outstanding(parseRunState(readOr(this.deps.paths().runState))).length === 0 && !hasInbox) return null;
     return `${WAKE_PREFIX} woke after ${Math.round((now - since) / 60_000)} min: run the Wake check of /run-day (section 10).`;
+  }
+
+  /** Called on the 30 s tick, between turns: one prompt per plan line with no run-state line (mod/planlines.ts). */
+  checkPlan(turnRunning: boolean): string | null {
+    if (turnRunning || !this.deps.holdsLock() || !this.active()) return null;
+    const p = this.deps.paths();
+    const diary = readOr(p.diary);
+    if (diary.includes(REPORT_MARK)) return null;
+    const { fresh, seen } = nextPlanLines(untracked(parseItems(diary), parseRunState(readOr(p.runState))), this.planSeen);
+    this.planSeen = seen;
+    return fresh.length > 0 ? piPlanPrompt(fresh.length) : null;
   }
 
   /**

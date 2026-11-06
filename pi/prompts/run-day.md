@@ -123,6 +123,9 @@ planned pause in the day:
 - `steps` = an item with open children, not all of them `me`: worked child by child through step 11 item 2, never as one ticket. Step 2 does not dispatch it.
 - `wait` = blocked on others.
 
+Every open item from triage gets a run-state line, `me` and `wait` included, a line with no ticket
+key keyed by its `<!-- pN -->`.
+
 Get what you need for each auto item from the plan line (the ticket key), the repo from `day-agent mrs` or the run state's `mr=` (no agent file: from the
 MR links on the plan line), and `jira-issue <KEY>` (summary, status, assignee, description). If an item needs code work and you cannot tell the repo, class it `wait` and
 file a decision (step 9) asking which one; the answer queues it as `auto`. Anything spanning repos or changing a contract between services is **one** item on the
@@ -433,6 +436,7 @@ Then:
   `wait-for`) was given up on: treat it as `gave up` (`needs_you=yes`, `day-agent note <key> blocked "<service> down"`; old format: `· blocked: <service> down`).
 - `inbox: N new` → step 7.
 - `[daily-idle] no agent running: …` → step 11.
+- `[daily-plan] <N> new plan line…` (between turns, once per line with no run-state line) → step 11.
 
 ## 7. Inbox
 
@@ -616,8 +620,18 @@ event you were handling if your last reply was cut off. End with one line per ro
 ## 11. Keep busy
 
 Run this after every processed agent report, finished or blocked item and answered decision, at
-the end of the dispatch in step 2, and on a `[daily-idle] no agent running: …` message. While fewer
-than 3 agents run (ticket, review and round agents all count), fill the free slots in this order:
+the end of the dispatch in step 2, and on a `[daily-idle] no agent running: …` or
+`[daily-plan] … new plan line…` message.
+
+Re-read the plan block first: the user edits it during the day.
+An open top-level line with no run-state line is new, whoever added it. It gets no triage table and
+no pause, because adding it is the go-ahead. Classify it (step 1), add its run-state line and, when
+it has no ticket key, a trailing `<!-- pN -->` from `day-agent id`, leaving the user's words as they
+are. A line that names several steps is `steps`: write them as children under it. Then it is queued
+like any other item below, and a status list names it (2026-11-06: a pass said it found nothing,
+five minutes after the user added an item).
+
+While fewer than 3 agents run (ticket, review and round agents all count), fill the free slots in this order:
 
 1. Queued `auto` and `review` items, in plan order (step 2).
 2. Open children, in plan order, under every open item whatever its class. First tick each child

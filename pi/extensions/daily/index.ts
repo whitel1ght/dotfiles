@@ -410,8 +410,10 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
       const nudge = await watcher.checkWake(Date.now()).catch(() => null);
       if (nudge) send(nudge, true);
       const told = watcher.checkInbox();
-      const busy = told ? null : watcher.checkBusy(Date.now(), activity);
+      const plan = told ? null : watcher.checkPlan(activity.turnRunning);
+      const busy = told || plan ? null : watcher.checkBusy(Date.now(), activity);
       if (!told) activity.userWrote = false;
+      if (plan) send(plan, true);
       if (busy) send(busy, true);
       // a merge changed the playbook or this extension: reload and resume the day with it
       if (watcher.checkUpdate(piPrint())) void pi.sendUserMessage("/daily-update", { expandPromptTemplates: true, deliverAs: "followUp" });

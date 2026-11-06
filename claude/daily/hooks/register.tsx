@@ -16,6 +16,7 @@ import type { InboxState, RunItem, ViewState } from '../mod/types.ts'
 import { joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts'
 import { NUDGE_TEXT, claimsSystem, claimsSystemPrompt, shouldNudge, systemMarkerPath } from '../mod/ideas.ts'
 import { BUSY_PROMPT, nextAgentAt, nextNudged, shouldNudgeBusy } from '../mod/busy.ts'
+import { nextPlanLines, planPrompt, untracked } from '../mod/planlines.ts'
 import { CLAUDE_PLAYBOOK, UPDATE_ARGS, fingerprint, parsePrint, playbookPath, shouldResume } from '../mod/update.ts'
 import { ASK_NUDGE, BUSY_NOTE, FORM_DENY, FORM_TOOLS, isBusyPrompt, nextAsk, shouldNudgeAsk } from '../mod/ask.ts'
 import { FOLLOWUP_MS, followupPrompt, parseCards, pendingFollowups } from '../mod/followup.ts'
@@ -185,6 +186,7 @@ async function nudgeIdeas($: EngineInterface) {
 // requests); a turn that never completes stops counting after TURN_STALE_MS.
 const TURN_STALE_MS = 30 * 60 * 1000
 const busy = { nudged: false, inTurn: false, lastAgentAt: 0 }
+const plan = { seen: [] as string[] }
 
 // Every session, not only the day's: questions go to the decisions deck (mod/ask.ts).
 let ask = { asked: false, nudged: false }
@@ -220,15 +222,27 @@ async function runningAgents($: EngineInterface): Promise<number> {
   return (await $.agent.list().catch(() => [])).filter(a => a.status === 'running').length
 }
 
+function isTurnRunning(now: number): boolean {
+  const lastActiveAt = Math.max(idle.lastUserAt, idle.lastTurnEndAt, warm.lastRequestAt ?? 0)
+  return busy.inTurn && now - lastActiveAt < TURN_STALE_MS
+}
+
+async function nudgePlan($: EngineInterface, ctx: DayCtx): Promise<boolean> {
+  if (ctx.dayEnded || isTurnRunning(await $.clock.now())) return false
+  const { fresh, seen } = nextPlanLines(untracked(ctx.items, ctx.runs), plan.seen)
+  plan.seen = seen
+  if (fresh.length === 0) return false
+  void $.prompt.submit({ text: planPrompt(fresh.length) }).catch(() => $.ui.toast('daily plan: prompt submit failed'))
+  return true
+}
+
 async function nudgeBusy($: EngineInterface, ctx: DayCtx) {
   const out = outstanding(ctx.runs).length
   busy.nudged = nextNudged(busy.nudged, { outstanding: out, userWrote: false })
   const now = await $.clock.now()
-  const lastActiveAt = Math.max(idle.lastUserAt, idle.lastTurnEndAt, warm.lastRequestAt ?? 0)
-  const turnRunning = busy.inTurn && now - lastActiveAt < TURN_STALE_MS
   const agents = await runningAgents($)
   busy.lastAgentAt = nextAgentAt(busy.lastAgentAt, now, out + agents)
-  const state = { isOwner: true, dayRunning: !ctx.dayEnded, now, lastAgentAt: busy.lastAgentAt, outstanding: out, agentsRunning: agents + (turnRunning ? 1 : 0), nudged: busy.nudged }
+  const state = { isOwner: true, dayRunning: !ctx.dayEnded, now, lastAgentAt: busy.lastAgentAt, outstanding: out, agentsRunning: agents + (isTurnRunning(now) ? 1 : 0), nudged: busy.nudged }
   if (!shouldNudgeBusy(state)) return
   busy.nudged = true
   busy.lastAgentAt = now
@@ -582,7 +596,7 @@ async function watchInbox($: EngineInterface) {
     if (owns && fresh.length > 0) {
       $.ui.toast(`inbox: ${fresh.length} new`)
       void $.prompt.submit({ text: inboxPrompt(fresh.length) }).catch(() => $.ui.toast('daily inbox: prompt submit failed'))
-    } else if (owns) {
+    } else if (owns && !(await nudgePlan($, ctx))) {
       await nudgeBusy($, ctx)
     }
   } catch (err) {

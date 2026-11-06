@@ -57,7 +57,7 @@ With `--dry`: stop after printing the table (a merge-class `me` row says: merged
 
 ## 2. Dispatch
 
-1. Create the run-state file (and its directory). Format, one line per tracked item, fields in this order, `-` for empty, no ` | ` inside a value, `mr` comma-separated as `<group>/<repo>!<iid>`:
+1. Create the run-state file (and its directory). Format, one line per open item from triage, `me` and `wait` included, a line with no ticket key keyed by its `<!-- pN -->`, fields in this order, `-` for empty, no ` | ` inside a value, `mr` comma-separated as `<group>/<repo>!<iid>`:
 
 ```
 # run-day 2026-10-08
@@ -171,6 +171,7 @@ glab api --method POST "projects/<urlencoded path>/merge_requests/<iid>/discussi
 - `[daily-event:info] ...` lines: no action. Mention them only if the user asks what changed.
 - `inbox: <N> new` (from the mod): process the inbox, section 7.
 - `[daily-idle] no agent running: run Keep busy of /daily:run-day (section 11).` (from the mod, once per idle stretch after 10 minutes with no agent outstanding): run section 11.
+- `[daily-plan] <N> new plan line…: run Keep busy of /daily:run-day (section 11).` (from the mod, between turns, once per line with no run-state line): run section 11.
 - Before handling any other event or agent report, list the inbox (section 7) and process what is waiting. Then re-read the plan block: the user edits the diary too. An item they ticked or removed is theirs; do not touch it.
 - No mod (the status line stays empty): there is no watcher and no inbox listing. Start `/loop 5m` with the prompt `check the run-day inbox (section 7), then run changes-since --cursor run-day and handle each line it prints as an event`, and keep the rule above.
 
@@ -295,7 +296,11 @@ cat ~/.local/state/run-day/$(date +%F).agents 2>/dev/null || echo 'no agents fil
 
 ## 11. Keep busy
 
-Run this after every processed agent report, finished or blocked item and answered decision, at the end of the dispatch in section 2, and on a `[daily-idle] no agent running: …` prompt. While fewer than **3** agents run (ticket, review and round agents all count), fill the free slots in this order:
+Run this after every processed agent report, finished or blocked item and answered decision, at the end of the dispatch in section 2, and on a `[daily-idle] no agent running: …` or `[daily-plan] … new plan line…` prompt.
+
+Re-read the plan block first: the user edits it during the day. An open top-level line with no run-state line is new, whoever added it. It gets no triage table and no pause, because adding it is the go-ahead. Classify it (section 1), add its run-state line and, when it has no ticket key, a trailing `<!-- pN -->` from `day-agent id`, leaving the user's words as they are. A line that names several steps is `steps`: write them as children under it. Then it is queued like any other item below, and a status list names it (2026-11-06: a pass said it found nothing, five minutes after the user added an item).
+
+While fewer than **3** agents run (ticket, review and round agents all count), fill the free slots in this order:
 
 1. Queued `auto` and `review` items, in plan order (section 2).
 2. Open children, in plan order, under every open item whatever its class. First tick each child that is already done (check its MR, pipeline, Slack or Jira state and the item's agent section, `day-agent show <key>`, where progress notes live; exit 1 means no notes yet, not an error; old format: the parent's `· progress:` suffix; section 3). Then, for each child still open: unless it is a merge in the UI or direct communication with a teammate, an agent works it (draft a reply, a description or a follow-up ticket, fix code, run a check, prepare and run a deploy or release step), dispatched as section 2 step 2, the brief naming that child as the task. A child that changes no code needs no worktree and no Draft MR: its report ticks that child, not the parent, and section 3's diff, test and pipeline checks apply only when it changed code. The parent is ticked with its last child. A reply child is read first: its note may need nothing (section 5), and then it is ticked `not needed`, with nothing dispatched. Anything it would post, file or send under the user's name, any deploy, and any query against production, goes into a decision first (section 9). Leave a child whose blocker has not cleared (after a deploy, after a merge) until it clears. An agent that cannot do a step (no access, refused by the harness) files a decision saying what stopped it: the step does not become the user's by itself. Merges and direct communication stay the user's, also a step the user said they will do themselves: leave them for the Finish list, with the text drafted when it is a message to a teammate.

@@ -588,9 +588,34 @@ test('no stuck follow-up when the machine sleeps again before it is due', async 
 
 const NOTE = '<task-notification>agent a1 completed</task-notification>'
 const notify = ($: any) => $.prompt.submit({ text: NOTE, origin: { kind: 'task-notification' } } as never)
+const noNewLines = { ...idleDay, diary: OPEN_DAY.replaceAll('- [ ]', '- [/]') }
+const planPrompts = (prompts: string[]) => prompts.filter(p => p.startsWith('[daily-plan]'))
+
+test('a plan line with no run-state line gets one prompt, and the idle nudge waits that tick', async ($, on) => {
+  const s = await start($, on, idleDay)
+  await s.clock.advance(31_000)
+  expect(planPrompts(s.prompts)).toEqual(['[daily-plan] 1 new plan line: run Keep busy of /daily:run-day (section 11).'])
+  await s.clock.advance(5 * MIN)
+  expect(planPrompts(s.prompts)).toHaveLength(1)
+})
+
+test('a plan line added later gets its own prompt', async ($, on) => {
+  const s = await start($, on, noNewLines)
+  await s.clock.advance(31_000)
+  expect(planPrompts(s.prompts)).toEqual([])
+  s.files[WIKI] = OPEN_DAY.replaceAll('- [ ]', '- [/]').replace('<!-- start-day:end -->', '- [ ] look at the devbox\n<!-- start-day:end -->')
+  await s.clock.advance(31_000)
+  expect(planPrompts(s.prompts)).toEqual(['[daily-plan] 1 new plan line: run Keep busy of /daily:run-day (section 11).'])
+})
+
+test('no plan prompt in a session that does not own the day', async ($, on) => {
+  const s = await start($, on, { ...idleDay, owner: 'sess-other' })
+  await s.clock.advance(31_000)
+  expect(planPrompts(s.prompts)).toEqual([])
+})
 
 test('a cold task-notification is relayed as a plugin prompt', async ($, on) => {
-  const s = await start($, on, idleDay)
+  const s = await start($, on, noNewLines)
   await turn($)
   await s.clock.advance(61 * MIN)
   const out = await notify($)
@@ -601,7 +626,7 @@ test('a cold task-notification is relayed as a plugin prompt', async ($, on) => 
 })
 
 test('a warm task-notification passes unchanged', async ($, on) => {
-  const s = await start($, on, idleDay)
+  const s = await start($, on, noNewLines)
   await turn($)
   await s.clock.advance(10 * MIN)
   expect(await notify($)).toEqual({ text: NOTE })
@@ -617,7 +642,7 @@ test('a task-notification in a session that does not own the day passes unchange
 })
 
 test('a typed prompt in a cold owner session passes unchanged', async ($, on) => {
-  const s = await start($, on, idleDay)
+  const s = await start($, on, noNewLines)
   await turn($)
   await s.clock.advance(61 * MIN)
   expect(await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' } } as never)).toEqual({ text: 'hello' })

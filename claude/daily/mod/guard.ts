@@ -72,7 +72,7 @@ function checkNew(before: string, after: string, agent: string): GuardResult {
   }
   const old = new Set((extractBlock(before) ?? '').split('\n'))
   for (const line of (extractBlock(after) ?? '').split('\n')) {
-    if (old.has(line)) continue
+    if (old.has(line) || old.has(line.replace(COMMENT_TAIL, ''))) continue
     if (DEFINITION.test(line)) bad.push(`${line}: a [label]: url definition line`)
     else if (ITEM_LINE.test(line)) {
       if (line.includes(' · ')) bad.push(`${line}: has " · "`)

@@ -4,6 +4,13 @@ import { AGENT, DIARY, DIARY_NEW, DIARY_UNPLANNED } from './fixtures.ts'
 
 const tick = (from: string, to: string) => DIARY.replace(from, to)
 
+test('a tracking id on a long line the user wrote is allowed, new long lines are not', async () => {
+  const long = `- [ ] ${'figure out the state of the project and draft a message '.repeat(3)}`.trimEnd()
+  const before = DIARY_NEW.replace('<!-- start-day:end -->', `${long}\n<!-- start-day:end -->`)
+  expect(checkTicks(before, before.replace(long, `${long} <!-- p9 -->`), AGENT).ok).toBe(true)
+  expect(checkTicks(DIARY_NEW, before, AGENT).ok).toBe(false)
+})
+
 test('ticking with an MR link is allowed', async () => {
   const after = tick(
     '- [ ] ecfx-6659 sync with @smtsuchi',

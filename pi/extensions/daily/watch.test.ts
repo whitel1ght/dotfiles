@@ -294,6 +294,29 @@ test("an idle day with no agent gets one Keep busy prompt per idle stretch", asy
   rmSync(root, { recursive: true });
 });
 
+const withNewLine = PLAN.replace("<!-- start-day:end -->", "- [ ] figure out the devbox\n<!-- start-day:end -->");
+const NEW_LINE = "[daily-plan] 1 new plan line: run Keep busy of /run-day (section 11).";
+
+test("a plan line the user added gets one prompt, between turns", async () => {
+  const { root, watcher } = setup();
+  assert.equal(watcher.checkPlan(false), null);
+  writeFileSync(join(root, "diary", `${DAY}.md`), withNewLine);
+  assert.equal(watcher.checkPlan(true), null);
+  assert.equal(watcher.checkPlan(false), NEW_LINE);
+  assert.equal(watcher.checkPlan(false), null);
+  rmSync(root, { recursive: true });
+});
+
+test("no plan prompt outside the watching session, or after the daily report", async () => {
+  for (const opts of [{ held: false }, { report: true }, { runState: false }]) {
+    const { root, watcher } = setup(opts);
+    const body = opts.report ? `${withNewLine}\n<!-- daily-report:start -->\n` : withNewLine;
+    writeFileSync(join(root, "diary", `${DAY}.md`), body);
+    assert.equal(watcher.checkPlan(false), null, JSON.stringify(opts));
+    rmSync(root, { recursive: true });
+  }
+});
+
 test("checkInbox says whether it sent a prompt, so the tick sends one turn at most", async () => {
   const { root, watcher } = setup({ inbox: [["20260101T090000-ECFX-1-abcd.md"], ["20260101T090000-ECFX-1-abcd.md"]] });
   assert.equal(watcher.checkInbox(), true);
