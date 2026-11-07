@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Watch my open MRs for new human review notes; driven by /watch-mrs.
 #
-#   mr-watch check [--since ISO]   one pass; exit 0 new notes, 1 none, 2 GitLab down
+#   mr-watch check [--since ISO]   one pass; exit 0 new notes, 1 none, 2 GitLab
+#                                  down — or held down by a recent failure, which
+#                                  says so on stderr ('glab-gate up' clears that)
 #   mr-watch wait [--every SECS]   sleep, check, repeat until something is new
 #                                  (default 3600s; sleeps first, so a round left
 #                                  unacked on purpose doesn't fire at once)
@@ -29,7 +31,9 @@
 # fetched and fast-forwarded first (the branch may have been pushed from another
 # machine), and reported STALE if it diverged or the fetch failed.
 # A failed per-MR lookup is logged as tool_error and skipped, not an outage: only
-# the probe and the MR list write the shared outage marker.
+# the probe and the MR list write the shared outage marker, and only once
+# GLAB_TRIES attempts have failed, so one dropped connection is not a 15-minute
+# outage for every caller.
 # Nothing is marked seen until ack or reply, so a round that fails is found again.
 set -euo pipefail
 
@@ -61,10 +65,40 @@ repo_path() {
 }
 
 
+GLAB_TRIES="${GLAB_TRIES:-3}"
+GLAB_RETRY_WAIT="${GLAB_RETRY_WAIT:-2}"
+
+# glab_api ARGS — a glab api read, retried. One failed call is usually a blip: a
+# dropped TLS connection, an edge 502. Believing it writes a shared outage marker
+# that keeps every caller off GitLab for glab-gate's whole hold and reports
+# "GitLab down" while GitLab answers fine, so reads are retried first. Writes are
+# never retried: a second POST could put the same note on the MR twice.
+glab_api() {
+  local n=1 rc=0 out
+  while :; do
+    rc=0; out=$(glab api "$@") || rc=$?
+    [ "$rc" -eq 0 ] && { printf '%s\n' "$out"; return 0; }
+    [ "$n" -ge "$GLAB_TRIES" ] && return "$rc"
+    sleep $((n * GLAB_RETRY_WAIT)); n=$((n + 1))
+  done
+}
+
 friction_log() { command -v friction >/dev/null 2>&1 && friction "$@" >/dev/null 2>&1 || true; }
-down() { "$HERE/glab-gate" down --source mr-watch "GitLab unavailable" || true; return 2; }
+# gate ARGS — glab-gate beside this script, else on PATH, else a loud 127: a
+# missing gate must not pass for a held poll.
+gate() {
+  local g="$HERE/glab-gate"
+  [ -x "$g" ] || g=$(command -v glab-gate 2>/dev/null) || g=""
+  [ -n "$g" ] || { echo "mr-watch: no glab-gate at $HERE/glab-gate or on PATH" >&2; return 127; }
+  "$g" "$@"
+}
+down() { gate down --source mr-watch "GitLab unavailable" || true; return 2; }
 lookup_failed() { friction_log --source mr-watch tool_error "$1 lookup failed for $2"; }
-glab_held() { local rc=0; "$HERE/glab-gate" check || rc=$?; [ "$rc" -eq 1 ]; }
+glab_held() { local rc=0; gate check || rc=$?; [ "$rc" -eq 1 ]; }
+held_line() { # not `held`: that name is the command listing unposted rounds
+  echo "mr-watch: GitLab marked down by a recent failure; not calling it until the" \
+    "glab-gate hold expires. 'glab-gate up' clears it now." >&2
+}
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 ignore_re() {
   local re="$BOT_RE" u
@@ -110,10 +144,10 @@ check() {
   default_floor=$(iso $(($(date +%s) - 7 * 86400)))
   [ "${1:-}" = --since ] && [ -n "${2:-}" ] && default_floor="$2"
   local me mrs
-  glab_held && return 2
-  me=$(glab api user | jq -r .username) || { down; return 2; }
-  mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { down; return 2; }
-  "$HERE/glab-gate" up || true
+  glab_held && { held_line; return 2; }
+  me=$(glab_api user | jq -r .username) || { down; return 2; }
+  mrs=$(glab_api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { down; return 2; }
+  gate up || true
   mkdir -p "$STATE_DIR/seen" "$STATE_DIR/rounds"
   local found=0 re stamp
   re=$(ignore_re); stamp=$(date +%Y%m%dT%H%M%S)
@@ -123,9 +157,9 @@ check() {
     floor=$(cat "$STATE_DIR/seen/$key" 2>/dev/null || echo "$default_floor")
     [[ "$updated" > "$floor" ]] || continue
     local approvals disc picked
-    approvals=$(glab api "projects/$pid/merge_requests/$iid/approvals") || { lookup_failed approvals "$ref"; continue; }
+    approvals=$(glab_api "projects/$pid/merge_requests/$iid/approvals") || { lookup_failed approvals "$ref"; continue; }
     jq -e '.approved and (.approved_by | length > 0)' <<<"$approvals" >/dev/null && continue
-    disc=$(glab api --paginate "projects/$pid/merge_requests/$iid/discussions?per_page=100" | jq -s 'add') || { lookup_failed discussions "$ref"; continue; }
+    disc=$(glab_api --paginate "projects/$pid/merge_requests/$iid/discussions?per_page=100" | jq -s 'add') || { lookup_failed discussions "$ref"; continue; }
     picked=$(jq --arg me "$me" --arg re "$re" --arg floor "$floor" '
       def human: (.system | not) and .author.username != $me and (.author.username | test($re) | not);
       ([.[].notes[] | select(.system | not) | select(.author.username == $me) | .created_at] | max // "") as $mine
