@@ -64,6 +64,12 @@ has "$replies" '`mr-review-response` skill, unasked' "F-051 replies through mr-r
 has "$replies" '"post it" or "post both" posts exactly what was shown' "F-051 a yes posts what was shown"
 has "$(section "$MD" Worktrees)" "Double-quote every variable" "F-030 quoted variables in worktree sessions"
 
+echo "CLAUDE.md — a finished dotfiles branch is landed by the agent"
+tooling=$(section "$MD" "Tests and tooling")
+has "$tooling" "land it yourself with \`dot-land <branch>\`" "F-109 the agent lands dotfiles branches"
+has "$tooling" "never hand the merge back to me" "F-109 no merge handed back"
+has "$tooling" "ECFX MRs I merge in the GitLab UI" "F-109 ECFX merges stay the user's"
+
 echo "handle-ticket — draft MR step (Claude and pi copies)"
 for SKILL in "${SKILLS[@]}"; do
   name="${SKILL#"$DIR/"}"

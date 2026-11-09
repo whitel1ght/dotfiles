@@ -55,8 +55,10 @@ Global instructions applied across all projects. Keep this short — project-lev
 
 - ecfx-backend tests need Java 25: every backend test command you give includes the setup
   (`sdk env` in the repo root, or `JAVA_HOME` set to `~/.sdkman/candidates/java/25.*`).
-- Code on a branch is not live: pi and the daily plugin load from `main`. Merge it, or say
-  plainly that it is not live yet.
+- Code on a branch is not live: pi and the daily plugin load from `main`. When a dotfiles
+  branch is finished and its tests pass, land it yourself with `dot-land <branch>` (merge,
+  push, cleanup) and say it landed; never hand the merge back to me. ECFX MRs I merge in the
+  GitLab UI; until one is merged, say plainly that it is not live yet.
 
 ## System manual
 
