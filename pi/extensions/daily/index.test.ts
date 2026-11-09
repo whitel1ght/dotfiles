@@ -192,6 +192,7 @@ test("registers both handlers and blocks only on a bad tick", () => {
     },
     registerTool() {},
     registerCommand() {},
+    registerEntryRenderer() {},
   } as never);
   assert.ok(handlers.before_agent_start);
   assert.ok(handlers.tool_call);
@@ -282,7 +283,7 @@ test("directions: missing file, missing script or failing script inject nothing"
 test("directions: before_agent_start sets the section, and never throws without one", () => {
   const { root, file } = directionsSandbox("#!/bin/sh\necho '- never retry with the model'\n");
   const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
-  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb), registerTool: () => {}, registerCommand: () => {} } as never);
+  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb), registerTool: () => {}, registerCommand: () => {}, registerEntryRenderer: () => {} } as never);
   writeFileSync(file, "x");
   const options = { sections: {} as Record<string, string> };
   handlers.before_agent_start({ systemPromptOptions: options }, { ui: undefined });
@@ -310,7 +311,7 @@ async function waitFor(path: string) {
 
 function blockedTick(diary: string) {
   const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
-  daily({ on: (event: string, cb: (e: unknown, c: unknown) => unknown) => (handlers[event] = cb), registerTool: () => {}, registerCommand: () => {} } as never);
+  daily({ on: (event: string, cb: (e: unknown, c: unknown) => unknown) => (handlers[event] = cb), registerTool: () => {}, registerCommand: () => {}, registerEntryRenderer: () => {} } as never);
   return handlers.tool_call(
     { toolName: "edit", input: { path: diary, edits: [{ oldText: "- [ ] ecfx-1001 fix the export", newText: "- [x] ecfx-1001 fix the export" }] } },
     {},
@@ -377,6 +378,7 @@ function fakePi() {
     on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb),
     registerTool: (tool: { name: string }) => void (tools[tool.name] = tool as never),
     registerCommand: (name: string, options: never) => void (commands[name] = options),
+    registerEntryRenderer: () => {},
     sendMessage: (m: { content: string }, o?: { triggerTurn?: boolean }) => void sent.push({ content: m.content, triggerTurn: o?.triggerTurn }),
     sendUserMessage: (content: string, o?: { expandPromptTemplates?: boolean }) => void userMessages.push({ content, expand: o?.expandPromptTemplates }),
   };
@@ -578,7 +580,7 @@ test("total cap: before_agent_start keeps the three sections within 9000 charact
   process.env.FRICTION_WIKI = join(root, "friction");
   process.env.FRICTION_LEDGER_BIN = ledger;
   const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
-  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb), registerTool: () => {}, registerCommand: () => {} } as never);
+  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb), registerTool: () => {}, registerCommand: () => {}, registerEntryRenderer: () => {} } as never);
   const options = { sections: {} as Record<string, string> };
   handlers.before_agent_start({ systemPromptOptions: options }, { ui: undefined });
   const s = options.sections;
@@ -594,7 +596,7 @@ test("total cap: before_agent_start keeps the three sections within 9000 charact
 test("system map: before_agent_start sets the section, and never throws without one", () => {
   const { root, file } = mapSandbox();
   const handlers: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
-  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb), registerTool: () => {}, registerCommand: () => {} } as never);
+  daily({ on: (e: string, cb: (event: unknown, ctx: unknown) => unknown) => void (handlers[e] = cb), registerTool: () => {}, registerCommand: () => {}, registerEntryRenderer: () => {} } as never);
   writeFileSync(file, "- run-day: the daily plan\n");
   const options = { sections: {} as Record<string, string> };
   handlers.before_agent_start({ systemPromptOptions: options }, { ui: undefined });

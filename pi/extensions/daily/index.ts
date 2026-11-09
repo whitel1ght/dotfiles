@@ -1,5 +1,5 @@
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -15,6 +15,19 @@ import { IdeasNudger } from "./ideas.ts";
 import { AskBackstop, piSubRunning } from "./ask.ts";
 import { FollowupDelivery, decideList, decisionsSession } from "./followup.ts";
 import { FOLLOWUP_MS } from "./mod/followup.ts";
+import {
+  ASK,
+  QuestionMirror,
+  WAIT,
+  closedLine,
+  decide,
+  fitLine,
+  queueDir,
+  questionLines,
+  readCard,
+  routeInput,
+  widgetLine,
+} from "./question.ts";
 import { PI_PLAYBOOK, UPDATE_ARGS, fingerprint } from "./mod/update.ts";
 import { resumedBetween } from "./mod/wake.ts";
 import type { SuspendSample } from "./mod/wake.ts";
@@ -364,6 +377,13 @@ function makeWakeProbe(): { probe: (needed: boolean) => Promise<WakeProbe>; rese
 }
 
 type Ui = { notify?: (message: string, type?: "info" | "warning" | "error") => void } | undefined;
+type QuestionUi =
+  | (NonNullable<Ui> & { setWidget?: (key: string, lines: string[] | undefined) => void })
+  | undefined;
+
+const QUESTION_ENTRY = "decisions-question";
+// the queue folder's watch is the fast path; this catches what it misses
+const QUESTION_MS = 1_000;
 
 /**
  * The run_day_watch tool: /run-day starts the watcher in its own session, so other pi
@@ -545,6 +565,8 @@ export default function daily(pi: ExtensionAPI) {
 
   // Every session's questions go to the decisions deck (ask.ts, mod/ask.ts); subagents ask nobody.
   let followupTimer: ReturnType<typeof setInterval> | undefined;
+  let questionTimer: ReturnType<typeof setInterval> | undefined;
+  let questionWatch: FSWatcher | undefined;
   if (!process.env.PI_SUBAGENT) {
     let deliverAs: "steer" | "followUp" | "nextTurn" = "nextTurn";
     const ask = new AskBackstop({
@@ -552,13 +574,64 @@ export default function daily(pi: ExtensionAPI) {
       note: (content) => pi.sendMessage({ customType: "decisions", content, display: false }, { deliverAs }),
       nudge: (content) => pi.sendMessage({ customType: "decisions", content, display: true }, { triggerTurn: true, deliverAs: "followUp" }),
     });
-    pi.on("input", (event) => {
+    // This session's open questions show here as well as in the deck, and a typed message answers
+    // the newest one; an answer from the deck closes it here (question.ts).
+    const qui = () => ui as QuestionUi;
+    pi.registerEntryRenderer(QUESTION_ENTRY, (entry, _opts, theme) => {
+      const lines = ((entry as { data?: { lines?: unknown } }).data?.lines ?? []) as string[];
+      const paint = (i: number, s: string) => (i === 0 ? theme.fg("accent", theme.bold(s)) : theme.fg("muted", s));
+      return { render: (width: number) => lines.map((l, i) => paint(i, fitLine(l, width))), invalidate() {} };
+    });
+    const waiting = new Set<string>();
+    const mirror = new QuestionMirror({
+      list: decideList,
+      show: async (id) => readCard(id),
+      now: () => Date.now(),
+      opened: (q) => pi.appendEntry(QUESTION_ENTRY, { lines: [...questionLines(q), "   answer here, or in the deck"] }),
+      render: (open) => qui()?.setWidget?.(QUESTION_ENTRY, open.length ? [widgetLine(open)] : undefined),
+      closed: (q, outcome, here) => pi.appendEntry(QUESTION_ENTRY, { lines: [closedLine(q.id, outcome, here)] }),
+    });
+    const checkQuestions = () => {
+      if (mirror.active) void mirror.tick().catch(() => {});
+    };
+    questionTimer = setInterval(checkQuestions, QUESTION_MS);
+    questionTimer.unref?.();
+    try {
+      // the deck rewrites the card file on an answer: react at once rather than at the next tick
+      questionWatch = watch(queueDir(), checkQuestions);
+      questionWatch.on("error", () => questionWatch?.close());
+      questionWatch.unref?.();
+    } catch {
+      // no queue folder yet: the timer still notices
+    }
+    pi.on("tool_execution_start", (event) => {
+      if (event.toolName === ASK || event.toolName === WAIT) waiting.add(event.toolCallId);
+    });
+    pi.on("tool_execution_end", (event) => {
+      waiting.delete(event.toolCallId);
+    });
+
+    pi.on("input", async (event) => {
+      if (event.source !== "extension" && !event.images?.length) {
+        const route = routeInput(mirror.questions, event.text, waiting.size > 0);
+        if (route) {
+          mirror.answeredHere(route.id);
+          const err = await decide(route.args);
+          if (err) mirror.answeredHere(route.id, false);
+          else {
+            checkQuestions();
+            return route.passThrough ? { action: "transform" as const, text: route.passThrough } : { action: "handled" as const };
+          }
+          qui()?.notify?.(`decisions: ${route.id} was not answered (${err}); your message went to the agent`, "warning");
+        }
+      }
       try {
         deliverAs = event.streamingBehavior ?? "nextTurn";
         ask.onInput(event.source, event.streamingBehavior);
       } catch {
         // never lose the user's input because the note failed
       }
+      return undefined;
     });
     pi.on("agent_end", (event) => {
       try {
@@ -567,7 +640,15 @@ export default function daily(pi: ExtensionAPI) {
         // a failed check only skips the nudge
       }
     });
-    pi.on("tool_call", (event) => ask.onToolCall(event.toolName));
+    pi.on("tool_call", (event) => {
+      try {
+        mirror.onToolCall(event.toolName, event.input);
+        checkQuestions();
+      } catch {
+        // the question shows in the deck either way
+      }
+      return ask.onToolCall(event.toolName);
+    });
 
     // and the user's follow-ups on its answer cards come back to it (followup.ts, mod/followup.ts)
     const followups = new FollowupDelivery({
@@ -583,6 +664,8 @@ export default function daily(pi: ExtensionAPI) {
     stopWatch();
     clearInterval(ideasTimer);
     clearInterval(followupTimer);
+    clearInterval(questionTimer);
+    questionWatch?.close();
   });
 
   // before_agent_start, not context_with_system: measured on pi 1.2.0, a section added to the
