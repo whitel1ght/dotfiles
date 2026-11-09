@@ -27,6 +27,10 @@ Three jobs, all reusing Claude Code's harness-free parsers in place
   Started by `/run-day` in its own session, so other pi sessions open the same day are never
   woken; `watch.lock` in the state dir keeps a second pi session from consuming the same
   cursor. Stops on `stop`, on session shutdown, and by itself once the run state is gone.
+- **Decisions questions in the session** ([`question.ts`](question.ts)) — a card this session
+  asks shows in the transcript with its options and as a widget line; the next typed message
+  answers it through `decide answer`/`tell`, and an answer from the deck closes it here. How it
+  works: `~/wiki/work/system/decisions-app.md`.
 
 Everything else CC's plugin does is native pi or an existing repo tool: model tiers come from
 the `session-models` extension's `<subagent_models>` list at run time, the plan display is `day-plan`
