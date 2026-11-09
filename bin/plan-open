@@ -1,0 +1,356 @@
+#!/usr/bin/env python3
+"""Plan items from earlier days that are still open, for /start-day.
+
+  plan-open list [--date D] [--record]   the "Still open" digest section body
+  plan-open missing [--date D]           read today's plan on stdin; print the
+                                         still-open items it leaves out (never fails)
+
+An item is a top-level plan line in a diary's <!-- start-day:start/end --> block
+up to D (default today). Leaving it off a plan, or deleting its line by hand,
+never closes it. Only these do:
+  - its line on the last plan it was on is ticked [X] (the user, or an agent with
+    its `done` note) or dismissed [-] (the user; an agent only on the user's word,
+    after `day-agent note <key> dismissed "the user said: ..."`); a ticked parent
+    closes its open children with it;
+  - a `dismissed` or `expired` note for it in an agent file dated on or after
+    that plan (dismissing an item that is on no plan any more);
+  - it was first planned more than 30 days (PLAN_OPEN_WINDOW) before D: `list`
+    names it once under "Expired", and with --record writes
+    `day-agent note <key> expired "..."` to D's agent file, so it is not tracked
+    again. A later plan line for the same ticket starts a new item.
+A `deferred` note "YYYY-MM-DD ..." dated on or after its last plan keeps it off
+the plan until that date: `list` shows it as not due yet.
+
+Identity: a ticket item is its key (the first ticket key in its words). A keyless
+item that names an MR (repo!iid) is that MR: the same MR on a later keyless line is
+the same item. Each keyless item is shown and dismissed by its ref, <date>/<pN>
+for a line ending in <!-- pN --> (ids restart each day), else <date>/i<N> (its
+place among that day's top-level lines). A keyless line on a later day is the same item when its pN section in that day's agent file
+has a note starting "from <ref>" (`day-agent note pK carried "from 2026-11-06/p3:
+..."`), or when its words are the same. Notes for an item: its key's section, its
+pN section on the day of that line, a section named by any of its refs
+(`day-agent note 2026-11-06/p3 dismissed "..."`), or any note starting "from <ref>".
+
+Plans are read over twice the window, so an item's first day is known before it
+expires. DIARY_DIR defaults to ~/wiki/diary; DAY_AGENT overrides the day-agent
+used by --record.
+"""
+
+import argparse
+import datetime as dt
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+START, END = "<!-- start-day:start -->", "<!-- start-day:end -->"
+TOP = re.compile(r"^[-*] \[([ xX/!>-])\] (.*)$")
+CHILD = re.compile(r"^\s+[-*] \[([ xX/!>-])\] (.*)$")
+GROUP = re.compile(r"^\*\*(.+?)\*\*\s*$")
+TICKET = re.compile(r"\b([a-z]{2,10}-\d{2,6})\b", re.I)
+MR = re.compile(r"\b(?:ecfx-)?([a-z][a-z0-9-]*) ?!(\d+)\b", re.I)
+CID = re.compile(r"\s*<!-- (p\d+) -->\s*$")
+SECTION = re.compile(r"^## (\S+)\s*$")
+ENTRY = re.compile(r"^- (\d\d:\d\d) ([a-z-]+): (.+)$")
+FROM = re.compile(r"^from (\d{4}-\d\d-\d\d/(?:p|i)\d+)\b")
+DATE_LEAD = re.compile(r"^(\d{4}-\d\d-\d\d)\b")
+CLOSED = set("xX-")
+CHILD_OPEN = set(" /!")
+CLOSING_NOTES = {"dismissed", "expired"}
+
+
+def words_of(text: str) -> str:
+    t = CID.sub("", text)
+    t = re.sub(r"\s*\[↗\]\[[^\]]*\]", "", t)
+    t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", t)
+    return t.split(" · ", 1)[0].strip()
+
+
+def suffix_of(text: str) -> str:
+    t = re.sub(r"\s*\[↗\]\[[^\]]*\]", "", CID.sub("", text))
+    return t.split(" · ", 1)[1].strip() if " · " in t else ""
+
+
+def norm(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def mr_of(words: str) -> str:
+    m = MR.search(words)
+    return f"{m.group(1).lower()}!{m.group(2)}" if m else ""
+
+
+def clip(text: str, n: int) -> str:
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def plan_items(lines):
+    """Top-level items of a plan, each {marker, text, group, ordinal, children}."""
+    items, group = [], ""
+    for line in lines:
+        g = GROUP.match(line)
+        if g:
+            group = g.group(1)
+            continue
+        m = TOP.match(line)
+        if m:
+            items.append({"marker": m.group(1), "text": m.group(2), "group": group,
+                          "ordinal": len(items) + 1, "children": []})
+            continue
+        c = CHILD.match(line)
+        if c and items:
+            items[-1]["children"].append((c.group(1), c.group(2)))
+    return items
+
+
+def block(path: Path):
+    try:
+        md = path.read_text()
+    except OSError:
+        return None
+    a = md.find(START)
+    if a < 0:
+        return None
+    b = md.find(END, a)
+    return None if b < 0 else md[a + len(START):b].split("\n")
+
+
+def agent_notes(path: Path):
+    """[(section, kind, time, text)] of one agent file, mr lines left out."""
+    out, sec = [], None
+    try:
+        lines = path.read_text().split("\n")
+    except OSError:
+        return out
+    for line in lines:
+        s = SECTION.match(line)
+        if s:
+            sec = s.group(1).lower()
+            continue
+        e = ENTRY.match(line)
+        if sec and e:
+            out.append((sec, e.group(2), e.group(1), e.group(3)))
+    return out
+
+
+class Item:
+    def __init__(self, key):
+        self.key = key          # ticket key, or "" for a keyless item
+        self.refs = []          # every <date>/<id> it was on a plan as
+        self.cids = set()       # (date, pN) of its lines
+        self.mrs = set()        # repo!iid a keyless item is known by
+        self.days = []          # [(date, [lines])] in date order
+
+    def add_ref(self, ref):
+        if ref not in self.refs:
+            self.refs.append(ref)
+
+    def name(self):
+        return self.key or self.refs[-1]
+
+    def label(self, lines):
+        words = clip(shown(lines)["words"], 60)
+        return words if self.key else f"{self.name()} {words}"
+
+    def owns(self, date, sec, text):
+        if sec == self.key or sec in self.refs or (date, sec) in self.cids:
+            return True
+        f = FROM.match(text)
+        return bool(f) and f.group(1) in self.refs
+
+
+def scan(diary: Path, today: dt.date, days: int):
+    """Items from the plans of the `days` days before today, and the agent notes up to today."""
+    dates = [(today - dt.timedelta(days=i)).isoformat() for i in range(days, -1, -1)]
+    notes = {}
+    for d in dates:
+        p = diary / ".agent" / f"{d}.md"
+        if p.exists():
+            notes[d] = agent_notes(p)
+    items, by_key, by_ref, by_words = [], {}, {}, {}
+    for d in dates:
+        lines = block(diary / f"{d}.md")
+        if lines is None:
+            continue
+        for it in plan_items(lines):
+            words = words_of(it["text"])
+            cm = CID.search(it["text"])
+            cid = cm.group(1) if cm else ""
+            ref = f"{d}/{cid or 'i%d' % it['ordinal']}"
+            km = TICKET.search(words)
+            key = km.group(1).lower() if km else ""
+            mr = "" if key else mr_of(words)
+            item = None
+            if key or mr:
+                item = by_key.get(key or mr)
+            if item is None and not key:
+                for sec, _, _, text in notes.get(d, []):
+                    f = FROM.match(text)
+                    if sec == cid and f and f.group(1) in by_ref:
+                        item = by_ref[f.group(1)]
+                        break
+                if item is None:
+                    item = by_words.get(norm(words))
+            if item is None:
+                item = Item(key)
+                items.append(item)
+            if key or mr:
+                by_key.setdefault(key or mr, item)
+            if mr:
+                item.mrs.add(mr)
+            item.add_ref(ref)
+            by_ref[ref] = item
+            if not key:
+                by_words[norm(words)] = item
+            if cid:
+                item.cids.add((d, cid))
+            line = {**it, "words": words, "suffix": suffix_of(it["text"])}
+            if item.days and item.days[-1][0] == d:
+                item.days[-1][1].append(line)
+            else:
+                item.days.append((d, [line]))
+    return items, notes
+
+
+def shown(lines):
+    return next((l for l in lines if l["marker"] not in CLOSED), lines[-1])
+
+
+def closed_by_marker(lines):
+    return all(l["marker"] in CLOSED for l in lines)
+
+
+def state(item: Item, notes, today: dt.date, window: int):
+    """(status, first, last, lines, until, latest note); status is closed, open, deferred or expired."""
+    mine = [(d, kind, text) for d in sorted(notes) for sec, kind, _, text in notes[d] if item.owns(d, sec, text)]
+    first = None
+    for i, (d, lines) in enumerate(item.days):
+        if i == 0:
+            first = d
+            continue
+        prev, prev_lines = item.days[i - 1]
+        if closed_by_marker(prev_lines) or any(prev <= nd < d and k in CLOSING_NOTES for nd, k, _ in mine):
+            first = d
+    last, lines = item.days[-1]
+    after = [(d, k, t) for d, k, t in mine if d >= last]
+    latest = next(((d, k, t) for d, k, t in reversed(mine) if d >= first), None)
+    if closed_by_marker(lines) or any(k in CLOSING_NOTES for _, k, _ in after):
+        return "closed", first, last, lines, None, latest
+    until = None
+    for _, k, t in after:
+        if k == "deferred":
+            m = DATE_LEAD.match(t)
+            until = m.group(1) if m else until
+    if first < (today - dt.timedelta(days=window)).isoformat():
+        return "expired", first, last, lines, until, latest
+    if until and until > today.isoformat():
+        return "deferred", first, last, lines, until, latest
+    return "open", first, last, lines, until, latest
+
+
+def rows(diary, today, window):
+    items, notes = scan(diary, today, 2 * window)
+    out = []
+    for item in items:
+        st = state(item, notes, today, window)
+        if st[0] != "closed":
+            out.append((item, *st))
+    out.sort(key=lambda r: (r[2], r[0].name()))
+    return out
+
+
+def show(item, st, first, last, lines, until, latest, today):
+    line = shown(lines)
+    marker = "[" + "".join(sorted({l["marker"] for l in lines}, key=" /!>xX-".index)) + "]"
+    open_days = (today - dt.date.fromisoformat(first)).days
+    head = f"- {marker} {clip(line['words'], 110)}"
+    where = f" ({line['group']})" if line["group"] else ""
+    meta = ("  " if item.key else f"  ref {item.name()}, ") + f"first planned {first}, {open_days} days open, last on the plan {last}{where}"
+    if st == "deferred":
+        meta += f"; deferred until {until}"
+    elif until:
+        meta += f"; was deferred until {until}, due now"
+    out = [head, meta]
+    if latest:
+        d, kind, text = latest
+        out.append(f"  latest note ({d} {kind}): {clip(text, 200)}")
+    elif line["suffix"]:
+        out.append(f"  last state: {clip(line['suffix'], 200)}")
+    for l in lines:
+        for m, text in l["children"]:
+            if m in CHILD_OPEN:
+                out.append(f"  - [{m}] {clip(words_of(text), 100)}")
+    return out
+
+
+def record_expired(today, expired):
+    day_agent = os.environ.get("DAY_AGENT") or str(Path(__file__).resolve().parent / "day-agent")
+    env = {**os.environ, "DAY_AGENT_DATE": today.isoformat()}
+    if subprocess.run([day_agent, "init"], env=env).returncode != 0:
+        print("(could not record the expired items: day-agent init failed)")
+        return
+    for item, _, first, last, *_ in expired:
+        text = f"first planned {first}, last on the plan {last}, open over the window: no longer tracked"
+        if subprocess.run([day_agent, "note", item.name(), "expired", text], env=env).returncode != 0:
+            print(f"(could not record {item.name()} as expired)")
+
+
+def cmd_list(diary, today, window, record):
+    rs = rows(diary, today, window)
+    due = [r for r in rs if r[1] == "open"]
+    later = [r for r in rs if r[1] == "deferred"]
+    expired = [r for r in rs if r[1] == "expired"]
+    if not rs:
+        print("(none)")
+        return 0
+    for r in due:
+        print("\n".join(show(*r, today)))
+    if later:
+        print("\nDeferred, not due yet (they stay off the plan until their date):")
+        for r in later:
+            print("\n".join(show(*r, today)))
+    if expired:
+        print(f"\nExpired (first planned over {window} days ago; no longer tracked, not planned): "
+              + "; ".join(f"{r[0].label(r[4])} (since {r[2]})" for r in expired))
+        if record:
+            record_expired(today, expired)
+    return 0
+
+
+def cmd_missing(diary, today, window, plan_text):
+    due = [r for r in rows(diary, today, window) if r[1] == "open"]
+    todays = agent_notes(diary / ".agent" / f"{today.isoformat()}.md")
+    keys, word_set, cids = set(), set(), set()
+    for it in plan_items(plan_text.split("\n")):
+        words = words_of(it["text"])
+        km = TICKET.search(words)
+        keys.add(km.group(1).lower() if km else mr_of(words))
+        word_set.add(norm(words))
+        cm = CID.search(it["text"])
+        if cm:
+            cids.add(cm.group(1))
+    carried = {f.group(1) for sec, _, _, t in todays if sec in cids for f in [FROM.match(t)] if f}
+    for item, *_, lines, _, _ in due:
+        if item.key in keys if item.key else (item.mrs & keys or carried & set(item.refs) or any(norm(l["words"]) in word_set for l in lines)):
+            continue
+        print(item.label(lines))
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="plan-open", description=__doc__.split("\n")[0])
+    ap.add_argument("cmd", choices=["list", "missing"])
+    ap.add_argument("--date", default=os.environ.get("PLAN_OPEN_DATE") or dt.date.today().isoformat())
+    ap.add_argument("--record", action="store_true")
+    a = ap.parse_args()
+    window = int(os.environ.get("PLAN_OPEN_WINDOW", "30"))
+    diary = Path(os.environ.get("DIARY_DIR") or Path.home() / "wiki/diary")
+    today = dt.date.fromisoformat(a.date)
+    if a.cmd == "list":
+        return cmd_list(diary, today, window, a.record)
+    return cmd_missing(diary, today, window, sys.stdin.read())
+
+
+if __name__ == "__main__":
+    sys.exit(main())

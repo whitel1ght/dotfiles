@@ -3,7 +3,7 @@ import type { Item } from './types.ts'
 
 export type AgentEntry = { kind: string; time: string; text: string }
 
-const KINDS = new Set(['progress', 'done', 'note', 'blocked', 'with-you', 'handed-back', 'carried'])
+const KINDS = new Set(['progress', 'done', 'note', 'blocked', 'with-you', 'handed-back', 'carried', 'dismissed', 'deferred', 'expired'])
 const SECTION = /^## (\S+)\s*$/
 const MR_LINE = /^- mr: (\S+) (\S+)\s*$/
 const ENTRY = /^- (\d\d:\d\d) ([a-z-]+): (.+)$/
@@ -58,8 +58,12 @@ export function agentMrUrls(md: string): Map<string, string> {
   return new Map(mrLines(md).map(m => [m.key, m.url]))
 }
 
+export function hasEntry(md: string, key: string, kind: string): boolean {
+  return (parseAgent(md).get(key.toLowerCase()) ?? []).some(e => e.kind === kind && e.text.trim() !== '')
+}
+
 export function hasDoneEvidence(md: string, key: string): boolean {
-  return (parseAgent(md).get(key.toLowerCase()) ?? []).some(e => e.kind === 'done' && e.text.trim() !== '')
+  return hasEntry(md, key, 'done')
 }
 
 export function commentId(line: string): string {

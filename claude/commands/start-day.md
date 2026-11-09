@@ -29,8 +29,9 @@ Run sync-tickets first, so the Jira statuses gathered next are already true.
 ```
 
 The first line gives the start of the window ("Since ..."). Use the same window for
-Slack. The digest has: carry-over from my last diary entry, my open MRs (reviews
-received, approvals, pipelines), which of my MRs are ready to merge (and in what order,
+Slack. The digest has: carry-over from my last diary entry, `## Still open from earlier
+plans` (every plan item of the last 30 days not yet ticked or dismissed, see step 3), my
+open MRs (reviews received, approvals, pipelines), which of my MRs are ready to merge (and in what order,
 when they depend on each other), MRs waiting on my review, Jira, `## Jira mentions of me`
 (every comment or description on an ECFX ticket that mentioned me in the window, each
 `awaiting reply` or `replied`: I commented on the ticket after it), `## QA candidates`
@@ -118,9 +119,24 @@ Group the items by what they unblock, in this order:
   reply. MRs in my review queue marked
   review_now or re_review, oldest first, except backend ones (see If time). A failed
   pipeline on one of my MRs.
-- **Today**: what I'm committed to. Unfinished items from the carry-over (unticked
-  `- [ ]`, In progress and Blocked lines), tickets newly assigned to me, and tickets
-  someone else moved, for example sent back by QA.
+- **Today**: what I'm committed to. Tickets newly assigned to me, and tickets someone
+  else moved, for example sent back by QA.
+
+**Still open.** Every item under `## Still open from earlier plans` goes on today's plan,
+in the group it belongs to by the rules above (its last group is shown), with fresh words
+for today; a blocked one says what it waits on (`ecfx-17425 waits on product's pick`), and
+its open children come with it. An item stays open until it is ticked `[X]` or dismissed
+`[-]`: leaving it off a plan, or the user deleting its line, never closes it, and `save`
+names any you leave out. Never dismiss or drop one yourself: `[-]` and `day-agent note
+<key> dismissed "the user said: <what>"` are written only on my explicit word. One that is
+already done (merged overnight, moved to QA) goes on the plan as `[X]`, after `day-agent
+note <key> done "<evidence>"`. A `[>]` item is due the next working day; one deferred to a
+date (`day-agent note <key> deferred "YYYY-MM-DD <why>"`) is listed under "Deferred, not
+due yet" and stays off until that date. A keyless item is named by its ref
+(`2026-11-06/p3`): give its line a new `<!-- pN -->` and run `day-agent note <pN> carried
+"from <ref>: <facts>"`, which keeps it the same item. The `Expired` line names items first
+planned over 30 days ago: they are no longer tracked and stay off; name them in one line
+in the closing message.
 - **If time**: reviews I owe on other people's backend MRs (ecfx-backend and backend
   services such as data-grpc-service), however long they've waited: they come after
   my own work. Then QA candidates from `## QA candidates`, at most two, as
@@ -141,7 +157,7 @@ already in First or Today, in which case say so in one short line.
 
 Before writing, check that every one of these made it in or was dropped on purpose: each
 review note on my MRs that needs a reply, each review_now or re_review MR, each newly
-assigned ticket, each unticked carry-over item, each Slack request (every DM and group DM
+assigned ticket, each still-open item, each Slack request (every DM and group DM
 request, every channel mention), each Jira mention awaiting a reply (both under **First**)
 and each unclaimed QA candidate. Then check that no
 ticket starts two top-level lines: several review notes, MRs or carry-over lines on one
@@ -149,7 +165,7 @@ ticket are one item.
 
 Leave out what isn't mine to move: a note marked "I replied since" is waiting on the
 reviewer even if its thread is still unresolved. Also leave out MRs that are idle,
-waiting on their author or already approved, and carry-over items already done.
+waiting on their author or already approved.
 Someone else's MR whose last review from me is unaddressed stays out wherever it shows
 up (a to-do marked "waiting on author", Slack, Jira) until its author pushes or replies.
 
@@ -173,10 +189,11 @@ it is>"` at once, so the next id is a new one. Keep it to what fits in a day, us
 14 items.
 
 Everything else goes to the agent file, not the plan line. For each MR a line names or
-owns, run `~/.local/bin/day-agent mr <key> <repo>!<iid> <url>`. For each carried-over
-item, take its facts from the carry-over's `Agent notes from <last>:` section and the
-last diary, and run `~/.local/bin/day-agent note <key> carried "<the facts still true:
-blocked reason, who has it, last state>"`. The plan line gets fresh words for today, not
+owns, run `~/.local/bin/day-agent mr <key> <repo>!<iid> <url>`. For each still-open
+item, take its facts from its `latest note` or `last state` in the digest, the carry-over's
+`Agent notes from <last>:` section and the last diary, and run
+`~/.local/bin/day-agent note <key> carried "<the facts still true: blocked reason, who has
+it, last state>"` (a keyless one: `"from <ref>: <facts>"` under its new pN). The plan line gets fresh words for today, not
 yesterday's line.
 
 These examples are made up to show the shape; every line you write must come from what
@@ -310,6 +327,9 @@ PLAN
 
 The plan has no links: the MR urls are in the agent file, and the plan picker (`` ` g ``) opens
 the plan's tickets and MRs.
+
+When `save` prints `still open but not on this plan`, you left a still-open item out: put
+it on the plan and save again.
 
 This puts it at the top of today's `### ECFX` section, creating today's diary entry from
 my template if needed. Running it again the same day replaces the plan and nothing else.

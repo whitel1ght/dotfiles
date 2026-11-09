@@ -12,6 +12,10 @@
 # collect reads, each best-effort (a failing source prints a note, the rest run):
 #   carry-over    the ### ECFX section of the last diary entry before today:
 #                 unticked items, the plan, and the day's report
+#   still open    every plan item of the last 30 days not yet ticked [X] or
+#                 dismissed [-], wherever it was left off (`plan-open list
+#                 --record`, which also records the ones over 30 days as expired;
+#                 START_DAY_RECORD=0 leaves the agent file alone)
 #   my MRs        comments from others, approvals and pipeline state on my open
 #                 MRs active since then (idle ones in one line), and which merged
 #   ready to merge  my open MRs that are mergeable now, or blocked only by
@@ -73,6 +77,14 @@ collect_carryover() {
   else
     echo "(no agent notes)"
   fi
+}
+
+# Leaving an item off a plan never closes it (decision 0014): only [X], [-] or a
+# dismissed note on the user's word does, or 30 days.
+collect_still_open() {
+  section "Still open from earlier plans"
+  if [ "${START_DAY_RECORD:-1}" = 0 ]; then "$HERE/plan-open" list 2>&1 || echo "(plan-open failed)"
+  else "$HERE/plan-open" list --record 2>&1 || echo "(plan-open failed)"; fi
 }
 
 glab_held() { local rc=0; "$HERE/glab-gate" check || rc=$?; [ "$rc" -eq 1 ]; }
@@ -524,7 +536,7 @@ case "${1:-}" in
     # team plugins after repos-sync, so they update from the clone it just fast-forwarded
     ( "${START_DAY_REPOS_SYNC:-$HERE/repos-sync}" >"$repos_out" 2>&1
       "${START_DAY_TEAM_PLUGINS_SYNC:-$HERE/team-plugins-sync}" >"$plugins_out" 2>&1 ) </dev/null & repos_pid=$!
-    collect_carryover; collect_my_mrs; collect_my_drafts; collect_ready_to_merge; collect_review_queue; collect_gitlab_todos; collect_jira; collect_jira_mentions; collect_qa_candidates
+    collect_carryover; collect_still_open; collect_my_mrs; collect_my_drafts; collect_ready_to_merge; collect_review_queue; collect_gitlab_todos; collect_jira; collect_jira_mentions; collect_qa_candidates
     wait "$repos_pid" || true
     section "Repos (fetched from GitLab)"
     if [ -s "$repos_out" ]; then cat "$repos_out"; else echo "(repos-sync printed nothing)"; fi
@@ -546,9 +558,11 @@ case "${1:-}" in
         exit 1
       fi
     fi
+    left=$(printf '%s\n' "$plan" | "$HERE/plan-open" missing 2>/dev/null | paste -sd ';' - | sed 's/;/; /g') || left=""
     file=$(printf '%s\n' "$plan" | "$HERE/end-day" save "$(date +%F)" --plan)
     "$HERE/diary-links" "$file" || echo "start-day: diary-links failed on $file" >&2
-    if [ -s "$STATE_DIR/pending" ]; then mv "$STATE_DIR/pending" "$STATE_DIR/last-run"; fi ;;
+    if [ -s "$STATE_DIR/pending" ]; then mv "$STATE_DIR/pending" "$STATE_DIR/last-run"; fi
+    [ -z "$left" ] || echo "start-day: saved; still open but not on this plan (tracked, listed again tomorrow): $left" >&2 ;;
   -h|--help|"") sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
   *) echo "start-day: unknown command $1" >&2; exit 1 ;;
 esac

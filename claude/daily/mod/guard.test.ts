@@ -202,3 +202,17 @@ test('new format: a 100-char line plus a comment id passes, an untouched old vio
 test('new format: broken block markers are refused', async () => {
   expect(checkTicks(DIARY_NEW, DIARY_NEW.replace(END_MARK, ''), AGENT).ok).toBe(false)
 })
+
+test('new format: [-] dismisses only with a dismissed entry, the user\'s word', async () => {
+  const dismissed = L18778.replace('[ ]', '[-]')
+  const res = checkTicks(DIARY_NEW, newEdit(L18778, dismissed), AGENT)
+  expect(res.ok).toBe(false)
+  if (!res.ok) expect(res.lines.join('|')).toContain('day-agent note ecfx-18778 dismissed')
+  const withWord = `${AGENT}## ecfx-18778\n- 10:30 dismissed: the user said: not needed any more\n`
+  expect(checkTicks(DIARY_NEW, newEdit(L18778, dismissed), withWord).ok).toBe(true)
+  expect(checkTicks(newEdit(L18778, dismissed), newEdit(L18778, dismissed), AGENT).ok).toBe(true)
+})
+
+test('old format: [-] is not policed', async () => {
+  expect(checkTicks(DIARY, tick('- [ ] ecfx-6659 sync with @smtsuchi', '- [-] ecfx-6659 sync with @smtsuchi'), null).ok).toBe(true)
+})

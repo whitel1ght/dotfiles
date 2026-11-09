@@ -81,6 +81,13 @@ for f in "$C" "$P"; do
   has "$f" '`## Jira mentions of me`' "$side: the digest's Jira mentions are read"
   has "$f" 'each Jira mention awaiting a reply' "$side: the pre-write check covers Jira mentions"
   has "$f" 'each DM or group' "$side: DM and group DM requests go under First"
+  has "$f" '`## Still open from earlier' "$side: the digest's still-open items are read"
+  has "$f" 'never closes it' "$side: leaving an item off never closes it"
+  has "$f" 'Never dismiss or drop one yourself' "$side: the model never dismisses on its own"
+  has "$f" 'dismissed "the user said: <what>"' "$side: a dismissal records the user's word"
+  has "$f" '"from <ref>: <facts>"' "$side: a keyless item keeps its identity"
+  has "$f" 'still open but not on this plan' "$side: save's note is acted on"
+  lacks "$f" 'each unticked carry-over item' "$side: no carry-over-only check"
 done
 
 has "$C" "Bash(~/.local/bin/day-agent:*)" "claude: allows day-agent"

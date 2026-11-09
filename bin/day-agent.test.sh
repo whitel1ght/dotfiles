@@ -197,6 +197,26 @@ while IFS= read -r line; do
 done < "$AGENT"
 assert_eq "0" "$bad" "every line of a file built with every subcommand matches the parser's regexes"
 
+echo "day-agent - closing kinds and earlier refs"
+fresh
+run note 2026-11-06/P3 dismissed "the user said: not needed"; rc=$?
+assert_eq "0" "$rc" "a keyless item of an earlier day is keyed by its ref"
+run note 2026-10-20/i2 expired "first planned 2026-10-20"
+run note ecfx-1 deferred "2026-11-11 after the release"
+assert_eq "# agent notes $DATE
+## 2026-11-06/p3
+- 09:12 dismissed: the user said: not needed
+## 2026-10-20/i2
+- 09:12 expired: first planned 2026-10-20
+## ecfx-1
+- 09:12 deferred: 2026-11-11 after the release" "$(cat "$AGENT")" "dismissed, expired and deferred are kinds"
+run note ecfx-1 deferred "next week" >/dev/null; rc=$?
+assert_eq "2" "$rc" "a deferred note without a date is refused"
+assert_contains "$(errs)" "YYYY-MM-DD" "naming the date it needs"
+run note 2026-11-06/x3 dismissed "x" >/dev/null; assert_eq "2" "$?" "a malformed ref is refused"
+run note ecfx-1 dropped "x" >/dev/null; assert_eq "2" "$?" "there is no dropped kind"
+assert_eq "p1" "$(run id)" "ref sections do not take a pN id"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

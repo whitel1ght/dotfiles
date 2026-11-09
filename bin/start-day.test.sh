@@ -521,6 +521,27 @@ assert_contains "$out" "(no agent notes)" "a day without an agent file says so"
 assert_contains "$out" "- [ ] ECFX-17482 dashboard fix" "the diary dump is still printed"
 rm -f "$DIARY/$last.md"
 
+echo "start-day — items left off a plan stay open"
+reset
+two=$(ago 2); one=$(ago 1); today=$(date +%F)
+printf '%s\n' '### ECFX' '<!-- start-day:start -->' '**Today**' '- [ ] ecfx-300 investigate the filter bug' '- [X] ecfx-301 merged' '<!-- start-day:end -->' > "$DIARY/$two.md"
+printf '%s\n' '### ECFX' '<!-- start-day:start -->' '**First**' '- [/] ecfx-302 answer Bob' '<!-- start-day:end -->' > "$DIARY/$one.md"
+out=$(run collect --since 2026-09-20T00:00:00Z)
+still=$(awk '/^## Still open from earlier plans/{f=1;next} /^## /{if(f)exit} f' <<<"$out")
+assert_contains "$still" "- [ ] ecfx-300 investigate the filter bug" "an item open two days ago but missing from yesterday's plan is listed"
+assert_contains "$still" "first planned $two, 2 days open, last on the plan $two (Today)" "with when it was planned"
+assert_contains "$still" "- [/] ecfx-302 answer Bob" "yesterday's open item too"
+assert_lacks "$still" "ecfx-301" "a ticked item is not"
+mkdir -p "$DIARY/.agent"; printf '# agent notes %s\n' "$today" > "$DIARY/.agent/$today.md"
+err=$(printf '%s\n' '**First**' '- [/] ecfx-302 answer Bob, then merge' | save); rc=$?
+assert_eq 0 "$rc" "save passes a plan that leaves an open item out"
+assert_contains "$err" "still open but not on this plan (tracked, listed again tomorrow): ecfx-300 investigate the filter bug" "and names it, without refusing"
+assert_contains "$(PATH="$STUBS:$PATH" DIARY_DIR="$DIARY" "$TEST_DIR/plan-open" list --date "$(date -v+1d +%F 2>/dev/null || date -d tomorrow +%F)")" "ecfx-300 investigate the filter bug" "the next day it is listed again: omission never closes it"
+err=$(printf '%s\n' '**First**' '- [/] ecfx-302 answer Bob' '**Today**' '- [-] ecfx-300 investigate the filter bug' | save)
+assert_lacks "$err" "still open" "a plan with every open item says nothing"
+assert_lacks "$(DIARY_DIR="$DIARY" "$TEST_DIR/plan-open" list)" "ecfx-300" "the user's [-] dismisses it"
+rm -rf "$DIARY/.agent" "$DIARY/$two.md" "$DIARY/$one.md" "$DIARY/$today.md"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

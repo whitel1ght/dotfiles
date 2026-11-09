@@ -2,7 +2,7 @@ import type { Item, Marker } from './types.ts'
 
 const START = '<!-- start-day:start -->'
 const END = '<!-- start-day:end -->'
-const ITEM = /^- \[([ xX/!>])\] (.*)$/
+const ITEM = /^- \[([ xX/!>-])\] (.*)$/
 const GROUP = /^\*\*(.+?)\*\*\s*$/
 const TICKET = /\b([a-z]{2,10}-\d{2,6})\b/i
 const MR_LINK = /\/([^/\s)]+)\/-\/merge_requests\/(\d+)/g

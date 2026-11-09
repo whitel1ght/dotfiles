@@ -10,8 +10,11 @@
 #   day-agent id                        print the next free p<N>
 #
 # note and mr exit 3 when the file is missing: that day is old format.
-# KEY is a ticket key (ecfx-123) or a comment id (p3). KIND is one of
-# progress done note blocked with-you handed-back carried.
+# KEY is a ticket key (ecfx-123), a comment id (p3), or an earlier day's keyless
+# item by its ref (2026-11-06/p3, 2026-10-20/i2: see plan-open). KIND is one of
+# progress done note blocked with-you handed-back carried dismissed deferred expired.
+# dismissed is written only on the user's word; deferred's text starts with the
+# date the item is due again (YYYY-MM-DD); expired is plan-open's.
 # The file is $DIARY_DIR/.agent/<date>.md (DIARY_DIR defaults to ~/wiki/diary).
 # DAY_AGENT_DATE and DAY_AGENT_NOW (HH:MM) override the clock, for tests.
 set -euo pipefail
@@ -60,7 +63,7 @@ init() {
 norm_key() {
   local k
   k=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-  [[ "$k" =~ ^([a-z][a-z0-9]*-[0-9]+|p[0-9]+)$ ]] || bad "bad key $1"
+  [[ "$k" =~ ^([a-z][a-z0-9]*-[0-9]+|p[0-9]+|[0-9]{4}-[0-9]{2}-[0-9]{2}/[pi][0-9]+)$ ]] || bad "bad key $1"
   printf '%s' "$k"
 }
 
@@ -92,9 +95,11 @@ case "$cmd" in
   note)
     [ $# -eq 3 ] || usage
     key=$(norm_key "$1")
-    case "$2" in progress|done|note|blocked|with-you|handed-back|carried) ;; *) bad "unknown kind $2" ;; esac
+    case "$2" in progress|done|note|blocked|with-you|handed-back|carried|dismissed|deferred|expired) ;; *) bad "unknown kind $2" ;; esac
     text=$(printf '%s' "$3" | tr '\n\r\t' '   ' | sed 's/  */ /g; s/^ //; s/ $//')
     [ -n "$text" ] || bad "empty text"
+    dated='^[0-9]{4}-[0-9]{2}-[0-9]{2}( |$)'
+    [ "$2" != deferred ] || [[ "$text" =~ $dated ]] || bad "a deferred note starts with the date it is due again (YYYY-MM-DD)"
     insert "$key" "- ${DAY_AGENT_NOW:-$(date +%H:%M)} $2: $text"
     ;;
   mr)

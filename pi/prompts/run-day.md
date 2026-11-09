@@ -272,9 +272,14 @@ goes to the agent file, children are not guarded). A child that turns out not to
 unticked child into tomorrow's plan.
 
 Markers: `[ ]` not started · `[/]` in progress · `[X]` done (an older `[x]` counts too) ·
-`[!]` blocked, needs the user · `[>]` deferred. Notes, evidence and MR links never go on the plan
+`[!]` blocked, needs the user · `[>]` deferred (due again on the next working day's plan, or on
+the date of a `day-agent note <key> deferred "YYYY-MM-DD <why>"`) · `[-]` dismissed (the user's call
+only). An item stays open, and start-day puts it back on every new plan, until it is `[X]` or `[-]`:
+leaving its line off a plan or deleting it never closes it. Write `[-]` only on the user's explicit
+word, after `day-agent note <key> dismissed "the user said: <what>"` (the `daily` extension refuses
+a new top-level `[-]` without that entry); never dismiss an item on your own. Notes, evidence and MR links never go on the plan
 line: they go to the hidden agent file through `day-agent` (`day-agent note <key> <kind> "<text>"`,
-kind one of `progress done note blocked with-you handed-back carried`; `day-agent mr <key>
+kind one of `progress done note blocked with-you handed-back carried dismissed deferred`; `day-agent mr <key>
 <repo>!<iid> <url>`), where `<key>` is the line's `<!-- pN -->` id when it has one, else its
 lowercase ticket key. The plan line only changes its marker and its few words (what is next, for
 example `[/] ecfx-17482 N1 next`), stays under 100 characters, and carries no ` · `, no
@@ -682,9 +687,9 @@ jt --list -u
      pushes and opens the Draft MR) and `Leave it`. On `Take it`:
      `jira-api GET myself | jq -r .accountId`, then
      `jira-api PUT "issue/<KEY>/assignee" '{"accountId":"<id>"}'`, and start a fresh `worker` in its
-     worktree to push and open the Draft MR. On `Leave it`: stop the agent and mark the line
-     `[>]` and run `day-agent note <key> note "left in the sprint"` (old format: a
-     `· note: left in the sprint` suffix).
+     worktree to push and open the Draft MR. On `Leave it` (the user's word, so a dismissal): stop
+     the agent, run `day-agent note <key> dismissed "the user chose Leave it: left in the sprint"`
+     and mark the line `[-]` (old format: `[>]` with a `· note: left in the sprint` suffix).
      Its report before `Take it` (also from the Wake check): run step 3's diff and test checks
      without the MR and pipeline parts, since there is none yet. Passing: `agent=-`, the line `[/]` and
      `day-agent note <key> progress "ready locally, waiting on Take it"` (old format: a

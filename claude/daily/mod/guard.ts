@@ -1,4 +1,4 @@
-import { hasDoneEvidence, itemKey } from './agentfile.ts'
+import { hasDoneEvidence, hasEntry, itemKey } from './agentfile.ts'
 import { extractBlock, parseItems } from './diary.ts'
 import type { Item, Marker } from './types.ts'
 
@@ -53,7 +53,7 @@ function checkTicksPure(before: string, after: string, agent: string | null): Gu
   return bad.length > 0 ? { ok: false, lines: bad, format } : { ok: true }
 }
 
-const ITEM_LINE = /^\s*- \[[ xX/!>]\] /
+const ITEM_LINE = /^\s*- \[[ xX/!>-]\] /
 const COMMENT_TAIL = /\s*<!-- p\d+ -->\s*$/
 const DEFINITION = /^\[[^\]]+\]: \S/
 const MAX_LINE = 100
@@ -65,6 +65,13 @@ function checkNew(before: string, after: string, agent: string): GuardResult {
   for (const it of parseItems(before)) pool.set(slot(it), [...(pool.get(slot(it)) ?? []), it.marker])
   for (const it of parseItems(after)) {
     const prior = pool.get(slot(it))?.shift()
+    if (it.marker === '-' && prior !== '-') {
+      // Dismissing is the user's call: an agent writes [-] only after recording the user's word.
+      const key = itemKey(it)
+      if (key === '') bad.push(`${it.line.trim()}: no ticket key or <!-- pN --> id to dismiss against`)
+      else if (!hasEntry(agent, key, 'dismissed')) bad.push(`${key} ${it.text.replace(COMMENT_TAIL, '').slice(0, 40)}: no dismissed entry; only on the user's word (day-agent note ${key} dismissed "the user said: <what>")`)
+      continue
+    }
     if (it.marker !== 'x' || prior === 'x') continue
     const key = itemKey(it)
     if (key === '') bad.push(`${it.line.trim()}: no ticket key or <!-- pN --> id to tick against`)
