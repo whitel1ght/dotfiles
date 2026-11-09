@@ -57,8 +57,10 @@ Global instructions applied across all projects. Keep this short — project-lev
   (`sdk env` in the repo root, or `JAVA_HOME` set to `~/.sdkman/candidates/java/25.*`).
 - Code on a branch is not live: pi and the daily plugin load from `main`. When a dotfiles
   branch is finished and its tests pass, land it yourself with `dot-land <branch>` (merge,
-  push, cleanup) and say it landed; never hand the merge back to me. ECFX MRs I merge in the
-  GitLab UI; until one is merged, say plainly that it is not live yet.
+  push, cleanup; exit 3 means it rebased onto a moved main: re-run the tests, then run it
+  again) and say it landed; never hand a dotfiles merge back to me. If the tests fail or
+  `dot-land` refuses, fix it or say plainly that it is not live. ECFX MRs I merge in the
+  GitLab UI; until that MR is merged, say plainly that it is not live yet.
 
 ## System manual
 
