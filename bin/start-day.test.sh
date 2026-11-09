@@ -376,6 +376,83 @@ out=$(run collect --since 2026-09-20T00:00:00Z)
 assert_contains "$(qa "$out")" "(Jira credentials missing" "without credentials the section says so"
 rm -f "$STUBS/curl" "$STUBS/qa-ledger.py"
 
+echo "start-day — Jira mentions of me"
+reset
+# curl answers by URL: myself, the mention search, each ticket's comments and changelog.
+cat > "$STUBS/curl" <<'EOF'
+#!/bin/bash
+for a in "$@"; do case "$a" in http*) url="$a" ;; jql=*) jql="${a#jql=}" ;; esac; done
+echo "${jql:-$url}" >> "$FIX/jira.log"
+case "$url" in
+  */myself) cat "$FIX/myself.json" ;;
+  */search/jql) case "${jql:-}" in
+      *"text ~"*) [ -n "${MENTIONS_DOWN:-}" ] && exit 22; cat "$FIX/mentions.json" ;;
+      *) echo '{"issues":[]}' ;;
+    esac ;;
+  */comment) k="${url%/comment}"; cat "$FIX/comments-${k##*/}.json" ;;
+  */issue/*) cat "$FIX/changelog-${url##*/}.json" ;;
+  *) exit 22 ;;
+esac
+EOF
+chmod +x "$STUBS/curl"
+echo '{"accountId":"acc-me","timeZone":"America/Los_Angeles"}' > "$FIX/myself.json"
+adf() { # text [mention-account-id]
+  jq -cn --arg t "$1" --arg id "${2:-}" '{type: "doc", version: 1, content: [{type: "paragraph", content:
+    ((if $id == "" then [] else [{type: "mention", attrs: {id: $id, text: "@Me"}}] end) + [{type: "text", text: $t}])}]}'
+}
+comment() { # id author-id author-name created body
+  jq -cn --arg id "$1" --arg aid "$2" --arg who "$3" --arg at "$4" --argjson body "$5" \
+    '{id: $id, author: {accountId: $aid, displayName: $who}, created: $at, updated: $at, body: $body}'
+}
+issue() { # key summary status created description
+  jq -cn --arg k "$1" --arg s "$2" --arg st "$3" --arg c "$4" --argjson d "$5" \
+    '{key: $k, fields: {summary: $s, status: {name: $st}, created: $c, reporter: {accountId: "acc-mel", displayName: "Melissa"}, description: $d}}'
+}
+none='null'
+cat > "$FIX/mentions.json" <<EOF
+{"issues":[$(issue ECFX-100 "Timeload export" "To-Do" 2026-10-01T10:00:00.000-0700 "$none"),
+ $(issue ECFX-200 "Cases filters" "In Progress" 2026-10-01T10:00:00.000-0700 "$none"),
+ $(issue ECFX-300 "Subtype mapping" "To-Do" 2026-11-07T09:00:00.000-0800 "$(adf " please size this" acc-me)"),
+ $(issue ECFX-400 "Old spec" "To-Do" 2026-09-01T09:00:00.000-0700 "$(adf " owns the API part" acc-me)")]}
+EOF
+cat > "$FIX/comments-ECFX-100.json" <<EOF
+{"comments":[$(comment 3 acc-bill Bill 2026-11-08T09:00:00.000-0800 "$(adf "unrelated note, no mention")"),
+ $(comment 2 acc-shoha Shoha 2026-11-07T16:10:25.973-0800 "$(adf " could you pull which firms exported a time load report" acc-me)"),
+ $(comment 1 acc-ann Ann 2026-11-01T10:00:00.000-0700 "$(adf " an old question from last week" acc-me)")]}
+EOF
+cat > "$FIX/comments-ECFX-200.json" <<EOF
+{"comments":[$(comment 5 acc-me Me 2026-11-06T10:00:00.000-0800 "$(adf "will do")"),
+ $(comment 4 acc-levi Levi 2026-11-06T08:40:04.096-0800 "$(adf " QA found one bug on the Cases page" acc-me)")]}
+EOF
+echo '{"comments":[]}' > "$FIX/comments-ECFX-300.json"
+echo '{"comments":[]}' > "$FIX/comments-ECFX-400.json"
+echo '{"changelog":{"histories":[{"created":"2026-11-08T11:00:00.000-0800","author":{"accountId":"acc-dave","displayName":"Dave"},"items":[{"field":"description"}]},{"created":"2026-09-02T11:00:00.000-0700","author":{"accountId":"acc-dave","displayName":"Dave"},"items":[{"field":"description"}]}]}}' > "$FIX/changelog-ECFX-400.json"
+run_mentions() {
+    (PATH="$STUBS:$PATH" FIX="$FIX" DIARY_DIR="$DIARY" START_DAY_STATE="$STATE" START_DAY_POLL_DELAY=0 TZ=UTC \
+     JIRA_EMAIL=me@x JIRA_API_TOKEN=t START_DAY_QA_LEDGER=/nonexistent START_DAY_TRIAGE=/nonexistent \
+     REPOS_SYNC_SILENT=1 "$SCRIPT" collect --since 2026-11-06T07:28:40Z 2>&1)
+}
+mentions() { printf '%s\n' "$1" | awk '/^## Jira mentions of me/{f=1;next} /^## /{if(f)exit} f' | sed '/^$/d'; }
+full=$(run_mentions); out=$(mentions "$full")
+assert_contains "$(cat "$FIX/jira.log")" 'project = ECFX AND text ~ "acc-me" AND updated >= "2026/11/05 23:28"' "searches mentions of the accountId from myself, the window in Jira's time zone"
+assert_contains "$(cat "$FIX/jira.log")" 'assignee CHANGED TO currentUser() AFTER "2026/11/05 23:28"' "the other Jira searches use Jira's time zone too"
+assert_contains "$out" '- ECFX-100 [To-Do] Timeload export — comment by Shoha, Sun 00:10 — awaiting reply: "@Me could you pull which firms exported a time load report"' "a mention is listed with ticket, status, author, local time and text, awaiting reply"
+assert_lacks "$out" "unrelated note" "a comment without a mention is ignored"
+assert_lacks "$out" "an old question" "a mention older than the window is ignored"
+assert_contains "$out" '- ECFX-200 [In Progress] Cases filters — comment by Levi, Fri 16:40 — replied: "@Me QA found one bug on the Cases page"' "a mention I answered since is marked replied"
+assert_contains "$out" '- ECFX-300 [To-Do] Subtype mapping — description by Melissa, Sat 17:00 — awaiting reply: "@Me please size this"' "a new ticket whose description mentions me is listed"
+assert_contains "$out" '- ECFX-400 [To-Do] Old spec — description edit by Dave, Sun 19:00 — awaiting reply' "an older ticket's description counts when edited in the window"
+assert_eq "4" "$(grep -c '^- ' <<<"$out")" "one line per mention, nothing else"
+echo '{"issues":[]}' > "$FIX/mentions.json"
+assert_eq "(none)" "$(mentions "$(run_mentions)")" "no mentions prints (none)"
+full=$(MENTIONS_DOWN=1 run_mentions)
+assert_eq "(Jira unavailable)" "$(mentions "$full")" "a failed search says so"
+assert_contains "$full" "## Team plugins" "and the digest keeps going"
+echo '{}' > "$FIX/myself.json"
+assert_eq "(Jira unavailable)" "$(mentions "$(run_mentions)")" "no accountId from myself says Jira unavailable"
+assert_contains "$(mentions "$(run collect --since 2026-11-06T07:28:40Z)")" "(Jira credentials missing" "without credentials the section says so"
+rm -f "$STUBS/curl"
+
 echo "start-day save — trailing diary refs"
 reset
 printf '%s\n' '- [ ] ECFX-1 thing [dashboard!1](https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/1)' \

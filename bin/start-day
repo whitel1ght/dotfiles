@@ -26,7 +26,9 @@
 #                 last review is unaddressed, leave out)"
 #   jira          tickets newly assigned to me, my tickets others touched, and
 #                 my To-Do backlog
-#   repos         `repos-sync` ($START_DAY_REPOS_SYNC overrides its path): every
+#   jira mentions comments (and descriptions) on any ECFX ticket that mention me,
+#                 made or edited since then, each "awaiting reply" or "replied"
+#   repos        `repos-sync` ($START_DAY_REPOS_SYNC overrides its path): every
 #                 GitLab repo in ~/projects fetched and its default branch
 #                 fast-forwarded where safe; started first, in the background,
 #                 and printed last
@@ -46,6 +48,11 @@ START_DAY_REPO_ORDER="${START_DAY_REPO_ORDER:-ecfx-protobufs ecfx-backend}"
 START_DAY_POLL_DELAY="${START_DAY_POLL_DELAY:-2}"
 
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+# Jira timestamps (2026-11-07T16:10:25.973-0800) to UTC, comparable with $SINCE as strings.
+JQ_UTC='def utc: if test("Z$") or test("\\+00:?00$") then sub("\\.[0-9]+"; "") | sub("\\+00:?00$"; "Z")
+  else capture("^(?<t>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<s>[+-])(?<h>[0-9]{2}):?(?<m>[0-9]{2})$")
+    | ((.t + "Z") | fromdateiso8601) - ((.s + "1" | tonumber) * ((.h | tonumber) * 3600 + (.m | tonumber) * 60)) | todate end;
+'
 epoch_of() { date -j -u -f %Y-%m-%dT%H:%M:%SZ "$1" +%s 2>/dev/null || date -u -d "$1" +%s; }
 section() { printf '\n## %s\n\n' "$1"; }
 
@@ -383,12 +390,24 @@ collect_gitlab_todos() {
     else "(none)" end' <<<"$todos"
 }
 
+jira_get() { curl -sf -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -G "$JIRA_BASE/rest/api/3/$1" "${@:2}"; }
+
 collect_jira() {
   section "Jira"
   : "${JIRA_EMAIL:=$(secret JIRA_USER 2>/dev/null)}" "${JIRA_API_TOKEN:=$(secret JIRA_TOKEN 2>/dev/null)}"
   [ -n "$JIRA_EMAIL" ] && [ -n "$JIRA_API_TOKEN" ] || { echo "(Jira credentials missing: JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env)"; return; }
-  local since_jql
-  since_jql=$(date -r "$(epoch_of "$SINCE")" '+%Y/%m/%d %H:%M' 2>/dev/null || date -d "$SINCE" '+%Y/%m/%d %H:%M')
+  local since_jql tz
+  # JQL reads dates in the Jira profile's time zone, not this machine's; myself also gives
+  # the accountId collect_jira_mentions searches for.
+  JIRA_ME=$(jira_get myself 2>/dev/null) || JIRA_ME='{}'
+  tz=$(jq -r '.timeZone // empty' <<<"$JIRA_ME" 2>/dev/null) || tz=""
+  JIRA_ACCOUNT_ID=$(jq -r '.accountId // empty' <<<"$JIRA_ME" 2>/dev/null) || JIRA_ACCOUNT_ID=""
+  if [ -n "$tz" ]; then
+    since_jql=$(TZ="$tz" date -r "$(epoch_of "$SINCE")" '+%Y/%m/%d %H:%M' 2>/dev/null || TZ="$tz" date -d "$SINCE" '+%Y/%m/%d %H:%M')
+  else
+    since_jql=$(date -r "$(epoch_of "$SINCE")" '+%Y/%m/%d %H:%M' 2>/dev/null || date -d "$SINCE" '+%Y/%m/%d %H:%M')
+  fi
+  JIRA_SINCE="$since_jql"
   jql() {
     curl -sf -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -G "$JIRA_BASE/rest/api/3/search/jql" \
       --data-urlencode "jql=$1" --data-urlencode fields=status,summary,issuetype,priority --data-urlencode maxResults=15 \
@@ -402,6 +421,68 @@ collect_jira() {
   echo; echo "My To-Do backlog (by priority):"
   jql "assignee = currentUser() AND status = \"To-Do\" ORDER BY priority DESC, updated DESC" | grep . \
     || echo "(none, or Jira unavailable — token may have expired)"
+}
+
+MENTIONS_JQ='
+def mentions($me): any(.. | objects; .type == "mention" and .attrs.id == $me);
+def plain: [.. | objects
+    | if .type == "text" then .text
+      elif .type == "mention" or .type == "emoji" then (.attrs.text // .attrs.shortName // "")
+      elif .type == "inlineCard" then (.attrs.url // "")
+      elif (.type | IN("paragraph", "heading", "listItem", "hardBreak", "codeBlock", "blockquote")) then " "
+      else empty end] | join("") | gsub("\\s+"; " ") | sub("^ "; "");
+def short: if length > 200 then .[0:200] + "…" else . end;
+($c.comments // []) as $cs
+| ([$cs[] | select(.author.accountId == $me) | .created | utc] | max // "") as $mine
+| $issue.fields as $f
+| ( [ $cs[] | select(.author.accountId != $me) | select(.body | mentions($me))
+      | (.created | utc) as $created
+      | {at: (if $created >= $since then $created else (.updated | utc) end), edited: ($created < $since),
+         who: .author.displayName, what: "comment", body}
+      | select(.at >= $since) ]
+  + ( if ($f.description | mentions($me)) | not then []
+      elif ($f.created | utc) >= $since then
+        [{at: ($f.created | utc), edited: false, who: ($f.reporter.displayName // "?"), what: "description", body: $f.description,
+          mine: (($f.reporter.accountId // "") == $me)}] | map(select(.mine | not))
+      else [ ($cl.changelog.histories // [])[] | select(any(.items[]?; .field == "description"))
+             | select((.created | utc) >= $since and .author.accountId != $me)
+             | {at: (.created | utc), edited: false, who: .author.displayName, what: "description edit", body: $f.description} ] | .[0:1]
+      end ) )
+| sort_by(.at)[]
+| "- \($issue.key) [\($f.status.name // "?")] \($f.summary) — \(.what) by \(.who), \(.at | fromdateiso8601 | strflocaltime("%a %H:%M"))\(if .edited then " (edited)" else "" end) — \(if $mine > .at then "replied" else "awaiting reply" end): \"\(.body | plain | short)\""
+'
+
+# Comments (and descriptions) on any ECFX ticket that mention me, made or edited since then.
+# Jira indexes a mention under the person's accountId, so `text ~ "<accountId>"` finds the
+# tickets cheaply: on 2026-11-09 it found the same two as reading every comment on all 325
+# tickets updated over that weekend. A hit is someone else's comment whose ADF body has a mention
+# node with my accountId (from collect_jira's myself call), among each ticket's newest 100;
+# "replied" when I commented on the ticket after it.
+collect_jira_mentions() {
+  section "Jira mentions of me"
+  [ -n "${JIRA_EMAIL:-}" ] && [ -n "${JIRA_API_TOKEN:-}" ] || { echo "(Jira credentials missing: JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env)"; return; }
+  [ -n "${JIRA_ACCOUNT_ID:-}" ] && [ -n "${JIRA_SINCE:-}" ] || { echo "(Jira unavailable)"; return; }
+  local issues issue key comments changelog lines any=0
+  issues=$(jira_get search/jql \
+    --data-urlencode "jql=project = ECFX AND text ~ \"$JIRA_ACCOUNT_ID\" AND updated >= \"$JIRA_SINCE\" ORDER BY updated DESC" \
+    --data-urlencode fields=summary,status,created,reporter,description --data-urlencode maxResults=50) || { echo "(Jira unavailable)"; return; }
+  while IFS= read -r issue; do
+    [ -n "$issue" ] || continue
+    key=$(jq -r .key <<<"$issue")
+    comments=$(jira_get "issue/$key/comment" --data-urlencode orderBy=-created --data-urlencode maxResults=100) \
+      || { echo "- $key: (comments unavailable)"; any=1; continue; }
+    changelog='{}'
+    # A description that mentions me on an older ticket counts only if it was edited since then.
+    if jq -e --arg me "$JIRA_ACCOUNT_ID" --arg since "$SINCE" "$JQ_UTC"'
+        any(.fields.description | .. | objects; .type == "mention" and .attrs.id == $me) and ((.fields.created | utc) < $since)' \
+        <<<"$issue" >/dev/null 2>&1; then
+      changelog=$(jira_get "issue/$key" --data-urlencode fields=created --data-urlencode expand=changelog) || changelog='{}'
+    fi
+    lines=$(jq -rn --argjson issue "$issue" --argjson c "$comments" --argjson cl "$changelog" \
+      --arg me "$JIRA_ACCOUNT_ID" --arg since "$SINCE" "$JQ_UTC$MENTIONS_JQ" 2>/dev/null) || lines="- $key: (comments unreadable)"
+    [ -n "$lines" ] && { printf '%s\n' "$lines"; any=1; }
+  done < <(jq -c '.issues[]?' <<<"$issues")
+  [ "$any" -eq 1 ] || echo "(none)"
 }
 
 # Tickets someone else finished that we could test with the claude-components QA skills: Ready for
@@ -443,7 +524,7 @@ case "${1:-}" in
     # team plugins after repos-sync, so they update from the clone it just fast-forwarded
     ( "${START_DAY_REPOS_SYNC:-$HERE/repos-sync}" >"$repos_out" 2>&1
       "${START_DAY_TEAM_PLUGINS_SYNC:-$HERE/team-plugins-sync}" >"$plugins_out" 2>&1 ) </dev/null & repos_pid=$!
-    collect_carryover; collect_my_mrs; collect_my_drafts; collect_ready_to_merge; collect_review_queue; collect_gitlab_todos; collect_jira; collect_qa_candidates
+    collect_carryover; collect_my_mrs; collect_my_drafts; collect_ready_to_merge; collect_review_queue; collect_gitlab_todos; collect_jira; collect_jira_mentions; collect_qa_candidates
     wait "$repos_pid" || true
     section "Repos (fetched from GitLab)"
     if [ -s "$repos_out" ]; then cat "$repos_out"; else echo "(repos-sync printed nothing)"; fi

@@ -73,6 +73,14 @@ for f in "$C" "$P"; do
   lacks "$f" 'already approved or drafts' "$side: drafts are no longer left out wholesale"
   lacks "$f" "trailing \`[↗][label]\` ref" "$side: no [↗] refs in the plan"
   lacks "$f" "inline \`[dashboard!940](url)\`" "$side: no inline MR links in the plan"
+  has "$f" '-in:<@USDTCL35J> -from:<@USDTCL35J>' "$side: the DM search leaves out the Jira app's DMs"
+  has "$f" 'im,mpim' "$side: it covers DMs and group DMs"
+  has "$f" 'with no page limit' "$side: it pages to the end"
+  lacks "$f" 'filter `is:dm`' "$side: no is:dm search the Jira app can crowd out"
+  lacks "$f" 'up to five pages' "$side: no page cap"
+  has "$f" '`## Jira mentions of me`' "$side: the digest's Jira mentions are read"
+  has "$f" 'each Jira mention awaiting a reply' "$side: the pre-write check covers Jira mentions"
+  has "$f" 'each DM or group' "$side: DM and group DM requests go under First"
 done
 
 has "$C" "Bash(~/.local/bin/day-agent:*)" "claude: allows day-agent"

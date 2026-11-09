@@ -28,7 +28,9 @@ Run sync-tickets first, so the Jira statuses gathered next are already true.
 The first line gives the start of the window ("Since ..."). Use the same window for
 Slack. The digest has: carry-over from my last diary entry, my open MRs (reviews
 received, approvals, pipelines), which of my MRs are ready to merge (and in what order,
-when they depend on each other), MRs waiting on my review, Jira, `## QA candidates`
+when they depend on each other), MRs waiting on my review, Jira, `## Jira mentions of me`
+(every comment or description on an ECFX ticket that mentioned me in the window, each
+`awaiting reply` or `replied`: I commented on the ticket after it), `## QA candidates`
 (other people's tickets in Ready for QA, each with its QA ledger state from the
 claude-components QA skills), and last `## Repos`:
 `repos-sync` has fetched every GitLab repo in `~/projects` and fast-forwarded its default
@@ -40,19 +42,33 @@ reason.
 
 **Slack** (the Slack MCP server, registered as `slack`; its tools are named
 `mcp__slack__<tool>`). Do not assume tool names: from a codemode script, discover the
-server's search, thread-read and user-profile tools with `searchTools` /
-`describeNamespace("mcp__slack")` and use only those. The server can also send
-messages, react and edit canvases; never call those. Find my user ID from what the
-server's tool descriptions or profile tools tell you. Run two searches with `after` set to the window start:
+server's search, thread-read, channel-history, conversation-list and user-profile tools
+with `searchTools` / `describeNamespace("mcp__slack")` and use only those, all read-only.
+The server can also send messages, react and edit canvases; never call those. Find my
+user ID from what the server's tool descriptions or profile tools tell you. Turn the
+window start into Unix seconds for `after` (`date -j -u -f %Y-%m-%dT%H:%M:%SZ <since> +%s`).
+Two searches:
 
-- direct messages: filter `is:dm`, sorted by timestamp, then drop app and bot DMs
-  (Jira, GitLab and the like), since the digest already covers those sources. The
-  Jira app alone can fill a page, so follow the cursor until results are older than the
-  window start, up to five pages, rather than stopping at the first page
-- mentions: keyword `<@MY_USER_ID>`
+1. DMs and group DMs (1:1 chats and the small group chats I am in). One search with
+   query `-in:<@USDTCL35J> -from:<@USDTCL35J> -in:<@U073BCYADGU> -from:<@U073BCYADGU>`,
+   channel types `im,mpim`, `after` the window start, sorted by timestamp, no context,
+   20 per page, the detailed format (channel IDs and message timestamps). The two IDs are
+   the Jira and GitLab apps: their DMs are bot posts that a bot filter does not remove and
+   that crowded people out of an `is:dm` search on 2026-11-09; the digest covers both
+   sources. Follow the cursor until the result says it is the end, with no page limit:
+   every result is then in the window. Drop results marked as bots and DMs with any other
+   app (Slackbot, Atlassian, Zoom, …). Group the rest by channel. A conversation needs me
+   when its last message from someone else is newer than my last message there and asks
+   something of me (a question, a request, a decision; in a group DM, my name, `<!here>`,
+   or a request aimed at the group). Open a thread only to see a reply I may have given
+   in it. If the search fails, list my DMs and group DMs (types `im,mpim`) and read each
+   human one's history from the window start; say in the closing message that the
+   search failed.
+2. Mentions in channels: keyword `<@MY_USER_ID>`, `after` the same, sorted by timestamp,
+   following the cursor the same way. Skip results already seen in search 1.
 
 For each person's request, open the thread when the search result is cut short. Note
-who, what they need, and whether I already replied in that thread. Never post, react,
+who, what they need, and whether I already replied. Never post, react,
 edit or mark read. If the slack server is not connected, write "Slack not connected"
 at the end of the plan, and carry on.
 
@@ -88,7 +104,10 @@ MR with no key) are one item per request as before.
 
 Group the items by what they unblock, in this order:
 
-- **First**: things other people are waiting on. Replies owed on Slack. Every review
+- **First**: things other people are waiting on. Replies owed on Slack: each DM or group
+  DM request and each channel mention. Each `## Jira mentions of me` line marked `awaiting
+  reply` that asks something of me (on its ticket's line when that ticket is already
+  planned). Every review
   note on my MRs marked "awaiting my reply", whether or not it's a resolvable thread: a
   whole first review often arrives as one plain comment. That label only compares
   timestamps, so read the note: one with no finding, no question and no action asked of us
@@ -119,8 +138,9 @@ already in First or Today, in which case say so in one short line.
 
 Before writing, check that every one of these made it in or was dropped on purpose: each
 review note on my MRs that needs a reply, each review_now or re_review MR, each newly
-assigned ticket, each unticked carry-over item, each Slack request and
-each unclaimed QA candidate. Then check that no
+assigned ticket, each unticked carry-over item, each Slack request (every DM and group DM
+request, every channel mention), each Jira mention awaiting a reply (both under **First**)
+and each unclaimed QA candidate. Then check that no
 ticket starts two top-level lines: several review notes, MRs or carry-over lines on one
 ticket are one item.
 
