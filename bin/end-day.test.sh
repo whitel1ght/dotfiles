@@ -165,7 +165,7 @@ printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "$CLOG"\n[ -n "${FRICTION_FAIL:-}" 
 chmod +x "$CBIN/glab-gate" "$CBIN/end-day" "$CBIN/ecfx-daily-commits" "$CSTUBS"/*
 export SANDBOX
 gate_clear() { rm -f "$FRICTION_DIR/gitlab-down" "$SANDBOX/glab.calls"; }
-collect() { PATH="$CSTUBS:$PATH" CLOG="$CLOG" CLAUDE_DIR="$SANDBOX/claude" JIRA_EMAIL=a JIRA_API_TOKEN=b "$CBIN/end-day" collect 2026-01-05 2>&1; }
+collect() { PATH="$CSTUBS:$PATH" END_DAY_RETRY_SLEEP=0 CLOG="$CLOG" CLAUDE_DIR="$SANDBOX/claude" JIRA_EMAIL=a JIRA_API_TOKEN=b "$CBIN/end-day" collect 2026-01-05 2>&1; }
 mkdir -p "$SANDBOX/cnof"; ln -s "$CSTUBS/glab" "$CSTUBS/curl" "$SANDBOX/cnof/"
 baseline=$(PATH="$SANDBOX/cnof:$(dirname "$(command -v jq)"):/usr/bin:/bin" CLAUDE_DIR="$SANDBOX/claude" JIRA_EMAIL=a JIRA_API_TOKEN=b "$CBIN/end-day" collect 2026-01-05 2>&1); brc=$?
 assert_eq "0" "$brc" "collect with no friction on PATH still exits 0"
@@ -176,7 +176,7 @@ assert_eq "$baseline" "$out" "and prints the same digest as without friction"
 assert_eq "--source end-day service_down commits unavailable
 --source end-day service_down GitLab unavailable
 --source end-day auth Jira unavailable, token may have expired" "$(cat "$CLOG")" "commits, GitLab and Jira failures record service_down/service_down/auth"
-assert_eq "1" "$(wc -l < "$SANDBOX/glab.calls" | tr -d ' ')" "the failing GitLab was probed once"
+assert_eq "2" "$(wc -l < "$SANDBOX/glab.calls" | tr -d ' ')" "the failing GitLab was tried twice, then given up on"
 rm -f "$CLOG"; gate_clear
 out=$(FRICTION_FAIL=1 collect); rc=$?
 assert_eq "0" "$rc" "a failing friction leaves exit 0"
@@ -189,17 +189,44 @@ assert_eq "--source end-day service_down commits unavailable
 echo "end-day collect — one outage, one probe (F-021)"
 rm -f "$CLOG"; gate_clear
 collect >/dev/null
-assert_eq "1" "$(wc -l < "$SANDBOX/glab.calls" | tr -d ' ')" "first run: glab is called once and fails"
+assert_eq "2" "$(wc -l < "$SANDBOX/glab.calls" | tr -d ' ')" "first run: glab fails and is retried once"
 assert_eq "1" "$(grep -c 'GitLab unavailable' "$CLOG")" "and logs one GitLab service_down"
 out=$(collect)
-assert_eq "1" "$(wc -l < "$SANDBOX/glab.calls" | tr -d ' ')" "a second run inside 15 minutes makes no glab call"
+assert_eq "2" "$(wc -l < "$SANDBOX/glab.calls" | tr -d ' ')" "a second run inside 15 minutes makes no glab call"
 assert_eq "1" "$(grep -c 'GitLab unavailable' "$CLOG")" "and adds no service_down line"
 case "$out" in *"(GitLab unavailable)"*) pass "and still prints (GitLab unavailable)" ;; *) fail "and still prints (GitLab unavailable)" "$out" ;; esac
 printf '%s\n' "$(($(date +%s) - 901))" > "$FRICTION_DIR/gitlab-down"
 collect >/dev/null
-assert_eq "2" "$(wc -l < "$SANDBOX/glab.calls" | tr -d ' ')" "after 15 minutes glab is tried again"
+assert_eq "4" "$(wc -l < "$SANDBOX/glab.calls" | tr -d ' ')" "after 15 minutes glab is tried again"
 assert_eq "1" "$(grep -c 'GitLab unavailable' "$CLOG")" "and the still-running outage is not logged again"
 [ "$(cat "$FRICTION_DIR/gitlab-down")" -ge "$(($(date +%s) - 5))" ] && pass "but the marker is refreshed" || fail "but the marker is refreshed" "$(cat "$FRICTION_DIR/gitlab-down")"
+
+echo "end-day collect — one dropped call is not an outage (F-117)"
+cat > "$CSTUBS/glab" <<'EOS'
+#!/bin/bash
+echo "$*" >> "$SANDBOX/glab.calls"
+[ -z "${GLAB_ALWAYS_FAIL:-}" ] || exit 1
+n=$(cat "$SANDBOX/glab.count" 2>/dev/null || echo 0); echo $((n + 1)) > "$SANDBOX/glab.count"
+[ "$n" -gt 0 ] || exit 1
+case "$*" in
+  "api user") echo '{"id":7,"username":"me"}' ;;
+  *events*) echo '[{"action_name":"opened","target_type":"Issue","target_title":"Flaky thing","created_at":"2026-01-05T12:00:00.000Z"}]' ;;
+  *) echo '{}' ;;
+esac
+EOS
+chmod +x "$CSTUBS/glab"
+has() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3" "[$2] not in [$1]" ;; esac; }
+rm -f "$CLOG" "$SANDBOX/glab.count"; gate_clear
+out=$(collect)
+has "$out" "- opened Issue Flaky thing" "first glab call fails, GitLab activity is still filled"
+assert_eq "no" "$([ -e "$FRICTION_DIR/gitlab-down" ] && echo yes || echo no)" "and no gitlab-down marker is written"
+assert_eq "0" "$(grep -c 'GitLab unavailable' "$CLOG")" "and no GitLab service_down line is logged"
+rm -f "$CLOG"; gate_clear
+out=$(GLAB_ALWAYS_FAIL=1 collect)
+has "$out" "(GitLab unavailable)" "glab failing every call prints (GitLab unavailable)"
+assert_eq "yes" "$([ -e "$FRICTION_DIR/gitlab-down" ] && echo yes || echo no)" "and writes the marker"
+assert_eq "1" "$(grep -c 'GitLab unavailable' "$CLOG")" "and logs exactly one service_down line"
+assert_eq "2" "$(wc -l < "$SANDBOX/glab.calls" | tr -d ' ')" "after trying twice"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

@@ -65,6 +65,17 @@ friction_log() { command -v friction >/dev/null 2>&1 && friction "$@" >/dev/null
 glab_held() { local rc=0; "$HERE/glab-gate" check || rc=$?; [ "$rc" -eq 1 ]; }
 glab_down() { "$HERE/glab-gate" down --source "$@" || true; }
 glab_up() { "$HERE/glab-gate" up || true; }
+# glab_retry <glab args>: gitlab.com drops about 1 call in 30 (F-021, F-117), so a failed call is
+# tried once more after END_DAY_RETRY_SLEEP seconds (default 1) before anyone calls glab_down.
+# Only the successful attempt's output is printed, so a --paginate page cut off mid-body is
+# never joined to the retry.
+glab_retry() {
+  local out
+  if out=$(glab "$@"); then printf '%s\n' "$out"; return 0; fi
+  sleep "${END_DAY_RETRY_SLEEP:-1}"
+  out=$(glab "$@") || return 1
+  printf '%s\n' "$out"
+}
 section() { printf '\n## %s\n\n' "$1"; }
 
 collect_commits() {
@@ -77,12 +88,12 @@ collect_gitlab() {
   section "GitLab activity"
   local user me username events
   glab_held && { echo "(GitLab unavailable)"; return; }
-  user=$(glab api user) || { glab_down end-day "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
+  user=$(glab_retry api user) || { glab_down end-day "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
   glab_up
   me=$(jq -r .id <<<"$user"); username=$(jq -r .username <<<"$user")
   # after/before are exclusive dates in UTC; widen by a day, then keep only
   # events whose local date is the one asked for.
-  events=$(glab api --paginate "users/$me/events?after=$prev&before=$next&per_page=100" | jq -s --arg d "$day" '
+  events=$(glab_retry api --paginate "users/$me/events?after=$prev&before=$next&per_page=100" | jq -s --arg d "$day" '
     add // [] | map(select((.created_at | sub("\\.[0-9]+"; "") | fromdateiso8601 | strflocaltime("%Y-%m-%d")) == $d))
     | map(select(.action_name | test("^(pushed|deleted)") | not))') || { glab_down end-day "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
   [ "$(jq length <<<"$events")" -gt 0 ] || { echo "(none)"; return; }

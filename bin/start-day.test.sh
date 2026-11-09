@@ -81,7 +81,7 @@ blocks() { printf '%s\n' "$2" > "$FIX/blocks-$1.json"; }
 
 run() {
     (unset JIRA_EMAIL JIRA_API_TOKEN
-     PATH="$STUBS:$PATH" FIX="$FIX" DIARY_DIR="$DIARY" START_DAY_STATE="$STATE" START_DAY_POLL_DELAY=0 \
+     PATH="$STUBS:$PATH" FIX="$FIX" DIARY_DIR="$DIARY" START_DAY_STATE="$STATE" START_DAY_POLL_DELAY=0 START_DAY_RETRY_SLEEP=0 \
      START_DAY_REPO_ORDER="${TEST_REPO_ORDER:-}" "$SCRIPT" "$@" 2>&1)
 }
 ready() { printf '%s\n' "$1" | awk '/^## Ready to merge/{f=1;next} /^## /{if(f)exit} f'; }
@@ -226,15 +226,51 @@ assert_contains "$out" "## Review queue" "collect keeps running the rest of the 
 assert_contains "$out" "## Team plugins" "including the final section"
 # The best-effort merged-since lookup is not gated; the review-queue triage is a plugin script, switched off here.
 gated() { grep -vc 'state=merged' "$FIX/glab.log"; }
-assert_eq "1" "$(gated)" "the failing probe is tried once, no gated call behind it (the outage is held)"
+assert_eq "2" "$(gated)" "the failing probe is tried twice, no gated call behind it (the outage is held)"
 out=$(START_DAY_TRIAGE=/nonexistent run collect --since 2026-09-20T00:00:00Z)
 assert_contains "$(ready "$out")" "(GitLab unavailable)" "a run inside the 15-minute window prints GitLab unavailable"
-assert_eq "1" "$(gated)" "and makes no probe, MR-list or to-dos call"
+assert_eq "2" "$(gated)" "and makes no probe, MR-list or to-dos call"
 assert_eq "" "$(cat "$FRICTION_DIR"/*.jsonl 2>/dev/null | sed -n '2,$p')" "and logs no second service_down"
 printf '%s\n' "$(($(date +%s) - 901))" > "$FRICTION_DIR/gitlab-down"
 out=$(START_DAY_TRIAGE=/nonexistent run collect --since 2026-09-20T00:00:00Z)
 [ "$(gated)" -gt 1 ] && pass "after the window GitLab is probed again" || fail "after the window GitLab is probed again" "$(gated) calls"
 unset -f gated
+
+echo "start-day — one dropped GitLab call is not an outage (F-117)"
+FLAKY="$SANDBOX/flaky"; mkdir -p "$FLAKY"
+cat > "$FLAKY/glab" <<'EOS'
+#!/bin/bash
+[ -z "${GLAB_ALWAYS_FAIL:-}" ] || exit 1
+n=$(cat "$FIX/glab.count" 2>/dev/null || echo 0); echo $((n + 1)) > "$FIX/glab.count"
+[ "$n" -gt 0 ] || exit 1
+exec "$STUBS/glab" "$@"
+EOS
+printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "$FIX/friction.log"\n' > "$FLAKY/friction"
+chmod +x "$FLAKY/glab" "$FLAKY/friction"
+flaky_run() {
+    (unset JIRA_EMAIL JIRA_API_TOKEN
+     PATH="$FLAKY:$STUBS:$PATH" STUBS="$STUBS" FIX="$FIX" DIARY_DIR="$DIARY" START_DAY_STATE="$STATE" START_DAY_POLL_DELAY=0 \
+     START_DAY_RETRY_SLEEP=0 START_DAY_TRIAGE=/nonexistent START_DAY_REPO_ORDER= "$SCRIPT" collect --since 2026-09-20T00:00:00Z 2>&1)
+}
+section_of() { printf '%s\n' "$2" | awk -v h="## $1" 'index($0, h) == 1 {f=1; next} /^## /{if(f)exit} f'; }
+reset
+cat > "$FIX/mrs.json" <<EOF
+[$(mr 2 700 "ecfx/ecfx-dashboard!700" "isolated fix" "dmitry/iso" "master" false "u700")]
+EOF
+detail mergeable 700
+echo '[{"action_name":"review_requested","target_type":"MergeRequest","target_url":"u9","project":{"path_with_namespace":"ecfx/ecfx-dashboard"},"target":{"iid":9,"title":"Flaky review"},"author":{"username":"bob"},"created_at":"2026-09-21T00:00:00Z"}]' > "$FIX/todos.json"
+out=$(flaky_run)
+assert_contains "$(section_of "My open MRs" "$out")" "ecfx/ecfx-dashboard!700" "first glab call fails, My open MRs is still filled"
+assert_contains "$(ready "$out")" "- ecfx/ecfx-dashboard!700 isolated fix — u700" "and so is Ready to merge"
+assert_contains "$(section_of "GitLab to-dos (pending)" "$out")" "Flaky review" "and so is the to-dos section"
+assert_lacks "$out" "(GitLab unavailable)" "no section says GitLab is unavailable"
+assert_eq "no" "$([ -e "$FRICTION_DIR/gitlab-down" ] && echo yes || echo no)" "no gitlab-down marker is written"
+assert_eq "0" "$(cat "$FIX/friction.log" 2>/dev/null | grep -c service_down)" "and no service_down line is logged"
+reset
+out=$(GLAB_ALWAYS_FAIL=1 flaky_run)
+assert_contains "$(section_of "My open MRs" "$out")" "(GitLab unavailable)" "glab failing every call prints (GitLab unavailable)"
+assert_eq "yes" "$([ -e "$FRICTION_DIR/gitlab-down" ] && echo yes || echo no)" "and writes the marker"
+assert_eq "1" "$(cat "$FIX/friction.log" 2>/dev/null | grep -c service_down)" "and logs exactly one service_down line"
 
 
 echo "start-day — repos"
