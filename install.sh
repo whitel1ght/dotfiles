@@ -698,6 +698,33 @@ if [ "${FRICTIONS_TICK_AGENT:-1}" != "0" ]; then
     setup_frictions_tick || log_warn "could not set up the frictions tick agent"
 fi
 
+# The articles app's daily picks: launchd/articles-picks.plist runs bin/articles-picks-daily
+# (nvm, then `articles picks`) at 08:30, or on wake if the Mac slept through it.
+# ARTICLES_PICKS_AGENT=0 skips it.
+[ -f "$DOTFILES_DIR/bin/articles-picks-daily" ] && \
+    create_symlink "$DOTFILES_DIR/bin/articles-picks-daily" "$HOME/.local/bin/articles-picks-daily"
+
+setup_articles_picks() {
+    local label="local.articles-picks" agent
+    agent="$HOME/Library/LaunchAgents/$label.plist"
+    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+    sed -e "s#__LABEL__#$label#g" -e "s#__HOME__#$HOME#g" \
+        "$DOTFILES_DIR/launchd/articles-picks.plist" > "$agent.new"
+    if ! cmp -s "$agent.new" "$agent"; then
+        mv "$agent.new" "$agent"
+        launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+        launchctl bootstrap "gui/$(id -u)" "$agent" \
+            && log_info "Loaded the articles picks agent" \
+            || log_warn "Could not load $agent"
+    else
+        rm -f "$agent.new"
+    fi
+}
+
+if [ "${ARTICLES_PICKS_AGENT:-1}" != "0" ]; then
+    setup_articles_picks || log_warn "could not set up the articles picks agent"
+fi
+
 # mr-watch finds new review notes on my MRs and posts the replies; driven by /watch-mrs.
 if [ -f "$DOTFILES_DIR/bin/mr-watch" ]; then
     create_symlink "$DOTFILES_DIR/bin/mr-watch" "$HOME/.local/bin/mr-watch"

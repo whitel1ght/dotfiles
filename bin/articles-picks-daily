@@ -1,0 +1,23 @@
+#!/bin/bash
+# The daily picks run, started by the articles-picks LaunchAgent (launchd/articles-picks.plist).
+# launchd gives a bare PATH and pi needs node, which comes from nvm in interactive shells only,
+# so this loads nvm the way bin/dev does, then runs `articles picks`. Until the articles app
+# has the picks command (phase 2 merged), it says so and exits 0.
+set -uo pipefail
+
+nvm_sh="${HOMEBREW_PREFIX:-/opt/homebrew}/opt/nvm/nvm.sh"
+if [ -s "$nvm_sh" ]; then
+    export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+    # shellcheck source=/dev/null
+    . "$nvm_sh"
+    nvm use --silent default >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1
+fi
+
+ARTICLES="${ARTICLES_CMD:-articles}"
+if ! "$ARTICLES" picks --help >/dev/null 2>&1; then
+    echo "$(date '+%F %T') articles has no picks command yet; nothing to do"
+    exit 0
+fi
+
+echo "$(date '+%F %T') articles picks"
+exec "$ARTICLES" picks "$@"
