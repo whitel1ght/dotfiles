@@ -5,7 +5,7 @@ import type { WarmInput } from './warm.ts'
 const MIN = 60_000
 const HOUR = 60 * MIN
 const T0 = 1_000_000_000
-const at = (over: Partial<WarmInput>): WarmInput => ({ isOwner: true, dayEnded: false, startedAt: T0, lastRequestAt: T0 + 6 * HOUR, now: T0 + 6 * HOUR, ...over })
+const at = (over: Partial<WarmInput>): WarmInput => ({ dayRunning: true, dayEnded: false, startedAt: T0, lastRequestAt: T0 + 6 * HOUR, now: T0 + 6 * HOUR, ...over })
 
 test('the constants match cache-tax: 6 h window, 50 min ping, 1 h TTL', async () => {
   expect([DAY_WARM_AFTER_MS, PING_AFTER_MS, TTL_MS]).toEqual([6 * HOUR, 50 * MIN, HOUR])
@@ -29,9 +29,9 @@ test("the hand-over starts from cache-tax's last warm ping: one at 5:40 makes th
   expect(nextWarm(at({ lastRequestAt: ping, now: T0 + 6 * HOUR + 30 * MIN }))).toEqual({ do: 'ping' })
 })
 
-test('a non-owner session is idle, whatever the clock says', async () => {
-  expect(nextWarm(at({ isOwner: false, now: T0 + 7 * HOUR }))).toEqual({ do: 'idle' })
-  expect(nextWarm(at({ isOwner: false, dayEnded: true }))).toEqual({ do: 'idle' })
+test('with no run state for today it is idle, whatever the clock says', async () => {
+  expect(nextWarm(at({ dayRunning: false, now: T0 + 7 * HOUR }))).toEqual({ do: 'idle' })
+  expect(nextWarm(at({ dayRunning: false, dayEnded: true }))).toEqual({ do: 'idle' })
 })
 
 test('no request yet is idle', async () => {

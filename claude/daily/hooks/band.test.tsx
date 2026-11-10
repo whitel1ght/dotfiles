@@ -350,8 +350,16 @@ test('after 6 h the owning session pings 50 idle minutes after its last turn, th
   expect(s.forks.length).toBe(2)
 })
 
-test('a session that does not own the day is never kept warm', async ($, on) => {
+test('a session that does not own the day is kept warm too, all day', async ($, on) => {
   const s = await start($, on, { ...idleDay, owner: 'sess-other' })
+  await s.clock.advance(6 * HOUR)
+  await turn($)
+  await s.clock.advance(3 * HOUR)
+  expect(s.forks).toEqual([T0 + 6 * HOUR + 50 * MIN, T0 + 6 * HOUR + 100 * MIN, T0 + 6 * HOUR + 150 * MIN])
+})
+
+test('before /start-day (no run state for today) no session is kept warm', async ($, on) => {
+  const s = await start($, on, { ...idleDay, state: null, owner: null })
   await s.clock.advance(6 * HOUR)
   await turn($)
   await s.clock.advance(3 * HOUR)
@@ -379,6 +387,21 @@ test('an unanswered fork stops keepwarm', async ($, on) => {
   expect(s.logs).toContain('daily keepwarm stopped: the API call failed (529)')
 })
 
+test('a failed API call stops keepwarm only until the next turn', async ($, on) => {
+  let replies = 0
+  const s = await start($, on, { ...idleDay, owner: 'sess-other', fork: () => (replies++ === 0 ? { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded' } : WARM_REPLY) })
+  await s.clock.advance(6 * HOUR)
+  await turn($)
+  await s.clock.advance(50 * MIN)
+  expect(s.logs).toContain('daily keepwarm stopped: the API call failed (529)')
+  await s.clock.advance(5 * MIN)
+  expect(s.forks.length).toBe(1)
+  await turn($)
+  const resumed = s.clock.now()
+  await s.clock.advance(2 * HOUR)
+  expect(s.forks.slice(1)).toEqual([resumed + 50 * MIN, resumed + 100 * MIN])
+})
+
 test('once the daily report is written keepwarm stops', async ($, on) => {
   const s = await start($, on, idleDay)
   await s.clock.advance(6 * HOUR)
@@ -391,11 +414,11 @@ test('once the daily report is written keepwarm stops', async ($, on) => {
   expect(s.logs).toContain("daily keepwarm stopped: today's report is written")
 })
 
-test('after midnight the dated owner file no longer matches and keepwarm goes quiet', async ($, on) => {
+test('after midnight there is no run state for the new date and keepwarm goes quiet', async ($, on) => {
   const s = await start($, on, idleDay)
   await s.clock.advance(6 * HOUR)
   await turn($)
-  delete s.files[OWNER]
+  delete s.files[STATE]
   await s.clock.advance(2 * HOUR)
   expect(s.forks).toEqual([])
 })
@@ -436,8 +459,8 @@ test('three turns ending together still give one ping', async ($, on) => {
   expect(s.forks.length).toBe(1)
 })
 
-test('a session that does not own the day reads no diary for keepwarm after a turn', async ($, on) => {
-  const s = await start($, on, { ...idleDay, owner: 'sess-other' })
+test('with no run state for today a turn reads no diary for keepwarm', async ($, on) => {
+  const s = await start($, on, { ...idleDay, state: null, owner: null })
   s.reads.length = 0
   await turn($)
   await s.clock.settle()

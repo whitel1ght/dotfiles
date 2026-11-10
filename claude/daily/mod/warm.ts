@@ -1,6 +1,7 @@
-// Keeps the day session's prompt cache warm after cache-tax's `keepwarm always` window (its first
-// 6 h) ends: same ping period, TTL, prompt and warm test as cache-tax. The two overlap only while
-// cache-tax's own 3 h auto-warm after a paid cold write runs past the 6 h mark. Claude only.
+// Keeps every session's prompt cache warm while the day runs, after cache-tax's `keepwarm always`
+// window (its first 6 h) ends: same ping period, TTL, prompt and warm test as cache-tax. The two
+// overlap only while cache-tax's own 3 h auto-warm after a paid cold write runs past the 6 h mark.
+// Claude only.
 
 export const DAY_WARM_AFTER_MS = 6 * 60 * 60 * 1000
 export const PING_AFTER_MS = 50 * 60 * 1000
@@ -9,8 +10,8 @@ export const WARM_PROMPT = 'Reply with the single word: warm'
 export const REPORT_MARK = '<!-- daily-report:start -->'
 
 export type WarmInput = {
-  /** This session owns today's day (the owner file is dated, so it turns false at midnight). */
-  isOwner: boolean
+  /** Today's run state exists (it is dated, so this turns false at midnight). */
+  dayRunning: boolean
   /** Today's diary has the end-of-day report. */
   dayEnded: boolean
   startedAt: number
@@ -31,7 +32,7 @@ export type WarmStep =
   | { do: 'stop'; why: string }
 
 export function nextWarm(i: WarmInput): WarmStep {
-  if (!i.isOwner) return { do: 'idle' }
+  if (!i.dayRunning) return { do: 'idle' }
   if (i.dayEnded) return { do: 'stop', why: "today's report is written" }
   if (i.lastRequestAt === null) return { do: 'idle' }
   const coldAt = i.lastRequestAt + TTL_MS

@@ -249,13 +249,16 @@ async function nudgeBusy($: EngineInterface, ctx: DayCtx) {
   void $.prompt.submit({ text: BUSY_PROMPT }).catch(() => $.ui.toast('daily idle: prompt submit failed'))
 }
 
-// Keepwarm for the day session after cache-tax's 6 h window (mod/warm.ts). One timer at a time,
-// re-armed after every main-thread turn and every warm ping; a late timer (sleep) re-checks first.
+// Keepwarm for every session while the day runs, after cache-tax's 6 h window (mod/warm.ts). One
+// timer at a time, re-armed after every main-thread turn and every warm ping; a late timer (sleep)
+// re-checks first. A ping that got no reply stops it only until the next turn; a cold readback
+// (the fork wrote the context instead of reading it) stops it for good, so it never pays twice.
 const warm = {
   startedAt: 0,
   lastRequestAt: null as number | null,
   timer: null as { cancel: () => void } | null,
   stopped: null as string | null,
+  retryAfterTurn: false,
   wasCold: false,
   isPinging: false,
   hasFollowed: false,
@@ -279,9 +282,9 @@ async function armWarm($: EngineInterface) {
   disarmWarm()
   if (warm.stopped !== null || warm.isPinging) return
   const day = await today($)
-  if (!day || (await readOr($, day.statePath)) === null || !(await isOwner($, day))) return
+  if (!day || (await readOr($, day.statePath)) === null) return
   const step = nextWarm({
-    isOwner: true,
+    dayRunning: true,
     dayEnded: ((await readOr($, day.diaryPath)) ?? '').includes(REPORT_MARK),
     startedAt: warm.startedAt,
     lastRequestAt: warm.lastRequestAt,
@@ -299,14 +302,20 @@ async function armWarm($: EngineInterface) {
 async function pingWarm($: EngineInterface) {
   warm.isPinging = true
   let why: string | null
+  let unanswered = true
   try {
-    why = pingFailure(await $.model.fork({ prompt: WARM_PROMPT }))
+    const reply = await $.model.fork({ prompt: WARM_PROMPT })
+    unanswered = !reply?.isAnswered
+    why = pingFailure(reply)
   } catch (err) {
     why = `the ping failed: ${err instanceof Error ? err.message : String(err)}`
   } finally {
     warm.isPinging = false
   }
-  if (why !== null) return stopWarm($, why)
+  if (why !== null) {
+    warm.retryAfterTurn = unanswered
+    return stopWarm($, why)
+  }
   warm.lastRequestAt = await $.clock.now()
   await armWarm($)
 }
@@ -701,6 +710,10 @@ export const register: Register = on => {
       warm.lastRequestAt = await $.clock.now()
       idle.lastTurnEndAt = warm.lastRequestAt
       busy.inTurn = false
+      if (warm.retryAfterTurn) {
+        warm.retryAfterTurn = false
+        warm.stopped = null
+      }
       void safeArmWarm($)
       if (shouldNudgeAsk({ isMain: true, reason: e.reason, text: r.text, ...ask })) {
         ask = nextAsk(ask, 'nudged')
