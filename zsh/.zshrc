@@ -290,6 +290,10 @@ zstyle ':fzf-tab:complete:kubectl:*' fzf-preview \
      ${${words[(r)(po|pod|pods|deploy|deployment|deployments|svc|service|services|no|node|nodes|ns|namespace|namespaces|cm|configmap|configmaps|secret|secrets|job|jobs|cronjob|cronjobs|ing|ingress|sts|statefulset|statefulsets)]}:-pod} \
      $word 2>/dev/null | head -80'
 
+# kubectl refuses a bare command on a prod context (explicit --context only), k9prod opens
+# k9s read-only on prod01. Found next to this file through the ~/.zshrc symlink.
+source "${${(%):-%x}:A:h}/kube.zsh"
+
 # docker inspect covers containers and images alike, so one rule serves every
 # subcommand. Config.Env is dropped: it is usually the longest section and
 # routinely carries credentials, which have no business on screen in a

@@ -122,6 +122,11 @@ brew "jira-cli"
 brew "jpeg"
 # Lightweight and flexible command-line JSON processor
 brew "jq"
+# Terminal UI over the kubeconfig: logs, shell, describe on single keys; `k9prod` opens prod
+# read-only (zsh/kube.zsh)
+brew "k9s"
+# kubectx/kubens: switch kube context and namespace; `kubectx -r` starts a read-only shell
+brew "kubectx"
 # QR code encoder; `proxyctl happ` shows the iPhone setup as a scannable code
 brew "qrencode"
 # Simple terminal UI for git commands
