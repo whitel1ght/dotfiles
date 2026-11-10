@@ -1,0 +1,97 @@
+#!/bin/bash
+# localsites: friendly names for local web apps through a loopback-only Caddy proxy.
+#   http://articles.localhost  → articles (127.0.0.1:8765)
+#   http://chat.localhost      → Open WebUI (127.0.0.1:8080)
+#
+#   localsites status      is the proxy running, and what each name answers
+#   localsites check       validate the Caddyfile in dotfiles
+#   localsites install     (sudo) copy the Caddyfile to a root-owned path, load the daemon
+#   localsites stop|start  (sudo) unload or load the daemon, e.g. when something else needs :80
+#   localsites uninstall   (sudo) remove the daemon and its config
+#
+# Only root may bind port 80 on loopback, so the proxy is a LaunchDaemon. It runs root-owned copies
+# of caddy and the Caddyfile, so nothing running as the user can change what root executes: re-run
+# `sudo localsites install` after editing localsites/Caddyfile or upgrading caddy.
+set -uo pipefail
+
+HERE="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+SRC="${LOCALSITES_SRC:-$HERE/localsites/Caddyfile}"
+PLIST_SRC="${LOCALSITES_PLIST_SRC:-$HERE/launchd/localsites.plist}"
+ETC="${LOCALSITES_ETC:-/usr/local/etc/localsites}"
+LIBEXEC="${LOCALSITES_LIBEXEC:-/usr/local/libexec/localsites}"
+DAEMON="${LOCALSITES_DAEMON:-/Library/LaunchDaemons/local.localsites.plist}"
+LOG="${LOCALSITES_LOG:-/Library/Logs/localsites.log}"
+LABEL="local.localsites"
+CADDY="${LOCALSITES_CADDY:-$(command -v caddy || echo /opt/homebrew/bin/caddy)}"
+LAUNCHCTL="${LOCALSITES_LAUNCHCTL:-launchctl}"
+UID_NOW="${LOCALSITES_UID:-$(id -u)}"
+OWNER="${LOCALSITES_OWNER:-root}"
+GROUP="${LOCALSITES_GROUP:-wheel}"
+
+need_root() {
+    [ "$UID_NOW" = "0" ] && return 0
+    echo "localsites $1 needs root: sudo $(readlink -f "$0") $1" >&2
+    exit 1
+}
+
+names() { sed -n 's#^http://\([a-z0-9.-]*\.localhost\) {$#\1#p' "$SRC"; }
+
+case "${1:-status}" in
+    check)
+        "$CADDY" validate --adapter caddyfile --config "$SRC" >/dev/null 2>&1 \
+            && echo "localsites: $SRC is valid" \
+            || { "$CADDY" validate --adapter caddyfile --config "$SRC" 2>&1 | tail -3; exit 1; }
+        ;;
+    install)
+        need_root install
+        [ -x "$CADDY" ] || { echo "localsites: caddy not found (brew install caddy)" >&2; exit 1; }
+        "$0" check >/dev/null || { echo "localsites: $SRC is not valid; nothing installed" >&2; exit 1; }
+        install -d -o "$OWNER" -g "$GROUP" -m 755 "$ETC"
+        install -o "$OWNER" -g "$GROUP" -m 644 "$SRC" "$ETC/Caddyfile"
+        install -d -o "$OWNER" -g "$GROUP" -m 755 "$LIBEXEC"
+        install -o "$OWNER" -g "$GROUP" -m 755 "$(readlink -f "$CADDY")" "$LIBEXEC/caddy"
+        sed -e "s#__CADDY__#$LIBEXEC/caddy#g" -e "s#__CONFIG__#$ETC/Caddyfile#g" -e "s#__LOG__#$LOG#g" \
+            "$PLIST_SRC" > "$DAEMON.new"
+        chown "$OWNER:$GROUP" "$DAEMON.new" && chmod 644 "$DAEMON.new" && mv "$DAEMON.new" "$DAEMON"
+        "$LAUNCHCTL" bootout "system/$LABEL" 2>/dev/null || true
+        "$LAUNCHCTL" bootstrap system "$DAEMON" && echo "localsites: running — $(names | sed 's#^#http://#' | tr '\n' ' ')"
+        ;;
+    start)
+        need_root start
+        "$LAUNCHCTL" bootstrap system "$DAEMON"
+        ;;
+    stop)
+        need_root stop
+        "$LAUNCHCTL" bootout "system/$LABEL"
+        ;;
+    uninstall)
+        need_root uninstall
+        "$LAUNCHCTL" bootout "system/$LABEL" 2>/dev/null || true
+        rm -f "$DAEMON" "$ETC/Caddyfile" "$LIBEXEC/caddy"
+        rmdir "$ETC" "$LIBEXEC" 2>/dev/null || true
+        echo "localsites: removed"
+        ;;
+    status)
+        if [ ! -f "$DAEMON" ]; then
+            echo "localsites: not installed (sudo $(readlink -f "$0") install)"
+            exit 0
+        fi
+        cmp -s "$SRC" "$ETC/Caddyfile" || echo "localsites: Caddyfile changed since install: sudo $(readlink -f "$0") install"
+        cmp -s "$(readlink -f "$CADDY")" "$LIBEXEC/caddy" || echo "localsites: caddy upgraded since install: sudo $(readlink -f "$0") install"
+        for n in $(names); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://$n/" 2>/dev/null)"
+            case "$code" in
+                000) echo "http://$n  proxy not answering" ;;
+                502) echo "http://$n  proxy up, app not running" ;;
+                *)   echo "http://$n  $code" ;;
+            esac
+        done
+        ;;
+    -h|--help|help)
+        sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+        ;;
+    *)
+        echo "localsites: unknown command $1 (status|check|install|start|stop|uninstall)" >&2
+        exit 2
+        ;;
+esac

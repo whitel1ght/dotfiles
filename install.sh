@@ -704,6 +704,15 @@ fi
 [ -f "$DOTFILES_DIR/bin/articles-picks-daily" ] && \
     create_symlink "$DOTFILES_DIR/bin/articles-picks-daily" "$HOME/.local/bin/articles-picks-daily"
 
+# localsites: http://articles.localhost and http://chat.localhost through a loopback-only Caddy
+# LaunchDaemon. Binding port 80 needs root, so install.sh only links the command and says how to
+# load the daemon: `sudo localsites install`.
+if [ -f "$DOTFILES_DIR/bin/localsites" ]; then
+    create_symlink "$DOTFILES_DIR/bin/localsites" "$HOME/.local/bin/localsites"
+    [ -f /Library/LaunchDaemons/local.localsites.plist ] \
+        || log_info "Local site names are off; turn them on with: sudo ~/.local/bin/localsites install"
+fi
+
 setup_articles_picks() {
     local label="local.articles-picks" agent
     agent="$HOME/Library/LaunchAgents/$label.plist"

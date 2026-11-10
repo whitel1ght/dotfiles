@@ -1,0 +1,21 @@
+# Local sites: friendly names for local web apps (bin/localsites installs this).
+# Browsers resolve every *.localhost name to this Mac themselves, so there is no DNS or
+# /etc/hosts entry. Plain HTTP on loopback only: no certificates, nothing on the network.
+{
+	admin off
+	auto_https off
+	default_bind 127.0.0.1 [::1]
+	http_port 80
+}
+
+http://articles.localhost {
+	reverse_proxy 127.0.0.1:8765
+}
+
+http://chat.localhost {
+	reverse_proxy 127.0.0.1:8080
+}
+
+http:// {
+	respond "No local site with that name." 404
+}
