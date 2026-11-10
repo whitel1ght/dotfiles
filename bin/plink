@@ -162,13 +162,18 @@ done
 # Team skills: generated from the claude-components clone Claude Code loads its
 # plugins from, so pi follows `git pull` there instead of keeping hand forks.
 # pi/settings.json lists skills-team; pi/gen/pi_skills.py explains the rewrite.
+# pi/team-skills.json picks what is mirrored: the plugins Claude Code enables, plus single skills
+# pi uses from the others (D-661). Every mirrored description is in every pi session's prompt.
 CC_SRC="${CLAUDE_COMPONENTS_DIR:-$HOME/projects/claude-components}"
+PI_TEAM_SELECT=""
+[ -f "$PI_SRC/team-skills.json" ] && PI_TEAM_SELECT="$PI_SRC/team-skills.json"
 if [ ! -d "$CC_SRC/plugins" ]; then
     log_warn "claude-components not found at $CC_SRC; team skills not regenerated"
 elif [ "$DRY_RUN" = 1 ]; then
     log_info "would regenerate team skills from $CC_SRC into $PI_DEST/skills-team"
     CHANGED=$((CHANGED + 1))
-elif python3 "$PI_SRC/gen/pi_skills.py" --src "$CC_SRC" --out "$PI_DEST/skills-team" >/dev/null; then
+elif python3 "$PI_SRC/gen/pi_skills.py" --src "$CC_SRC" --out "$PI_DEST/skills-team" \
+        ${PI_TEAM_SELECT:+--select "$PI_TEAM_SELECT"} >/dev/null; then
     log_info "regenerated team skills from $CC_SRC ($(git -C "$CC_SRC" rev-parse --short HEAD 2>/dev/null || echo '?'))"
 else
     log_error "team skill generation failed"

@@ -20,7 +20,13 @@ every run and carries a .generated.json marker; a folder without the marker is
 never wiped.
 
   pi_skills.py [--src ~/projects/claude-components] [--out ~/.pi/agent/skills-team]
+               [--select pi/team-skills.json]
+
+--select limits the copy to the plugins Claude Code enables plus single skills pi
+uses from the others: every mirrored description sits in every pi session's prompt.
 """
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -128,11 +134,27 @@ def source_commit(src: Path) -> str:
         return "unknown"
 
 
-def generate(src: Path, out: Path) -> list[str]:
+def load_select(path: Path | None, src: Path) -> tuple[set[str], set[str]] | None:
+    """The plugins mirrored whole and the single skills kept from the others; None mirrors all.
+    A name the clone no longer has is warned about, so an upstream rename is seen, not lost."""
+    if path is None:
+        return None
+    sel = json.loads(path.expanduser().read_text())
+    plugins, skills = set(sel.get("plugins", [])), set(sel.get("skills", []))
+    have_plugins = {p.name for p in src.glob("plugins/*") if p.is_dir()}
+    have_skills = {p.parent.name for p in src.glob("plugins/*/skills/*/SKILL.md")}
+    for kind, names, have in (("plugin", plugins, have_plugins), ("skill", skills, have_skills)):
+        for n in sorted(names - have):
+            print(f"pi_skills: {path.name} names {kind} {n}, which {src} does not have", file=sys.stderr)
+    return plugins, skills
+
+
+def generate(src: Path, out: Path, select: Path | None = None) -> list[str]:
     src, out = src.expanduser().resolve(), out.expanduser()
     if out.exists() and any(out.iterdir()) and not (out / MARKER).exists():
         sys.exit(f"pi_skills: {out} has files this script did not create; refusing to wipe it")
     plugins = plugin_names(src)
+    chosen = load_select(select, src)
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
@@ -141,6 +163,8 @@ def generate(src: Path, out: Path) -> list[str]:
         skill_src = skill_md.parent
         plugin_src = skill_src.parent.parent
         name = skill_src.name
+        if chosen and plugin_src.name not in chosen[0] and name not in chosen[1]:
+            continue
         skill_out = out / name
         if skill_out.exists():
             sys.exit(f"pi_skills: two plugins define a skill named {name}")
@@ -162,8 +186,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate pi skills from claude-components.")
     parser.add_argument("--src", default="~/projects/claude-components")
     parser.add_argument("--out", default="~/.pi/agent/skills-team")
+    parser.add_argument("--select", help="JSON {plugins: [...], skills: [...]}; without it every plugin is mirrored")
     args = parser.parse_args()
-    names = generate(Path(args.src), Path(args.out))
+    names = generate(Path(args.src), Path(args.out), Path(args.select) if args.select else None)
     print(f"pi_skills: {len(names)} skills from {Path(args.src).expanduser()} -> {Path(args.out).expanduser()}")
 
 

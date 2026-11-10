@@ -152,6 +152,16 @@ CLAUDE_COMPONENTS_DIR="$CC" run_plink >/dev/null
 grep -qx 'name: shipit' "$DEST/skills-team/shipit/SKILL.md" 2>/dev/null \
     && pass "generates team skills from claude-components" \
     || fail "generates team skills from claude-components" "no $DEST/skills-team/shipit/SKILL.md"
+mkdir -p "$CC/plugins/ops/skills/health-check" "$CC/plugins/ops/skills/notice-qa"
+printf -- '---\nname: h\ndescription: d\n---\nbody\n' > "$CC/plugins/ops/skills/health-check/SKILL.md"
+printf -- '---\nname: n\ndescription: d\n---\nbody\n' > "$CC/plugins/ops/skills/notice-qa/SKILL.md"
+printf '{"plugins":["shared"],"skills":["notice-qa"]}\n' > "$DOT/pi/team-skills.json"
+CLAUDE_COMPONENTS_DIR="$CC" run_plink >/dev/null 2>&1
+[ -f "$DEST/skills-team/shipit/SKILL.md" ] && [ -f "$DEST/skills-team/notice-qa/SKILL.md" ] \
+    && [ ! -e "$DEST/skills-team/health-check" ] \
+    && pass "pi/team-skills.json limits the mirror to its plugins and skills" \
+    || fail "pi/team-skills.json limits the mirror" "$(ls "$DEST/skills-team")"
+rm -f "$DOT/pi/team-skills.json"
 out="$(CLAUDE_COMPONENTS_DIR="$SANDBOX/nope" run_plink 2>&1)"; status=$?
 [ "$status" -eq 0 ] && pass "missing claude-components does not fail plink" \
     || fail "missing claude-components does not fail plink" "exit $status"

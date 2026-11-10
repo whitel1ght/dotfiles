@@ -157,5 +157,42 @@ class TransformTests(Fixture):
         self.assertTrue((self.out / "mine/SKILL.md").exists())
 
 
+
+class SelectTests(Fixture):
+    def setUp(self):
+        super().setUp()
+        write(self.src / "plugins/ops/skills/notice-qa/SKILL.md", "---\nname: notice-qa\ndescription: QA.\n---\nbody\n")
+        write(self.src / "plugins/ops/skills/health-check/SKILL.md", "---\nname: Health\ndescription: H.\n---\nbody\n")
+        self.select = self.tmp / "team-skills.json"
+
+    def gen(self, select):
+        self.select.write_text(json.dumps(select))
+        return pi_skills.generate(self.src, self.out, select=self.select)
+
+    def test_without_a_selection_every_plugin_is_mirrored(self):
+        names = pi_skills.generate(self.src, self.out)
+        self.assertEqual(sorted(names), ["health-check", "notice-qa", "shipit", "tdd-flow"])
+
+    def test_selection_keeps_listed_plugins_and_listed_skills_only(self):
+        names = self.gen({"plugins": ["shared", "backend"], "skills": ["notice-qa"]})
+        self.assertEqual(sorted(names), ["notice-qa", "shipit", "tdd-flow"])
+        self.assertFalse((self.out / "health-check").exists())
+        marker = json.loads((self.out / pi_skills.MARKER).read_text())
+        self.assertEqual(marker["skills"], ["notice-qa", "shipit", "tdd-flow"])
+
+    def test_prefixes_of_unselected_plugins_are_still_dropped(self):
+        self.gen({"plugins": ["backend"], "skills": []})
+        self.assertIn("`ux-expert` subagent", (self.out / "tdd-flow/SKILL.md").read_text())
+
+    def test_unknown_names_in_the_selection_warn_and_the_rest_is_generated(self):
+        import contextlib, io
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            names = self.gen({"plugins": ["shared", "gone-plugin"], "skills": ["renamed-skill"]})
+        self.assertEqual(names, ["shipit"])
+        self.assertIn("gone-plugin", err.getvalue())
+        self.assertIn("renamed-skill", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
