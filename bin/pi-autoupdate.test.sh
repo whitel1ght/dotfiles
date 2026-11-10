@@ -61,11 +61,13 @@ echo "zsh pi function"
 if command -v zsh >/dev/null; then
   mkdir -p "$SANDBOX/zbin"; ln -sf "$SCRIPT" "$SANDBOX/zbin/pi-autoupdate"; ln -sf "$SANDBOX/bin/pi" "$SANDBOX/zbin/pi"
   rm -rf "$PI_AUTOUPDATE_STATE"; : >"$LOG"
-  fn="$(sed -n '/^pi() {/p' "$TEST_DIR/../zsh/.zshrc")"
+  fn="$(sed -n '/^pi() {/,/^}/p' "$TEST_DIR/../zsh/.zshrc")"
   PATH="$SANDBOX/zbin:$PATH" PI_BIN="$SANDBOX/zbin/pi" zsh -fc "$fn; pi --model x hello" 2>/dev/null
   assert_eq "pi update --all|pi --model x hello" "$(cut -d'|' -f1 "$LOG" | sed 's/ $//' | paste -sd '|' -)" "the function updates, then starts pi with the same arguments"
   : >"$LOG"; PATH="$SANDBOX/bin:$PATH" zsh -fc "$fn; pi --model y" 2>/dev/null
   assert_eq "pi --model y" "$(cut -d'|' -f1 "$LOG" | sed 's/ $//')" "without pi-autoupdate installed, pi still starts"
+  : >"$LOG"; PATH="$SANDBOX/bin:$PATH" HOME="$SANDBOX" zsh -fc "$fn; pi --team -c 'a b'" 2>/dev/null
+  assert_eq "pi --skill $SANDBOX/.pi/agent/skills-team -c a b" "$(cut -d'|' -f1 "$LOG" | sed 's/ $//')" "--team loads the team skills; other arguments pass through"
 fi
 
 echo

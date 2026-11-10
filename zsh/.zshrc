@@ -96,7 +96,16 @@ alias jtodo='jt -u'   # current Omni sprint, unassigned and To-Do
 # Every interactive pi, plain or through an alias below, first updates pi and its extensions
 # (bin/pi-autoupdate: a few seconds, skipped for subcommands, -p and within 10 min of the last
 # update), so it never opens on an "update available" notice.
-pi() { (( $+commands[pi-autoupdate] )) && pi-autoupdate "$@"; command pi "$@"; }
+# The ECFX team skills (~/.pi/agent/skills-team) are off by default; `pi --team` loads them (D-664).
+pi() {
+  local -a args
+  local a
+  for a in "$@"; do
+    [[ $a == --team ]] && args+=(--skill "$HOME/.pi/agent/skills-team") || args+=("$a")
+  done
+  (( $+commands[pi-autoupdate] )) && pi-autoupdate "${args[@]}"
+  command pi "${args[@]}"
+}
 
 # w <word>: define a word (macOS's dictionary) and save it as a word to learn (bin/words; the
 # words track of the learning system). Replaces the Unix `w` (who is logged in) in this shell.

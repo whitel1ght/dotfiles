@@ -80,8 +80,10 @@ plugin marketplace. pi gets the same skills **generated**, not copied:
 `plugins/*/skills/<name>/` folder from the clone into `~/.pi/agent/skills-team/`
 and rewrites the few Claude-only parts (`!`cmd`` context lines, `plugin:name`
 prefixes, `${CLAUDE_SKILL_DIR}` / `${CLAUDE_PLUGIN_ROOT}`, `~/.claude/docs/`), plus
-a short "In pi" note on skills that launch subagents. `settings.json` lists
-`skills-team`. To pick up team changes:
+a short "In pi" note on skills that launch subagents. `team-skills.json` picks which
+plugins and skills are copied. They are off by default: `settings.json` lists no
+skill folder, and `pi --team` (the zsh function) adds `--skill ~/.pi/agent/skills-team`
+for an ECFX session. To pick up team changes:
 
 ```sh
 git -C ~/projects/claude-components pull && plink
