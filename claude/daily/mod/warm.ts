@@ -1,10 +1,11 @@
-// Keeps every session's prompt cache warm while the day runs, after cache-tax's `keepwarm always`
-// window (its first 6 h) ends: same ping period, TTL, prompt and warm test as cache-tax. The two
-// overlap only while cache-tax's own 3 h auto-warm after a paid cold write runs past the 6 h mark.
-// Claude only.
+// Keeps every session's prompt cache warm while the day runs: same TTL, prompt and warm test as
+// cache-tax, pinging TRAIL_MS after cache-tax's own 50 min. While a cache-tax window is armed its
+// ping comes first and, seen as another plugin's warm fork, moves this clock, so only one ping is
+// sent; outside a window (it lasts 6 h from a session start, a plugin reload does not re-arm it)
+// this one keeps the cache. Claude only.
 
-export const DAY_WARM_AFTER_MS = 6 * 60 * 60 * 1000
 export const PING_AFTER_MS = 50 * 60 * 1000
+export const TRAIL_MS = 5 * 60 * 1000
 export const TTL_MS = 60 * 60 * 1000
 export const WARM_PROMPT = 'Reply with the single word: warm'
 export const REPORT_MARK = '<!-- daily-report:start -->'
@@ -14,7 +15,6 @@ export type WarmInput = {
   dayRunning: boolean
   /** Today's diary has the end-of-day report. */
   dayEnded: boolean
-  startedAt: number
   /** The main thread's last request, or a warm ping's; null before the first. */
   lastRequestAt: number | null
   now: number
@@ -37,8 +37,7 @@ export function nextWarm(i: WarmInput): WarmStep {
   if (i.lastRequestAt === null) return { do: 'idle' }
   const coldAt = i.lastRequestAt + TTL_MS
   if (i.now >= coldAt) return { do: 'cold' }
-  const due = Math.max(i.startedAt + DAY_WARM_AFTER_MS, i.lastRequestAt + PING_AFTER_MS)
-  if (due >= coldAt) return { do: 'idle' }
+  const due = i.lastRequestAt + PING_AFTER_MS + TRAIL_MS
   return i.now >= due ? { do: 'ping' } : { do: 'wait', ms: due - i.now }
 }
 

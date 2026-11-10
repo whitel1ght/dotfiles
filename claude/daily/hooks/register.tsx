@@ -249,12 +249,11 @@ async function nudgeBusy($: EngineInterface, ctx: DayCtx) {
   void $.prompt.submit({ text: BUSY_PROMPT }).catch(() => $.ui.toast('daily idle: prompt submit failed'))
 }
 
-// Keepwarm for every session while the day runs, after cache-tax's 6 h window (mod/warm.ts). One
+// Keepwarm for every session while the day runs, trailing cache-tax by 5 min (mod/warm.ts). One
 // timer at a time, re-armed after every main-thread turn and every warm ping; a late timer (sleep)
 // re-checks first. A ping that got no reply stops it only until the next turn; a cold readback
 // (the fork wrote the context instead of reading it) stops it for good, so it never pays twice.
 const warm = {
-  startedAt: 0,
   lastRequestAt: null as number | null,
   timer: null as { cancel: () => void } | null,
   stopped: null as string | null,
@@ -286,7 +285,6 @@ async function armWarm($: EngineInterface) {
   const step = nextWarm({
     dayRunning: true,
     dayEnded: ((await readOr($, day.diaryPath)) ?? '').includes(REPORT_MARK),
-    startedAt: warm.startedAt,
     lastRequestAt: warm.lastRequestAt,
     now: await $.clock.now(),
   })
@@ -619,7 +617,6 @@ async function watchInbox($: EngineInterface) {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    warm.startedAt = await $.clock.now()
     followups.ids.add(await $.session.id())
     try {
       await $.command.register({ name: 'day-plan', description: "Open today's plan in nvim in a tmux popup" })
@@ -729,7 +726,7 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // cache-tax's pings are forks too: a warm one moves the clock the hand-over at 6 h starts from.
+  // cache-tax's pings are forks too: a warm one moves the clock, so the trailing ping is not sent.
   on('model.fork', async ($, e, next) => {
     const r = await next(e)
     if (r && r.isAnswered && isWarm(r.usage) && !warm.isPinging) {

@@ -316,7 +316,7 @@ test('a failed owner write toasts, records friction and still runs the command',
   expect(frictionFor(s.calls, 'daily-owner').length).toBe(1)
 })
 
-// The day session stays warm after cache-tax's 6 h window.
+// Every session stays warm while the day runs, trailing cache-tax's 50 min ping by 5 min.
 const MIN = 60_000
 const HOUR = 60 * MIN
 const OPEN_DAY = DIARY.replace(/<!-- daily-report:start -->[\s\S]*<!-- daily-report:end -->\n/, '')
@@ -330,23 +330,15 @@ async function step($: any) {
 }
 const turn = ($: any) => $.turn.complete({ answer: 'ok', reason: 'answer', durationMs: 1000, isAborted: false, turnId: 't' } as never)
 
-test('no keepwarm ping in the first 6 h: cache-tax covers those', async ($, on) => {
+test('right from session start, a session pings 55 idle minutes after its last turn, then every 55 minutes', async ($, on) => {
   const s = await start($, on, idleDay)
-  await s.clock.advance(5 * HOUR)
+  await s.clock.advance(1 * HOUR)
   await turn($)
-  await s.clock.advance(59 * MIN)
-  expect(s.forks).toEqual([])
-})
-
-test('after 6 h the owning session pings 50 idle minutes after its last turn, then every 50 minutes', async ($, on) => {
-  const s = await start($, on, idleDay)
-  await s.clock.advance(6 * HOUR)
-  await turn($)
-  await s.clock.advance(49 * MIN)
+  await s.clock.advance(54 * MIN)
   expect(s.forks).toEqual([])
   await s.clock.advance(1 * MIN)
-  expect(s.forks).toEqual([T0 + 6 * HOUR + 50 * MIN])
-  await s.clock.advance(50 * MIN)
+  expect(s.forks).toEqual([T0 + 1 * HOUR + 55 * MIN])
+  await s.clock.advance(55 * MIN)
   expect(s.forks.length).toBe(2)
 })
 
@@ -355,7 +347,7 @@ test('a session that does not own the day is kept warm too, all day', async ($, 
   await s.clock.advance(6 * HOUR)
   await turn($)
   await s.clock.advance(3 * HOUR)
-  expect(s.forks).toEqual([T0 + 6 * HOUR + 50 * MIN, T0 + 6 * HOUR + 100 * MIN, T0 + 6 * HOUR + 150 * MIN])
+  expect(s.forks).toEqual([T0 + 6 * HOUR + 55 * MIN, T0 + 6 * HOUR + 110 * MIN, T0 + 6 * HOUR + 165 * MIN])
 })
 
 test('before /start-day (no run state for today) no session is kept warm', async ($, on) => {
@@ -371,7 +363,7 @@ test('a cold readback stops keepwarm for the session, with one log line', async 
   const s = await start($, on, { ...idleDay, fork: () => cold })
   await s.clock.advance(6 * HOUR)
   await turn($)
-  await s.clock.advance(50 * MIN)
+  await s.clock.advance(55 * MIN)
   expect(s.forks.length).toBe(1)
   expect(s.logs.filter(l => l.startsWith('daily keepwarm stopped: the ping read 0'))).toHaveLength(1)
   await turn($)
@@ -383,7 +375,7 @@ test('an unanswered fork stops keepwarm', async ($, on) => {
   const s = await start($, on, { ...idleDay, fork: () => ({ isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded' }) })
   await s.clock.advance(6 * HOUR)
   await turn($)
-  await s.clock.advance(50 * MIN)
+  await s.clock.advance(55 * MIN)
   expect(s.logs).toContain('daily keepwarm stopped: the API call failed (529)')
 })
 
@@ -392,24 +384,24 @@ test('a failed API call stops keepwarm only until the next turn', async ($, on) 
   const s = await start($, on, { ...idleDay, owner: 'sess-other', fork: () => (replies++ === 0 ? { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded' } : WARM_REPLY) })
   await s.clock.advance(6 * HOUR)
   await turn($)
-  await s.clock.advance(50 * MIN)
+  await s.clock.advance(55 * MIN)
   expect(s.logs).toContain('daily keepwarm stopped: the API call failed (529)')
   await s.clock.advance(5 * MIN)
   expect(s.forks.length).toBe(1)
   await turn($)
   const resumed = s.clock.now()
   await s.clock.advance(2 * HOUR)
-  expect(s.forks.slice(1)).toEqual([resumed + 50 * MIN, resumed + 100 * MIN])
+  expect(s.forks.slice(1)).toEqual([resumed + 55 * MIN, resumed + 110 * MIN])
 })
 
 test('once the daily report is written keepwarm stops', async ($, on) => {
   const s = await start($, on, idleDay)
   await s.clock.advance(6 * HOUR)
   await turn($)
-  await s.clock.advance(50 * MIN)
+  await s.clock.advance(55 * MIN)
   expect(s.forks.length).toBe(1)
   s.files[WIKI] = DIARY
-  await s.clock.advance(50 * MIN)
+  await s.clock.advance(55 * MIN)
   expect(s.forks.length).toBe(1)
   expect(s.logs).toContain("daily keepwarm stopped: today's report is written")
 })
@@ -428,13 +420,13 @@ test('re-running /daily:run-day restarts a keepwarm that stopped', async ($, on)
   const s = await start($, on, { ...idleDay, fork: () => (replies++ === 0 ? { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded' } : WARM_REPLY) })
   await s.clock.advance(6 * HOUR)
   await turn($)
-  await s.clock.advance(50 * MIN)
+  await s.clock.advance(55 * MIN)
   expect(s.logs).toContain('daily keepwarm stopped: the API call failed (529)')
   await $.command.run({ command: 'daily:run-day', args: 'resume' })
   await turn($)
   const resumed = s.clock.now()
   await s.clock.advance(3 * HOUR)
-  expect(s.forks.slice(1)).toEqual([resumed + 50 * MIN, resumed + 100 * MIN, resumed + 150 * MIN])
+  expect(s.forks.slice(1)).toEqual([resumed + 55 * MIN, resumed + 110 * MIN, resumed + 165 * MIN])
 })
 
 test('a main-thread model request in a long turn moves the idle clock', async ($, on) => {
@@ -446,8 +438,8 @@ test('a main-thread model request in a long turn moves the idle clock', async ($
   const stepped = s.clock.now()
   await s.clock.advance(10 * MIN)
   expect(s.forks).toEqual([])
-  await s.clock.advance(40 * MIN)
-  expect(s.forks).toEqual([stepped + 50 * MIN])
+  await s.clock.advance(45 * MIN)
+  expect(s.forks).toEqual([stepped + 55 * MIN])
 })
 
 test('three turns ending together still give one ping', async ($, on) => {
@@ -455,7 +447,7 @@ test('three turns ending together still give one ping', async ($, on) => {
   await s.clock.advance(6 * HOUR)
   await Promise.all([turn($), turn($), turn($)])
   await s.clock.settle()
-  await s.clock.advance(50 * MIN)
+  await s.clock.advance(55 * MIN)
   expect(s.forks.length).toBe(1)
 })
 
@@ -638,7 +630,8 @@ test('no plan prompt in a session that does not own the day', async ($, on) => {
 })
 
 test('a cold task-notification is relayed as a plugin prompt', async ($, on) => {
-  const s = await start($, on, noNewLines)
+  const coldReadback = { ...WARM_REPLY, usage: { ...WARM_REPLY.usage, cache_read_input_tokens: 0, cache_creation_input_tokens: 80_000 } }
+  const s = await start($, on, { ...noNewLines, fork: () => coldReadback })
   await turn($)
   await s.clock.advance(61 * MIN)
   const out = await notify($)
