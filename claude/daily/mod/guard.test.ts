@@ -216,3 +216,27 @@ test('new format: [-] dismisses only with a dismissed entry, the user\'s word', 
 test('old format: [-] is not policed', async () => {
   expect(checkTicks(DIARY, tick('- [ ] ecfx-6659 sync with @smtsuchi', '- [-] ecfx-6659 sync with @smtsuchi'), null).ok).toBe(true)
 })
+
+const LONG = `- [ ] ecfx-18778 ${'compare what was done with what product asked for, then write it up '.repeat(2)}`.trimEnd()
+const withLong = DIARY_NEW.replace(END_MARK, `${LONG}\n${END_MARK}`)
+const DONE_18778 = `${AGENT}## ecfx-18778\n- 12:00 done: shipped\n`
+
+test('new format: changing only the marker of an existing long line is not a new long line', async () => {
+  expect(checkTicks(withLong, withLong.replace(LONG, LONG.replace('[ ]', '[/]')), AGENT).ok).toBe(true)
+  expect(checkTicks(withLong, withLong.replace(LONG, LONG.replace('[ ]', '[X]')), DONE_18778).ok).toBe(true)
+  expect(checkTicks(withLong, withLong.replace(LONG, `${LONG.replace('[ ]', '[/]')} <!-- p9 -->`), AGENT).ok).toBe(true)
+})
+
+test('new format: rewording an existing long line still checks its length', async () => {
+  expect(checkTicks(withLong, withLong.replace(LONG, LONG.replace('[ ]', '[/]').replace('compare', 'contrast')), AGENT).ok).toBe(false)
+})
+
+test('the friction message names the reasons first, so a long line cannot cut them off', async () => {
+  const seen: string[] = []
+  checkTicks(DIARY_NEW, DIARY_NEW.replace(END_MARK, `- [ ] ${'x'.repeat(400)}\n${END_MARK}`), AGENT, m => seen.push(m))
+  expect(seen[0].startsWith('diary guard blocked [long line]: ')).toBe(true)
+  checkTicks(DIARY_NEW, newEdit(L18778, `- [X] ecfx-18778 ${'y'.repeat(120)}`), AGENT, m => seen.push(m))
+  expect(seen[1].startsWith('diary guard blocked [tick without a done entry, long line]: ')).toBe(true)
+  checkTicks(DIARY, tick('- [ ] ecfx-6659 sync with @smtsuchi', '- [x] ecfx-6659 sync with @smtsuchi'), null, m => seen.push(m))
+  expect(seen[2].startsWith('diary guard blocked [tick without evidence]: ')).toBe(true)
+})

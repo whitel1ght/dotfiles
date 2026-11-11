@@ -399,7 +399,7 @@ test("guardVerdict reports a block through onBlock and stays quiet otherwise", (
     guardVerdict("edit", { path: diary, edits: [{ oldText: from, newText: to }] }, DAY, true, (m) => seen.push(m));
   assert.ok(edit("- [ ] ecfx-1001 fix the export", "- [x] ecfx-1001 fix the export"));
   assert.equal(seen.length, 1);
-  assert.match(seen[0], /diary guard blocked: .*ecfx-1001/);
+  assert.match(seen[0], /diary guard blocked \[[^\]]+\]: .*ecfx-1001/);
   assert.equal(edit("- [ ] ecfx-1001 fix the export", "- [x] ecfx-1001 fix the export · merged"), undefined);
   assert.equal(seen.length, 1);
   cleanup(root);
@@ -416,7 +416,7 @@ test("a blocked tick records a guard friction event for pi", async () => {
     await waitFor(log);
     const lines = readFileSync(log, "utf8").trim().split("\n");
     assert.equal(lines.length, 1);
-    assert.match(lines[0], /^--harness pi --source daily-guard guard diary guard blocked: .*ecfx-1001/);
+    assert.match(lines[0], /^--harness pi --source daily-guard guard diary guard blocked \[[^\]]+\]: .*ecfx-1001/);
   } finally {
     process.env.PATH = path;
     cleanup(root);
