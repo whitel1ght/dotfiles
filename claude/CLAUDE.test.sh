@@ -91,6 +91,14 @@ for SKILL in "${SKILLS[@]}"; do
   fi
 done
 
+echo "CLAUDE.md — mockups are proposals, Chrome is the browser (insights 2026-11-11)"
+evidence=$(section "$MD" "Evidence")
+has "$evidence" "A mockup or design is a proposal, not a decision" "mockup details are not decisions"
+has "$evidence" "under open questions, with whose mockup it is" "they are listed with their source"
+browser=$(section "$MD" "Browser")
+has "$browser" "Claude in Chrome extension tools" "UI checks run in Chrome"
+has "$browser" "stop and tell me; never switch to Playwright or a terminal browser pane" "no silent browser fallback"
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]

@@ -50,6 +50,15 @@ Global instructions applied across all projects. Keep this short — project-lev
 - Before saying something does not exist, check every path it could come in by (e.g. the
   legacy Vue 2 → Segment → Mixpanel path, not only the current one).
 - Label unverified claims as hypotheses. Fact-check an analysis draft before presenting it.
+- A mockup or design is a proposal, not a decision: in a plan, contract or summary, list what
+  comes only from a mockup under open questions, with whose mockup it is, until someone
+  confirms it.
+
+## Browser
+
+- UI checks run in my Chrome through the Claude in Chrome extension tools (load them with
+  `ToolSearch` first). When they do not load or answer "Browser extension is not connected",
+  stop and tell me; never switch to Playwright or a terminal browser pane unless I ask.
 
 ## Tests and tooling
 
