@@ -11,14 +11,20 @@ const ME = 'sess-me'
 const T0 = Date.UTC(2026, 9, 8, 6, 0)
 const WARM_REPLY = { isAnswered: true, text: 'warm', usage: { input_tokens: 5, output_tokens: 2, cache_read_input_tokens: 80_000, cache_creation_input_tokens: 40 } }
 
+const MIN = 60_000
+const HOUR = 60 * MIN
+
 type Run = { exitCode: number; stdout: string; stderr: string }
 
-type Opts = { day: Run | (() => Run); rejectWith?: string; refuse?: boolean; frictionDenied?: boolean; owner?: string | null; writeFails?: boolean; inbox?: string; diary?: string; state?: string | null; fork?: () => unknown; files?: Record<string, string>; decide?: Run }
+type Opts = { day: Run | (() => Run); rejectWith?: string; refuse?: boolean; frictionDenied?: boolean; owner?: string | null; writeFails?: boolean; inbox?: string; diary?: string; state?: string | null; fork?: () => unknown; files?: Record<string, string>; decide?: Run; quiet?: boolean }
 
 async function start($: any, on: any, opts: Opts) {
   // A closed lid stops the 5 s refresh tick: while asleep its next period waits for the wake.
   let sleepUntil = 0
-  on('clock.every', { ms: 5_000 }, (_$: any, e: any, next: any) => {
+  // Keepwarm runs on its own one-shot timer: a test that only watches pings (`quiet`) stretches every
+  // periodic tick (refresh, watch, inbox, ideas, follow-up) so hours of fake time do not fire thousands.
+  for (const ms of opts.quiet ? new Set([5_000, 30_000, 60_000, 180_000, FOLLOWUP_MS]) : [5_000]) on('clock.every', { ms }, (_$: any, e: any, next: any) => {
+    if (opts.quiet) return next({ ...e, ms: 12 * HOUR })
     const now = clock.now()
     return now < sleepUntil ? next({ ...e, ms: sleepUntil - now }) : next(e)
   })
@@ -317,10 +323,9 @@ test('a failed owner write toasts, records friction and still runs the command',
 })
 
 // Every session stays warm while the day runs, trailing cache-tax's 50 min ping by 5 min.
-const MIN = 60_000
-const HOUR = 60 * MIN
 const OPEN_DAY = DIARY.replace(/<!-- daily-report:start -->[\s\S]*<!-- daily-report:end -->\n/, '')
 const idleDay = { day: OK, diary: OPEN_DAY }
+const warmDay = { ...idleDay, quiet: true }
 async function step($: any) {
   const stream = $.turn.step({ turnId: 't', index: 0, model: 'm', messageCount: 1 } as never)
   for await (const _ of stream) {
@@ -331,7 +336,7 @@ async function step($: any) {
 const turn = ($: any) => $.turn.complete({ answer: 'ok', reason: 'answer', durationMs: 1000, isAborted: false, turnId: 't' } as never)
 
 test('right from session start, a session pings 55 idle minutes after its last turn, then every 55 minutes', async ($, on) => {
-  const s = await start($, on, idleDay)
+  const s = await start($, on, warmDay)
   await s.clock.advance(1 * HOUR)
   await turn($)
   await s.clock.advance(54 * MIN)
@@ -343,7 +348,7 @@ test('right from session start, a session pings 55 idle minutes after its last t
 })
 
 test('a session that does not own the day is kept warm too, all day', async ($, on) => {
-  const s = await start($, on, { ...idleDay, owner: 'sess-other' })
+  const s = await start($, on, { ...warmDay, owner: 'sess-other' })
   await s.clock.advance(6 * HOUR)
   await turn($)
   await s.clock.advance(3 * HOUR)
@@ -351,7 +356,7 @@ test('a session that does not own the day is kept warm too, all day', async ($, 
 })
 
 test('before /start-day (no run state for today) no session is kept warm', async ($, on) => {
-  const s = await start($, on, { ...idleDay, state: null, owner: null })
+  const s = await start($, on, { ...warmDay, state: null, owner: null })
   await s.clock.advance(6 * HOUR)
   await turn($)
   await s.clock.advance(3 * HOUR)
@@ -360,7 +365,7 @@ test('before /start-day (no run state for today) no session is kept warm', async
 
 test('a cold readback stops keepwarm for the session, with one log line', async ($, on) => {
   const cold = { ...WARM_REPLY, usage: { ...WARM_REPLY.usage, cache_read_input_tokens: 0, cache_creation_input_tokens: 80_000 } }
-  const s = await start($, on, { ...idleDay, fork: () => cold })
+  const s = await start($, on, { ...warmDay, fork: () => cold })
   await s.clock.advance(6 * HOUR)
   await turn($)
   await s.clock.advance(55 * MIN)
@@ -372,7 +377,7 @@ test('a cold readback stops keepwarm for the session, with one log line', async 
 })
 
 test('an unanswered fork stops keepwarm', async ($, on) => {
-  const s = await start($, on, { ...idleDay, fork: () => ({ isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded' }) })
+  const s = await start($, on, { ...warmDay, fork: () => ({ isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded' }) })
   await s.clock.advance(6 * HOUR)
   await turn($)
   await s.clock.advance(55 * MIN)
@@ -381,7 +386,7 @@ test('an unanswered fork stops keepwarm', async ($, on) => {
 
 test('a failed API call stops keepwarm only until the next turn', async ($, on) => {
   let replies = 0
-  const s = await start($, on, { ...idleDay, owner: 'sess-other', fork: () => (replies++ === 0 ? { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded' } : WARM_REPLY) })
+  const s = await start($, on, { ...warmDay, owner: 'sess-other', fork: () => (replies++ === 0 ? { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded' } : WARM_REPLY) })
   await s.clock.advance(6 * HOUR)
   await turn($)
   await s.clock.advance(55 * MIN)
@@ -395,7 +400,7 @@ test('a failed API call stops keepwarm only until the next turn', async ($, on) 
 })
 
 test('once the daily report is written keepwarm stops', async ($, on) => {
-  const s = await start($, on, idleDay)
+  const s = await start($, on, warmDay)
   await s.clock.advance(6 * HOUR)
   await turn($)
   await s.clock.advance(55 * MIN)
@@ -407,7 +412,7 @@ test('once the daily report is written keepwarm stops', async ($, on) => {
 })
 
 test('after midnight there is no run state for the new date and keepwarm goes quiet', async ($, on) => {
-  const s = await start($, on, idleDay)
+  const s = await start($, on, warmDay)
   await s.clock.advance(6 * HOUR)
   await turn($)
   delete s.files[STATE]
@@ -417,7 +422,7 @@ test('after midnight there is no run state for the new date and keepwarm goes qu
 
 test('re-running /daily:run-day restarts a keepwarm that stopped', async ($, on) => {
   let replies = 0
-  const s = await start($, on, { ...idleDay, fork: () => (replies++ === 0 ? { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded' } : WARM_REPLY) })
+  const s = await start($, on, { ...warmDay, fork: () => (replies++ === 0 ? { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded' } : WARM_REPLY) })
   await s.clock.advance(6 * HOUR)
   await turn($)
   await s.clock.advance(55 * MIN)
@@ -430,7 +435,7 @@ test('re-running /daily:run-day restarts a keepwarm that stopped', async ($, on)
 })
 
 test('a main-thread model request in a long turn moves the idle clock', async ($, on) => {
-  const s = await start($, on, idleDay)
+  const s = await start($, on, warmDay)
   await s.clock.advance(6 * HOUR)
   await turn($)
   await s.clock.advance(45 * MIN)
@@ -443,7 +448,7 @@ test('a main-thread model request in a long turn moves the idle clock', async ($
 })
 
 test('three turns ending together still give one ping', async ($, on) => {
-  const s = await start($, on, idleDay)
+  const s = await start($, on, warmDay)
   await s.clock.advance(6 * HOUR)
   await Promise.all([turn($), turn($), turn($)])
   await s.clock.settle()
@@ -452,7 +457,7 @@ test('three turns ending together still give one ping', async ($, on) => {
 })
 
 test('with no run state for today a turn reads no diary for keepwarm', async ($, on) => {
-  const s = await start($, on, { ...idleDay, state: null, owner: null })
+  const s = await start($, on, { ...warmDay, state: null, owner: null })
   s.reads.length = 0
   await turn($)
   await s.clock.settle()
