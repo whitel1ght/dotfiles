@@ -43,7 +43,12 @@ function setup(
   const listings = [...(opts.inbox ?? [])];
   const probes = [...(opts.probes ?? [])];
   const deps: WatchDeps = {
-    paths: () => ({ runState: join(stateDir, `${DAY}.md`), diary: join(root, "diary", `${DAY}.md`), playbook: join(stateDir, `${DAY}.playbook`) }),
+    paths: () => ({
+      runState: join(stateDir, `${DAY}.md`),
+      diary: join(root, "diary", `${DAY}.md`),
+      playbook: join(stateDir, `${DAY}.playbook`),
+      slack: join(stateDir, `${DAY}.slack`),
+    }),
     changes: async () => {
       calls.runs += 1;
       return changes.shift() ?? { code: 0, stdout: "", stderr: "" };
@@ -296,6 +301,33 @@ test("an idle day with no agent gets one Keep busy prompt per idle stretch", asy
 
 const withNewLine = PLAN.replace("<!-- start-day:end -->", "- [ ] figure out the devbox\n<!-- start-day:end -->");
 const NEW_LINE = "[daily-plan] 1 new plan line: run Keep busy of /run-day (section 11).";
+
+const H = (h: number, m = 0) => h * 60 + m;
+
+test("the Slack check: from 15:00 every 20 min, once per slot, between turns, recorded in <date>.slack", async () => {
+  const { root, stateDir, watcher } = setup();
+  assert.equal(watcher.checkSlack(false, H(14, 59)), null);
+  assert.equal(watcher.checkSlack(true, H(15)), null);
+  assert.equal(watcher.checkSlack(false, H(15)), "[daily-slack] check 1/10: run /slack-check.");
+  assert.equal(watcher.checkSlack(false, H(15, 10)), null);
+  assert.equal(readFileSync(join(stateDir, `${DAY}.slack`), "utf8"), "slot=0\n");
+  assert.equal(watcher.checkSlack(false, H(16, 5)), "[daily-slack] check 4/10: run /slack-check.");
+  assert.equal(watcher.checkSlack(false, H(18, 20)), null);
+  rmSync(root, { recursive: true });
+});
+
+test("no Slack check outside the watching session, after the daily report, or for a slot a reload already sent", async () => {
+  const other = setup({ held: false });
+  assert.equal(other.watcher.checkSlack(false, H(15)), null);
+  rmSync(other.root, { recursive: true });
+  const ended = setup({ report: true });
+  assert.equal(ended.watcher.checkSlack(false, H(15)), null);
+  rmSync(ended.root, { recursive: true });
+  const reloaded = setup();
+  writeFileSync(join(reloaded.stateDir, `${DAY}.slack`), "slot=2\n");
+  assert.equal(reloaded.watcher.checkSlack(false, H(15, 45)), null);
+  rmSync(reloaded.root, { recursive: true });
+});
 
 test("a plan line the user added gets one prompt, between turns", async () => {
   const { root, watcher } = setup();

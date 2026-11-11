@@ -174,6 +174,7 @@ glab api --method POST "projects/<urlencoded path>/merge_requests/<iid>/discussi
 - `inbox: <N> new` (from the mod): process the inbox, section 7.
 - `[daily-idle] no agent running: run Keep busy of /daily:run-day (section 11).` (from the mod, once per idle stretch after 10 minutes with no agent outstanding): run section 11.
 - `[daily-plan] <N> new plan line…: run Keep busy of /daily:run-day (section 11).` (from the mod, between turns, once per line with no run-state line): run section 11.
+- `[daily-slack] check <N>/10: run /daily:slack-check.` (from the mod, between turns, from 15:00 local time every 20 min, 10 checks): run `/daily:slack-check` (Skill tool, `daily:slack-check`). It ticks plan lines whose Slack message the user has sent and puts new requests on the plan.
 - Before handling any other event or agent report, list the inbox (section 7) and process what is waiting. Then re-read the plan block: the user edits the diary too. An item they ticked or removed is theirs; do not touch it.
 - No mod (the status line stays empty): there is no watcher and no inbox listing. Start `/loop 5m` with the prompt `check the run-day inbox (section 7), then run changes-since --cursor run-day and handle each line it prints as an event`, and keep the rule above.
 

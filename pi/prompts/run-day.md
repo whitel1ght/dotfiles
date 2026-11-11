@@ -445,6 +445,7 @@ Then:
 - `inbox: N new` → step 7.
 - `[daily-idle] no agent running: …` → step 11.
 - `[daily-plan] <N> new plan line…` (between turns, once per line with no run-state line) → step 11.
+- `[daily-slack] check <N>/10: run /slack-check.` (between turns, from 15:00 local time every 20 min, 10 checks) → follow `/slack-check` (`~/projects/dotfiles/pi/prompts/slack-check.md`): it ticks plan lines whose Slack message the user has sent and puts new requests on the plan.
 
 ## 7. Inbox
 

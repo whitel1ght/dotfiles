@@ -134,6 +134,7 @@ for doc in "$F" "$P"; do
   has "$doc" "Re-read the plan block first" "$n: Keep busy reads the plan before anything else"
   has "$doc" "with no run-state line is new" "$n: a line the user added is taken up"
   has "$doc" "[daily-plan]" "$n: the plan prompt runs Keep busy"
+  has "$doc" "[daily-slack]" "$n: the Slack timer prompt runs the Slack check"
   has "$doc" "any query against production, goes into a decision first" "$n: prod checks wait for a decision"
   has "$doc" "5. Nothing in steps 1-4" "$n: Finish only after children and the sprint"
   has "$doc" "one of steps 1-4 has" "$n: the idle rule counts the children step"

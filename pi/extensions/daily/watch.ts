@@ -13,6 +13,7 @@ import { isFullWake, outstanding, parseGraphics, parseLid, sleptBetween, WAKE_PR
 import { REPORT_MARK } from "./mod/warm.ts";
 import { PI_BUSY_PROMPT, nextAgentAt, nextNudged, shouldNudgeBusy } from "./mod/busy.ts";
 import { nextPlanLines, piPlanPrompt, untracked } from "./mod/planlines.ts";
+import { formatSlot, parseSlot, piSlackPrompt, slackDue } from "./mod/slack.ts";
 import { parsePrint, shouldResume } from "./mod/update.ts";
 
 export const WATCH_MS = 180_000;
@@ -23,7 +24,7 @@ const BLIND_PROBES = 3;
 export type Exec = { code: number; stdout: string; stderr: string };
 
 export type WatchDeps = {
-  paths: () => { runState: string; diary: string; playbook: string };
+  paths: () => { runState: string; diary: string; playbook: string; slack: string };
   /** changes-since --cursor run-day */
   changes: () => Promise<Exec>;
   listInbox: () => string[];
@@ -53,6 +54,7 @@ export class DayWatcher {
   private busyAgentAt = 0;
   private planSeen: string[] = [];
   private updateSent = false;
+  private slackFailed = false;
   private deps: WatchDeps;
 
   constructor(deps: WatchDeps) {
@@ -161,6 +163,32 @@ export class DayWatcher {
     const { fresh, seen } = nextPlanLines(untracked(parseItems(diary), parseRunState(readOr(p.runState))), this.planSeen);
     this.planSeen = seen;
     return fresh.length > 0 ? piPlanPrompt(fresh.length) : null;
+  }
+
+  /**
+   * Called on the 30 s tick, between turns: from 15:00 local time, every 20 min, 10 checks, the
+   * /slack-check prompt (mod/slack.ts). The slot is recorded first, so a failing write never
+   * repeats it every tick.
+   */
+  checkSlack(turnRunning: boolean, localMinutes: number | null): string | null {
+    const p = this.deps.paths();
+    try {
+      const slot = slackDue({
+        isOwner: this.deps.holdsLock(),
+        dayRunning: this.active() && !readOr(p.diary).includes(REPORT_MARK),
+        turnRunning,
+        localMinutes,
+        lastSlot: parseSlot(existsSync(p.slack) ? readFileSync(p.slack, "utf8") : null),
+      });
+      if (slot === null) return null;
+      writeFileSync(p.slack, formatSlot(slot));
+      this.slackFailed = false;
+      return piSlackPrompt(slot);
+    } catch (err) {
+      if (!this.slackFailed) this.deps.friction("tool_error", `slack check not sent: ${err instanceof Error ? err.message : String(err)}`, "daily-slack");
+      this.slackFailed = true;
+      return null;
+    }
   }
 
   /**

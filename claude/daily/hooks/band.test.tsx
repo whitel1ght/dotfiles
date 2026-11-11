@@ -16,7 +16,7 @@ const HOUR = 60 * MIN
 
 type Run = { exitCode: number; stdout: string; stderr: string }
 
-type Opts = { day: Run | (() => Run); rejectWith?: string; refuse?: boolean; frictionDenied?: boolean; owner?: string | null; writeFails?: boolean; inbox?: string; diary?: string; state?: string | null; fork?: () => unknown; files?: Record<string, string>; decide?: Run; quiet?: boolean }
+type Opts = { day: Run | (() => Run); rejectWith?: string; refuse?: boolean; frictionDenied?: boolean; owner?: string | null; writeFails?: boolean; inbox?: string; diary?: string; state?: string | null; fork?: () => unknown; files?: Record<string, string>; decide?: Run; quiet?: boolean; slackAt?: number }
 
 async function start($: any, on: any, opts: Opts) {
   // A closed lid stops the 5 s refresh tick: while asleep its next period waits for the wake.
@@ -58,6 +58,10 @@ async function start($: any, on: any, opts: Opts) {
     if (e.argv[0].endsWith('/ioreg')) return { value: { exitCode: 0, stdout: world.lid === null ? '' : `| |   "AppleClamshellState" = ${world.lid === 'closed' ? 'Yes' : 'No'}\n`, stderr: '' } } as never
     if (e.argv[0].endsWith('/pmset')) return { value: { exitCode: 0, stdout: world.graphics === null ? '' : `Current System Capabilities are: CPU${world.graphics ? ' Graphics Audio' : ''} Network\n`, stderr: '' } } as never
     if (isSubagentsLs(e.argv)) return { value: { exitCode: 0, stdout: `${SUBAGENTS}\n`, stderr: '' } } as never
+    if (opts.slackAt !== undefined && e.argv[0] === 'date' && e.argv[1] === '+%H:%M') {
+      const m = opts.slackAt + Math.floor((clock.now() - T0) / MIN)
+      return { value: { exitCode: 0, stdout: `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}\n`, stderr: '' } } as never
+    }
     return { value: e.argv[0] === 'date' ? { exitCode: 0, stdout: '2026-10-08\n', stderr: '' } : typeof opts.day === 'function' ? (isChangesSince(e.argv) ? opts.day() : OK) : opts.day } as never
   })
   const reads: string[] = []
@@ -610,6 +614,34 @@ const NOTE = '<task-notification>agent a1 completed</task-notification>'
 const notify = ($: any) => $.prompt.submit({ text: NOTE, origin: { kind: 'task-notification' } } as never)
 const noNewLines = { ...idleDay, diary: OPEN_DAY.replaceAll('- [ ]', '- [/]') }
 const planPrompts = (prompts: string[]) => prompts.filter(p => p.startsWith('[daily-plan]'))
+
+const SLACK = '/home/t/.local/state/run-day/2026-10-08.slack'
+const slackPrompts = (prompts: string[]) => prompts.filter(p => p.startsWith('[daily-slack]'))
+
+test('from 15:00 the day session gets a Slack check every 20 min, once per slot, recorded in <date>.slack', async ($, on) => {
+  const s = await start($, on, { ...noNewLines, slackAt: 14 * 60 + 59 })
+  await s.clock.advance(31_000)
+  expect(slackPrompts(s.prompts)).toEqual([])
+  await s.clock.advance(MIN)
+  expect(slackPrompts(s.prompts)).toEqual(['[daily-slack] check 1/10: run /daily:slack-check.'])
+  expect(s.files[SLACK]).toBe('slot=0\n')
+  await s.clock.advance(10 * MIN)
+  expect(slackPrompts(s.prompts)).toHaveLength(1)
+  await s.clock.advance(10 * MIN)
+  expect(slackPrompts(s.prompts)).toEqual(['[daily-slack] check 1/10: run /daily:slack-check.', '[daily-slack] check 2/10: run /daily:slack-check.'])
+})
+
+test('no Slack check in a session that does not own the day', async ($, on) => {
+  const s = await start($, on, { ...noNewLines, owner: 'sess-other', slackAt: 15 * 60 })
+  await s.clock.advance(31_000)
+  expect(slackPrompts(s.prompts)).toEqual([])
+})
+
+test('a slot already in <date>.slack is not sent again after a reload', async ($, on) => {
+  const s = await start($, on, { ...noNewLines, slackAt: 15 * 60 + 5, files: { [SLACK]: 'slot=0\n' } })
+  await s.clock.advance(31_000)
+  expect(slackPrompts(s.prompts)).toEqual([])
+})
 
 test('a plan line with no run-state line gets one prompt, and the idle nudge waits that tick', async ($, on) => {
   const s = await start($, on, idleDay)

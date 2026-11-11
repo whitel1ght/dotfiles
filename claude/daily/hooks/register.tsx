@@ -17,6 +17,7 @@ import { joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts
 import { NUDGE_TEXT, claimsSystem, claimsSystemPrompt, shouldNudge, systemMarkerPath } from '../mod/ideas.ts'
 import { BUSY_PROMPT, nextAgentAt, nextNudged, shouldNudgeBusy } from '../mod/busy.ts'
 import { nextPlanLines, planPrompt, untracked } from '../mod/planlines.ts'
+import { formatSlot, parseClock, parseSlot, slackDue, slackPath, slackPrompt } from '../mod/slack.ts'
 import { CLAUDE_PLAYBOOK, UPDATE_ARGS, fingerprint, parsePrint, playbookPath, shouldResume } from '../mod/update.ts'
 import { ASK_NUDGE, BUSY_NOTE, FORM_DENY, FORM_TOOLS, isBusyPrompt, nextAsk, shouldNudgeAsk } from '../mod/ask.ts'
 import { FOLLOWUP_MS, followupPrompt, parseCards, pendingFollowups } from '../mod/followup.ts'
@@ -40,7 +41,7 @@ const EMPTY: ViewState = { active: false, status: '', groups: [] }
 const view = atom({ plugin: 'daily', key: 'view' } as const, EMPTY)
 const inbox = atom({ plugin: 'daily', key: 'inbox' } as const, EMPTY_INBOX as InboxState)
 
-type Day = { home: string; today: string; diaryPath: string; statePath: string; ownerPath: string; agentsPath: string; playbookPath: string }
+type Day = { home: string; today: string; diaryPath: string; statePath: string; ownerPath: string; agentsPath: string; playbookPath: string; slackPath: string }
 
 async function today($: EngineInterface): Promise<Day | null> {
   const home = await $.env.get('HOME')
@@ -57,6 +58,7 @@ async function today($: EngineInterface): Promise<Day | null> {
     ownerPath: ownerPath(stateDir, day),
     agentsPath: `${stateDir}/${day}.agents`,
     playbookPath: playbookPath(stateDir, day),
+    slackPath: slackPath(stateDir, day),
   }
 }
 
@@ -234,6 +236,32 @@ async function nudgePlan($: EngineInterface, ctx: DayCtx): Promise<boolean> {
   if (fresh.length === 0) return false
   void $.prompt.submit({ text: planPrompt(fresh.length) }).catch(() => $.ui.toast('daily plan: prompt submit failed'))
   return true
+}
+
+// From 15:00, every 20 min, 10 checks: /daily:slack-check between turns (mod/slack.ts). The slot is
+// recorded before the prompt goes out, so a failing write never repeats it every tick.
+let hasSlackFailed = false
+
+async function nudgeSlack($: EngineInterface, ctx: DayCtx): Promise<boolean> {
+  try {
+    const ran = await $.process.run(['date', '+%H:%M'], { timeoutMs: 2_000 })
+    const slot = slackDue({
+      isOwner: true,
+      dayRunning: !ctx.dayEnded,
+      turnRunning: isTurnRunning(await $.clock.now()),
+      localMinutes: ran.exitCode === 0 ? parseClock(ran.stdout) : null,
+      lastSlot: parseSlot(await readOr($, ctx.day.slackPath)),
+    })
+    if (slot === null) return false
+    await $.fs.write(ctx.day.slackPath, formatSlot(slot))
+    hasSlackFailed = false
+    void $.prompt.submit({ text: slackPrompt(slot) }).catch(() => $.ui.toast('daily slack: prompt submit failed'))
+    return true
+  } catch (err) {
+    if (!hasSlackFailed) friction($, 'tool_error', `slack check not sent: ${err instanceof Error ? err.message : String(err)}`, 'daily-slack')
+    hasSlackFailed = true
+    return false
+  }
 }
 
 async function nudgeBusy($: EngineInterface, ctx: DayCtx) {
@@ -603,7 +631,7 @@ async function watchInbox($: EngineInterface) {
     if (owns && fresh.length > 0) {
       $.ui.toast(`inbox: ${fresh.length} new`)
       void $.prompt.submit({ text: inboxPrompt(fresh.length) }).catch(() => $.ui.toast('daily inbox: prompt submit failed'))
-    } else if (owns && !(await nudgePlan($, ctx))) {
+    } else if (owns && !(await nudgePlan($, ctx)) && !(await nudgeSlack($, ctx))) {
       await nudgeBusy($, ctx)
     }
   } catch (err) {

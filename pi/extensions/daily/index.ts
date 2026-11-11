@@ -12,6 +12,7 @@ import type { OnBlock } from "./mod/guard.ts";
 import { messageFiles } from "./mod/inbox.ts";
 import { parseRunState } from "./mod/runstate.ts";
 import { acquireLock, DayWatcher, INBOX_MS, releaseLock, WATCH_MS, type Exec } from "./watch.ts";
+import { slackPath } from "./mod/slack.ts";
 import { IdeasNudger } from "./ideas.ts";
 import { AskBackstop, piSubRunning } from "./ask.ts";
 import { FollowupDelivery, decideList, decisionsSession } from "./followup.ts";
@@ -60,6 +61,7 @@ type Paths = {
   today: string;
   playbook: string;
   resumeMarker: string;
+  slack: string;
 };
 
 function paths(): Paths {
@@ -78,6 +80,7 @@ function paths(): Paths {
     // pi's own record: it fingerprints other files than Claude's `<date>.playbook`
     playbook: join(stateDir, `${today}.pi-playbook`),
     resumeMarker: join(stateDir, `${today}.pi-resume`),
+    slack: slackPath(stateDir, today),
   };
 }
 
@@ -431,9 +434,12 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
       if (nudge) send(nudge, true);
       const told = watcher.checkInbox();
       const plan = told ? null : watcher.checkPlan(activity.turnRunning);
-      const busy = told || plan ? null : watcher.checkBusy(Date.now(), activity);
+      const now = new Date();
+      const slack = told || plan ? null : watcher.checkSlack(activity.turnRunning, now.getHours() * 60 + now.getMinutes());
+      const busy = told || plan || slack ? null : watcher.checkBusy(Date.now(), activity);
       if (!told) activity.userWrote = false;
       if (plan) send(plan, true);
+      if (slack) send(slack, true);
       if (busy) send(busy, true);
       // a merge changed the playbook or this extension: reload and resume the day with it
       if (watcher.checkUpdate(piPrint())) void pi.sendUserMessage("/daily-update", { expandPromptTemplates: true, deliverAs: "followUp" });
