@@ -160,3 +160,6 @@ Global instructions applied across all projects. Keep this short — project-lev
 - In Claude Code, to move a session into a worktree call `EnterWorktree` with `name` only:
   the `WorktreeCreate` hook (`wt hook-create`) creates it in that layout, without a prompt.
   Never pass `path`: a path outside `.claude/worktrees/` asks me to approve it every time.
+- A worktree made by `wt add` or `EnterWorktree` gets `node_modules` as a clone of the install
+  cached for its lockfile (`nm-clone`). Don't run `npm ci` over it; run it only when
+  `node_modules` is missing or `package-lock.json` changed, then `nm-clone --save .`.

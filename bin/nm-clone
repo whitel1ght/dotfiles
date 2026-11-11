@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Give a worktree its node_modules as an APFS clone instead of a fresh `npm ci`.
+#
+#   nm-clone <dir>          clone the cached install for <dir>'s lockfile into
+#                           <dir>/node_modules; exit 0 when cloned or already
+#                           there, 3 when no install matches (run `npm ci`, then
+#                           `nm-clone --save <dir>`)
+#   nm-clone --save <dir>   cache <dir>/node_modules under its lockfile
+#   nm-clone --ls           the cached installs, newest first
+#
+# A dashboard install is ~680 MB; every worktree used to get its own (39 of them
+# held 23 GB on 2026-11-11, D-768). `cp -c` clones: the copy shares the
+# cache's blocks and costs disk only for files changed later, so a clone takes
+# seconds and next to no space, and each worktree still owns a writable
+# node_modules (vite and vitest write caches into it). A symlink to one shared
+# install would put every worktree on the main checkout's lockfile and share
+# those caches between agents running at the same time.
+#
+# The cache key is package-lock.json plus .nvmrc, so a branch that changes a
+# dependency or the Node version never gets another branch's packages. With no
+# cached match, the main checkout's own node_modules is cached first when its
+# key matches and its install is current. Build caches (.vite, .vitest, .cache)
+# are left out of the cache. The newest NM_CLONE_KEEP installs are kept.
+# du counts every clone at full size; the saving shows in df.
+set -euo pipefail
+
+CACHE="${NM_CLONE_CACHE:-$HOME/.cache/nm-clone}"
+KEEP="${NM_CLONE_KEEP:-6}"
+
+die() { echo "nm-clone: $*" >&2; exit 1; }
+say() { echo "nm-clone: $*" >&2; }
+
+key_of() { # dir
+  [ -f "$1/package-lock.json" ] || return 1
+  { cat "$1/package-lock.json"; echo; cat "$1/.nvmrc" 2>/dev/null || true; } | shasum -a 256 | cut -c1-16
+}
+
+# an install npm finished and that matches the lockfile it sits next to
+current() { # dir
+  [ -f "$1/node_modules/.package-lock.json" ] && [ ! "$1/package-lock.json" -nt "$1/node_modules/.package-lock.json" ]
+}
+
+save() { # dir
+  local dir="$1" key tmp
+  key=$(key_of "$dir") || die "no package-lock.json in $dir"
+  current "$dir" || die "$dir/node_modules is missing or older than package-lock.json: run npm ci first"
+  if [ -d "$CACHE/$key/node_modules" ]; then touch "$CACHE/$key"; return 0; fi
+  mkdir -p "$CACHE"
+  tmp=$(mktemp -d "$CACHE/.tmp.XXXXXX")
+  cp -cR "$dir/node_modules" "$tmp/node_modules" || { rm -rf "$tmp"; die "cp -c failed: is $CACHE on the same APFS volume as $dir?"; }
+  rm -rf "$tmp/node_modules/.vite" "$tmp/node_modules/.vitest" "$tmp/node_modules/.cache"
+  if mv "$tmp" "$CACHE/$key" 2>/dev/null; then say "cached $dir/node_modules as $key"; else rm -rf "$tmp"; fi
+  prune
+}
+
+prune() {
+  local old
+  old=$(ls -1t "$CACHE" 2>/dev/null | grep -v '^\.' | tail -n +"$((KEEP + 1))" || true)
+  [ -z "$old" ] || while IFS= read -r k; do rm -rf "${CACHE:?}/$k"; done <<<"$old"
+}
+
+main_checkout() { # dir
+  local d
+  d=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  echo "${d%/.git}"
+}
+
+clone() { # dir
+  local dir="$1" key main tmp
+  [ -d "$dir" ] || die "no directory $dir"
+  if [ -e "$dir/node_modules" ]; then return 0; fi
+  key=$(key_of "$dir") || die "no package-lock.json in $dir"
+  if [ ! -d "$CACHE/$key/node_modules" ] && main=$(main_checkout "$dir") && [ "$main" != "$dir" ] \
+    && [ "$(key_of "$main" 2>/dev/null)" = "$key" ] && current "$main"; then
+    save "$main"
+  fi
+  [ -d "$CACHE/$key/node_modules" ] || { say "no cached install for $dir's lockfile: run npm ci, then nm-clone --save"; return 3; }
+  tmp="$dir/.node_modules.nm-clone.$$"
+  cp -cR "$CACHE/$key/node_modules" "$tmp" || { rm -rf "$tmp"; die "cp -c failed"; }
+  mv "$tmp" "$dir/node_modules"
+  touch "$CACHE/$key" "$dir/node_modules/.package-lock.json"
+  say "cloned node_modules into $dir ($key)"
+}
+
+case "${1:-}" in
+  --save) [ $# -eq 2 ] || die "usage: nm-clone --save <dir>"; save "$(cd "$2" && pwd -P)" ;;
+  --ls) [ -d "$CACHE" ] && ls -1t "$CACHE" | grep -v '^\.' || true ;;
+  -h|--help|"") sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
+  -*) die "unknown option $1" ;;
+  *) [ $# -eq 1 ] || die "usage: nm-clone <dir>"; clone "$(cd "$1" && pwd -P)" ;;
+esac

@@ -472,6 +472,11 @@ if [ -f "$DOTFILES_DIR/bin/clean-worktrees" ]; then
     create_symlink "$DOTFILES_DIR/bin/clean-worktrees" "$HOME/.local/bin/clean-worktrees"
 fi
 
+# nm-clone gives worktrees node_modules as APFS clones of a cached install; wt add and dev call it.
+if [ -f "$DOTFILES_DIR/bin/nm-clone" ]; then
+    create_symlink "$DOTFILES_DIR/bin/nm-clone" "$HOME/.local/bin/nm-clone"
+fi
+
 # end-day gathers the day's work for /end-day and files it in the diary.
 if [ -f "$DOTFILES_DIR/bin/end-day" ]; then
     create_symlink "$DOTFILES_DIR/bin/end-day" "$HOME/.local/bin/end-day"
