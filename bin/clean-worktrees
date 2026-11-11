@@ -21,9 +21,15 @@
 # Anything else is reported and left alone: open MRs, no MR, other detached
 # HEADs, worktrees on the default branch, other unknown directories.
 # Stale worktree entries whose directory is already gone are pruned.
+#
+# A worktree it keeps loses its Gradle build output when no file in it changed
+# for CLEAN_BUILD_IDLE_DAYS (14) days: each `build` directory that git ignores
+# and that sits next to a build.gradle(.kts). Gradle rebuilds it on the next
+# run; an ecfx-backend worktree carries 0.1-1.7 GB of it.
 set -euo pipefail
 
 WORKTREES_DIR="${WORKTREES_DIR:-$HOME/projects/worktrees}"
+BUILD_IDLE_DAYS="${CLEAN_BUILD_IDLE_DAYS:-14}"
 # vite's auto-import plugins rewrite these in every dashboard worktree that runs; pi keeps sessions in .pi/
 GENERATED=(':(exclude)src/components.d.ts' ':(exclude)src/typed-router.d.ts' ':(exclude).pi')
 
@@ -129,6 +135,32 @@ for wt in "$WORKTREES_DIR"/*/*/; do
   remove "$wt" "$name" "$main" "$ref $state, branch $branch" "$branch"
 done
 
+gb() { awk -v k="$1" 'BEGIN { printf "%.1f GB", k / 1048576 }'; }
+
+# Gradle build output of the worktrees still here, when nothing in them changed for BUILD_IDLE_DAYS.
+trimmed=0 trimmed_kb=0
+for wt in "$WORKTREES_DIR"/*/*/; do
+  wt="${wt%/}"; name="${wt#"$WORKTREES_DIR"/}"
+  [ -e "$wt/.git" ] || continue
+  [ -z "$(find "$wt" \( -name node_modules -o -name .git \) -prune -o -type f -mtime "-$BUILD_IDLE_DAYS" -print -quit 2>/dev/null)" ] || continue
+  dirs=()
+  while IFS= read -r d; do
+    { [ -f "${d%/build}/build.gradle" ] || [ -f "${d%/build}/build.gradle.kts" ]; } || continue
+    git -C "$wt" check-ignore -q "$d" || continue
+    [ -z "$(git -C "$wt" ls-files -- "$d" | head -1)" ] || continue
+    dirs+=("$d")
+  done < <(find "$wt" \( -name node_modules -o -name .git \) -prune -o -type d -name build -prune -print 2>/dev/null)
+  [ "${#dirs[@]}" -gt 0 ] || continue
+  kb=$(du -sk "${dirs[@]}" | awk '{ s += $1 } END { print s + 0 }')
+  if [ "$dry" -eq 1 ]; then
+    echo "  would   trim $name (Gradle build output, $(gb "$kb"); nothing changed in $BUILD_IDLE_DAYS+ days)"
+  else
+    rm -rf "${dirs[@]}"
+    echo "  trimmed $name (Gradle build output, $(gb "$kb"); nothing changed in $BUILD_IDLE_DAYS+ days)"
+  fi
+  trimmed=$((trimmed + 1)); trimmed_kb=$((trimmed_kb + kb))
+done
+
 if [ "$dry" -eq 0 ]; then
   while IFS= read -r main; do
     [ -n "$main" ] && git -C "$main" worktree prune
@@ -136,5 +168,5 @@ if [ "$dry" -eq 0 ]; then
   find "$WORKTREES_DIR" -mindepth 1 -maxdepth 1 -type d -empty -delete
 fi
 
-echo "$removed removed, $kept kept, $failed failed$([ "$dry" -eq 1 ] && echo ' (dry run)')"
+echo "$removed removed, $kept kept, $failed failed$([ "$trimmed" -gt 0 ] && echo ", build output trimmed in $trimmed ($(gb "$trimmed_kb"))")$([ "$dry" -eq 1 ] && echo ' (dry run)')"
 [ "$failed" -eq 0 ]

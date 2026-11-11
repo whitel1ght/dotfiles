@@ -45,6 +45,23 @@ worktree squashed    u/squashed    merged
 worktree open        u/open        opened
 worktree closed      u/closed      closed
 worktree closedlocal u/closedlocal closed
+
+# Gradle worktrees kept for their open MR: build/ next to a build.gradle is output; a build/
+# without one (a scripts folder) or holding tracked files is not.
+gradle() {
+    worktree "$1" "u/$1" opened
+    local w="$WT/repo/$1"
+    printf 'build/\n' > "$w/.gitignore"
+    mkdir -p "$w/sub" "$w/scripts/build" "$w/tracked/build"
+    touch "$w/build.gradle" "$w/sub/build.gradle" "$w/tracked/build.gradle"
+    echo run > "$w/scripts/build/run.sh"; echo keep > "$w/tracked/build/keep.txt"
+    git -C "$w" add -A && git -C "$w" add -f tracked/build/keep.txt && git -C "$w" commit -q -m gradle
+    mkdir -p "$w/build/libs" "$w/sub/build/classes"
+    echo jar > "$w/build/libs/a.jar"; echo class > "$w/sub/build/classes/A.class"
+}
+gradle idlegradle
+gradle activegradle
+find "$WT/repo/idlegradle" -name .git -prune -o -exec touch -t 202501010000 {} +
 worktree generated   u/generated   merged
 worktree nomr        u/nomr        none
 git -C "$REPO" worktree add -q --detach "$WT/repo/detached" master
@@ -110,6 +127,8 @@ echo "clean-worktrees — dry run"
 out="$(run -n)"
 assert_contains "$out" "would   remove repo/merged" "a clean merged worktree would go"
 present "$WT/repo/merged" "dry run removes nothing"
+assert_contains "$out" "would   trim repo/idlegradle" "a dry run names the build output it would trim"
+present "$WT/repo/idlegradle/build/libs/a.jar" "a dry run trims nothing"
 
 echo "clean-worktrees — apply"
 out="$(run)"
@@ -142,6 +161,16 @@ present "$WT/gh/wip" "keeps a non-GitLab branch not merged yet"
 assert_contains "$out" "gh/wip — not merged into main" "says why the unmerged one stayed"
 [ -z "$(git -C "$REPO" worktree list | grep "$WT/repo/merged")" ] && pass "git no longer lists the removed worktree" \
     || fail "git no longer lists the removed worktree" "still listed"
+
+echo "clean-worktrees — Gradle build output of idle worktrees"
+present "$WT/repo/idlegradle/build.gradle" "the idle worktree itself stays (its MR is open)"
+gone "$WT/repo/idlegradle/build" "removes build/ next to the root build.gradle"
+gone "$WT/repo/idlegradle/sub/build" "removes build/ next to a subproject's build.gradle"
+present "$WT/repo/idlegradle/scripts/build/run.sh" "keeps a build/ with no build.gradle beside it"
+present "$WT/repo/idlegradle/tracked/build/keep.txt" "keeps a build/ holding tracked files"
+assert_contains "$out" "trimmed repo/idlegradle (Gradle build output" "says what it trimmed"
+assert_contains "$out" "build output trimmed in 1" "counts it in the summary"
+present "$WT/repo/activegradle/build/libs/a.jar" "keeps the build output of a worktree changed recently"
 
 echo
 echo "passed: $PASS  failed: $FAIL"
