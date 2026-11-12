@@ -440,6 +440,14 @@ glab mr view <iid> --comments | head -40
 If a review comment did land on the MR, delete it and say so in the final
 report — don't leave it sitting there.
 
+Save the consolidated findings to a file with a `Panel:` line naming the lenses
+and the full head SHA, then record the review. Phase 10's `mr-ship` refuses
+without it, and only a local file is written:
+
+```bash
+~/.local/bin/mr-ship --reviewed <repo> <iid> <head_sha> <findings.md>
+```
+
 ## Phase 9 — Evaluate the findings
 
 Load `superpowers:receiving-code-review` and apply it to the returned findings.
