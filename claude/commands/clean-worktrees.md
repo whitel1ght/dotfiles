@@ -1,5 +1,5 @@
 ---
-description: Remove worktrees under ~/projects/worktrees whose MR has been merged
+description: Remove worktrees under ~/projects/worktrees whose MR was merged or closed, and reviews of such MRs
 argument-hint: [-n]
 model: haiku
 allowed-tools: Bash(~/.local/bin/clean-worktrees:*)
@@ -18,11 +18,10 @@ remove, stash, commit or force anything yourself, even for worktrees it kept.
 Reply with a short summary:
 
 - **Removed**: one line each, `repo/name (!iid)`.
-- **Kept, needs you**: worktrees kept because of uncommitted changes, unpushed
-  commits or a closed MR, and directories that aren't worktrees, with the reason as
-  printed.
-- **Kept, still active**: a single line listing names with open MRs, no MR, a detached
-  HEAD or the default branch.
+- **Kept, needs you**: worktrees kept because of uncommitted changes or commits that
+  exist nowhere else, and directories that aren't worktrees, with the reason as printed.
+- **Kept, still active**: a single line listing names with open MRs (reviews of open
+  MRs included), no MR, a detached HEAD, not merged yet, or the default branch.
 - The final count line.
 
 If the script failed, show its error lines.

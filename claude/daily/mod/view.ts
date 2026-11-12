@@ -54,7 +54,7 @@ export function panelGroups(rows: Row[]): PanelGroup[] {
       .filter(r => r.item.group === group)
       .map(r => ({
         marker: r.item.marker,
-        text: r.item.text,
+        text: r.item.text.replace(/\s*<!-- p\d+ -->\s*$/, ''),
         needsYou: r.needsYou,
         badges: [
           ...(r.running ? [`${ICON.running} running`] : []),

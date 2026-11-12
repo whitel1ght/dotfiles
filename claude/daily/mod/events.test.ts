@@ -42,8 +42,13 @@ test('assigned is a prompt unless the ticket is already in the plan', async () =
   expect(classify({ kind: 'assigned', ticket: 'ECFX-18169', summary: 's' }, ctx)).toBe('note')
 })
 
+test('merged on a today MR is a prompt, so the session ticks the merge without being told', async () => {
+  expect(classify({ ...review, kind: 'merged' }, ctx)).toBe('prompt')
+  expect(classify({ ...review, kind: 'merged', mr: 9999 }, ctx)).toBe('note')
+})
+
 test('informational kinds are notes even on a today MR', async () => {
-  for (const kind of ['approved', 'merged', 'pipeline_fixed', 'ticket_updated', 'mention']) {
+  for (const kind of ['approved', 'pipeline_fixed', 'ticket_updated', 'mention']) {
     expect(classify({ ...review, kind }, ctx)).toBe('note')
   }
 })

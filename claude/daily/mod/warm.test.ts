@@ -1,37 +1,31 @@
 import { test, expect } from 'claude-code/testing'
-import { DAY_WARM_AFTER_MS, isWarm, nextWarm, pingFailure, PING_AFTER_MS, TTL_MS } from './warm.ts'
+import { isWarm, nextWarm, pingFailure, PING_AFTER_MS, TRAIL_MS, TTL_MS } from './warm.ts'
 import type { WarmInput } from './warm.ts'
 
 const MIN = 60_000
 const HOUR = 60 * MIN
 const T0 = 1_000_000_000
-const at = (over: Partial<WarmInput>): WarmInput => ({ isOwner: true, dayEnded: false, startedAt: T0, lastRequestAt: T0 + 6 * HOUR, now: T0 + 6 * HOUR, ...over })
+const at = (over: Partial<WarmInput>): WarmInput => ({ dayRunning: true, dayEnded: false, lastRequestAt: T0, now: T0, ...over })
 
-test('the constants match cache-tax: 6 h window, 50 min ping, 1 h TTL', async () => {
-  expect([DAY_WARM_AFTER_MS, PING_AFTER_MS, TTL_MS]).toEqual([6 * HOUR, 50 * MIN, HOUR])
+test("the constants: cache-tax's 50 min ping and 1 h TTL, trailed by 5 min", async () => {
+  expect([PING_AFTER_MS, TRAIL_MS, TTL_MS]).toEqual([50 * MIN, 5 * MIN, HOUR])
 })
 
-test('no ping before 6 h: a turn at 4 h waits on cache-tax, a turn at 5:30 waits for the 6 h mark', async () => {
-  expect(nextWarm(at({ lastRequestAt: T0 + 4 * HOUR, now: T0 + 4 * HOUR + 10 * MIN }))).toEqual({ do: 'idle' })
-  expect(nextWarm(at({ lastRequestAt: T0 + 5 * HOUR + 30 * MIN, now: T0 + 5 * HOUR + 31 * MIN }))).toEqual({ do: 'wait', ms: 49 * MIN })
+test("it waits 55 idle minutes, after cache-tax's 50, then pings while the cache is still warm", async () => {
+  expect(nextWarm(at({}))).toEqual({ do: 'wait', ms: 55 * MIN })
+  expect(nextWarm(at({ now: T0 + 50 * MIN }))).toEqual({ do: 'wait', ms: 5 * MIN })
+  expect(nextWarm(at({ now: T0 + 55 * MIN }))).toEqual({ do: 'ping' })
+  expect(nextWarm(at({ now: T0 + 59 * MIN }))).toEqual({ do: 'ping' })
 })
 
-test('after 6 h it waits for 50 idle minutes, then pings', async () => {
-  const last = T0 + 7 * HOUR
-  expect(nextWarm(at({ lastRequestAt: last, now: last }))).toEqual({ do: 'wait', ms: 50 * MIN })
-  expect(nextWarm(at({ lastRequestAt: last, now: last + 50 * MIN }))).toEqual({ do: 'ping' })
-  expect(nextWarm(at({ lastRequestAt: last, now: last + 59 * MIN }))).toEqual({ do: 'ping' })
+test("a warm ping from cache-tax at 50 min moves the clock: the next daily ping is 55 min after it", async () => {
+  const ping = T0 + 50 * MIN
+  expect(nextWarm(at({ lastRequestAt: ping, now: ping }))).toEqual({ do: 'wait', ms: 55 * MIN })
 })
 
-test("the hand-over starts from cache-tax's last warm ping: one at 5:40 makes the first daily ping 6:30", async () => {
-  const ping = T0 + 5 * HOUR + 40 * MIN
-  expect(nextWarm(at({ lastRequestAt: ping, now: ping }))).toEqual({ do: 'wait', ms: 50 * MIN })
-  expect(nextWarm(at({ lastRequestAt: ping, now: T0 + 6 * HOUR + 30 * MIN }))).toEqual({ do: 'ping' })
-})
-
-test('a non-owner session is idle, whatever the clock says', async () => {
-  expect(nextWarm(at({ isOwner: false, now: T0 + 7 * HOUR }))).toEqual({ do: 'idle' })
-  expect(nextWarm(at({ isOwner: false, dayEnded: true }))).toEqual({ do: 'idle' })
+test('with no run state for today it is idle, whatever the clock says', async () => {
+  expect(nextWarm(at({ dayRunning: false, now: T0 + 7 * HOUR }))).toEqual({ do: 'idle' })
+  expect(nextWarm(at({ dayRunning: false, dayEnded: true }))).toEqual({ do: 'idle' })
 })
 
 test('no request yet is idle', async () => {

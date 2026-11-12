@@ -12,6 +12,9 @@ STATE="$STATE_DIR/$TODAY.md"
 DIARY="$WIKI/diary/$TODAY.md"
 MAX_CHARS=6000
 BLOCK_MAX=3000
+AGENT_MAX=2000
+AGENT_MARK="[agent notes truncated: run day-agent show]"
+AGENT_FILE="$WIKI/diary/.agent/$TODAY.md"
 # Claude Code drops additionalContext past ~10k characters. The run context (at most MAX_CHARS)
 # always goes in whole; the map takes what is left, then the directions; each cut is marked.
 TOTAL_MAX=9000
@@ -21,6 +24,11 @@ CUT_MARK="
 # Codepoint-safe cut regardless of locale.
 cut_chars() { printf '%s' "$1" | jq -Rrs --argjson n "$2" '.[:$n]'; }
 len() { printf '%s' "$1" | jq -Rrs 'length'; }
+
+# line_cut <text> <n>: the text if it has n characters or fewer, else its leading whole lines within n.
+line_cut() {
+  printf '%s' "$1" | jq -Rrs --argjson n "$2" 'if length <= $n then . else (.[:$n + 1]) as $h | if ($h | test("\n")) then ($h | sub("\n[^\n]*$"; "")) else "" end end'
+}
 
 # fit <text> <room>: the text if it fits, else its head and the cut mark, else nothing.
 fit() {
@@ -114,6 +122,35 @@ elif [ "$(len "$block")" -gt "$room" ]; then
 [plan block truncated]"
 fi
 
-ctx="$head_text$block_head$block$state_text"
+# The agent notes come after the plan block and are cut first: they take what MAX_CHARS leaves.
+agent_text=""
+if [ -f "$AGENT_FILE" ]; then
+  notes="$(<"$AGENT_FILE")"
+  if [ -n "${notes//[[:space:]]/}" ]; then
+    agent_head="
+
+## Agent notes ($AGENT_FILE)
+"
+    avail=$((MAX_CHARS - $(len "$head_text$block_head$block$state_text")))
+    room=$((avail - $(len "$agent_head")))
+    [ "$room" -gt "$AGENT_MAX" ] && room=$AGENT_MAX
+    if [ "$(len "$notes")" -le "$room" ]; then
+      agent_text="$agent_head$notes"
+    else
+      room=$((room - ${#AGENT_MARK} - 1))
+      kept=""
+      [ "$room" -lt 100 ] || kept="$(line_cut "$notes" "$room")"
+      if [ -n "$kept" ]; then
+        agent_text="$agent_head$kept
+$AGENT_MARK"
+      elif [ "$avail" -ge $((${#AGENT_MARK} + 1)) ]; then
+        agent_text="
+$AGENT_MARK"
+      fi
+    fi
+  fi
+fi
+
+ctx="$head_text$block_head$block$agent_text$state_text"
 
 emit "$(cut_chars "$ctx" "$MAX_CHARS")"

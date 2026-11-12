@@ -50,3 +50,29 @@ max_agents: 3
 - ecfx-18171 | class=auto | agent=- | worktree=- | mr=- | retries=0 | needs_you=no
 - ECFX-9190 | class=me
 `
+
+export const DIARY_NEW = `# Thu Nov  5 09:40:02 +03 2026
+
+## Work
+
+### ECFX
+
+<!-- start-day:start -->
+#### Plan
+
+**First**
+- [/] ecfx-17482 retrieve picker: merge after its pipeline
+- [ ] ecfx-18778 release: deploy, then dashboard to prod
+  - [ ] A3 deploy on v1.0.62
+- [ ] reply to Levi about the QA date <!-- p3 -->
+<!-- start-day:end -->
+`
+
+export const AGENT = `# agent notes 2026-11-05
+## ecfx-17482
+- mr: dashboard!2289 https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2289
+- 09:12 progress: O2, N1 fixed, pushed at 811e370a3
+- 11:40 done: merged dec5a42eb2
+## p3
+- 10:05 note: replied to Levi in Slack
+`

@@ -1,15 +1,21 @@
 import { test, expect } from 'claude-code/testing'
-import { BUSY_IDLE_MS, BUSY_PROMPT, PI_BUSY_PROMPT, nextNudged, shouldNudgeBusy } from './busy.ts'
+import { BUSY_IDLE_MS, BUSY_PROMPT, PI_BUSY_PROMPT, nextAgentAt, nextNudged, shouldNudgeBusy } from './busy.ts'
 
-const base = { isOwner: true, dayRunning: true, now: 10 * BUSY_IDLE_MS, lastActiveAt: 0, outstanding: 0, agentsRunning: 0, nudged: false }
+const base = { isOwner: true, dayRunning: true, now: 10 * BUSY_IDLE_MS, lastAgentAt: 1, outstanding: 0, agentsRunning: 0, nudged: false }
 
-test('an idle day session with no agent is nudged', async () => {
+test('a day session with no agent for the whole window is nudged', async () => {
   expect(shouldNudgeBusy(base)).toBe(true)
 })
 
-test('not before it has been idle for the whole window', async () => {
-  expect(shouldNudgeBusy({ ...base, lastActiveAt: base.now - BUSY_IDLE_MS + 1 })).toBe(false)
-  expect(shouldNudgeBusy({ ...base, lastActiveAt: base.now - BUSY_IDLE_MS })).toBe(true)
+test('not before the whole window has passed with no agent', async () => {
+  expect(shouldNudgeBusy({ ...base, lastAgentAt: base.now - BUSY_IDLE_MS + 1 })).toBe(false)
+  expect(shouldNudgeBusy({ ...base, lastAgentAt: base.now - BUSY_IDLE_MS })).toBe(true)
+})
+
+test('the clock restarts only on an agent, so the user chatting does not hold the nudge back', async () => {
+  expect(nextAgentAt(0, 500, 0)).toBe(500)
+  expect(nextAgentAt(300, 500, 0)).toBe(300)
+  expect(nextAgentAt(300, 500, 2)).toBe(500)
 })
 
 test('never outside the owner session or a running day', async () => {

@@ -2,12 +2,12 @@ import { test, expect } from 'claude-code/testing'
 import { REPLY, followupPrompt, parseCards, pendingFollowups } from './followup.ts'
 import type { Card } from './followup.ts'
 
-const card: Card = { id: 'D-180', kind: 'answer', status: 'open', question: 'Why is CI red?', session: 'sess-me', followup: 'and the flaky one?', discussion_count: 1 }
+const card: Card = { id: 'D-180', kind: 'answer', status: 'open', question: 'Why is CI red?', session: 'sess-me', followup: 'and the flaky one?', discussion_count: 1, prompt: false }
 const none = new Map<string, number>()
 
 test('decide list --json parses into cards; anything else is none', async () => {
   const json = JSON.stringify([{ ...card, age: '2m', options: [] }, { id: 'D-1', kind: 'question', status: 'open' }])
-  expect(parseCards(json)).toEqual([card, { id: 'D-1', kind: 'question', status: 'open', question: '', session: '', followup: '', discussion_count: 0 }])
+  expect(parseCards(json)).toEqual([card, { id: 'D-1', kind: 'question', status: 'open', question: '', session: '', followup: '', discussion_count: 0, prompt: false }])
   expect(parseCards('')).toEqual([])
   expect(parseCards('error: no queue')).toEqual([])
   expect(parseCards('{"id":"D-1"}')).toEqual([])
@@ -56,4 +56,43 @@ test('several follow-ups go in one prompt, one paragraph each; no question, no p
   expect(first).toContain('card D-180 (their question')
   expect(second).toContain('card D-181: "and the flaky one?"')
   expect(second).toContain('id "D-181"')
+})
+
+test('after /clear a session still picks up the cards addressed to any id it has had', async () => {
+  const ids = new Set(['sess-before-clear', 'sess-now'])
+  expect(pendingFollowups([{ ...card, session: 'sess-before-clear' }], ids, none)).toHaveLength(1)
+  expect(pendingFollowups([{ ...card, session: 'sess-now' }], ids, none)).toHaveLength(1)
+  expect(pendingFollowups([{ ...card, session: 'sess-other' }], ids, none)).toEqual([])
+  expect(pendingFollowups([{ ...card, session: '' }], new Set(['']), none)).toEqual([])
+})
+
+const message: Card = { ...card, prompt: true, question: 'how far along?', followup: 'how far along?' }
+
+test("a message from the deck's prompt line is delivered as a message, not as a follow-up", async () => {
+  const text = followupPrompt([message])
+  expect(text).toContain('The user sent you this message from the decisions deck (card D-180): "how far along?"')
+  expect(text).not.toContain('followed up')
+  expect(text).toContain(`${REPLY}, id "D-180"`)
+})
+
+test('a second message on the same card is a follow-up', async () => {
+  expect(followupPrompt([{ ...message, followup: 'and now?', discussion_count: 3 }])).toContain('followed up')
+})
+
+test('files named with @ and images are explained only when the text has them', async () => {
+  const note = 'read them with your file tool'
+  expect(followupPrompt([message])).not.toContain(note)
+  expect(followupPrompt([{ ...message, followup: 'mail me@work.com #3' }])).not.toContain(note)
+  expect(followupPrompt([{ ...message, followup: 'compare @src/app.rs#L10-20' }])).toContain(note)
+  expect(followupPrompt([{ ...message, followup: '@src/app.rs please' }])).toContain(note)
+  expect(followupPrompt([{ ...message, followup: 'look [image: /a/1.png]' }])).toContain(note)
+  expect(followupPrompt([{ ...card, followup: 'and @src/app.rs?' }])).toContain(note)
+})
+
+test('a path outside the working directory is explained too', async () => {
+  for (const followup of ['see @~/wiki/index.md', 'see @/etc/hosts', 'see @../dotfiles/README.md']) {
+    const prompt = followupPrompt([{ ...message, followup }])
+    expect(prompt).toContain('read them with your file tool')
+    expect(prompt).toContain('unless it starts with / or ~/')
+  }
 })

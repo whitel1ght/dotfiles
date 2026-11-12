@@ -1,6 +1,6 @@
 import type { DailyInbox, DailyView } from '../types/index.d.ts'
 
-export type Marker = ' ' | '/' | 'x' | '!' | '>'
+export type Marker = ' ' | '/' | 'x' | '!' | '>' | '-'
 
 export type Item = {
   group: string

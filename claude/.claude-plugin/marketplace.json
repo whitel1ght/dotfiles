@@ -11,7 +11,7 @@
     },
     {
       "name": "daily",
-      "description": "Daily workflow: /run-day, /review, /ask-wiki, jira-write and the plan panel.",
+      "description": "Daily workflow: /run-day, /daily:review, /daily:ask-wiki, jira-write and the plan panel.",
       "source": "./daily"
     },
     {

@@ -19,6 +19,8 @@ Global instructions applied across all projects. Keep this short — project-lev
   get past it; stop and ask me.
 - Messages sent as me to other people (Slack replies, DMs, notes) are
   five sentences or fewer; lead with the answer, and put evidence in an attachment or a link.
+- A post in #flyway goes out without asking when it claims, moves or answers for a migration
+  on my own ticket (`flyway-migration-preflight`). Never hand it to me or put it on a card.
 
 ## Questions
 
@@ -28,6 +30,9 @@ Global instructions applied across all projects. Keep this short — project-lev
   In the chat say one line, "asked in decisions: D-<n>", and keep working on what does not
   depend on it. I may answer in either place; when I answer in the chat, `withdraw` the card.
   Never use the question form (AskUserQuestion), and never ask again a question I turned down.
+- Every option on a card names who acts. On a card "you" means me, and you are "the agent":
+  "The agent runs it through the admin pod", "You merge it in the GitLab UI". Never write I,
+  me, my or we in an option: I can't tell which side it means, and the server refuses it.
 - When you answer a question I sent while you were busy (mid-task, agents running), give the
   answer in the chat and also file it with `tell_user`, so it waits for me in the deck.
 - When a plan or artifact already names the next step, do that step; ask only about a
@@ -45,13 +50,26 @@ Global instructions applied across all projects. Keep this short — project-lev
 - Before saying something does not exist, check every path it could come in by (e.g. the
   legacy Vue 2 → Segment → Mixpanel path, not only the current one).
 - Label unverified claims as hypotheses. Fact-check an analysis draft before presenting it.
+- A mockup or design is a proposal, not a decision: in a plan, contract or summary, list what
+  comes only from a mockup under open questions, with whose mockup it is, until someone
+  confirms it.
+
+## Browser
+
+- UI checks run in my Chrome through the Claude in Chrome extension tools (load them with
+  `ToolSearch` first). When they do not load or answer "Browser extension is not connected",
+  stop and tell me; never switch to Playwright or a terminal browser pane unless I ask.
 
 ## Tests and tooling
 
 - ecfx-backend tests need Java 25: every backend test command you give includes the setup
   (`sdk env` in the repo root, or `JAVA_HOME` set to `~/.sdkman/candidates/java/25.*`).
-- Code on a branch is not live: pi and the daily plugin load from `main`. Merge it, or say
-  plainly that it is not live yet.
+- Code on a branch is not live: pi and the daily plugin load from `main`. When a dotfiles
+  branch is finished and its tests pass, land it yourself with `dot-land <branch>` (merge,
+  push, cleanup; exit 3 means it rebased onto a moved main: re-run the tests, then run it
+  again) and say it landed; never hand a dotfiles merge back to me. If the tests fail or
+  `dot-land` refuses, fix it or say plainly that it is not live. ECFX MRs I merge in the
+  GitLab UI; until that MR is merged, say plainly that it is not live yet.
 
 ## System manual
 
@@ -113,7 +131,12 @@ Global instructions applied across all projects. Keep this short — project-lev
 - To undraft one of my MRs ("undraft", "mark ready", "ship it"), run `~/.local/bin/mr-ship
   <repo> <iid>`: it marks it ready, assigns me and requests the Omni engineers team (Levi,
   Bill, Shoha, EJ, Adam) as reviewers. Never a bare `glab mr update --ready`;
-  `gitlab-api-guard` blocks it without `--reviewer`.
+  `gitlab-api-guard` blocks it without `--reviewer`. `mr-ship` refuses an MR with no recorded
+  review (`/ship-mr` runs and records one); its `--no-review` is mine alone.
+- An MR stays in draft only while its work is unfinished. Waiting on another MR, a deploy or a
+  release is not unfinished: the MR ships, with `Depends on: backend!6888, merge after it` in
+  its description. A finished MR ships without asking, through `/ship-mr`, which reviews and
+  fixes it first.
 - When an API merge fails, report it and leave the merge to me; no retries with other flags.
 - Never move a Jira ticket backwards (e.g. Done → In QA) without asking.
 
@@ -122,6 +145,8 @@ Global instructions applied across all projects. Keep this short — project-lev
 - Answer review findings on an MR with the `mr-review-response` skill, unasked. Show the
   drafted replies once per round as one batch; "yes", "post it" or "post both" posts
   exactly what was shown, through that skill, with no further question.
+- A note with no finding, no question and no action asked of us ("no blockers", "ready to
+  approve") gets nothing: no reply, no acknowledgement, no card, ever.
 
 ## Worktrees
 
@@ -135,3 +160,6 @@ Global instructions applied across all projects. Keep this short — project-lev
 - In Claude Code, to move a session into a worktree call `EnterWorktree` with `name` only:
   the `WorktreeCreate` hook (`wt hook-create`) creates it in that layout, without a prompt.
   Never pass `path`: a path outside `.claude/worktrees/` asks me to approve it every time.
+- A worktree made by `wt add` or `EnterWorktree` gets `node_modules` as a clone of the install
+  cached for its lockfile (`nm-clone`). Don't run `npm ci` over it; run it only when
+  `node_modules` is missing or `package-lock.json` changed, then `nm-clone --save .`.

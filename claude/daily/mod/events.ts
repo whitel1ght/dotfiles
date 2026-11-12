@@ -4,7 +4,7 @@ import type { DayEvent } from './types.ts'
 export type EventContext = { mrKeys: Set<string>; ticketKeys: Set<string> }
 export type Disposition = 'prompt' | 'note'
 
-const THREAD_KINDS = new Set(['review', 'comment', 'pipeline_failed'])
+const THREAD_KINDS = new Set(['review', 'comment', 'pipeline_failed', 'merged'])
 
 export function parseEvents(stdout: string): { events: DayEvent[]; bad: number } {
   const events: DayEvent[] = []
