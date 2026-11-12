@@ -13,6 +13,9 @@
 # that field and the rest still prints. Exit 1 when the diary or its plan block is missing.
 # Every glab and jira-api call that exits non-zero is retried once (gitlab.com drops ~2.5% of
 # calls at random); jira-api exits 0 on an HTTP error status (429/5xx), so those are not retried.
+# On a new-format day (the hidden agent file $DIARY_DIR/.agent/<date>.md exists) the plan lines
+# carry no MR links: an item's MRs come from `day-agent mrs` rows for its key (ticket key, or the
+# <!-- pN --> of a keyless line), and an item with such a row never asks glab for my open MRs.
 # Tests and stubs: DAY_STATUS_GLAB, DAY_STATUS_JIRA (commands, default glab and jira-api),
 # DAY_STATUS_RETRY_SLEEP (seconds before the retry, default 1).
 set -euo pipefail
@@ -53,6 +56,12 @@ file="$DIARY_DIR/$date_arg.md"
 [ -f "$file" ] || die "no diary at $file"
 grep -qF -- '<!-- start-day:start -->' "$file" || die "no plan block in $file"
 state="$RUN_DAY_STATE_DIR/$date_arg.md"
+
+# agent-file MR rows (key<TAB>repo!iid<TAB>url), only on a new-format day
+agent_rows=""
+if [ -f "$DIARY_DIR/.agent/$date_arg.md" ]; then
+  agent_rows=$(DIARY_DIR="$DIARY_DIR" DAY_AGENT_DATE="$date_arg" "$(dirname "$0")/day-agent" mrs 2>/dev/null || true)
+fi
 
 mine=""   # my open MRs, fetched once in the main shell and only when an item needs the key search
 mine_loaded=0
@@ -101,14 +110,31 @@ mr_json() {
   }' <<<"$detail"
 }
 
-# mrs_for <key> <line text> <run-state mr=> <my open MRs JSON or "unknown"> -> JSON array
+# agent_mrs_for <lowercase key>: repo!iid<TAB>url rows of that key's agent-file section
+agent_mrs_for() {
+  [ -n "$1" ] && [ -n "$agent_rows" ] || return 0
+  awk -F'\t' -v k="$1" '$1 == k { print $2 "\t" $3 }' <<<"$agent_rows"
+}
+
+# mrs_for <key> <line text> <run-state mr=> <my open MRs JSON or "unknown"> <agent-file rows> -> JSON array
 mrs_for() {
-  local key="$1" text="$2" runmr="$3" found="$4" refs ref r iid p out="" seen=" "
+  local key="$1" text="$2" runmr="$3" found="$4" amrs="${5:-}" refs ref r iid p out="" seen=" " aref aurl
+  while IFS=$'\t' read -r aref aurl; do
+    [ -n "$aref" ] || continue
+    r=$(printf '%s' "${aref%!*}" | tr 'A-Z' 'a-z'); r="${r#ecfx-}"; iid="${aref#*!}"
+    case "$seen" in *" $r!$iid "*) continue ;; esac
+    seen="$seen$r!$iid "
+    p=$(sed -nE 's#^https://gitlab\.com/(.+)/-/merge_requests/[0-9]+.*$#\1#p' <<<"$aurl")
+    [ -n "$p" ] || p=$(repo_path "$r")
+    out="$out$(mr_json "$p" "$iid" "$r!$iid")"$'\n'
+  done <<<"$amrs"
   if [[ $runmr =~ ^([^[:space:]!]+/[^[:space:]!]+)!([0-9]+)$ ]]; then
     p="${BASH_REMATCH[1]}"; iid="${BASH_REMATCH[2]}"
     r=$(printf '%s' "${p##*/}" | tr 'A-Z' 'a-z'); r="${r#ecfx-}"
-    seen="$seen$r!$iid "
-    out="$out$(mr_json "$p" "$iid" "$r!$iid")"$'\n'
+    case "$seen" in
+      *" $r!$iid "*) ;;
+      *) seen="$seen$r!$iid "; out="$out$(mr_json "$p" "$iid" "$r!$iid")"$'\n' ;;
+    esac
   fi
   refs=$(mr_refs "$text" "$runmr")
   for ref in $refs; do
@@ -138,11 +164,11 @@ jira_status() {
   jq -r '.fields.status.name // "unknown"' <<<"$resp" 2>/dev/null || echo unknown
 }
 
-# item_json <group> <state> <key> <title> <run-state mr=> <agent> <round> <my open MRs> -> one JSON line
+# item_json <group> <state> <key> <title> <run-state mr=> <agent> <round> <my open MRs> <agent-file rows> -> one JSON line
 item_json() {
-  local group="$1" st="$2" key="$3" title="$4" runmr="$5" agent="$6" round="$7" found="$8" jira="-" mrs
+  local group="$1" st="$2" key="$3" title="$4" runmr="$5" agent="$6" round="$7" found="$8" amrs="${9:-}" jira="-" mrs
   [ -z "$key" ] || jira=$(jira_status "$key")
-  mrs=$(mrs_for "$key" "$title" "$runmr" "$found")
+  mrs=$(mrs_for "$key" "$title" "$runmr" "$found" "$amrs")
   jq -nc --arg group "$group" --arg state "$st" --arg key "$key" --arg text "$title" --arg jira "$jira" \
     --arg agent "$agent" --arg round "$round" --argjson mrs "$mrs" \
     '{group: $group, state: $state, key: $key, text: $text, jira: $jira, mrs: $mrs,
@@ -173,9 +199,16 @@ while IFS= read -r line; do
     fi
   fi
   title="${text%% · *}"
-  if [ -n "$key" ] && [ -z "$(mr_refs "$title" "$runmr")" ]; then load_mine; fi
+  [[ $title =~ ^(.*[^[:space:]])?[[:space:]]*\<!--\ p[0-9]+\ --\>[[:space:]]*$ ]] && title="${BASH_REMATCH[1]}"
+  amrs=""
+  if [ -n "$agent_rows" ]; then
+    if [[ $text =~ \<!--\ (p[0-9]+)\ --\>[[:space:]]*$ ]]; then akey="${BASH_REMATCH[1]}"
+    else akey=$(printf '%s' "$key" | tr 'A-Z' 'a-z'); fi
+    amrs=$(agent_mrs_for "$akey")
+  fi
+  if [ -n "$key" ] && [ -z "$amrs" ] && [ -z "$(mr_refs "$title" "$runmr")" ]; then load_mine; fi
   n=$((n + 1))
-  { item_json "$group" "$st" "$key" "$title" "$runmr" "$agent" "$round" "$mine" > "$tmp/$(printf '%05d' "$n")" 2>/dev/null || true; } </dev/null &
+  { item_json "$group" "$st" "$key" "$title" "$runmr" "$agent" "$round" "$mine" "$amrs" > "$tmp/$(printf '%05d' "$n")" 2>/dev/null || true; } </dev/null &
 done <<<"$block"
 wait
 

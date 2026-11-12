@@ -10,7 +10,8 @@
                   then too); oldest first. --sync: sync first (the idle timers use it, so a line
                   added since the last review counts). --id: those ideas, whatever their state.
   ideas record I-NNN --verdict stale|actionable|elaborate --summary TEXT --file F
-                  the review: F's text becomes the entry's `## Review`; status reviewed.
+                  the review: F's text becomes the entry's `## Review`; status reviewed;
+                  an earlier answer is cleared, so the new review waits for a new one.
   ideas answer I-NNN yes|no|later [--days N]
                   the user's answer; later is due again after N days (7).
 sync, record and answer hold a lock (IDEAS_DIR/.lock, 30 s wait, a dead holder's taken over).
@@ -252,7 +253,8 @@ def cmd_record(eid, verdict, summary, file):
     entries = load_entries()
     e = entry_or_die(entries, eid)
     e.update({"status": "reviewed", "verdict": verdict, "summary": " ".join(summary.split()),
-              "reviewed_on": today(), "_body": f"## Review\n\n{review}"})
+              "reviewed_on": today(), "_body": f"## Review\n\n{review}",
+              "answer": "", "answered_on": "", "later_until": ""})
     save(entries)
 
 

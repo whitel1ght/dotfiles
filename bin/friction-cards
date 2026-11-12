@@ -8,7 +8,8 @@
 #                                     or closed. Runs under $COACH_STATE_DIR/.cards.lock (a
 #                                     dead holder's lock is taken over), so two syncs never
 #                                     file one card twice.
-#   friction-cards count [--badge]    the deck's waiting cards (`frictions count`)
+#   friction-cards count [--badge]    the deck's cards to answer (`frictions count`); --badge is
+#                                     the status bar's wrench and N, nothing when none
 #   friction-cards hook               the deck's on_answer command: one JSON line on stdin
 #                                     ({event, id, key, source, option, note, text, at}); returns
 #                                     at once, the work runs detached (log: $COACH_STATE_DIR/logs/
@@ -99,7 +100,7 @@ options_for() { # card retryable(true|false): the card's answers, one per line
     suggestion) printf '%s\n' Apply Ignore Later ;;
     rule) printf '%s\n' "Apply: add the rule" Ignore Later ;;
     nochange) printf '%s\n' Ignore Later ;;
-    secret) printf '%s\n' "Done (I did the steps)" Later Ignore ;;
+    secret) printf '%s\n' "Done (you did the steps)" Later Ignore ;;
     landed) printf '%s\n' OK ;;
     failed) if [ "${2:-false}" = true ]; then printf '%s\n' Retry Ignore; else printf '%s\n' OK; fi ;;
     *) die "no answers for card kind: $1" ;;
@@ -146,7 +147,9 @@ file_card() { # item JSON, date, result(0|1)
   while IFS= read -r o; do opts+=(--option "$o"); done < <(options_for "$card" "$retry")
   ctx="$(card_context <<<"$item")"
   errf="$(mktemp)"
-  if ! new="$("$FRICTIONS_BIN" add --key "$id" --source "coach:$card" --question "$q" "${opts[@]}" <<<"$ctx" 2>"$errf")"; then
+  # the deck takes 2-9 options; a card with one answer (OK) is information: a note, marked seen
+  local how=(add "${opts[@]}"); [ "${#opts[@]}" -ge 4 ] || how=(note)
+  if ! new="$("$FRICTIONS_BIN" "${how[0]}" --key "$id" --source "coach:$card" --question "$q" "${how[@]:1}" <<<"$ctx" 2>"$errf")"; then
     echo "friction-cards: could not file the card for $id: $(one_line "$(tail -1 "$errf")")" >&2
     rm -f "$errf"; return 1
   fi
@@ -197,7 +200,16 @@ sync_locked() { # date; the caller holds the cards lock
   done < <(jq -c '.results[]' <<<"$cards")
 }
 
-cmd_count() { exec "$FRICTIONS_BIN" count "$@"; }
+# --badge is the tmux status bar: only cards that need an answer. A notice stays in the deck, so the
+# bar's one envelope is the decisions deck's. The trailing space keeps it clear of the next badge.
+cmd_count() {
+  [ "${1:-}" = --badge ] || exec "$FRICTIONS_BIN" count "$@"
+  local n line
+  n="$("$FRICTIONS_BIN" count)"
+  [ -n "$n" ] || return 0
+  line="$("$FRICTIONS_BIN" count --badge)"
+  printf '%s %s \n' "${line%% *}" "$n"
+}
 
 # --- answers, replies, the watchdog ----------------------------------------------
 
