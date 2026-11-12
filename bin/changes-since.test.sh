@@ -67,7 +67,7 @@ cat > "$STUBS/glab" <<'STUB'
 echo "$*" >> "${FIX:?}/glab.log"
 [ -n "${GLAB_SLEEP_ON:-}" ] && case "$*" in *"$GLAB_SLEEP_ON"*) sleep 30 ;; esac
 [ -n "${GLAB_FAIL:-}" ] && case "$*" in *"$GLAB_FAIL"*) exit 1 ;; esac
-[ -n "${GLAB_FAIL_EXACT:-}" ] && [ "$*" = "$GLAB_FAIL_EXACT" ] && exit 1
+[ -n "${GLAB_FAIL_EXACT:-}" ] && [ "$*" = "$GLAB_FAIL_EXACT" ] && { [ -n "${GLAB_ERR_TEXT:-}" ] && echo "$GLAB_ERR_TEXT" >&2; exit 1; }
 # a connection dropped mid-answer, once: half a body on stdout, then exit 1
 [ -n "${GLAB_FAIL_ONCE:-}" ] && case "$*" in *"$GLAB_FAIL_ONCE"*) mkdir "$FIX/dropped-once" 2>/dev/null && { echo '[{"half":'; exit 1; } ;; esac
 case "$*" in
@@ -527,6 +527,24 @@ reset; cursor 2026-10-08T07:00:00Z
 out=$(JIRA_MYSELF_BODY='{"message":"Unauthorized"}' CHANGES_SINCE_NET_PROBE=false run); rc=$?
 assert_eq "1" "$rc" "a credentials failure is checked before the probe: exit 1 even when offline"
 assert_contains "$(cat "$FIX/friction.log")" "JIRA_USER/JIRA_TOKEN" "and keeps its own message"
+
+reset; cursor 2026-10-08T07:00:00Z
+out=$(JIRA_MYSELF_FAIL=1 JIRA_MYSELF_ERR="curl: (6) Could not resolve host: x" CHANGES_SINCE_NET_PROBE=false run); rc=$?
+assert_eq "75" "$rc" "offline with curl's message on stderr: exit 75"
+assert_eq "changes-since: offline (network not up); skipping this tick" "$(errs | sed -n 1p)" "Jira: the offline line is the first stderr line"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(GLAB_FAIL_EXACT="api user" GLAB_ERR_TEXT="glab: could not resolve host" CHANGES_SINCE_NET_PROBE=false run); rc=$?
+assert_eq "75" "$rc" "GitLab offline with glab's message on stderr: exit 75"
+assert_eq "changes-since: offline (network not up); skipping this tick" "$(errs | sed -n 1p)" "GitLab: the offline line is the first stderr line"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(GLAB_FAIL_EXACT="api user" GLAB_ERR_TEXT="glab: could not resolve host" CHANGES_SINCE_NET_PROBE=true run); rc=$?
+assert_eq "1" "$rc" "GitLab real outage: exit 1"
+assert_contains "$(errs)" "glab: could not resolve host" "and glab's stderr still shows"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(JIRA_SLEEP=30 CHANGES_SINCE_CALL_TIMEOUT=1 CHANGES_SINCE_BACKOFF=0 CHANGES_SINCE_NET_PROBE=false run); rc=$?
+assert_eq "75" "$rc" "a Jira timeout with a failing probe: exit 75"
+assert_contains "$(errs)" "timed out" "the timeout message wins over the offline one"
+assert_not_contains "$(errs)" "offline" "and the probe is not consulted"
 
 echo "changes-since — background waiter"
 reset; cursor 2026-10-08T07:00:00Z
