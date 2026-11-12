@@ -262,7 +262,7 @@ Whoever writes the code:
 ## Phase 5 — Project checks
 
 Run **the project's own checks**, discovered rather than assumed. Look at
-`CLAUDE.md`, `package.json` scripts, the Gradle tasks, the Makefile — in that
+`AGENTS.md`, `package.json` scripts, the Gradle tasks, the Makefile — in that
 order — and run what the project actually defines.
 
 Known defaults:
@@ -416,6 +416,8 @@ Capture the MR IID and URL from the output — Phase 8 needs both.
 ## Phase 8 — Multi-agent review, findings **not** posted
 
 Invoke `/mr-review-multi-agent` against the MR you just opened.
+
+On Pi, tell it to choose and pass an explicit model for every reviewer from that invocation's current `<subagent_models>` block. Do not carry Phase 1 model choices forward.
 
 > ⚠️ **The review must not be posted to the MR.** That skill's default is to
 > auto-post one consolidated comment plus a verdict action and a status label.
