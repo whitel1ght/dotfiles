@@ -107,14 +107,8 @@ alias pilm='pi --model lmstudio/qwen/qwen2.5-coder-14b --models lmstudio/qwen/qw
 # always lets Pi start if an update fails. Ubuntu installs this helper via install.sh.
 pi() { if (( $+commands[pi-autoupdate] )); then command pi-autoupdate "$@"; fi; command pi "$@"; }
 
-# Free Pi session, with Longcat as the only scoped model.
-alias pifree='pi --model opencode-go/longcat-2.5-preview-free --models opencode-go/longcat-2.5-preview-free'
-
 # Provider-scoped OpenAI session.
 alias piopenai='pi --model openai/gpt-6.1-sol --models "openai/*"'
-
-# Longcat leads a ten-model Go pool with coding, reasoning and flash alternatives.
-alias pigo='pi --model opencode-go/longcat-2.5-preview-free --models opencode-go/longcat-2.5-preview-free,opencode-go/gpt-6-luna,opencode-go/glm-5.3,opencode-go/qwen3.8-max,opencode-go/grok-4.7,opencode-go/mimo-v2.6-pro,opencode-go/kimi-k3,opencode-go/glm-5.3-flash,opencode-go/qwen3.8-flash,opencode-go/deepseek-v4.1-flash'
 
 # Better grep
 alias grep='command grep --color=auto --exclude-dir=.git'
