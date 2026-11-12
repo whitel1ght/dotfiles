@@ -9,7 +9,8 @@ You address a code review on a merge request. Work in the worktree below. Nothin
 
 ## Limits
 - You may not: push, post any comment on the MR, no Slack, no Jira transition, or touch another worktree.
-- You must never write to `~/wiki` (the long-term memory). You write only `{{REPLY_FILE}}`; give the orchestrator what to record in the `memory:` block below.
+- You must never write to `~/wiki` (the long-term memory), except `~/wiki/work/system/` and `~/wiki/tools/` when you change one of the system repos (dotfiles, decisions, articles); commit those with `wiki-commit --by <claude|pi> -m <msg> -- <paths>`. Otherwise you write only `{{REPLY_FILE}}`; give the orchestrator what to record in the `memory:` block below.
+- Start any build or test run that may take over 5 minutes in the background (`run_in_background`, pi: background terminal) and check on it; never block a foreground command on it. If you were interrupted, check `git status` and your last step before continuing.
 
 ## Steps
 1. Read the review. Number every finding (use the reviewer's IDs if it has them).

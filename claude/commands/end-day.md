@@ -2,9 +2,17 @@
 description: Standup report of the day's work across commits, MRs, Jira and all Claude sessions, filed in the diary, then folded into the project memory in ~/wiki
 argument-hint: [yesterday | YYYY-MM-DD]
 model: sonnet
-allowed-tools: Bash(~/.local/bin/end-day:*), Bash(~/.local/bin/diary-links:*), Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Bash(fd:*), Bash(grep:*), Bash(glab api:*), Bash(jq:*), Bash(printf:*), Bash(cat:*), Bash(wc:*), Bash([:*), Bash(test:*), Bash(git -C * diff:*), Bash(wt add:*), Read, Edit, Write
+allowed-tools: Bash(~/.local/bin/sync-tickets:*), Bash(~/.local/bin/end-day:*), Bash(~/.local/bin/diary-links:*), Bash(~/.local/bin/day-agent:*), Bash(DAY_AGENT_DATE=* ~/.local/bin/day-agent:*), Bash(~/.local/bin/friction-mine:*), Bash(~/.local/bin/friction-ledger:*), Bash(~/.local/bin/coach-fix:*), Bash(~/.local/bin/words:*), Bash(~/.local/bin/drills:*), Agent, Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Bash(fd:*), Bash(grep:*), Bash(glab api:*), Bash(jq:*), Bash(printf:*), Bash(cat:*), Bash(wc:*), Bash([:*), Bash(test:*), Bash(git -C * diff:*), Bash(wt add:*), Read, Edit, Write
 disable-model-invocation: true
 ---
+
+Sync Jira to the MRs first, so the digest's Jira section is already true:
+
+```bash
+~/.local/bin/sync-tickets
+```
+
+Report what it did in one line (its last line is the summary).
 
 Collect the day's work:
 
@@ -57,6 +65,9 @@ start on the ECFX-1004 calendar fix.
 
 **Blocked / waiting**
 - ECFX-1007 Bulk archive — waiting on product to decide whether it notifies clients
+
+**Waiting on you**
+- D-7 ECFX-18313 Fix the nit, or merge now?
 ```
 
 These tickets are made up to show the shape. Every line you write must come from the
@@ -82,6 +93,9 @@ How to get there:
   else that moved forward. **Picked up** is a ticket that only moved to In Progress, with
   nothing else yet. **Blocked / waiting** is anything waiting on a person, a release or a
   decision. My prompts and the sessions' replies are the best evidence for this.
+  **Waiting on you** lists the open decisions from `decide list` (id, key, question), one
+  line each; leave the group out when there are none. They stay open: the next `/run-day`
+  picks them up.
 - **Account for every ticket.** Before writing, list every ticket key in the digest,
   across all four sections. Each one must end up in a line, or be one you dropped as
   noise on purpose. A ticket with activity in several repos is easy to under-report:
@@ -118,15 +132,18 @@ DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$AR
 PLAN="$(awk '/<!-- start-day:start -->/{f=1;next} /<!-- start-day:end -->/{f=0} f' ~/wiki/diary/$DAY.md)"
 printf '%s\n' "$PLAN" | rg -oi '\b[a-z]{2,10}-[0-9]{2,6}\b' | tr 'A-Z' 'a-z' | sort -u
 printf '%s\n' "$PLAN" | rg -o 'merge_requests/[0-9]+' | sort -u
+if test -f ~/wiki/diary/.agent/$DAY.md; then DAY_AGENT_DATE="$DAY" ~/.local/bin/day-agent mrs | rg -o '^\S+|merge_requests/[0-9]+' | sort -u; fi
 ```
+
+On a new-format day (the agent file `~/wiki/diary/.agent/$DAY.md` exists) the MR links no longer sit on the plan lines, so the last command adds the keys and MR numbers of `day-agent mrs` (one `key<TAB>repo!iid<TAB>url` line per MR) to the two lists; count them with the plan's. On a day with no agent file the plan block alone gives both lists.
 
 Compare the digest's four sections with those two lists. A digest item is **unreported** when its ticket key is not among the plan's keys and, for an MR, its `merge_requests/<n>` is not among the plan's MR numbers. Items with neither a key nor an MR (a commit or a session without a ticket) are grouped per repo or session topic and shown for the user to judge; drop obvious noise (merge commits, the edits made by this very report). Only the plan block counts, never the diary's report block.
 
-If nothing is unreported, say so in one line. Otherwise show a short list, one line each: `<key or topic> - <one-line summary> - <evidence: MR link or commit>`. Ask which to add, then stop and wait for the user's answer (yes or no per item), and do not continue until answered. Do not go on to "Consolidate memory", and do not add anything, before the answer arrives. For each yes, add one line under the plan block's `**Unplanned**` group (create the group as the last group, just above `<!-- start-day:end -->`, when it is missing): `- [x] <key> <summary> · MR <repo>!<iid>  [↗][<repo>!<iid>]` (the URL goes in a `[<repo>!<iid>]: <url>` line above the end marker; an inline `[<repo>!<iid>](<url>)` is fine too), or `· note: <summary>` when there is no MR, because the diary's tick guard refuses an `[x]` without an MR link, `merged` or `· note:`. Use `[/]` for work that is clearly unfinished. After the edits run `~/.local/bin/diary-links ~/wiki/diary/$DAY.md`. Never add a line the user did not approve and never edit a line outside the block.
+If nothing is unreported, say so in one line. Otherwise show a short list, one line each: `<key or topic> - <one-line summary> - <evidence: MR link or commit>`. Ask which to add, then stop and wait for the user's answer (yes or no per item), and do not continue until answered. Do not go on to "Consolidate memory", and do not add anything, before the answer arrives. For each yes, add one line under the plan block's `**Unplanned**` group (create the group as the last group, just above `<!-- start-day:end -->`, when it is missing). On a new-format day the line is short and carries no evidence: `- [X] <key> <few words, at most 80 characters>`, or `- [X] <few words> <!-- pN -->` with the next free id from `DAY_AGENT_DATE="$DAY" ~/.local/bin/day-agent id` when there is no key; the evidence goes to the agent file, run before the tick: `DAY_AGENT_DATE="$DAY" ~/.local/bin/day-agent mr <key> <repo>!<iid> <url>` when there is an MR, and `DAY_AGENT_DATE="$DAY" ~/.local/bin/day-agent note <key> done "<evidence: merged <sha> (repo!iid), or the summary>"` (the key is the `pN` id for a keyless line), because the diary's tick guard refuses a top-level `[X]` with no `done` entry. Use `[/]` and kind `progress` for work that is clearly unfinished. On a day with no agent file the old rules apply: `- [X] <key> <summary> · MR <repo>!<iid>  [↗][<repo>!<iid>]` (the URL goes in a `[<repo>!<iid>]: <url>` line above the end marker; an inline `[<repo>!<iid>](<url>)` is fine too), or `· note: <summary>` when there is no MR, because the old tick guard refuses an `[X]` without an MR link, `merged` or `· note:`; `[/]` for unfinished work. After the edits run `~/.local/bin/diary-links ~/wiki/diary/$DAY.md`. Never add a line the user did not approve and never edit a line outside the block.
 
 ## Consolidate memory
 
-Skip this step, and say so in one line, when `~/wiki/projects` does not exist or the day has no log entries below (the commit and the end of the run below still happen). It is the only place project `state.md` files change; during the day `/run-day` only appends logs and decisions.
+Skip this step, and say so in one line, when `~/wiki/work/projects` does not exist or the day has no log entries below (the commit and the end of the run below still happen). It is the only place project `state.md` files change; during the day `/run-day` only appends logs and decisions.
 
 `$DAY` was defined above (set it again in each command, since shell state may not carry over). Find which projects were touched. The scripts do this (`end-day touched` prints, one project name per line, the projects with a `## <day> <title>` log entry or a decision dated `<day>`; empty output means none):
 
@@ -137,9 +154,92 @@ DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$AR
 
 For each project `<p>` it prints:
 
-1. Read `~/wiki/projects/<p>/state.md`, the day's log entries (`~/.local/bin/end-day entries "$DAY" <p>`), the decisions dated that day (`rg -l "^date: $DAY" ~/wiki/projects/<p>/decisions`), and the `<p>:` lines under `notes:` in `~/.local/state/run-day/$DAY.md` if it exists (the `state_change` lines `/run-day` collected).
+1. Read `~/wiki/work/projects/<p>/state.md`, the day's log entries (`~/.local/bin/end-day entries "$DAY" <p>`), the decisions dated that day (`rg -l "^date: $DAY" ~/wiki/work/projects/<p>/decisions`), and the `<p>:` lines under `notes:` in `~/.local/state/run-day/$DAY.md` if it exists (the `state_change` lines `/run-day` collected).
 2. Rewrite `state.md` in full from the old state plus those: current focus, open threads (drop what finished, add what started), links to existing notes. Keep the file's frontmatter and headings, set its `date` to `$DAY`, and keep it at **60 lines or fewer** (`wc -l` it). It is a snapshot, not a history: history lives in the log.
 3. If the project's one-line focus changed, update its line in the `## Long-term memory (projects)` section of `~/wiki/index.md` (the existing vault index; edit only that section).
+
+## Reflect on friction
+
+Scripts do the bookkeeping and the model only judges new friction. Mine the day and fold it into the ledger (`M` is the miner output, kept for the diary step; the `apply` result goes to `A`, which the subagent reads, so it is never retyped):
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+M="${TMPDIR:-/tmp}/friction-$DAY.json"; A="${M%.json}.apply.json"; R="${M%.json}.reply.json"; K="${M%.json}.concepts.json"
+~/.local/bin/friction-mine --date "$DAY" >"$M" && ~/.local/bin/friction-ledger apply --date "$DAY" --mine-json "$M" >"$A" &&
+  jq -c '[(.concepts // [])[:15][] | .question |= .[:300] | .answer |= .[:1500]]' "$M" >"$K" &&
+  jq -c --slurpfile k "$K" '{new: (.new | length), needs_proposal: (.needs_proposal | length), regressed: (.regressed | length), user_signals: (.user_signals | length), concepts: ($k[0] | length)}' "$A"
+```
+
+It writes `{new, needs_proposal, regressed, corrections, user_signals}` to `$A` and the day's concept candidates to `$K` (at most 15 concepts, each question cut to 300 chars and answer to 1500, so the cheap model's input stays small), and prints the counts: `user_signals` are my prompts that may hold a standing direction or a frustration (none once the day was already ingested, so a re-run adds nothing). If either command is missing or fails, say so in one line and go on to the commit: friction never blocks the report. If `new`, `needs_proposal`, `user_signals` and `concepts` are all 0, say so in one line and skip to the diary step: no subagent for nothing. Otherwise make ONE Agent call with `model: "haiku"` and this brief, with the real paths of `$A`, `$K` and `$R` in place of `<A>`, `<K>` and `<R>` (print them with `echo "$A" "$K" "$R"`):
+
+> Classify friction from my daily workflow and propose fixes. Read `<A>` (JSON: `new` items first seen today, `needs_proposal` items that qualify for a fix, `user_signals` my own prompts of the day with their `harness`; items have an id, signature, samples and evidence `path:line`, readable, only when a sample is not enough) and `<K>` (JSON array of `concepts`: explanations I asked for, each with `harness`, `session`, `at`, `question`, `answer`) and run `~/.local/bin/friction-ledger directions render` for the active directions. Write your reply to `<R>` as ONE JSON object and nothing else; write no other file.
+> `items` is keyed by F id. For every item in `new`: `class` is `env` (auth, MCP, network, service down), `instruction` (a prompt or skill is wrong), `script` (a bug in our code), `model` (model behaviour) or `external` (a blocker outside us: another ticket, an approval); `diagnosis` is one line of at most 20 words. For every item in `needs_proposal` and not `external`: `rung` and `proposal`, or `nofix` when no change to our code, config or prompts would prevent it: the guard or harness refused correctly, the rule already exists in CLAUDE.md or the skill and the model slipped anyway, or it was a one-off model mistake. `nofix` is one line saying which; it closes the entry as `wontfix`, so it never reaches the friction deck. Propose only what a builder could change; between a vague prompt nudge and `nofix`, choose `nofix`. Pick the cheapest rung that works: `script` (retry/backoff, health gate, preflight check, cache, fallback source, background waiter), then `config` (re-auth, env var, settings, dropping a dead step), then `prompt` (prompt/skill/command text, only when the problem is the model's judgement). `proposal` is markdown: the rung, why each lower rung does not fit, the target files in `~/projects/dotfiles` (`bin/`, `claude/`, `pi/`), and a test that proves it (a `bin/<x>.test.sh` case or similar).
+> For each `user_signals` item (`text` is what I typed, `prev_assistant` what the model had just said): a standing rule I want kept from now on goes in `directions` (`rule` an imperative one-liner, `scope` one of global, run-day, reviews, a repo, or a skill/command name, `quote` at most 100 chars, `harness` copied from the signal; add `same_as: "D-NNN"` when it restates an active direction). Where I was annoyed at what the system did, add to `frustrations` (`what_went_wrong`, `class` as above, `sig_hint` a short stable phrase naming the failure, so the same failure on another day gets the same hint) and ALWAYS give it `rung` and `proposal` as above. Anything else (a one-off instruction for that task, a question, a plain correction) appears nowhere. Be strict: when in doubt, leave it out.
+> Items of kind `repeat` (the same request asked again and again), `restated` (a direction I keep restating) and `secret` (a secret found in a file (location only)) are in `new`/`needs_proposal` like the rest. `repeat`: the proposal names the skill or command to create (rung `prompt` or `script`). `restated`: the proposal says which of two fixes it is: keep it as a standing direction, with a line `Direction: <the rule as an imperative one-liner>` and a line `Scope: <global, run-day, reviews, a repo, or a skill/command name>`; or enforce it in a script, with no `Direction:` line. `secret`: the proposal is user steps (rotate the key, remove the line, use `$(secret NAME)`), never an automatic fix; the model never sees or asks for the value. Any proposal that touches a guard, a permission or allow/deny rule, a hook, auto mode or a settings file must contain the exact change, one line each: `Change: <file or key>: <before> → <after>`.
+> For each `<K>` concept that is a real explanation of how something works (not a task request, a status question or debugging of one specific failure), add to `cards` one `{front, back, tags, source}`: `front` a question I could answer from memory, `back` distilled from the answer in at most 4 lines, `tags` from ecfx, tech, setup, `source` the concept's session file plus its date (from `session` and `at`). Be strict: when in doubt, leave it out.
+> Reply shape: `{"items":{"F-001":{"class":"env","diagnosis":"...","rung":"config","proposal":"..."}},"directions":[{"rule":"...","scope":"global","quote":"...","harness":"claude"}],"frustrations":[{"what_went_wrong":"...","class":"env","sig_hint":"...","rung":"script","proposal":"..."}],"cards":[{"front":"...","back":"...","tags":["tech"],"source":"<session> 2026-01-01"}]}`; `rung` and `proposal` go together and are omitted for an item without a proposal (`"nofix":"..."` takes their place); empty parts may be left out.
+
+Then apply the whole reply with one command; the script validates it and applies nothing when anything is invalid:
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+~/.local/bin/friction-ledger ingest "${TMPDIR:-/tmp}/friction-$DAY.reply.json" --date "$DAY"
+```
+
+It sets class, diagnosis and proposals (`proposed` for an item with one, `wontfix` for `external` and for a `nofix` verdict), adds directions (active from the next session with no confirmation; the diary lists them so I can retire them) and records frustrations (the script sets `proposed` from their second day), and adds the `cards` to the quiz deck with `cards add` (once per date; an invalid card rejects the whole reply). A `secret` item always gets `safety: true`, and /start-day shows it as the user's own steps, never as a job. Nothing from cards or coach items goes into the diary report. On an error, relaunch the subagent once with the error text appended; a second failure is left for tomorrow. Never retype or edit its data by hand.
+
+Then file the section in the diary and let the commit below pick up `work/friction/`:
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+M="${TMPDIR:-/tmp}/friction-$DAY.json"
+S="$(~/.local/bin/friction-ledger diary-section --date "$DAY" --mine-json "$M")"
+[ -z "$S" ] || printf '%s\n' "$S" | ~/.local/bin/end-day friction "$DAY"
+```
+
+`end-day friction` puts it between its own markers at the end of the diary, so a re-run replaces it and the report is never touched. Mention the counts in one line.
+
+## Words
+
+File the day's word progress in its own diary block, skipped silently when `words` is not installed or there are no word cards yet:
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+L="$(command -v ~/.local/bin/words >/dev/null && ~/.local/bin/words stats --date "$DAY" --line)"; if [ -n "$L" ]; then printf '%s\n' "$L" | ~/.local/bin/end-day words "$DAY"; fi
+```
+
+The line reads `Words: R reviewed, N new, K known of T · streak S days`; `end-day words` keeps it between its own markers at the end of the diary, outside the report block. Never tick or write a habit line for words in the diary.
+
+## Drills
+
+Turn new commands into drills, then file the day's drill line. List the tools-manual rows for
+commands we built that have no drill yet with `~/.local/bin/drills candidates --json` (an array
+of `{command, page, row}`). Take at most 5, in order. For each, decide from its row:
+
+- not a shell command or alias we built (a hook, a library, a guard) or no sensible goal can be
+  written: `~/.local/bin/drills skip "<command>" --reason "<why>"`;
+- else write a goal in plain words that names what I want, not the command (for example "Show how
+  many friction cards are waiting."), the canonical command, and `accept`: the words a typed line
+  must hold, in order, the first being the command, with concrete example values when it takes
+  arguments ("handoff-open ECFX-123 ~/projects/worktrees/ecfx-dashboard/ECFX-123"); and `run`:
+  `yes` only when the command is safe to run at any time with no special arguments (it shows,
+  lists or looks something up), else `no` (it is then checked, never run); when unsure, `no`.
+  Then `~/.local/bin/drills add --goal "<goal>" --cmd "<command>" --accept "<accept>" --run <yes|no> --back "<the full command>" --page <page> --from manual`.
+
+Then file the day's line in its own diary block, skipped silently when `drills` is not installed
+or there are no drill cards yet:
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+L="$(command -v ~/.local/bin/drills >/dev/null && ~/.local/bin/drills stats --date "$DAY" --line)"; if [ -n "$L" ]; then printf '%s\n' "$L" | ~/.local/bin/end-day drills "$DAY"; fi
+```
+
+The line reads `Drills: R right of N · streak S days`. Mention the new drills in one line to me,
+never in the diary report.
+
+## Check the system
+
+Run `~/.local/bin/system-check --record`; it prints JSON with the findings that are new since its last recorded run, and records them as seen (without `--record` it only looks, so a run by hand leaves them for this step). For each `new` item, fix the page it names (`~/wiki/work/system/` or `~/wiki/tools/`), or ask me before moving a stray script into dotfiles or before adding a line to `known.txt`. An id containing `:failed` means a check itself is broken: report it as "check broken: <detail>" and do not edit a page for it. An `install` finding has no page to fix: list it under the **System** line and ask once, for all of them together, whether to add each to the Brewfile (or `pi/settings.json`, or `install.sh` for a Claude plugin or marketplace), uninstall it, or acknowledge it with an `install <glob>` line in `known.txt` (with a `# reason`); then do what I answer. Commit page fixes with `~/.local/bin/wiki-commit --by claude -m "<msg>" -- <paths>`; if it exits 2 only because there is no wiki, carry on. List what changed under a **System** line in the closing message to me, never in the diary report.
 
 ## Index, commit and end the run
 
@@ -148,14 +248,26 @@ This always runs, even when the memory step was skipped: the report and the diar
 ```bash
 DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
 qmd update && qmd embed
-git -C ~/wiki add -A -- diary projects index.md
-[ -d ~/wiki/reviews ] && git -C ~/wiki add -A -- reviews
+git -C ~/wiki add -A -- diary work index.md tools
 git -C ~/wiki diff --cached --quiet || git -C ~/wiki commit -m "wiki: $DAY day"
+~/.local/bin/wiki-sync
 ```
 
-If `qmd` fails, say so in one line and still commit. Never touch `*.pdf` or `*.kdbx`.
+If `qmd` fails, say so in one line and still commit. `wiki-sync` pushes the day (and anything
+else changed) to the VPS; if it fails, show its one-line error and point at `wiki-sync status`.
+Never touch `*.pdf` or `*.kdbx`.
 
 Finally end the run: move `~/.local/state/run-day/$DAY.md` into `~/.local/state/run-day/done/` (create the directory). That switches off the SessionStart hook, the plan panel and the watcher. Skip this when there is no such file.
+
+## Land the coach's fixes
+
+The last step that changes anything, after the report is saved and the day committed. It lands the fixes the coach built in the background today (each one the user said yes to in /start-day). Landing can re-run a fix's test suites for minutes, so it runs detached and this call returns at once:
+
+```bash
+~/.local/bin/coach-fix land --detach
+```
+
+It prints one line: "landing in the background; log: <path>", "a land is already running", or "a day session is running; landing waits" (leave it: never add `--force-check` here). Put that line under a **Coach** line in the closing message to me, never in the diary report. Do not wait for the land or read its log: it writes each result to the ledger, `wiki-sync`'s next run commits it, and tomorrow's /start-day reports what landed or why it failed.
 
 ## Offer reviews
 
@@ -163,8 +275,8 @@ Do not run these; ask whether to:
 
 ```bash
 d=$(date +%-d); w=$(date +%u)
-[ "$w" = 5 ] && echo "offer: /review week"
-if { [ "$d" -eq 1 ] && [ "$w" -le 5 ]; } || { [ "$w" -eq 1 ] && [ "$d" -le 3 ]; }; then echo "offer: /review month"; fi
+[ "$w" = 5 ] && echo "offer: /daily:review week"
+if { [ "$d" -eq 1 ] && [ "$w" -le 5 ]; } || { [ "$w" -eq 1 ] && [ "$d" -le 3 ]; }; then echo "offer: /daily:review month"; fi
 ```
 
-Friday offers `/review week`; the first workday of a month offers `/review month`. Print nothing if neither line appears. End with the diary path, the projects consolidated, and the commit, then print the Standup paragraph once more (the `**Standup**` line and the paragraph, nothing else) as the very last thing, so I can copy it.
+Friday offers `/daily:review week`; the first workday of a month offers `/daily:review month`. Print nothing if neither line appears. End with the diary path, the projects consolidated, and the commit, then print the Standup paragraph once more (the `**Standup**` line and the paragraph, nothing else) as the very last thing, so I can copy it.
