@@ -72,6 +72,21 @@ function tick(diary: string, oldText: string, newText: string, active = true) {
   return guardVerdict("edit", { path: diary, edits: [{ oldText, newText }] }, DAY, active);
 }
 
+test("new-format day: a tick needs a done entry in the agent file", () => {
+  const { root, diary } = sandbox();
+  const agent = join(root, "wiki", "diary", ".agent", `${DAY}.md`);
+  mkdirSync(join(root, "wiki", "diary", ".agent"), { recursive: true });
+  writeFileSync(agent, `# agent notes ${DAY}\n## ecfx-1001\n- 09:12 progress: working\n`);
+  const refused = tick(diary, "- [ ] ecfx-1001 fix the export", "- [x] ecfx-1001 fix the export");
+  assert.ok(refused);
+  assert.match(refused, /day-agent note/);
+  writeFileSync(agent, `# agent notes ${DAY}\n## ecfx-1001\n- 11:40 done: merged abc1234\n`);
+  assert.equal(tick(diary, "- [ ] ecfx-1001 fix the export", "- [x] ecfx-1001 fix the export"), undefined);
+  writeFileSync(agent, "");
+  assert.ok(tick(diary, "- [ ] ecfx-1001 fix the export", "- [x] ecfx-1001 fix the export"));
+  cleanup(root);
+});
+
 test("refuses a newly ticked [x] with no evidence", () => {
   const { root, diary } = sandbox();
   const verdict = tick(diary, "- [ ] ecfx-1001 fix the export", "- [x] ecfx-1001 fix the export");
@@ -166,12 +181,75 @@ test("injects the run state on every request, and stays silent with no run", () 
 });
 
 test("trims the diary block before the run state", () => {
-  const { root, diary, runState } = sandbox();
+  const { root, diary } = sandbox();
   writeFileSync(diary, PLAN.replace("**Today**", `**Today**\n${"- [ ] filler line to make the plan block huge\n".repeat(200)}`));
   const section = runStateSection()!;
   assert.ok(section && section.length <= 6000);
   assert.match(section, /## Run state/);
   assert.match(section, /export order settled/);
+  cleanup(root);
+});
+
+function writeAgent(root: string, text: string) {
+  mkdirSync(join(root, "wiki", "diary", ".agent"), { recursive: true });
+  writeFileSync(join(root, "wiki", "diary", ".agent", `${DAY}.md`), text);
+}
+
+test("injects the agent notes after the plan block, and nothing without an agent file", () => {
+  const { root } = sandbox();
+  const before = runStateSection()!;
+  assert.doesNotMatch(before, /Agent notes/);
+  writeAgent(root, `# agent notes ${DAY}\n## ecfx-1001\n- 09:12 progress: N1 fixed, pushed at 811e370a3\n`);
+  const section = runStateSection()!;
+  assert.match(section, /## Agent notes \(.*\.agent\/2026-01-01\.md\)\n# agent notes/);
+  assert.match(section, /- 09:12 progress: N1 fixed/);
+  assert.ok(section.indexOf("ecfx-1002 address review") < section.indexOf("## Agent notes"));
+  assert.ok(section.indexOf("## Agent notes") < section.indexOf("## Run state"));
+  assert.doesNotMatch(section, /agent notes truncated/);
+  cleanup(root);
+});
+
+test("cuts a 10 KB agent file on a full line and keeps the plan block and run state whole", () => {
+  const { root } = sandbox();
+  const lines = Array.from({ length: 200 }, (_, i) => `- 10:00 note: agent entry number ${i + 1} with padding`);
+  writeAgent(root, [`# agent notes ${DAY}`, ...lines].join("\n") + "\n");
+  const section = runStateSection()!;
+  assert.ok(section.length <= 6000);
+  assert.match(section, /ecfx-1002 address review/);
+  assert.match(section, /export order settled/);
+  assert.match(section, /\n\[agent notes truncated: run day-agent show\]\n/);
+  assert.match(section, /agent entry number 1 /);
+  assert.doesNotMatch(section, /agent entry number 200/);
+  const body = section.slice(section.indexOf("## Agent notes"), section.indexOf("\n\n## Run state"));
+  const entries = body.split("\n").filter((l) => l.startsWith("- 10:00"));
+  assert.ok(entries.every((l) => /with padding$/.test(l)));
+  assert.ok(body.length <= 2200);
+  cleanup(root);
+});
+
+test("multibyte characters at the agent-notes cut stay whole", () => {
+  const { root } = sandbox();
+  const lines = Array.from({ length: 200 }, (_, i) => `- 10:00 note: ·↗·↗·↗·↗·↗·↗ entry ${i + 1} ↗·↗·↗·↗·↗·↗·`);
+  writeAgent(root, [`# agent notes ${DAY}`, ...lines].join("\n") + "\n");
+  const section = runStateSection()!;
+  assert.match(section, /\n\[agent notes truncated: run day-agent show\]\n/);
+  const entries = section.split("\n").filter((l) => l.startsWith("- 10:00"));
+  assert.ok(entries.length > 0);
+  assert.ok(entries.every((l) => /^- 10:00 note: ·↗·↗·↗·↗·↗·↗ entry \d+ ↗·↗·↗·↗·↗·↗·$/.test(l)));
+  assert.doesNotMatch(section, /\uFFFD/);
+  cleanup(root);
+});
+
+test("agent notes get only what the budget leaves, down to the marker", () => {
+  const { root, runState } = sandbox();
+  const base = runStateSection()!.length;
+  writeAgent(root, `# agent notes ${DAY}\n` + "- 10:00 note: x\n".repeat(100));
+  writeFileSync(runState, RUN_STATE + `pad: ${"x".repeat(5950 - base)}\n`);
+  const section = runStateSection()!;
+  assert.ok(section.length <= 6000);
+  assert.match(section, /pad: xxxxxxxxxx/);
+  assert.match(section, /\n\[agent notes truncated: run day-agent show\]\n/);
+  assert.doesNotMatch(section, /- 10:00 note/);
   cleanup(root);
 });
 
@@ -325,7 +403,7 @@ test("guardVerdict reports a block through onBlock and stays quiet otherwise", (
     guardVerdict("edit", { path: diary, edits: [{ oldText: from, newText: to }] }, DAY, true, (m) => seen.push(m));
   assert.ok(edit("- [ ] ecfx-1001 fix the export", "- [x] ecfx-1001 fix the export"));
   assert.equal(seen.length, 1);
-  assert.match(seen[0], /diary guard blocked: .*ecfx-1001/);
+  assert.match(seen[0], /diary guard blocked \[[^\]]+\]: .*ecfx-1001/);
   assert.equal(edit("- [ ] ecfx-1001 fix the export", "- [x] ecfx-1001 fix the export · merged"), undefined);
   assert.equal(seen.length, 1);
   cleanup(root);
@@ -342,7 +420,7 @@ test("a blocked tick records a guard friction event for pi", async () => {
     await waitFor(log);
     const lines = readFileSync(log, "utf8").trim().split("\n");
     assert.equal(lines.length, 1);
-    assert.match(lines[0], /^--harness pi --source daily-guard guard diary guard blocked: .*ecfx-1001/);
+    assert.match(lines[0], /^--harness pi --source daily-guard guard diary guard blocked \[[^\]]+\]: .*ecfx-1001/);
   } finally {
     process.env.PATH = path;
     cleanup(root);
@@ -608,7 +686,6 @@ test("system map: before_agent_start sets the section, and never throws without 
   rmSync(root, { recursive: true, force: true });
   delete process.env.SYSTEM_MAP;
 });
-
 // Sleep and wake (watch.ts checkWake): the probes are faked at the dep boundary, so nothing here
 // reads /proc, sleeps, or runs ioreg. CLOCK_BOOTTIME and CLOCK_MONOTONIC are the probe's business.
 const SUSPEND_MS = 95 * 60_000; // a sleep long enough for the watcher's 60 s gap

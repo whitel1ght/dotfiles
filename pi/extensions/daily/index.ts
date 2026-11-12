@@ -5,12 +5,14 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 // The Claude Code plugin's harness-free parsers, imported in place so both
 // harnesses read and write byte-identical state. Only the glue is pi-specific.
+import { agentPath } from "./mod/agentfile.ts";
 import { extractBlock } from "./mod/diary.ts";
 import { applyEdit, checkTicks, denyMessage, isTodaysDiary } from "./mod/guard.ts";
 import type { OnBlock } from "./mod/guard.ts";
 import { messageFiles } from "./mod/inbox.ts";
 import { parseRunState } from "./mod/runstate.ts";
 import { acquireLock, DayWatcher, INBOX_MS, releaseLock, WATCH_MS, type Exec, type WakeProbe } from "./watch.ts";
+import { slackPath } from "./mod/slack.ts";
 import { IdeasNudger } from "./ideas.ts";
 import { AskBackstop, piSubRunning } from "./ask.ts";
 import { FollowupDelivery, decideList, decisionsSession } from "./followup.ts";
@@ -50,6 +52,8 @@ function ideasDue(): Promise<boolean> {
 
 const MAX_CHARS = 6000;
 const BLOCK_MAX = 3000;
+const AGENT_MAX = 2000;
+const AGENT_MARK = "[agent notes truncated: run day-agent show]";
 
 type Paths = {
   stateDir: string;
@@ -59,6 +63,7 @@ type Paths = {
   today: string;
   playbook: string;
   resumeMarker: string;
+  slack: string;
 };
 
 function paths(): Paths {
@@ -77,6 +82,7 @@ function paths(): Paths {
     // pi's own record: it fingerprints other files than Claude's `<date>.playbook`
     playbook: join(stateDir, `${today}.pi-playbook`),
     resumeMarker: join(stateDir, `${today}.pi-resume`),
+    slack: slackPath(stateDir, today),
   };
 }
 
@@ -148,7 +154,29 @@ export function runStateSection(): string | null {
     block = `${cut(block, room)}\n[plan block truncated]`;
   }
 
-  return cut(`${head}${blockHead}${block}${stateText}`, MAX_CHARS);
+  const agentText = agentNotes(p.diary, MAX_CHARS - head.length - blockHead.length - [...block].length - stateText.length);
+  return cut(`${head}${blockHead}${block}${agentText}${stateText}`, MAX_CHARS);
+}
+
+/** The agent notes section, cut on a full line to AGENT_MAX and to the `avail` characters the budget leaves. */
+function agentNotes(diary: string, avail: number): string {
+  const file = agentPath(diary);
+  if (!existsSync(file)) return "";
+  const notes = readFileSync(file, "utf8").replace(/\n+$/, "");
+  if (!notes.trim()) return "";
+  const agentHead = `\n\n## Agent notes (${file})\n`;
+  let room = Math.min(AGENT_MAX, avail - [...agentHead].length);
+  const chars = [...notes];
+  if (chars.length <= room) return agentHead + notes;
+  room -= AGENT_MARK.length + 1;
+  let kept = "";
+  if (room >= 100) {
+    const h = chars.slice(0, room + 1).join("");
+    const i = h.lastIndexOf("\n");
+    kept = i < 0 ? "" : h.slice(0, i);
+  }
+  if (kept) return `${agentHead}${kept}\n${AGENT_MARK}`;
+  return avail >= AGENT_MARK.length + 1 ? `\n${AGENT_MARK}` : "";
 }
 
 let directionsCache: { key: string; text: string } | null = null;
@@ -286,8 +314,9 @@ export function guardVerdict(
   }
   if (after === null) return undefined;
 
-  const result = checkTicks(before, after, onBlock);
-  return result.ok ? undefined : denyMessage(result.lines);
+  const agent = existsSync(agentPath(path)) ? readFileSync(agentPath(path), "utf8") : null;
+  const result = checkTicks(before, after, agent, onBlock);
+  return result.ok ? undefined : denyMessage(result.lines, result.format);
 }
 
 /** changes-since --cursor run-day, without blocking pi; a timeout reports exit 124. */
@@ -424,10 +453,9 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
   });
 
   // for the Keep busy prompt (watch.ts checkBusy, mod/busy.ts)
-  const activity = { lastActiveAt: Date.now(), turnRunning: false, userWrote: false };
+  const activity = { turnRunning: false, userWrote: false };
   pi.on("input", (event) => {
     if (event.source === "extension") return;
-    activity.lastActiveAt = Date.now();
     activity.userWrote = true;
   });
   pi.on("agent_start", () => {
@@ -435,7 +463,6 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
   });
   pi.on("agent_end", () => {
     activity.turnRunning = false;
-    activity.lastActiveAt = Date.now();
   });
 
   const stop = () => {
@@ -472,8 +499,13 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
       const nudge = await watcher.checkWake(Date.now()).catch(() => null);
       if (nudge) send(nudge, true);
       const told = watcher.checkInbox();
-      const busy = told ? null : watcher.checkBusy(Date.now(), activity);
+      const plan = told ? null : watcher.checkPlan(activity.turnRunning);
+      const now = new Date();
+      const slack = told || plan ? null : watcher.checkSlack(activity.turnRunning, now.getHours() * 60 + now.getMinutes());
+      const busy = told || plan || slack ? null : watcher.checkBusy(Date.now(), activity);
       if (!told) activity.userWrote = false;
+      if (plan) send(plan, true);
+      if (slack) send(slack, true);
       if (busy) send(busy, true);
       // a merge changed the playbook or this extension: reload and resume the day with it
       if (watcher.checkUpdate(piPrint())) void pi.sendUserMessage("/daily-update", { expandPromptTemplates: true, deliverAs: "followUp" });
