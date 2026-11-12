@@ -51,7 +51,9 @@ directory and the **worktree**. Handle every MR in the summary, in parallel.
    If the list is empty, stop the watch loop: launch nothing, ack nothing, start no wait,
    and tell me. See `~/.pi/agent/model-selection.md`.
 
-2. **Fixer.** In one turn, make one `subagent` call per MR that is not DIRTY or STALE:
+2. **Fixer.** First read each round's notes. A round with no finding, no question and no action asked of us
+   (a confirmation pass, "no blockers", "ready to approve") gets `mr-watch ack <round>`, no
+   fixer and no reply. For the rest: in one turn, make one `subagent` call per MR that is not DIRTY or STALE:
    `subagent({ role: "worker", model: "<live exact id>", task: "<filled brief>",
    cwd: "<worktree>", label: "<repo>!<iid>" })`. One call per MR in the same turn is what runs
    them concurrently, and each call carries its own `cwd`, so fixers land in different
@@ -73,7 +75,7 @@ directory and the **worktree**. Handle every MR in the summary, in parallel.
    from the current live list. Still failing: that finding becomes Deferred with the reason.
 4. **Push**: `git -C <wt> push`. Never force. If the push is rejected, stop on this MR:
    ack the round, hold its reply and tell me.
-5. **Reply.** Post every round's reply with `~/.local/bin/mr-watch reply <round>`,
+5. **Reply.** Post the reply of every round that had a fixer with `~/.local/bin/mr-watch reply <round>`,
    including rounds with Not changed or Deferred findings: reviewers need the fixes
    reported, and the reply carries the reason for each declined or deferred one. That
    posts `response.md` as one note, the `threads.tsv` lines into their inline threads,

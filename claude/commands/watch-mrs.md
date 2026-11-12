@@ -41,7 +41,9 @@ directory and the **worktree**. Handle every MR in the summary, in parallel.
      machine on top of local commits), or the fetch failed. Treat it like `DIRTY`.
    - `none (clone <path>)`: create one with `wt add <repo> <TICKET> <branch>` (it
      prints the path), then use it.
-2. **Fixer.** One subagent per MR, all in one message, each with `model: "sonnet"`. For
+2. **Fixer.** First read each round's notes. A round with no finding, no question and no action asked of us
+   (a confirmation pass, "no blockers", "ready to approve") gets `mr-watch ack <round>`, no
+   fixer and no reply. For the rest: one subagent per MR, all in one message, each with `model: "sonnet"`. For
    ecfx-backend use `subagent_type: "backend:java-micronaut-dev"`, otherwise
    `general-purpose`. Give each the brief below with its paths filled in.
 3. **Check** each report as it lands, with cheap commands only:
@@ -52,7 +54,7 @@ directory and the **worktree**. Handle every MR in the summary, in parallel.
    retry once on `opus`. Still failing: that finding becomes Deferred with the reason.
 4. **Push**: `git -C <wt> push`. Never force. If the push is rejected, stop on this MR:
    ack the round, hold its reply and tell me.
-5. **Reply.** Post every round's reply with `~/.local/bin/mr-watch reply <round>`,
+5. **Reply.** Post the reply of every round that had a fixer with `~/.local/bin/mr-watch reply <round>`,
    including rounds with Not changed or Deferred findings: reviewers need the fixes
    reported, and the reply carries the reason for each declined or deferred one. That
    posts `response.md` as one note, the `threads.tsv` lines into their inline threads,

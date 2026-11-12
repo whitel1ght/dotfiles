@@ -1,6 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
+import { agentMrKeys, agentPath } from '../mod/agentfile.ts'
 import { mrKeyFromRef, mrKeysOf, parseItems, ticketKey } from '../mod/diary.ts'
 import { classify, formatNote, formatPrompt, formatToast, isTimeout, parseEvents } from '../mod/events.ts'
 import { EMPTY_INBOX, inboxPrompt, nextInbox, parseListing } from '../mod/inbox.ts'
@@ -15,7 +16,9 @@ import type { AgentRow } from '../mod/wake.ts'
 import type { InboxState, RunItem, ViewState } from '../mod/types.ts'
 import { joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts'
 import { NUDGE_TEXT, claimsSystem, claimsSystemPrompt, shouldNudge, systemMarkerPath } from '../mod/ideas.ts'
-import { BUSY_PROMPT, nextNudged, shouldNudgeBusy } from '../mod/busy.ts'
+import { BUSY_PROMPT, nextAgentAt, nextNudged, shouldNudgeBusy } from '../mod/busy.ts'
+import { nextPlanLines, planPrompt, untracked } from '../mod/planlines.ts'
+import { formatSlot, parseClock, parseSlot, slackDue, slackPath, slackPrompt } from '../mod/slack.ts'
 import { CLAUDE_PLAYBOOK, UPDATE_ARGS, fingerprint, parsePrint, playbookPath, shouldResume } from '../mod/update.ts'
 import { ASK_NUDGE, BUSY_NOTE, FORM_DENY, FORM_TOOLS, isBusyPrompt, nextAsk, shouldNudgeAsk } from '../mod/ask.ts'
 import { FOLLOWUP_MS, followupPrompt, parseCards, pendingFollowups } from '../mod/followup.ts'
@@ -40,7 +43,7 @@ const EMPTY: ViewState = { active: false, status: '', groups: [] }
 const view = atom({ plugin: 'daily', key: 'view' } as const, EMPTY)
 const inbox = atom({ plugin: 'daily', key: 'inbox' } as const, EMPTY_INBOX as InboxState)
 
-type Day = { home: string; today: string; diaryPath: string; statePath: string; ownerPath: string; agentsPath: string; playbookPath: string }
+type Day = { home: string; today: string; diaryPath: string; statePath: string; ownerPath: string; agentsPath: string; playbookPath: string; slackPath: string }
 
 async function today($: EngineInterface): Promise<Day | null> {
   const home = await $.env.get('HOME')
@@ -57,6 +60,7 @@ async function today($: EngineInterface): Promise<Day | null> {
     ownerPath: ownerPath(stateDir, day),
     agentsPath: `${stateDir}/${day}.agents`,
     playbookPath: playbookPath(stateDir, day),
+    slackPath: slackPath(stateDir, day),
   }
 }
 
@@ -79,7 +83,8 @@ async function load($: EngineInterface) {
   const state = await readOr($, day.statePath)
   if (state === null) return { day, active: false as const }
   const diary = (await readOr($, day.diaryPath)) ?? ''
-  return { day, active: true as const, items: parseItems(diary), runs: parseRunState(state), dayEnded: diary.includes(REPORT_MARK) }
+  const agent = await readOr($, agentPath(day.diaryPath))
+  return { day, active: true as const, agent, items: parseItems(diary), runs: parseRunState(state), dayEnded: diary.includes(REPORT_MARK) }
 }
 
 type DayCtx = Extract<NonNullable<Awaited<ReturnType<typeof load>>>, { active: true }>
@@ -184,22 +189,25 @@ async function nudgeIdeas($: EngineInterface) {
 // A turn counts as running between its first step and turn.complete (a long tool call makes no
 // requests); a turn that never completes stops counting after TURN_STALE_MS.
 const TURN_STALE_MS = 30 * 60 * 1000
-const busy = { nudged: false, inTurn: false }
+const busy = { nudged: false, inTurn: false, lastAgentAt: 0 }
+const plan = { seen: [] as string[] }
 
 // Every session, not only the day's: questions go to the decisions deck (mod/ask.ts).
 let ask = { asked: false, nudged: false }
 
 // Every session: the user's follow-ups on its answer cards come back as a prompt, once each
-// (mod/followup.ts). A failing or missing decide is no follow-ups.
-const followups = { delivered: new Map<string, number>(), isChecking: false }
+// (mod/followup.ts). A failing or missing decide is no follow-ups. /clear gives the session a new
+// id while its decisions server keeps stamping the old one, so every id it has had still counts.
+const followups = { delivered: new Map<string, number>(), ids: new Set<string>(), isChecking: false }
 
 async function deliverFollowups($: EngineInterface) {
   if (followups.isChecking) return
   followups.isChecking = true
   try {
     const ran = await $.process.run(['/bin/sh', '-c', DECIDE_LIST], { timeoutMs: 10_000 })
+    followups.ids.add(await $.session.id())
     if (ran.exitCode !== 0) return
-    const due = pendingFollowups(parseCards(ran.stdout), await $.session.id(), followups.delivered)
+    const due = pendingFollowups(parseCards(ran.stdout), followups.ids, followups.delivered)
     if (due.length === 0) return
     const sent = await $.prompt.submit({ text: followupPrompt(due) }).then(
       () => true,
@@ -218,26 +226,68 @@ async function runningAgents($: EngineInterface): Promise<number> {
   return (await $.agent.list().catch(() => [])).filter(a => a.status === 'running').length
 }
 
+function isTurnRunning(now: number): boolean {
+  const lastActiveAt = Math.max(idle.lastUserAt, idle.lastTurnEndAt, warm.lastRequestAt ?? 0)
+  return busy.inTurn && now - lastActiveAt < TURN_STALE_MS
+}
+
+async function nudgePlan($: EngineInterface, ctx: DayCtx): Promise<boolean> {
+  if (ctx.dayEnded || isTurnRunning(await $.clock.now())) return false
+  const { fresh, seen } = nextPlanLines(untracked(ctx.items, ctx.runs), plan.seen)
+  plan.seen = seen
+  if (fresh.length === 0) return false
+  void $.prompt.submit({ text: planPrompt(fresh.length) }).catch(() => $.ui.toast('daily plan: prompt submit failed'))
+  return true
+}
+
+// From 15:00, every 20 min, 10 checks: /daily:slack-check between turns (mod/slack.ts). The slot is
+// recorded before the prompt goes out, so a failing write never repeats it every tick.
+let hasSlackFailed = false
+
+async function nudgeSlack($: EngineInterface, ctx: DayCtx): Promise<boolean> {
+  try {
+    const ran = await $.process.run(['date', '+%H:%M'], { timeoutMs: 2_000 })
+    const slot = slackDue({
+      isOwner: true,
+      dayRunning: !ctx.dayEnded,
+      turnRunning: isTurnRunning(await $.clock.now()),
+      localMinutes: ran.exitCode === 0 ? parseClock(ran.stdout) : null,
+      lastSlot: parseSlot(await readOr($, ctx.day.slackPath)),
+    })
+    if (slot === null) return false
+    await $.fs.write(ctx.day.slackPath, formatSlot(slot))
+    hasSlackFailed = false
+    void $.prompt.submit({ text: slackPrompt(slot) }).catch(() => $.ui.toast('daily slack: prompt submit failed'))
+    return true
+  } catch (err) {
+    if (!hasSlackFailed) friction($, 'tool_error', `slack check not sent: ${err instanceof Error ? err.message : String(err)}`, 'daily-slack')
+    hasSlackFailed = true
+    return false
+  }
+}
+
 async function nudgeBusy($: EngineInterface, ctx: DayCtx) {
   const out = outstanding(ctx.runs).length
   busy.nudged = nextNudged(busy.nudged, { outstanding: out, userWrote: false })
   const now = await $.clock.now()
-  const lastActiveAt = Math.max(idle.lastUserAt, idle.lastTurnEndAt, warm.lastRequestAt ?? 0)
-  const turnRunning = busy.inTurn && now - lastActiveAt < TURN_STALE_MS
-  const running = (await $.agent.list().catch(() => [])).filter(a => a.status === 'running').length + (turnRunning ? 1 : 0)
-  const state = { isOwner: true, dayRunning: !ctx.dayEnded, now, lastActiveAt, outstanding: out, agentsRunning: running, nudged: busy.nudged }
+  const agents = await runningAgents($)
+  busy.lastAgentAt = nextAgentAt(busy.lastAgentAt, now, out + agents)
+  const state = { isOwner: true, dayRunning: !ctx.dayEnded, now, lastAgentAt: busy.lastAgentAt, outstanding: out, agentsRunning: agents + (isTurnRunning(now) ? 1 : 0), nudged: busy.nudged }
   if (!shouldNudgeBusy(state)) return
   busy.nudged = true
+  busy.lastAgentAt = now
   void $.prompt.submit({ text: BUSY_PROMPT }).catch(() => $.ui.toast('daily idle: prompt submit failed'))
 }
 
-// Keepwarm for the day session after cache-tax's 6 h window (mod/warm.ts). One timer at a time,
-// re-armed after every main-thread turn and every warm ping; a late timer (sleep) re-checks first.
+// Keepwarm for every session while the day runs, trailing cache-tax by 5 min (mod/warm.ts). One
+// timer at a time, re-armed after every main-thread turn and every warm ping; a late timer (sleep)
+// re-checks first. A ping that got no reply stops it only until the next turn; a cold readback
+// (the fork wrote the context instead of reading it) stops it for good, so it never pays twice.
 const warm = {
-  startedAt: 0,
   lastRequestAt: null as number | null,
   timer: null as { cancel: () => void } | null,
   stopped: null as string | null,
+  retryAfterTurn: false,
   wasCold: false,
   isPinging: false,
   hasFollowed: false,
@@ -261,11 +311,10 @@ async function armWarm($: EngineInterface) {
   disarmWarm()
   if (warm.stopped !== null || warm.isPinging) return
   const day = await today($)
-  if (!day || (await readOr($, day.statePath)) === null || !(await isOwner($, day))) return
+  if (!day || (await readOr($, day.statePath)) === null) return
   const step = nextWarm({
-    isOwner: true,
+    dayRunning: true,
     dayEnded: ((await readOr($, day.diaryPath)) ?? '').includes(REPORT_MARK),
-    startedAt: warm.startedAt,
     lastRequestAt: warm.lastRequestAt,
     now: await $.clock.now(),
   })
@@ -281,14 +330,20 @@ async function armWarm($: EngineInterface) {
 async function pingWarm($: EngineInterface) {
   warm.isPinging = true
   let why: string | null
+  let unanswered = true
   try {
-    why = pingFailure(await $.model.fork({ prompt: WARM_PROMPT }))
+    const reply = await $.model.fork({ prompt: WARM_PROMPT })
+    unanswered = !reply?.isAnswered
+    why = pingFailure(reply)
   } catch (err) {
     why = `the ping failed: ${err instanceof Error ? err.message : String(err)}`
   } finally {
     warm.isPinging = false
   }
-  if (why !== null) return stopWarm($, why)
+  if (why !== null) {
+    warm.retryAfterTurn = unanswered
+    return stopWarm($, why)
+  }
   warm.lastRequestAt = await $.clock.now()
   await armWarm($)
 }
@@ -545,6 +600,7 @@ async function watch($: EngineInterface) {
     const eventCtx = {
       mrKeys: new Set([
         ...ctx.items.flatMap(i => mrKeysOf(i.line)),
+        ...agentMrKeys(ctx.agent ?? ''),
         ...ctx.runs.flatMap(r => r.mrs.map(mrKeyFromRef)).filter(k => k !== ''),
       ]),
       ticketKeys: new Set(ctx.items.map(i => ticketKey(i.text)).filter(k => k !== '')),
@@ -611,7 +667,7 @@ async function watchInbox($: EngineInterface) {
     if (owns && fresh.length > 0) {
       $.ui.toast(`inbox: ${fresh.length} new`)
       void $.prompt.submit({ text: inboxPrompt(fresh.length) }).catch(() => $.ui.toast('daily inbox: prompt submit failed'))
-    } else if (owns) {
+    } else if (owns && !(await nudgePlan($, ctx)) && !(await nudgeSlack($, ctx))) {
       await nudgeBusy($, ctx)
     }
   } catch (err) {
@@ -625,7 +681,7 @@ async function watchInbox($: EngineInterface) {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    warm.startedAt = await $.clock.now()
+    followups.ids.add(await $.session.id())
     try {
       await $.command.register({ name: 'day-plan', description: "Open today's plan in nvim in a tmux popup" })
     } catch (err) {
@@ -715,6 +771,10 @@ export const register: Register = on => {
       warm.lastRequestAt = await $.clock.now()
       idle.lastTurnEndAt = warm.lastRequestAt
       busy.inTurn = false
+      if (warm.retryAfterTurn) {
+        warm.retryAfterTurn = false
+        warm.stopped = null
+      }
       void safeArmWarm($)
       if (shouldNudgeAsk({ isMain: true, reason: e.reason, text: r.text, ...ask })) {
         ask = nextAsk(ask, 'nudged')
@@ -730,7 +790,7 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // cache-tax's pings are forks too: a warm one moves the clock the hand-over at 6 h starts from.
+  // cache-tax's pings are forks too: a warm one moves the clock, so the trailing ping is not sent.
   on('model.fork', async ($, e, next) => {
     const r = await next(e)
     if (r && r.isAnswered && isWarm(r.usage) && !warm.isPinging) {
@@ -760,8 +820,9 @@ export const register: Register = on => {
       const current = (await readOr($, e.file_path)) ?? ''
       const after = applyEdit(current, e as unknown as EditInput)
       if (after === null) return next(e)
-      const verdict = checkTicks(current, after, msg => friction($, 'guard', msg, 'daily-guard'))
-      return verdict.ok ? next(e) : { deny: denyMessage(verdict.lines) }
+      const agent = await readOr($, agentPath(e.file_path))
+      const verdict = checkTicks(current, after, agent, msg => friction($, 'guard', msg, 'daily-guard'))
+      return verdict.ok ? next(e) : { deny: denyMessage(verdict.lines, verdict.format) }
     }).catch(($, e, next) => next(e))
   }
 }

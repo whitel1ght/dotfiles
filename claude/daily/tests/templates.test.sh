@@ -25,12 +25,15 @@ unknown() { # file, allowed-keys
 echo "== ticket-brief =="
 f="$T/ticket-brief.md"
 for k in $BRIEF_KEYS; do has "$f" "{{$k}}" "has {{$k}}"; done
+has "$f" "Draft means the work is unfinished" "a draft means unfinished work"
+has "$f" 'Depends on: <repo>!<iid>, merge after it' "a dependency goes in the MR description"
 [ -z "$(unknown "$f" "$BRIEF_KEYS")" ] && pass "no unknown placeholders" || fail "unknown placeholders" "$(unknown "$f" "$BRIEF_KEYS")"
 has "$f" "memory:" "ends with the memory block"
 has "$f" "decision: {title, context, decision, consequences} | none" "memory block has the decision field"
 has "$f" "state_change:" "memory block has state_change"
 has "$f" "**Draft**" "states the Draft MR rule"
 has "$f" "never write to \`~/wiki\`" "forbids vault writes"
+has "$f" "except \`~/wiki/work/system/\` and \`~/wiki/tools/\`" "allows the system and tools pages"
 
 echo "== review-round-brief =="
 f="$T/review-round-brief.md"
@@ -44,7 +47,21 @@ has "$f" "discussion:" "reports the discussion id"
 has "$f" "reply_file:" "reports the reply file"
 has "$f" "memory:" "ends with the memory block"
 has "$f" "never write to \`~/wiki\`" "forbids vault writes"
+has "$f" "except \`~/wiki/work/system/\` and \`~/wiki/tools/\`" "allows the system and tools pages"
 has "$f" "no Slack, no Jira transition" "forbids Slack posts and Jira transitions"
+
+echo "== review-brief =="
+f="$T/review-brief.md"
+REVIEW_KEYS="KEY TITLE AUTHOR REPO MR_IID MR_URL PROJECT_PATH BRANCH HEAD WORKTREE KIND REVIEW_FILE PROJECT"
+for k in $REVIEW_KEYS; do has "$f" "{{$k}}" "has {{$k}}"; done
+[ -z "$(unknown "$f" "$REVIEW_KEYS")" ] && pass "no unknown placeholders" || fail "unknown placeholders" "$(unknown "$f" "$REVIEW_KEYS")"
+has "$f" "shared:mr-review" "names the review skill"
+has "$f" "**Draft only.**" "drafts, never posts"
+has "$f" "You never run \`glab mr note\`, \`glab mr approve\`" "forbids posting and approving"
+has "$f" "verdict:" "reports the verdict"
+has "$f" "review_file:" "reports the review file"
+has "$f" "memory:" "ends with the memory block"
+has "$f" "never write to \`~/wiki\`" "forbids vault writes"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

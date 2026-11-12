@@ -55,9 +55,12 @@ function setup(
     },
     listInbox: () => listings.shift() ?? [],
     holdsLock: () => opts.held !== false,
-    lidAndGraphics: async () => {
+    probe: async (needed) => {
+      // A tick with nothing to judge reads nothing, as macLidAndGraphics only runs when needed.
+      if (!needed) return { platform: "darwin", resumed: false, sampled: false, lid: "", systemstate: "" };
       calls.probes += 1;
-      return probes.shift() ?? OPEN;
+      const p = probes.shift() ?? OPEN;
+      return { platform: "darwin", resumed: false, sampled: true, ...p };
     },
     wake: (t) => calls.wakes.push(t),
     note: (t) => calls.notes.push(t),
@@ -251,13 +254,13 @@ test("a gap during a time the lock was not held is forgotten", async () => {
 test("a probe that throws never loses the sleep", async () => {
   const { root, watcher } = setup({ state: WORKING });
   const deps = (watcher as unknown as { deps: WatchDeps }).deps;
-  const real = deps.lidAndGraphics;
-  deps.lidAndGraphics = async () => {
+  const real = deps.probe;
+  deps.probe = async () => {
     throw new Error("boom");
   };
   await watcher.checkWake(T0);
   await assert.rejects(watcher.checkWake(T0 + 10 * MIN));
-  deps.lidAndGraphics = real;
+  deps.probe = real;
   assert.match((await watcher.checkWake(T0 + 10 * MIN + 30_000)) ?? "", /^\[daily-wake\] woke after 11 min/);
   rmSync(root, { recursive: true });
 });

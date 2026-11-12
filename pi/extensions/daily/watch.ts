@@ -4,13 +4,16 @@
 // The session that runs the day starts it with the run_day_watch tool (index.ts).
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
+import { agentMrKeys, agentPath } from "./mod/agentfile.ts";
 import { mrKeyFromRef, mrKeysOf, parseItems, ticketKey } from "./mod/diary.ts";
 import { classify, formatNote, formatPrompt, parseEvents } from "./mod/events.ts";
 import { inboxPrompt, messageFiles, nextInbox } from "./mod/inbox.ts";
 import { parseRunState } from "./mod/runstate.ts";
 import { isFullWake, outstanding, parseGraphics, parseLid, sleptBetween, WAKE_PREFIX } from "./mod/wake.ts";
 import { REPORT_MARK } from "./mod/warm.ts";
-import { PI_BUSY_PROMPT, nextNudged, shouldNudgeBusy } from "./mod/busy.ts";
+import { PI_BUSY_PROMPT, nextAgentAt, nextNudged, shouldNudgeBusy } from "./mod/busy.ts";
+import { nextPlanLines, piPlanPrompt, untracked } from "./mod/planlines.ts";
+import { formatSlot, parseSlot, piSlackPrompt, slackDue } from "./mod/slack.ts";
 import { parsePrint, shouldResume } from "./mod/update.ts";
 
 export const WATCH_MS = 180_000;
@@ -38,7 +41,7 @@ export type WakeProbe = {
 };
 
 export type WatchDeps = {
-  paths: () => { runState: string; diary: string; playbook: string };
+  paths: () => { runState: string; diary: string; playbook: string; slack: string };
   /** changes-since --cursor run-day */
   changes: () => Promise<Exec>;
   listInbox: () => string[];
@@ -69,7 +72,10 @@ export class DayWatcher {
   private pendingSince: number | null = null;
   private blindProbes = 0;
   private busyNudged = false;
+  private busyAgentAt = 0;
+  private planSeen: string[] = [];
   private updateSent = false;
+  private slackFailed = false;
   private deps: WatchDeps;
 
   constructor(deps: WatchDeps) {
@@ -104,6 +110,7 @@ export class DayWatcher {
       const ctx = {
         mrKeys: new Set([
           ...items.flatMap((i) => mrKeysOf(i.line)),
+          ...agentMrKeys(readOr(agentPath(p.diary))),
           ...runs.flatMap((r) => r.mrs.map(mrKeyFromRef)).filter((k) => k !== ""),
         ]),
         ticketKeys: new Set(items.map((i) => ticketKey(i.text)).filter((k) => k !== "")),
@@ -147,7 +154,17 @@ export class DayWatcher {
       return null;
     }
     const slept = prev !== null && sleptBetween(prev, now);
-    const probed = await this.deps.probe(slept || this.pendingSince !== null);
+    const needed = slept || this.pendingSince !== null;
+    let probed: WakeProbe;
+    try {
+      probed = await this.deps.probe(needed);
+    } catch (err) {
+      // A probe that could not run still leaves the sleep pending for the next tick to judge, and
+      // a tick with nothing to judge does not fail over a sample.
+      if (slept && prev !== null) this.pendingSince ??= prev;
+      if (!needed) return null;
+      throw err;
+    }
 
     if (probed.platform === "linux") {
       // A resume is the whole verdict here: no lid, no display, and no blind probe spent on it.
@@ -189,26 +206,65 @@ export class DayWatcher {
     return null;
   }
 
+  /** Called on the 30 s tick, between turns: one prompt per plan line with no run-state line (mod/planlines.ts). */
+  checkPlan(turnRunning: boolean): string | null {
+    if (turnRunning || !this.deps.holdsLock() || !this.active()) return null;
+    const p = this.deps.paths();
+    const diary = readOr(p.diary);
+    if (diary.includes(REPORT_MARK)) return null;
+    const { fresh, seen } = nextPlanLines(untracked(parseItems(diary), parseRunState(readOr(p.runState))), this.planSeen);
+    this.planSeen = seen;
+    return fresh.length > 0 ? piPlanPrompt(fresh.length) : null;
+  }
+
   /**
-   * Called on the 30 s tick: the Keep busy prompt when the watching session has sat idle with no
-   * agent outstanding (mod/busy.ts), once per idle stretch.
+   * Called on the 30 s tick, between turns: from 15:00 local time, every 20 min, 10 checks, the
+   * /slack-check prompt (mod/slack.ts). The slot is recorded first, so a failing write never
+   * repeats it every tick.
    */
-  checkBusy(now: number, a: { lastActiveAt: number; turnRunning: boolean; userWrote: boolean }): string | null {
+  checkSlack(turnRunning: boolean, localMinutes: number | null): string | null {
+    const p = this.deps.paths();
+    try {
+      const slot = slackDue({
+        isOwner: this.deps.holdsLock(),
+        dayRunning: this.active() && !readOr(p.diary).includes(REPORT_MARK),
+        turnRunning,
+        localMinutes,
+        lastSlot: parseSlot(existsSync(p.slack) ? readFileSync(p.slack, "utf8") : null),
+      });
+      if (slot === null) return null;
+      writeFileSync(p.slack, formatSlot(slot));
+      this.slackFailed = false;
+      return piSlackPrompt(slot);
+    } catch (err) {
+      if (!this.slackFailed) this.deps.friction("tool_error", `slack check not sent: ${err instanceof Error ? err.message : String(err)}`, "daily-slack");
+      this.slackFailed = true;
+      return null;
+    }
+  }
+
+  /**
+   * Called on the 30 s tick: the Keep busy prompt when the watching session has had no agent
+   * outstanding for the whole window (mod/busy.ts), once per idle stretch.
+   */
+  checkBusy(now: number, a: { turnRunning: boolean; userWrote: boolean }): string | null {
     const p = this.deps.paths();
     const out = this.active() ? outstanding(parseRunState(readOr(p.runState))).length : 0;
     this.busyNudged = nextNudged(this.busyNudged, { outstanding: out, userWrote: a.userWrote });
+    this.busyAgentAt = nextAgentAt(this.busyAgentAt, now, out);
     const dayRunning = this.active() && !readOr(p.diary).includes(REPORT_MARK);
     const state = {
       isOwner: this.deps.holdsLock(),
       dayRunning,
       now,
-      lastActiveAt: a.lastActiveAt,
+      lastAgentAt: this.busyAgentAt,
       outstanding: out,
       agentsRunning: a.turnRunning ? 1 : 0,
       nudged: this.busyNudged,
     };
     if (!shouldNudgeBusy(state)) return null;
     this.busyNudged = true;
+    this.busyAgentAt = now;
     return PI_BUSY_PROMPT;
   }
 
