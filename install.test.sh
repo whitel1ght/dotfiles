@@ -59,7 +59,8 @@ assert_link "$XDG_DIR/mrglass/config.yaml" "$TEST_DIR/mrglass/config.yaml" 'link
 assert_link "$HOME_DIR/.local/bin/proxyctl" "$TEST_DIR/bin/proxyctl" 'keeps Ubuntu proxyctl'
 assert_link "$HOME_DIR/.local/bin/clipboard-copy" "$TEST_DIR/bin/clipboard-copy" 'links Linux clipboard helper'
 for helper in wiki-sync repos-sync team-plugins-sync system-check jira-api jira-issue \
-    day-status friction friction-cards decisions decide run-day-inbox-answer pi-autoupdate; do
+    day-status day-agent friction friction-cards decisions decide run-day-inbox-answer pi-autoupdate \
+    plan-open plan-pick secrets-guard gitlab-api-guard; do
     assert_link "$HOME_DIR/.local/bin/$helper" "$TEST_DIR/bin/$helper" "links $helper"
 done
 assert_link "$HOME_DIR/.local/bin/decide" "$TEST_DIR/bin/decide" 'preserves source decide symlink target'
@@ -161,12 +162,47 @@ HOME="$HOOK_HOME" jq -e '.customSetting == true
   "$HOOK_HOME/.claude/settings.json" >/dev/null \
     && pass 'Claude hooks merge without replacing user hooks/settings' \
     || fail 'Claude hooks merge without replacing user hooks/settings' 'merged settings differ'
+HOME="$HOOK_HOME" jq -e --arg g "$TEST_DIR/bin/secrets-guard" --arg a "$TEST_DIR/bin/gitlab-api-guard" '
+  any(.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?; .command == $g)
+  and any(.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?; .command == $a)' \
+  "$HOOK_HOME/.claude/settings.json" >/dev/null \
+    && pass 'registers the Linux agent guards before Bash' \
+    || fail 'registers the Linux agent guards before Bash' 'guard hooks absent'
+HOME="$HOOK_HOME" jq -e '
+  (.permissions.deny // []) as $d
+  | (["Read(~/.secrets/**)", "Edit(~/.secrets/**)", "Read(~/.config/ecfx/jira.env)"] - $d) == []' \
+  "$HOOK_HOME/.claude/settings.json" >/dev/null \
+    && pass 'denies agent reads of the secrets files' \
+    || fail 'denies agent reads of the secrets files' 'deny rules absent'
+[ "$(jq -r '.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' "$HOOK_HOME/.claude/settings.json")" = 50 ] \
+    && pass 'Claude auto-compacts at 50%' \
+    || fail 'Claude auto-compacts at 50%' "got $(jq -c .env "$HOOK_HOME/.claude/settings.json")"
 before="$(sha256sum "$HOOK_HOME/.claude/settings.json")"
 env HOME="$HOOK_HOME" XDG_CONFIG_HOME="$HOOK_HOME/.config" CLAUDE_HOOKS=1 \
     bash "$SCRIPT" >/dev/null 2>&1
 after="$(sha256sum "$HOOK_HOME/.claude/settings.json")"
 [ "$before" = "$after" ] && pass 'Claude hook merge is idempotent' \
     || fail 'Claude hook merge is idempotent' 'rerun changed settings'
+
+# Auto-compact is only set when missing, so a hand-set value survives a re-run.
+jq '.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = "70"' "$HOOK_HOME/.claude/settings.json" \
+    > "$SANDBOX/hooks70.json" && mv "$SANDBOX/hooks70.json" "$HOOK_HOME/.claude/settings.json"
+env HOME="$HOOK_HOME" XDG_CONFIG_HOME="$HOOK_HOME/.config" CLAUDE_HOOKS=1 \
+    bash "$SCRIPT" >/dev/null 2>&1
+[ "$(jq -r '.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' "$HOOK_HOME/.claude/settings.json")" = 70 ] \
+    && pass 're-run keeps a hand-set auto-compact threshold' \
+    || fail 're-run keeps a hand-set auto-compact threshold' \
+        "got $(jq -r '.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE' "$HOOK_HOME/.claude/settings.json")"
+
+# Claude owns its settings file: a host that never ran Claude gets none, since
+# there is nothing to merge the auto-compact threshold into.
+NOSET_HOME="$SANDBOX/noset-home"
+mkdir -p "$NOSET_HOME"
+env HOME="$NOSET_HOME" XDG_CONFIG_HOME="$NOSET_HOME/.config" \
+    bash "$SCRIPT" > "$SANDBOX/noset.log" 2>&1
+[ ! -e "$NOSET_HOME/.claude/settings.json" ] \
+    && pass 'does not create a Claude settings file on a host without Claude' \
+    || fail 'does not create a Claude settings file on a host without Claude' 'settings.json created'
 
 # Ubuntu command-name compatibility links are executable links, not aliases.
 SHIM_HOME="$SANDBOX/shims-home"

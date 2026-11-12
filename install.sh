@@ -168,12 +168,13 @@ create_symlink "$DOTFILES_DIR/git/config/git/ignore" "$XDG_CONFIG_HOME/git/ignor
 # script indirectly: the Ubuntu branch's bin/proxyctl is deliberately retained.
 [ "$DRY_RUN" = 1 ] || mkdir -p "$HOME/.local/bin"
 for name in art cards changes-since clean-worktrees clipboard-copy coach-fix coach-mine cs cs-add \
-    daily-stats day-note day-plan day-status decide decisions dev diary-links \
+    daily-stats day-agent day-note day-plan day-status decide decisions dev diary-links \
     drills docs-check ecfx-daily-commits ecfx-docker end-day friction friction-cards friction-ledger \
-    friction-mine frictions glab-gate ideas jira-api jira-issue jt mr-ship mr-watch \
+    friction-mine frictions gitlab-api-guard glab-gate ideas jira-api jira-issue jt mr-ship mr-watch \
     newsboat-urls notes open-path opencode-console-auth pi-autoupdate pi-contract \
-    pi-parity plink repos-sync review-gate run-day-inbox-answer session-picker start-day sync-tickets system-check \
-    team-plugins-sync tmux-prune vault-check wiki-commit wiki-sync words wt proxyctl; do
+    pi-parity plan-open plan-pick plink repos-sync review-gate run-day-inbox-answer \
+    secrets-guard session-picker start-day sync-tickets system-check team-plugins-sync tmux-prune \
+    vault-check wiki-commit wiki-sync words wt proxyctl; do
     link_command "$name"
 done
 ensure_command_compat fd fdfind
@@ -202,12 +203,17 @@ fi
 create_symlink "$DOTFILES_DIR/claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
 link_dir_contents "$DOTFILES_DIR/claude/commands" "$HOME/.claude/commands"
 
-# Optional active Claude worktree hooks. Existing hooks are merged, not replaced.
+# Optional active Claude hooks: worktrees under ~/projects/worktrees, the agent
+# guards before every Bash call, and deny rules that keep Claude's file tools out
+# of ~/.secrets. Existing hooks are merged, not replaced. docker-guard and
+# dashboard-check are macOS-side helpers and are not registered here.
 install_claude_hooks() {
-    local settings="$HOME/.claude/settings.json" tmp create remove backup
+    local settings="$HOME/.claude/settings.json" tmp create remove secrets gitlab backup
     command -v jq >/dev/null 2>&1 || { log_warn 'jq missing; cannot configure Claude hooks'; return 0; }
     create="$HOME/.local/bin/wt hook-create"
     remove="$HOME/.local/bin/wt hook-remove"
+    secrets="$DOTFILES_DIR/bin/secrets-guard"
+    gitlab="$DOTFILES_DIR/bin/gitlab-api-guard"
     mkdir -p "$(dirname "$settings")"
     if [ -L "$settings" ]; then
         log_warn "Leaving symlinked Claude settings untouched: $settings"
@@ -215,13 +221,21 @@ install_claude_hooks() {
     fi
     [ -f "$settings" ] || printf '{}\n' > "$settings"
     tmp="$(mktemp "${settings}.XXXXXX")"
-    if ! jq --arg create "$create" --arg remove "$remove" '
+    if ! jq --arg create "$create" --arg remove "$remove" --arg secrets "$secrets" \
+        --arg gitlab "$gitlab" '
         def ensure_hook($key; $command):
           .hooks[$key] = ((.hooks[$key] // []) + [{hooks:[{type:"command", command:$command}]}]
             | unique_by(tojson));
+        def without_cmds($cmds): [.[]? | select(([.hooks[]?.command] - $cmds) == [.hooks[]?.command])];
         .hooks = (.hooks // {})
         | ensure_hook("WorktreeCreate"; $create)
         | ensure_hook("WorktreeRemove"; $remove)
+        | .hooks.PreToolUse = ((.hooks.PreToolUse | without_cmds([$secrets, $gitlab]))
+            + [{matcher:"Bash", hooks:[{type:"command", command:$secrets}]},
+               {matcher:"Bash", hooks:[{type:"command", command:$gitlab}]}])
+        | (.permissions.deny // []) as $deny
+        | .permissions.deny = $deny + (["Read(~/.secrets/**)", "Edit(~/.secrets/**)",
+            "Read(~/.config/ecfx/jira.env)"] - $deny)
     ' "$settings" > "$tmp"; then
         rm -f "$tmp"
         log_warn "Could not parse $settings; leaving it untouched"
@@ -240,6 +254,38 @@ install_claude_hooks() {
 
 if [ "$DRY_RUN" != 1 ] && [ "$LINKS_ONLY" != 1 ] && [ "${CLAUDE_HOOKS:-0}" = 1 ]; then
     install_claude_hooks
+fi
+
+# Claude auto-compacts at 50% of the context window instead of near the limit.
+# Only set when missing, so a value changed by hand survives a re-run. Claude
+# owns the file: a host that never ran Claude gets no settings.json from here.
+install_claude_defaults() {
+    local settings="$HOME/.claude/settings.json" tmp backup
+    command -v jq >/dev/null 2>&1 || { log_warn 'jq missing; cannot set Claude defaults'; return 0; }
+    if [ -L "$settings" ]; then
+        log_warn "Leaving symlinked Claude settings untouched: $settings"
+        return 0
+    fi
+    [ -f "$settings" ] || return 0
+    tmp="$(mktemp "${settings}.XXXXXX")"
+    if ! jq '.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE //= "50"' "$settings" > "$tmp"; then
+        rm -f "$tmp"
+        log_warn "Could not set the auto-compact threshold in $settings"
+        return 0
+    fi
+    if cmp -s "$tmp" "$settings"; then
+        rm -f "$tmp"
+        return 0
+    fi
+    backup="$(unique_backup "$settings")"
+    cp -a -- "$settings" "$backup"
+    chmod --reference="$settings" "$tmp"
+    mv -f -- "$tmp" "$settings"
+    log_info "Claude auto-compacts at 50% of the context window in $settings (backup: $backup)"
+}
+
+if [ "$DRY_RUN" != 1 ] && [ "$LINKS_ONLY" != 1 ]; then
+    install_claude_defaults
 fi
 
 # Never perform a vendor fetch or modify Claude's registered marketplaces unless
