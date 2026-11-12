@@ -173,7 +173,8 @@ for name in art cards changes-since clean-worktrees clipboard-copy coach-fix coa
     friction-mine frictions gitlab-api-guard glab-gate handoff-open ideas jira-api jira-issue jt \
     mr-ship mr-watch newsboat-urls notes open-path opencode-console-auth pi-autoupdate pi-contract \
     pi-parity plan-open plan-pick plink repos-sync review-gate run-day-inbox-answer secret \
-    secrets-guard session-picker start-day sync-tickets system-check team-plugins-sync tmux-here \
+    secrets secrets-guard session-picker start-day sync-tickets system-check team-plugins-sync \
+    tmux-here \
     tmux-prune vault-check wiki-commit wiki-sync words wt proxyctl; do
     link_command "$name"
 done
