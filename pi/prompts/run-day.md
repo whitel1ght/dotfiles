@@ -48,6 +48,9 @@ the user edits the diary too. `day-plan` opens today's diary in a tmux popup whe
   post about someone else's).
 - Questions for the user go into the decision queue (step 9): never ask the question in the thread,
   never wait for the answer. The only question asked in the thread is the triage go-ahead (step 1).
+- Before the first `kubectl --context prod01` call of a step, run `prod-kube-preflight`. Exit 3 means the
+  Duplo sign-in expired and a card is filed: stop that step and report it blocked, don't call kubectl
+  (it would hang on the login).
 - When the user asks for testing steps for a ticket, answer with the numbered steps first, taken from
   the plan or the hand-off note, and report agent status after them. If they don't exist yet, write
   them from the ticket and the diff, or say in the first line what is missing.

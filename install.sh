@@ -764,6 +764,11 @@ if [ -f "$DOTFILES_DIR/bin/mr-ship" ]; then
     create_symlink "$DOTFILES_DIR/bin/mr-ship" "$HOME/.local/bin/mr-ship"
 fi
 
+# prod-kube-preflight checks the Duplo sign-in before a kubectl prod01 step; driven by /run-day.
+if [ -f "$DOTFILES_DIR/bin/prod-kube-preflight" ]; then
+    create_symlink "$DOTFILES_DIR/bin/prod-kube-preflight" "$HOME/.local/bin/prod-kube-preflight"
+fi
+
 # jira-api is the Jira REST helper the daily system calls; it reads its login with `secret`.
 if [ -f "$DOTFILES_DIR/bin/jira-api" ]; then
     create_symlink "$DOTFILES_DIR/bin/jira-api" "$HOME/.local/bin/jira-api"

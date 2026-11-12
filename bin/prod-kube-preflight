@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# prod-kube-preflight [context]: check, before a `kubectl --context prod01` step, that the Duplo
+# sign-in behind the context's exec credential is still valid. kubectl runs `duploctl jit k8s
+# --interactive`, which opens a browser login and blocks when the session has expired (after sleep,
+# say); this runs the same command with stdin closed, bounded to 15 s, and never blocks.
+#   exit 0  valid session (ExecCredential expires in the future)
+#   exit 2  duploctl failed for another reason (network, bad output): message on stderr, no card
+#   exit 3  hung or expired: prints the login line, files one decision card (not one per call)
+# Overrides: PROD_KUBE_PREFLIGHT_LIMIT (seconds, default 15), DECIDE_BIN (default decide).
+set -uo pipefail
+
+CTX="${1:-prod01}"
+LIMIT="${PROD_KUBE_PREFLIGHT_LIMIT:-15}"
+DECIDE="${DECIDE_BIN:-decide}"
+TITLE="Duplo sign-in expired for kubectl $CTX"
+
+cfg="$(kubectl config view --raw -o json 2>/dev/null || true)"
+user="$(jq -r --arg c "$CTX" '[.contexts[]? | select(.name == $c) | .context.user][0] // empty' <<<"$cfg" 2>/dev/null || true)"
+cmd=()
+while IFS= read -r w; do cmd+=("$w"); done < <(jq -r --arg u "${user:-$CTX}" \
+  '[.users[]? | select(.name == $u) | .user.exec | select(. != null) | [.command] + (.args // [])][0] // [] | .[]' <<<"$cfg" 2>/dev/null)
+if [ "${#cmd[@]}" -eq 0 ]; then
+  echo "prod-kube-preflight: no exec credential for context $CTX in the kubeconfig" >&2
+  exit 2
+fi
+login="${cmd[*]}"
+
+OUT="$(mktemp)"
+ERR="$(mktemp)"
+trap 'rm -f "$OUT" "$ERR"' EXIT
+
+# perl: run the command in its own process group, kill the whole group after LIMIT seconds
+# (macOS has no timeout); exit 124 on a kill.
+perl -e '
+  my $limit = shift @ARGV;
+  my $pid = fork();
+  die "fork: $!" unless defined $pid;
+  if (!$pid) { setpgrp(0, 0); open(STDIN, "<", "/dev/null"); exec @ARGV or exit 127; }
+  $SIG{ALRM} = sub { kill "KILL", -$pid; kill "KILL", $pid; waitpid($pid, 0); exit 124; };
+  alarm $limit;
+  waitpid($pid, 0);
+  exit($? >> 8);
+' "$LIMIT" "${cmd[@]}" >"$OUT" 2>"$ERR"
+rc=$?
+
+expired=""
+if [ "$rc" -eq 124 ]; then
+  expired="no answer within ${LIMIT}s, the interactive login is waiting"
+elif [ "$rc" -ne 0 ]; then
+  echo "prod-kube-preflight: duploctl exited $rc: $(head -c 400 "$ERR")" >&2
+  exit 2
+elif ! jq -e '.status.token' "$OUT" >/dev/null 2>&1; then
+  echo "prod-kube-preflight: duploctl printed no ExecCredential: $(head -c 200 "$OUT")" >&2
+  exit 2
+else
+  exp="$(jq -r '.status.expirationTimestamp // empty' "$OUT")"
+  if [ -n "$exp" ]; then
+    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    # ISO-8601 UTC strings compare in order
+    [[ "${exp%%.*}Z" > "$now" ]] || expired="the session expired at $exp"
+  fi
+fi
+
+[ -z "$expired" ] && exit 0
+
+echo "Duplo sign-in expired for $CTX ($expired). Run in a terminal: $login"
+
+if ! "$DECIDE" list --json 2>/dev/null | grep -qF "$TITLE"; then
+  "$DECIDE" add --key '' --source prod-kube-preflight --blocks "kubectl $CTX step" \
+    --question "$TITLE: sign in again?" \
+    --option "You run \`$login\` in a terminal and sign in; the agent then retries the kubectl step" \
+    --option "The agent drops the kubectl step and reports it blocked" <<EOT >/dev/null
+$TITLE. $expired. kubectl calls on $CTX hang on the interactive login until it is renewed.
+EOT
+fi
+exit 3
