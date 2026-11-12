@@ -47,11 +47,28 @@ plugins=(git)
 [[ -d "$ZSH/custom/plugins/zsh-autosuggestions" ]] && plugins+=(zsh-autosuggestions)
 plugins+=(sudo)
 
+# oh-my-zsh updates itself every 13 days without asking; under the p10k instant
+# prompt it also stays silent.
+zstyle ':omz:update' mode auto
+
 if [[ -r "$ZSH/oh-my-zsh.sh" ]]; then
   source "$ZSH/oh-my-zsh.sh"
 else
   PROMPT='%n@%m:%~%# '
 fi
+
+# The theme and plugins in the custom folder (powerlevel10k, fzf-tab, autosuggestions,
+# syntax highlighting) are git clones that oh-my-zsh's updater skips. The
+# autoupdate plugin (TamCore, installed by zsh-setup.sh) pulls them on the same
+# 13-day cycle. It is sourced here instead of listed in plugins=() so its
+# per-plugin lines go to a log: any output during startup trips the instant
+# prompt's warning, and QUIET only hides its header. Ubuntu never sets ZSH_CUSTOM
+# and $ZSH_CACHE_DIR only exists once oh-my-zsh has loaded, hence both fallbacks.
+ZSH_CUSTOM_AUTOUPDATE_QUIET=true
+ZSH_AUTOUPDATE_PLUGIN="${ZSH_CUSTOM:-$ZSH/custom}/plugins/autoupdate/autoupdate.plugin.zsh"
+[[ -r "$ZSH_AUTOUPDATE_PLUGIN" ]] &&
+    source "$ZSH_AUTOUPDATE_PLUGIN" >>"${ZSH_CACHE_DIR:-$HOME/.cache}/zsh-autoupdate.log" 2>&1
+unset ZSH_AUTOUPDATE_PLUGIN
 
 # -----------------------------------------------------------------------------
 # ALIASES
@@ -105,7 +122,16 @@ alias pilm='pi --model lmstudio/qwen/qwen2.5-coder-14b --models lmstudio/qwen/qw
 # Keep Pi and its extensions current before an interactive start. The updater
 # skips subcommands/non-interactive calls, rate-limits successful updates, and
 # always lets Pi start if an update fails. Ubuntu installs this helper via install.sh.
-pi() { if (( $+commands[pi-autoupdate] )); then command pi-autoupdate "$@"; fi; command pi "$@"; }
+# The ECFX team skills (~/.pi/agent/skills-team) are off by default; `pi --team` loads them (D-664).
+pi() {
+  local -a args
+  local a
+  for a in "$@"; do
+    [[ $a == --team ]] && args+=(--skill "$HOME/.pi/agent/skills-team") || args+=("$a")
+  done
+  (( $+commands[pi-autoupdate] )) && command pi-autoupdate "${args[@]}"
+  command pi "${args[@]}"
+}
 
 # Provider-scoped OpenAI session.
 alias piopenai='pi --model openai/gpt-6.1-sol --models "openai/*"'

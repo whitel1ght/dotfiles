@@ -9,6 +9,7 @@ STUBS="$ROOT/bin"
 mkdir -p "$STUBS" "$HOME_DIR/.oh-my-zsh/custom/themes/powerlevel10k" \
     "$HOME_DIR/.oh-my-zsh/custom/plugins/zsh-autosuggestions" \
     "$HOME_DIR/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" \
+    "$HOME_DIR/.oh-my-zsh/custom/plugins/autoupdate" \
     "$HOME_DIR/.oh-my-zsh/custom/plugins/fzf-tab"
 
 cat > "$STUBS/zsh" <<'EOF'
