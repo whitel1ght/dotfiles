@@ -415,10 +415,10 @@ whether it runs; never start a loop of your own.
 It sorts the events the way Claude Code's daily plugin does (same code), and sends:
 
 - `[daily-event] <kind> | <repo>!<iid> | <TICKET> | <summary> | <url>`, which starts a turn: a
-  `review`, `comment` or `pipeline_failed` on an MR or ticket of today's plan, or a new
+  `review`, `comment`, `pipeline_failed` or `merged` on an MR or ticket of today's plan, or a new
   `assigned` ticket that is not on it. Several arrive as one message, one line each.
-- `[daily-event:info] ...` lines, added without a turn: everything else (approvals, merges,
-  pipelines fixed, ticket moves, mentions, other MRs).
+- `[daily-event:info] ...` lines, added without a turn: everything else (approvals, merges of
+  other MRs, pipelines fixed, ticket moves, mentions, other MRs).
 - `inbox: <N> new` when report-backs or hand-offs land.
 - `[daily-idle] no agent running: run Keep busy of /run-day (section 11).` once per idle stretch,
   after 10 minutes with no agent outstanding and no turn running.
@@ -433,6 +433,16 @@ Then:
 - `[daily-event] review | ...` / `comment | ...` → step 5.
 - `[daily-event] pipeline_failed | ...` → dispatch a fix agent (step 2, ticket brief with done-when: the
   pipeline on the branch is green), within the cap of 3.
+- `[daily-event] merged | <repo>!<iid> | ...` → the user merged it in the UI; tick it without being
+  told. Take the sha from `glab api "projects/<urlencoded path>/merge_requests/<iid>" | jq -r
+  '.merge_commit_sha // .squash_commit_sha // .sha'`. For every item whose run-state `mr=`, plan
+  line or agent-file MRs name that MR: tick each child whose step is merging it `[X]` and run
+  `day-agent note <key> progress "merged <sha> (<repo>!<iid>)"`. When nothing else on the item is
+  open (every MR in its `mr=` merged, no other open child), run `day-agent note <key> done "merged
+  <sha> (<repo>!<iid>)"`, tick the top-level line `[X]` and set `needs_you=no`; otherwise keep it
+  `[/]` with its few words naming what is next. A line already `[X]` or `[-]` stays as it is.
+  Withdraw and close any open decision about merging that MR (step 9). Then Keep busy (step 11): a
+  merge often clears another item's blocker.
 - `[daily-event] assigned | ...` → file a decision `Add <KEY> to today's plan?` (options `Add it`
   and `Not today`); on `Add it`, add one `- [ ] <key> <summary>` line under `**Today**` (never on
   your own) and triage it like step 1.
