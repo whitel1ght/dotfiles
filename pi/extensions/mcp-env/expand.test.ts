@@ -30,11 +30,17 @@ test("a server with an unset variable is skipped, the rest are kept", () => {
 test("the committed mcp-servers.json names its secrets only as variables", () => {
   const file = JSON.parse(readFileSync(new URL("../../mcp-servers.json", import.meta.url), "utf8"));
   const out = expandServers(file, {});
-  assert.deepEqual(out.servers, []);
   assert.deepEqual(
     Object.fromEntries(out.skipped.map((s) => [s.name, s.missing])),
     { slack: ["SLACK_MCP_CLIENT_ID", "SLACK_MCP_CLIENT_SECRET"] },
   );
+  // A server that needs no secret — a local command like decisions — loads with an empty
+  // environment. Anything credential-bearing has to be skipped above instead.
+  for (const { name, config } of out.servers) {
+    const c = config as { oauth?: unknown; headers?: Record<string, string> };
+    assert.equal(c.oauth, undefined, `${name} loads without env but declares oauth`);
+    assert.equal(c.headers, undefined, `${name} loads without env but declares headers`);
+  }
 });
 
 test("rejects a file without mcpServers", () => {
