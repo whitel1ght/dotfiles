@@ -1,0 +1,4 @@
+{
+  "plugins": ["shared", "backend", "admin", "dashboard", "ui-review"],
+  "skills": ["notice-qa", "fix-jira-bug", "obsidian-cli", "duploctl"]
+}
