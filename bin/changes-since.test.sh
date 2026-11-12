@@ -33,10 +33,13 @@ echo "waiter stderr noise" >&2
 STUB
 chmod +x "$STUBS/wait-for"
 export CHANGES_SINCE_WAIT_FOR="$STUBS/wait-for"
+# No test may reach the network: the offline probe succeeds unless a test says otherwise.
+export CHANGES_SINCE_NET_PROBE=true
 
 # jira-api <METHOD> <path> [body]: GET myself answers the profile zone (JIRA_TZ,
 # default UTC; JIRA_MYSELF_FAIL=1 fails it; JIRA_MYSELF_BODY replies with that
-# body instead, like Jira's error bodies; JIRA_MISSING=<text> prints it to stderr
+# body instead, like Jira's error bodies; JIRA_MYSELF_ERR=<text> goes to stderr
+# with the failure; JIRA_MISSING=<text> prints it to stderr
 # and exits 1 with no stdout, like a missing secret); otherwise picks the fixture
 # by what the JQL asks for; JIRA_SEARCH_BODY replies to search/jql with that body
 # (GET myself still succeeds).
@@ -46,7 +49,7 @@ echo "$*" >> "${FIX:?}/jira.log"
 [ -e "$FIX/jira-hang-once" ] && { rm -f "$FIX/jira-hang-once"; sleep 30; }
 [ -n "${JIRA_SLEEP:-}" ] && sleep "$JIRA_SLEEP"
 [ -n "${JIRA_MISSING:-}" ] && { echo "$JIRA_MISSING" >&2; exit 1; }
-[ "$1 $2" = "GET myself" ] && { [ -n "${JIRA_MYSELF_BODY:-}" ] && { echo "$JIRA_MYSELF_BODY"; exit 0; }; [ -n "${JIRA_MYSELF_FAIL:-}" ] && exit 1; printf '{"timeZone":"%s"}\n' "${JIRA_TZ:-UTC}"; exit 0; }
+[ "$1 $2" = "GET myself" ] && { [ -n "${JIRA_MYSELF_BODY:-}" ] && { echo "$JIRA_MYSELF_BODY"; exit 0; }; [ -n "${JIRA_MYSELF_FAIL:-}" ] && { [ -n "${JIRA_MYSELF_ERR:-}" ] && echo "$JIRA_MYSELF_ERR" >&2; exit 1; }; printf '{"timeZone":"%s"}\n' "${JIRA_TZ:-UTC}"; exit 0; }
 [ -n "${JIRA_SEARCH_BODY:-}" ] && { echo "$JIRA_SEARCH_BODY"; exit 0; }
 [ -n "${JIRA_DOWN:-}" ] && { echo '{"errorMessages":["Unauthorized"]}'; exit 0; }
 case "$3" in
@@ -496,6 +499,34 @@ run >/dev/null; rc=$?
 assert_eq "1" "$rc" "a failing to-dos feed also holds off the next runs"
 assert_eq "1" "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "to-dos: still one friction line"
 assert_eq "$glab_calls" "$(wc -l < "$FIX/glab.log")" "to-dos: no glab call inside the window"
+
+echo "changes-since — offline gate"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(JIRA_MYSELF_FAIL=1 CHANGES_SINCE_NET_PROBE=false run); rc=$?
+assert_eq "75|" "$rc|$out" "Jira call fails and the network probe fails: exit 75, nothing on stdout"
+assert_eq "changes-since: offline (network not up); skipping this tick" "$(errs)" "stderr says offline"
+[ ! -e "$FIX/friction.log" ] && pass "offline: no service_down line" || fail "offline: no service_down line" "$(cat "$FIX/friction.log")"
+[ ! -e "$FIX/wait-for.log" ] && pass "offline: wait-for not called" || fail "offline: wait-for not called" "$(cat "$FIX/wait-for.log")"
+assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "offline: cursor unchanged"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(GLAB_FAIL_EXACT="api user" CHANGES_SINCE_NET_PROBE=false run); rc=$?
+assert_eq "75|" "$rc|$out" "GitLab user call fails and the probe fails: exit 75"
+assert_contains "$(errs)" "offline (network not up)" "GitLab: stderr says offline"
+[ ! -e "$FIX/friction.log" ] && pass "GitLab offline: no service_down line" || fail "GitLab offline: no service_down line" "$(cat "$FIX/friction.log")"
+[ ! -e "$FRICTION_DIR/gitlab-down" ] && pass "GitLab offline: glab-gate down not called" || fail "GitLab offline: glab-gate down not called" "marker written"
+assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "GitLab offline: cursor unchanged"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(JIRA_MYSELF_FAIL=1 CHANGES_SINCE_NET_PROBE=true run); rc=$?
+assert_eq "1" "$rc" "probe succeeds: a failing Jira is still an outage, exit 1"
+assert_eq "--source jira service_down Jira unavailable, retry in a few minutes" "$(cat "$FIX/friction.log")" "and still logs service_down"
+assert_eq "jira --detach" "$(cat "$FIX/wait-for.log" 2>/dev/null)" "and still starts wait-for jira --detach"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(JIRA_MYSELF_FAIL=1 JIRA_MYSELF_ERR="curl: (6) Could not resolve host: x" CHANGES_SINCE_NET_PROBE=true run); rc=$?
+assert_eq "--source jira service_down Jira unavailable, retry in a few minutes: curl: (6) Could not resolve host: x" "$(cat "$FIX/friction.log")" "a real outage line carries the failing call's first stderr line"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(JIRA_MYSELF_BODY='{"message":"Unauthorized"}' CHANGES_SINCE_NET_PROBE=false run); rc=$?
+assert_eq "1" "$rc" "a credentials failure is checked before the probe: exit 1 even when offline"
+assert_contains "$(cat "$FIX/friction.log")" "JIRA_USER/JIRA_TOKEN" "and keeps its own message"
 
 echo "changes-since — background waiter"
 reset; cursor 2026-10-08T07:00:00Z

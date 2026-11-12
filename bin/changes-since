@@ -51,6 +51,15 @@
 # starts in the background (CHANGES_SINCE_WAIT_FOR names another command), so
 # the recovery is noted; its output is dropped and a failing waiter changes nothing.
 #
+# Offline gate: a fast failure is not always an outage (the daily watcher's timer
+# also fires in macOS DarkWake, lid closed and network not up). Before a Jira or
+# GitLab outage is logged, CHANGES_SINCE_NET_PROBE (a command string; default: curl
+# a small Apple page, 3 s) must succeed. When it fails the machine is offline: the
+# run prints "offline" on stderr and exits 75 like a timeout, with no service_down
+# line, no wait-for, no glab-gate down and no cursor move. Credentials failures are
+# judged before the probe. A real Jira outage line ends with the failing call's
+# first stderr line, so its cause shows.
+#
 # Needs jira-api (it reads the Jira token from ~/.secrets), glab and jq.
 set -euo pipefail
 
@@ -67,6 +76,8 @@ down() {
   [ -z "${3:-}" ] || "${CHANGES_SINCE_WAIT_FOR:-wait-for}" "$1" --detach </dev/null >/dev/null 2>&1 || true
   die "$2"
 }
+offline() { ! eval "${CHANGES_SINCE_NET_PROBE:-curl -sS -o /dev/null --max-time 3 https://www.apple.com/library/test/success.html}" >/dev/null 2>&1; }
+skip_tick() { echo "changes-since: offline (network not up); skipping this tick" >&2; exit 75; }
 HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 epoch_of() { date -j -u -f %Y-%m-%dT%H:%M:%SZ "$1" +%s 2>/dev/null || date -u -d "$1" +%s; }
@@ -282,7 +293,7 @@ feed_gitlab_mrs() {
   done < <(jq -r '.[] | [.project_id, .iid] | @tsv' <<<"$mrs")
 }
 
-gitlab_down() { [ ! -e "$TIMED_OUT" ] || down "$@"; "$HERE/glab-gate" down --source "$1" "$2" || true; die "$2"; }
+gitlab_down() { [ ! -e "$TIMED_OUT" ] || down "$@"; offline && skip_tick; "$HERE/glab-gate" down --source "$1" "$2" || true; die "$2"; }
 
 gate_rc=0; "$HERE/glab-gate" check || gate_rc=$?
 [ "$gate_rc" -ne 1 ] || die "GitLab unavailable (holding off until the 15-minute window since the last failure passes)"
@@ -296,7 +307,9 @@ jira_down() {
   fi
   # The waiter probes GET myself: only a failure there means Jira itself is down.
   [ "${JIRA_STEP:-myself}" = myself ] || down jira "Jira search failed, retry in a few minutes"
-  down jira "Jira unavailable, retry in a few minutes" wait
+  offline && skip_tick
+  local cause; cause=$(head -n 1 "$JIRA_ERR" 2>/dev/null || true)
+  down jira "Jira unavailable, retry in a few minutes${cause:+: $cause}" wait
 }
 feed_jira || jira_down
 ME=$(bounded glab api user | jq -er .username) || gitlab_down gitlab "GitLab unavailable"
