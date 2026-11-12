@@ -12,6 +12,10 @@
 #     --ff-only` there;
 #   - local commits not on origin, or uncommitted changes (submodules aside): left alone, with
 #     the reason.
+# Every other worktree whose branch tracks a remote branch it is behind (an MR pushed from the
+# ThinkPad overnight) is fast-forwarded the same way: `git merge --ff-only` when it has no local
+# commits off the remote and no uncommitted changes to tracked files, else left alone, with the
+# reason.
 # Where the default branch is checked out, its submodules are then brought to the commits it
 # records (`submodule update --init --recursive`), each only when it is not set up yet or is
 # behind; one with uncommitted changes or moved on purpose (a commit not behind) is left alone.
@@ -37,36 +41,68 @@ sync_one() { # repo-dir
   if [ -z "$d" ]; then
     for c in main master; do git -C "$r" rev-parse -q --verify "refs/remotes/origin/$c" >/dev/null && { d="$c"; break; }; done
   fi
-  [ -n "$d" ] || { printf 'ok\t%s\n' "$name"; return; }
-  lref="refs/heads/$d"; up="refs/remotes/origin/$d"
-  old="$(git -C "$r" rev-parse -q --verify "$lref")" || { printf 'ok\t%s\n' "$name"; return; }
-  new="$(git -C "$r" rev-parse "$up")"
-  behind="$(git -C "$r" rev-list --count "$lref..$up")"; ahead="$(git -C "$r" rev-list --count "$up..$lref")"
-  wt="$(git -C "$r" worktree list --porcelain | awk -v b="branch $lref" '/^worktree / { w = substr($0, 10) } $0 == b { print w; exit }')"
-  local moved="" subs
-  if [ "$ahead" -gt 0 ]; then
-    [ "$behind" -gt 0 ] || { printf 'ok\t%s\n' "$name"; return; }
-    printf 'left\t%s: %s is %s behind origin and has %s local commit(s) not on it, not moved\n' "$name" "$d" "$behind" "$ahead"; return
-  fi
-  if [ "$behind" -gt 0 ]; then
-    # submodules are checked on their own below, so a stale one never blocks the branch
-    if [ -z "$wt" ]; then
-      git -C "$r" update-ref -m "repos-sync: fast-forward to origin" "$lref" "$new" "$old" 2>/dev/null ||
-        { printf 'failed\t%s: could not move %s\n' "$name" "$d"; return; }
-    elif [ -n "$(git -C "$wt" status --porcelain --untracked-files=no --ignore-submodules=all)" ]; then
-      printf 'left\t%s: %s is %s behind origin, not moved: uncommitted changes in %s\n' "$name" "$d" "$behind" "$wt"; return
-    elif ! err="$(git -C "$wt" merge --ff-only -q "$up" 2>&1)"; then
-      printf 'failed\t%s: fast-forward of %s failed: %s\n' "$name" "$d" "$(printf '%s\n' "$err" | tail -1)"; return
+  local moved="" left="" subs="" upd
+  lref=""; [ -z "$d" ] || lref="refs/heads/$d"; up="refs/remotes/origin/$d"
+  if [ -n "$lref" ] && old="$(git -C "$r" rev-parse -q --verify "$lref")"; then
+    new="$(git -C "$r" rev-parse "$up")"
+    behind="$(git -C "$r" rev-list --count "$lref..$up")"; ahead="$(git -C "$r" rev-list --count "$up..$lref")"
+    wt="$(git -C "$r" worktree list --porcelain | awk -v b="branch $lref" '/^worktree / { w = substr($0, 10) } $0 == b { print w; exit }')"
+    if [ "$ahead" -gt 0 ]; then
+      [ "$behind" -eq 0 ] || left="$d is $behind behind origin and has $ahead local commit(s) not on it, not moved"
+    else
+      if [ "$behind" -gt 0 ]; then
+        # submodules are checked on their own below, so a stale one never blocks the branch
+        if [ -z "$wt" ]; then
+          git -C "$r" update-ref -m "repos-sync: fast-forward to origin" "$lref" "$new" "$old" 2>/dev/null ||
+            { printf 'failed\t%s: could not move %s\n' "$name" "$d"; return; }
+          moved="$d fast-forwarded $behind commit(s)"
+        elif [ -n "$(git -C "$wt" status --porcelain --untracked-files=no --ignore-submodules=all)" ]; then
+          left="$d is $behind behind origin, not moved: uncommitted changes in $wt"
+        elif ! err="$(git -C "$wt" merge --ff-only -q "$up" 2>&1)"; then
+          printf 'failed\t%s: fast-forward of %s failed: %s\n' "$name" "$d" "$(printf '%s\n' "$err" | tail -1)"; return
+        else
+          moved="$d fast-forwarded $behind commit(s)"
+        fi
+      fi
+      [ -n "$left" ] || [ -z "$wt" ] || subs="$(sub_sync "$wt")"
     fi
-    moved="$d fast-forwarded $behind commit(s)"
   fi
-  [ -n "$wt" ] && subs="$(sub_sync "$wt")" || subs=""
-  local upd left
-  upd="$(sed -n 's/^updated //p' <<<"$subs")"; left="$(sed -n 's/^left //p' <<<"$subs")"
+  upd="$(sed -n 's/^updated //p' <<<"$subs")"
+  [ -n "$left" ] || left="$(sed -n 's/^left //p' <<<"$subs")"
   [ -z "$upd" ] || moved="${moved:+$moved, }submodules updated ($upd)"
+  subs="$(wt_sync "$r" "$lref")"
+  upd="$(sed -n 's/^updated //p' <<<"$subs")"
+  [ -z "$upd" ] || moved="${moved:+$moved, }$upd"
+  upd="$(sed -n 's/^left //p' <<<"$subs")"
+  [ -z "$upd" ] || left="${left:+$left; }$upd"
   if [ -n "$left" ]; then printf 'left\t%s: %s\n' "$name" "${moved:+$moved; }$left"
   elif [ -n "$moved" ]; then printf 'moved\t%s: %s\n' "$name" "$moved"
   else printf 'ok\t%s\n' "$name"; fi
+}
+
+# fast-forwards every other worktree of the repo (MR branches, pushed from another machine
+# overnight) whose branch has an upstream it is behind: only with no local commits off it and no
+# uncommitted changes to tracked files. Prints "updated <text>" and "left <reasons>" lines.
+wt_sync() { # repo default-branch-ref
+  local r="$1" skip="$2" w b behind ahead upd="" left=""
+  while IFS=$'\t' read -r w b; do
+    [ "$b" != "$skip" ] || continue
+    b="${b#refs/heads/}"
+    git -C "$w" rev-parse -q --verify '@{u}' >/dev/null 2>&1 || continue
+    behind="$(git -C "$w" rev-list --count 'HEAD..@{u}')"; [ "$behind" -gt 0 ] || continue
+    ahead="$(git -C "$w" rev-list --count '@{u}..HEAD')"
+    if [ "$ahead" -gt 0 ]; then
+      left="$left; worktree $b not moved: $behind behind origin and $ahead local commit(s) not on it"
+    elif [ -n "$(git -C "$w" status --porcelain --untracked-files=no --ignore-submodules=all)" ]; then
+      left="$left; worktree $b not moved: $behind behind origin, uncommitted changes"
+    elif git -C "$w" merge --ff-only -q '@{u}' >/dev/null 2>&1; then
+      upd="${upd:+$upd, }worktree $b fast-forwarded $behind commit(s)"
+    else
+      left="$left; worktree $b not moved: fast-forward failed"
+    fi
+  done < <(git -C "$r" worktree list --porcelain | awk '/^worktree / { w = substr($0, 10) } /^branch / { print w "\t" substr($0, 8) }')
+  [ -z "$upd" ] || echo "updated $upd"
+  [ -z "$left" ] || echo "left ${left#; }"
 }
 
 # brings the submodules of a checked-out default branch to the commits it records: one that is
