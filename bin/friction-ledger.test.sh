@@ -320,6 +320,20 @@ apply 2026-10-15 "$SANDBOX/i1u.json" >/dev/null
 assert_eq "$before" "$(snap)" "re-run of apply + ingest creates no new entries"
 assert_eq "1" "$(grep -c '^| D-' "$FRICTION_WIKI/directions.md")" "one direction"
 
+echo "ingest — no fix"
+before="$(snap)"
+for bad in '{"items": {"F-001": {"class": "model", "diagnosis": "x", "nofix": "guard was right", "rung": "prompt", "proposal": "p"}}}' \
+           '{"items": {"F-001": {"class": "model", "diagnosis": "x", "nofix": " "}}}'; do
+  printf '%s' "$bad" >"$SANDBOX/bad.json"
+  "$SCRIPT" ingest "$SANDBOX/bad.json" --date 2026-10-16 2>/dev/null; rc=$?
+  [ "$rc" = 1 ] && [ "$before" = "$(snap)" ] && pass "rejected, nothing applied: ${bad:30:70}" || fail "invalid nofix" "$bad rc=$rc"
+done
+echo '{"items": {"F-001": {"class": "model", "diagnosis": "guard refused correctly", "nofix": "the worktree guard did its job and the rule is already in CLAUDE.md"}}}' >"$SANDBOX/nf.json"
+"$SCRIPT" ingest "$SANDBOX/nf.json" --date 2026-10-16 >/dev/null
+assert_eq "wontfix|model" "$(fld F-001 status)|$(fld F-001 class)" "a no-fix verdict closes the entry as wontfix, even a proposed one"
+assert_eq "the worktree guard did its job and the rule is already in CLAUDE.md" "$(fld F-001 reason)" "and records why"
+assert_eq "null" "$("$SCRIPT" cards --date 2026-10-16 | jq -c '[.file[].id] | index("F-001")')" "it never becomes a card"
+
 # --- coach --------------------------------------------------------------------
 echo "coach"
 export FRICTION_WIKI="$SANDBOX/coach"
@@ -783,6 +797,8 @@ assert_eq '{"enqueue":true,"safety":true}' "$("$SCRIPT" card-answer F-004 apply 
 cfile F-008 --date 2026-10-15; "$SCRIPT" card-answer F-008 apply --date 2026-10-15 2>"$SANDBOX/err"; assert_eq "1" "$?" "apply on a nochange card exits 1"
 assert_has "no exact change to approve" "$(cat "$SANDBOX/err")" "nochange refusal says why"
 assert_eq "offered" "$(fld F-008 status)" "a refused apply leaves the entry offered"
+assert_eq "{}" "$("$SCRIPT" card-answer F-008 ignore --date 2026-10-15)" "ignore on a nochange card prints {}"
+assert_eq "wontfix|ignored on its no-change card" "$(fld F-008 status)|$(fld F-008 reason)" "and closes it for good, not declined"
 cfile F-006 --date 2026-10-15; "$SCRIPT" card-answer F-006 apply --date 2026-10-15 2>/dev/null; assert_eq "1" "$?" "apply on a secret card exits 1"
 assert_eq "{}" "$("$SCRIPT" card-answer F-006 done --date 2026-10-15)" "done on a secret card prints {}"
 assert_eq "fixed" "$(fld F-006 status)" "and fixes it"

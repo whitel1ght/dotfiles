@@ -82,7 +82,10 @@
 #            "frustrations": [{"what_went_wrong": T, "class": C, "sig_hint": H, "rung": R, "proposal": MD}]}
 #         items: rung and proposal go together; directions: same_as, harness, quote are optional.
 #         Unknown keys, ids, classes or rungs reject the whole file and nothing is applied. An item with a proposal goes open -> proposed, an
-#         `external` one open -> wontfix. A frustration always stores its proposal; the script
+#         `external` one open -> wontfix. An item may carry `nofix` (one line: why no change to our
+#         code, config or prompts would help, e.g. a guard refused correctly or the rule already
+#         exists) instead of rung and proposal: it goes wontfix with that line as `reason`, from any
+#         status but fixed, landing or landed, and so never becomes a card. A frustration always stores its proposal; the script
 #         sets it proposed from the second day. Marks D as ingested (.ingested/D): apply then
 #         drops user_signals for D and a re-run of ingest skips directions and frustrations.
 #         A group of kind repeat|restated|secret that carries `days` (coach-mine counts over a
@@ -569,8 +572,7 @@ cmd_diary() {
         "## Friction", "",
         "\($new | length) new · \($rec | length) recurring · \($reg | length) regressed", "",
         ($seen[] | select(.status == "proposed" or .regressed) | "- \(.id) — \(.text) → in the friction queue (`` ` f ``)"),
-        ($seen[] | select(.frustr and (.status != "proposed") and (.regressed | not)) | "- \(.id) — \(.text) (frustration)"),
-        (if $ncor > 0 then "- \($ncor) possible corrections (unverified): " + ([$cor[].samples[]? | short | "\"" + . + "\""] | .[:3] | join(" · ")) else empty end),
+        ($seen[] | select(.frustr and (.status != "proposed") and (.regressed | not)) | "- \(.id) — \(.text) (frustration)"),        (if $ncor > 0 then "- \($ncor) possible corrections (unverified): " + ([$cor[].samples[]? | short | "\"" + . + "\""] | .[:3] | join(" · ")) else empty end),
         (if ($dnew | length) > 0 then "", "Directions learned today (active from the next session; retire with `friction-ledger directions retire D-NNN`):", ($dnew[] | "- \(.id) — \(.rule) (\(.scope))") else empty end),
         ($dgrp[] | "", "\(length) active directions share the scope \"\(.[0].scope)\" (\([.[].id] | join(", "))): they can be folded into that prompt or skill; say so to any session, which commits the change and runs `friction-ledger directions promote D-NNN --fix <sha>`.")
       end'
@@ -707,8 +709,11 @@ INGEST_ERRORS='
     + ((.items // {}) | if type != "object" then ["items: must be an object keyed by F-NNN"] else
         [to_entries[] | .key as $k | .value | "items.\($k)" as $w
           | (if ($k | test("^F-[0-9]+$") | not) then ["\($w): not an F-NNN id"] else [] end)
-            + obj($w; ["class", "diagnosis", "rung", "proposal"]; ["class", "diagnosis"])
-            + (if type == "object" then common($w) else [] end)] | add // [] end)
+            + obj($w; ["class", "diagnosis", "rung", "proposal", "nofix"]; ["class", "diagnosis"])
+            + (if type == "object" then common($w)
+                + (if has("nofix") and (.nofix | str | not) then ["\($w): nofix must be non-empty text"] else [] end)
+                + (if has("nofix") and has("proposal") then ["\($w): nofix and a proposal exclude each other"] else [] end)
+              else [] end)] | add // [] end)
     + ((.directions // []) | if type != "array" then ["directions: must be an array"] else
         [to_entries[] | .key as $i | .value | "directions[\($i)]" as $w
           | obj($w; ["rule", "scope", "quote", "same_as", "harness"]; ["rule", "scope"])
@@ -757,12 +762,15 @@ cmd_ingest() {
   fi
 
   local tmp; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
-  local f cur class rung out ids="" frs="" skipped=false
+  local f cur class rung nofix out ids="" frs="" skipped=false
   for id in $(jq -r '(.items // {}) | keys[]' "$file"); do
     f="$(fpath "$id")"; cur="$(fm_get "$f" status)"
     class="$(jq -r --arg i "$id" '.items[$i].class' "$file")"; rung="$(jq -r --arg i "$id" '.items[$i].rung // empty' "$file")"
     local args=(--class "$class" --diagnosis "$(jq -r --arg i "$id" '.items[$i].diagnosis' "$file")" --date "$date_")
-    if [ "$cur" = open ]; then
+    nofix="$(jq -r --arg i "$id" '.items[$i].nofix // empty' "$file")"
+    if [ -n "$nofix" ]; then
+      case "$cur" in fixed | landed | landing) ;; *) args+=(--status wontfix --reason "$(one_line "$nofix")") ;; esac
+    elif [ "$cur" = open ]; then
       if [ "$class" = external ]; then args+=(--status wontfix)
       elif [ -n "$rung" ]; then args+=(--status proposed); fi
     fi
@@ -1055,8 +1063,12 @@ cmd_card_answer() {
           jq -nc --argjson s "$([ "$(fm_get "$f" safety)" = true ] && echo true || echo false)" '{enqueue: true, safety: $s}' ;;
       esac ;;
     ignore)
-      fm_set "$f" declined_count "$(entry_count "$f")"
-      cmd_set "$id" --status declined --date "$date_"
+      if [ "$card" = nochange ]; then
+        cmd_set "$id" --status wontfix --reason "ignored on its no-change card" --date "$date_"
+      else
+        fm_set "$f" declined_count "$(entry_count "$f")"
+        cmd_set "$id" --status declined --date "$date_"
+      fi
       echo '{}' ;;
     later)
       fm_set "$f" offered_on "$date_"
