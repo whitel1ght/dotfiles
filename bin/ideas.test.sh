@@ -170,6 +170,9 @@ ideas record "$RL" --verdict actionable --summary "do it" --file "$SANDBOX/revie
 ideas answer "$RL" later --days 2
 assert_eq "[]" "$(ideas due | jq -c 'map(.id)')" "a reviewed idea answered later is not due before its date"
 assert_eq "[\"$RL\"]" "$(IDEAS_TODAY=$(date_add 3) "$SCRIPT" due | jq -c 'map(.id)')" "and is due again once the date has passed"
+IDEAS_TODAY=$(date_add 3) "$SCRIPT" record "$RL" --verdict elaborate --summary "asked again" --file "$SANDBOX/review.md"
+assert_eq "||" "$(fm "$RL" answer)|$(fm "$RL" answered_on)|$(fm "$RL" later_until)" "a re-review clears the old answer: the new review waits for a new one"
+assert_eq "[]" "$(IDEAS_TODAY=$(date_add 3) "$SCRIPT" due | jq -c 'map(.id)')" "a re-reviewed idea is not due again while its new review waits for an answer"
 printf '# ideas\n\n## review & implement:\n\n- [ ] reviewed then later\n- [ ] a brand new idea\n' >"$IDEAS_FILE"
 assert_has "a brand new idea" "$(ideas due --sync --limit 3 | jq -r '.[].text')" "due --sync picks up a line added since the last sync"
 printf '# ideas\n\n* * *\n\n## implemented:\n\n- plain implemented line\n' >"$IDEAS_FILE"; reset; ideas sync >/dev/null
