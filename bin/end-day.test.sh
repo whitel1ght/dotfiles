@@ -2,6 +2,8 @@
 # Tests for bin/end-day save. Works on a sandbox DIARY_DIR; collect talks to
 # GitLab and Jira and is exercised by running it, not here.
 set -uo pipefail
+# Never fall back to the real secrets file (scripts read Jira credentials from it).
+export SECRETS_FILE=/nonexistent/secrets.env
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$TEST_DIR/end-day"
@@ -15,6 +17,8 @@ assert_eq() { [ "$1" = "$2" ] && pass "$3" || fail "$3" "expected [$1] got [$2]"
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "$SANDBOX"' EXIT
 export DIARY_DIR="$SANDBOX"
+# The outage marker (glab-gate) lives in the friction dir: keep it out of the real one.
+export FRICTION_DIR="$SANDBOX/friction-state"
 printf '## habits\n\n- [ ] x\n\n## Work\n\n### ECFX\n' > "$SANDBOX/template.md"
 
 save() { printf '%s\n' "$2" | "$SCRIPT" save "$1" >/dev/null; }
@@ -92,43 +96,12 @@ echo "end-day — input checks"
 printf '' | "$SCRIPT" save 2026-01-07 >/dev/null 2>&1 && fail "refuses an empty report" "exit 0" || pass "refuses an empty report"
 "$SCRIPT" collect 26-1-1 >/dev/null 2>&1 && fail "rejects a malformed date" "exit 0" || pass "rejects a malformed date"
 
-echo "end-day collect — glab retry"
-STUBS="$SANDBOX/stubs"; mkdir -p "$STUBS" "$SANDBOX/empty" "$SANDBOX/no-claude"
-cat > "$STUBS/glab" <<'STUB'
-#!/bin/bash
-printf '%s\n' "$*" >> "$GLAB_LOG"
-case "$*" in
-  *"api user"*)
-    [ "$(grep -c 'api user' "$GLAB_LOG")" -ge 2 ] || exit 1
-    echo '{"id": 7, "username": "me"}' ;;
-  *) echo '[]' ;;
-esac
-STUB
-chmod +x "$STUBS/glab"
-collect() {
-  GLAB_LOG="$SANDBOX/glab.log" PATH="$STUBS:$PATH" PROJECTS_DIR="$SANDBOX/empty" \
-    CLAUDE_DIR="$SANDBOX/no-claude" JIRA_EMAIL= JIRA_API_TOKEN= END_DAY_RETRY_SLEEP=0 \
-    "$SCRIPT" collect 2026-10-09 2>&1
-}
-out="$(collect)"
-assert_eq "2" "$(grep -c 'api user' "$SANDBOX/glab.log")" "a failed glab api user is tried once more"
-assert_eq "no" "$(grep -q 'GitLab unavailable' <<<"$out" && echo yes || echo no)" "and the retry's answer is the one reported"
-rm -f "$SANDBOX/glab.log"
-cat > "$STUBS/glab" <<'STUB'
-#!/bin/bash
-printf '%s\n' "$*" >> "$GLAB_LOG"
-exit 1
-STUB
-out="$(collect)"
-assert_eq "2" "$(grep -c 'api user' "$SANDBOX/glab.log")" "a call that keeps failing stops after two attempts"
-assert_eq "1" "$(grep -c 'GitLab unavailable' <<<"$out")" "and GitLab is reported unavailable once"
-
 echo "end-day touched"
 WIKI="$SANDBOX/wiki"
-mkdir -p "$WIKI/projects/ecfx/log" "$WIKI/projects/ecfx/decisions" "$WIKI/projects/epicmax/log" "$WIKI/projects/epicmax/decisions" "$WIKI/projects/personal/log"
-printf -- '---\nproject: ecfx\n---\n\n## 2026-10-07 earlier work\n\ntext\n\n## 2026-10-08 retry button\n\ntext\n' > "$WIKI/projects/ecfx/log/2026-Q4.md"
-printf -- '---\nproject: epicmax\ntype: decision\ndate: 2026-10-08\n---\n# 0003 pick x\n' > "$WIKI/projects/epicmax/decisions/0003-pick-x.md"
-printf -- '---\nproject: personal\ndate: 2026-10-07\n---\n' > "$WIKI/projects/personal/log/2026-Q4.md"
+mkdir -p "$WIKI/work/projects/ecfx/log" "$WIKI/work/projects/ecfx/decisions" "$WIKI/work/projects/epicmax/log" "$WIKI/work/projects/epicmax/decisions" "$WIKI/work/projects/personal/log"
+printf -- '---\nproject: ecfx\n---\n\n## 2026-10-07 earlier work\n\ntext\n\n## 2026-10-08 retry button\n\ntext\n' > "$WIKI/work/projects/ecfx/log/2026-Q4.md"
+printf -- '---\nproject: epicmax\ntype: decision\ndate: 2026-10-08\n---\n# 0003 pick x\n' > "$WIKI/work/projects/epicmax/decisions/0003-pick-x.md"
+printf -- '---\nproject: personal\ndate: 2026-10-07\n---\n' > "$WIKI/work/projects/personal/log/2026-Q4.md"
 touched() { WIKI_DIR="$WIKI" "$SCRIPT" touched "$@"; }
 assert_eq "ecfx
 epicmax" "$(touched 2026-10-08)" "lists projects with a log entry or a decision on that date, one per line"
@@ -150,6 +123,110 @@ assert_eq "yes" "$(grep -q 'end-day: entries: project must be a plain name' <<<"
 WIKI_DIR="$WIKI" "$SCRIPT" entries 2026-10-08 a/b >/dev/null 2>&1; assert_eq "1" "$?" "entries rejects a slash in the project"
 out=$(WIKI_DIR="$WIKI" "$SCRIPT" entries 2026-10-08 2>&1); assert_eq "1" "$?" "entries without a project exits 1"
 assert_eq "end-day: entries needs a project" "$out" "with an explicit message"
+
+echo "end-day friction"
+printf '# Day\n\n## Work\n\n### ECFX\n\n- mine\n' > "$SANDBOX/2026-02-01.md"
+save 2026-02-01 "- report"
+printf '## Friction\n\n1 new\n' | "$SCRIPT" friction 2026-02-01 >/dev/null
+assert_eq "yes" "$(tail -5 "$SANDBOX/2026-02-01.md" | head -1 | grep -qx '<!-- friction:start -->' && echo yes || echo no)" "the section goes at the end, between markers"
+printf '## Friction\n\n2 new\n' | "$SCRIPT" friction 2026-02-01 >/dev/null
+assert_eq "1" "$(grep -c 'friction:start' "$SANDBOX/2026-02-01.md")" "a re-run replaces the block"
+assert_eq "yes" "$(grep -q '^2 new$' "$SANDBOX/2026-02-01.md" && ! grep -q '^1 new$' "$SANDBOX/2026-02-01.md" && echo yes || echo no)" "with the new text"
+save 2026-02-01 "- report v2"
+assert_eq "yes" "$(grep -q '^2 new$' "$SANDBOX/2026-02-01.md" && grep -q -- '- report v2' "$SANDBOX/2026-02-01.md" && echo yes || echo no)" "re-saving the report leaves the friction block alone"
+printf '' | "$SCRIPT" friction 2026-02-01 >/dev/null 2>&1; assert_eq "1" "$?" "empty stdin is refused"
+printf 'x\n' | "$SCRIPT" friction 2026-02-02 >/dev/null 2>&1; assert_eq "1" "$?" "no diary for the day is refused"
+
+echo "end-day words"
+printf 'Words: 2 reviewed, 1 new, 3 known of 40 · streak 4 days\n' | "$SCRIPT" words 2026-02-01 >/dev/null
+assert_eq "<!-- words:start -->|Words: 2 reviewed, 1 new, 3 known of 40 · streak 4 days|<!-- words:end -->" "$(tail -3 "$SANDBOX/2026-02-01.md" | paste -sd '|' -)" "the words line goes at the end, between its own markers"
+printf 'Words: 3 reviewed, 1 new, 3 known of 40 · streak 4 days\n' | "$SCRIPT" words 2026-02-01 >/dev/null
+assert_eq "1|1" "$(grep -c 'words:start' "$SANDBOX/2026-02-01.md")|$(grep -c '^Words: 3 reviewed' "$SANDBOX/2026-02-01.md")" "a re-run replaces it"
+assert_eq "yes" "$(grep -q '^2 new$' "$SANDBOX/2026-02-01.md" && grep -q -- '- report v2' "$SANDBOX/2026-02-01.md" && echo yes || echo no)" "the friction block and the report are untouched"
+save 2026-02-01 "- report v3"
+assert_eq "1" "$(grep -c '^Words: 3 reviewed' "$SANDBOX/2026-02-01.md")" "re-saving the report leaves the words block alone"
+assert_eq "" "$(sed -n '/<!-- daily-report:start -->/,/<!-- daily-report:end -->/p' "$SANDBOX/2026-02-01.md" | grep 'Words:')" "the words line is never inside the report"
+
+echo "end-day drills"
+printf 'Drills: 4 right of 5 · streak 2 days\n' | "$SCRIPT" drills 2026-02-01 >/dev/null
+assert_eq "<!-- drills:start -->|Drills: 4 right of 5 · streak 2 days|<!-- drills:end -->" "$(tail -3 "$SANDBOX/2026-02-01.md" | paste -sd '|' -)" "the drills line goes at the end, between its own markers"
+printf 'Drills: 5 right of 5 · streak 2 days\n' | "$SCRIPT" drills 2026-02-01 >/dev/null
+assert_eq "1|1|1" "$(grep -c 'drills:start' "$SANDBOX/2026-02-01.md")|$(grep -c '^Drills: 5 right' "$SANDBOX/2026-02-01.md")|$(grep -c '^Words: 3 reviewed' "$SANDBOX/2026-02-01.md")" "a re-run replaces it and leaves the words block"
+
+echo "end-day collect — friction capture"
+# A private copy of the script, so HERE holds a failing ecfx-daily-commits; glab and curl fail too.
+CBIN="$SANDBOX/cbin"; CSTUBS="$SANDBOX/cstubs"; CLOG="$SANDBOX/friction.log"
+mkdir -p "$CBIN" "$CSTUBS" "$SANDBOX/claude"
+cp "$SCRIPT" "$CBIN/end-day"; cp "$TEST_DIR/glab-gate" "$CBIN/glab-gate"
+printf '#!/bin/bash\nexit 1\n' > "$CBIN/ecfx-daily-commits"
+printf '#!/bin/bash\necho "$*" >> "$SANDBOX/glab.calls"\nexit 1\n' > "$CSTUBS/glab"
+printf '#!/bin/bash\nexit 22\n' > "$CSTUBS/curl"
+printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "$CLOG"\n[ -n "${FRICTION_FAIL:-}" ] && exit 1\nexit 0\n' > "$CSTUBS/friction"
+chmod +x "$CBIN/glab-gate" "$CBIN/end-day" "$CBIN/ecfx-daily-commits" "$CSTUBS"/*
+export SANDBOX
+gate_clear() { rm -f "$FRICTION_DIR/gitlab-down" "$SANDBOX/glab.calls"; }
+collect() { PATH="$CSTUBS:$PATH" END_DAY_RETRY_SLEEP=0 CLOG="$CLOG" CLAUDE_DIR="$SANDBOX/claude" JIRA_EMAIL=a JIRA_API_TOKEN=b "$CBIN/end-day" collect 2026-01-05 2>&1; }
+mkdir -p "$SANDBOX/cnof"; ln -s "$CSTUBS/glab" "$CSTUBS/curl" "$SANDBOX/cnof/"
+baseline=$(PATH="$SANDBOX/cnof:$(dirname "$(command -v jq)"):/usr/bin:/bin" CLAUDE_DIR="$SANDBOX/claude" JIRA_EMAIL=a JIRA_API_TOKEN=b "$CBIN/end-day" collect 2026-01-05 2>&1); brc=$?
+assert_eq "0" "$brc" "collect with no friction on PATH still exits 0"
+gate_clear
+out=$(collect); rc=$?
+assert_eq "0" "$rc" "collect with friction present exits 0"
+assert_eq "$baseline" "$out" "and prints the same digest as without friction"
+assert_eq "--source end-day service_down commits unavailable
+--source end-day service_down GitLab unavailable
+--source end-day auth Jira unavailable, token may have expired" "$(cat "$CLOG")" "commits, GitLab and Jira failures record service_down/service_down/auth"
+assert_eq "2" "$(wc -l < "$SANDBOX/glab.calls" | tr -d ' ')" "the failing GitLab was tried twice, then given up on"
+rm -f "$CLOG"; gate_clear
+out=$(FRICTION_FAIL=1 collect); rc=$?
+assert_eq "0" "$rc" "a failing friction leaves exit 0"
+assert_eq "$baseline" "$out" "and the same digest"
+printf '#!/bin/bash\nexit 0\n' > "$CSTUBS/curl"
+rm -f "$CLOG"; gate_clear; collect >/dev/null
+assert_eq "--source end-day service_down commits unavailable
+--source end-day service_down GitLab unavailable" "$(cat "$CLOG")" "Jira answering with nothing records no auth event"
+
+echo "end-day collect — one outage, one probe (F-021)"
+rm -f "$CLOG"; gate_clear
+collect >/dev/null
+assert_eq "2" "$(wc -l < "$SANDBOX/glab.calls" | tr -d ' ')" "first run: glab fails and is retried once"
+assert_eq "1" "$(grep -c 'GitLab unavailable' "$CLOG")" "and logs one GitLab service_down"
+out=$(collect)
+assert_eq "2" "$(wc -l < "$SANDBOX/glab.calls" | tr -d ' ')" "a second run inside 15 minutes makes no glab call"
+assert_eq "1" "$(grep -c 'GitLab unavailable' "$CLOG")" "and adds no service_down line"
+case "$out" in *"(GitLab unavailable)"*) pass "and still prints (GitLab unavailable)" ;; *) fail "and still prints (GitLab unavailable)" "$out" ;; esac
+printf '%s\n' "$(($(date +%s) - 901))" > "$FRICTION_DIR/gitlab-down"
+collect >/dev/null
+assert_eq "4" "$(wc -l < "$SANDBOX/glab.calls" | tr -d ' ')" "after 15 minutes glab is tried again"
+assert_eq "1" "$(grep -c 'GitLab unavailable' "$CLOG")" "and the still-running outage is not logged again"
+[ "$(cat "$FRICTION_DIR/gitlab-down")" -ge "$(($(date +%s) - 5))" ] && pass "but the marker is refreshed" || fail "but the marker is refreshed" "$(cat "$FRICTION_DIR/gitlab-down")"
+
+echo "end-day collect — one dropped call is not an outage (F-117)"
+cat > "$CSTUBS/glab" <<'EOS'
+#!/bin/bash
+echo "$*" >> "$SANDBOX/glab.calls"
+[ -z "${GLAB_ALWAYS_FAIL:-}" ] || exit 1
+n=$(cat "$SANDBOX/glab.count" 2>/dev/null || echo 0); echo $((n + 1)) > "$SANDBOX/glab.count"
+[ "$n" -gt 0 ] || exit 1
+case "$*" in
+  "api user") echo '{"id":7,"username":"me"}' ;;
+  *events*) echo '[{"action_name":"opened","target_type":"Issue","target_title":"Flaky thing","created_at":"2026-01-05T12:00:00.000Z"}]' ;;
+  *) echo '{}' ;;
+esac
+EOS
+chmod +x "$CSTUBS/glab"
+has() { case "$1" in *"$2"*) pass "$3" ;; *) fail "$3" "[$2] not in [$1]" ;; esac; }
+rm -f "$CLOG" "$SANDBOX/glab.count"; gate_clear
+out=$(collect)
+has "$out" "- opened Issue Flaky thing" "first glab call fails, GitLab activity is still filled"
+assert_eq "no" "$([ -e "$FRICTION_DIR/gitlab-down" ] && echo yes || echo no)" "and no gitlab-down marker is written"
+assert_eq "0" "$(grep -c 'GitLab unavailable' "$CLOG")" "and no GitLab service_down line is logged"
+rm -f "$CLOG"; gate_clear
+out=$(GLAB_ALWAYS_FAIL=1 collect)
+has "$out" "(GitLab unavailable)" "glab failing every call prints (GitLab unavailable)"
+assert_eq "yes" "$([ -e "$FRICTION_DIR/gitlab-down" ] && echo yes || echo no)" "and writes the marker"
+assert_eq "1" "$(grep -c 'GitLab unavailable' "$CLOG")" "and logs exactly one service_down line"
+assert_eq "2" "$(wc -l < "$SANDBOX/glab.calls" | tr -d ' ')" "after trying twice"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

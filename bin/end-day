@@ -2,8 +2,12 @@
 # Gather a day's work for /end-day, and file the written report in the diary.
 #
 #   end-day collect [DATE]   print a compact digest of the day's work
+#                            (SESSIONS=pi reads pi sessions instead of Claude's)
 #   end-day save [DATE]      read a report on stdin into that day's diary
 #   end-day save [DATE] --plan   same for /start-day's plan, at the top of ### ECFX
+#   end-day friction [DATE]  read the `## Friction` section on stdin into that day's diary
+#   end-day words [DATE]     read the words line (`words stats --line`) on stdin into its own block
+#   end-day drills [DATE]    read the drills line (`drills stats --line`) on stdin into its own block
 #   end-day touched [DATE]   list the wiki projects with a log entry or decision dated DATE
 #   end-day entries DATE PROJECT   print PROJECT's "## DATE <title>" log entries
 #
@@ -18,20 +22,27 @@
 #   jira      tickets whose status I changed that day
 #   claude    each Claude session active that day: project, title, my prompts
 #             (built-in commands dropped), and its last few substantial replies —
-#             work that leaves no commit behind
+#             work that leaves no commit behind. SESSIONS=pi replaces this section
+#             with the same shape read from ~/.pi/agent/sessions
 #
 # save puts the report between markers under "### ECFX" in ~/wiki/diary/DATE.md,
 # replacing the block a previous run wrote, so re-running updates rather than
 # duplicates. Lines outside the markers are never touched. --plan keeps its own
 # markers and goes first in the section, so a day reads plan first, report last. A missing diary file
 # is created the way nvim's vimwiki autocmd does: the date, then template.md.
+# friction does the same for the reflect step's section, between <!-- friction:start/end -->
+# markers at the end of the file, outside the report block, so a re-run replaces it and a
+# report re-save never touches it. words and drills do the same with their lines, between <!-- words:start/end --> and <!-- drills:start/end -->.
 set -euo pipefail
 
 JIRA_BASE="${JIRA_BASE:-https://ecfxdev.atlassian.net}"
 DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
 WIKI_DIR="${WIKI_DIR:-$HOME/wiki}"
 CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
+PI_DIR="${PI_DIR:-$HOME/.pi/agent}"
+SESSIONS="${SESSIONS:-claude}"
 BUILTINS="usage|context|exit|model|clear|compact|cost|help|config|status|resume|rewind|login|logout|doctor|memory|permissions|hooks|agents|mcp|plugin|ide|theme|vim|fast|effort|tasks|rename|export|init|bug|feedback"
+PI_BUILTINS="$BUILTINS|scoped-models|ps|bg|todos|new|share|name"
 HERE="$(cd "$(dirname "$(readlink "$0" || echo "$0")")" && pwd)"
 
 cmd="${1:-}"; shift || true
@@ -50,9 +61,14 @@ shift_day() { date -j -v"$2"d -f %F "$1" +%F 2>/dev/null || date -d "$1 $2 day" 
 next=$(shift_day "$day" +1)
 prev=$(shift_day "$day" -1)
 
+friction_log() { command -v friction >/dev/null 2>&1 && friction "$@" >/dev/null 2>&1 || true; }
+glab_held() { local rc=0; "$HERE/glab-gate" check || rc=$?; [ "$rc" -eq 1 ]; }
+glab_down() { "$HERE/glab-gate" down --source "$@" || true; }
+glab_up() { "$HERE/glab-gate" up || true; }
 # glab_retry <glab args>: gitlab.com drops about 1 call in 30 (F-021, F-117), so a failed call is
-# tried once more after END_DAY_RETRY_SLEEP seconds (default 1). Only the successful attempt's
-# output is printed, so a --paginate page cut off mid-body is never joined to the retry.
+# tried once more after END_DAY_RETRY_SLEEP seconds (default 1) before anyone calls glab_down.
+# Only the successful attempt's output is printed, so a --paginate page cut off mid-body is
+# never joined to the retry.
 glab_retry() {
   local out
   if out=$(glab "$@"); then printf '%s\n' "$out"; return 0; fi
@@ -64,19 +80,22 @@ section() { printf '\n## %s\n\n' "$1"; }
 
 collect_commits() {
   section "Commits"
-  "$HERE/ecfx-daily-commits" "$day 00:00" "$next 00:00" | sed 's/^\(ecfx-[^ ]*\)$/### \1/' || echo "(commits unavailable)"
+  "$HERE/ecfx-daily-commits" "$day 00:00" "$next 00:00" | sed 's/^\(ecfx-[^ ]*\)$/### \1/' \
+    || { friction_log --source end-day service_down "commits unavailable"; echo "(commits unavailable)"; }
 }
 
 collect_gitlab() {
   section "GitLab activity"
   local user me username events
-  user=$(glab_retry api user) || { echo "(GitLab unavailable)"; return; }
+  glab_held && { echo "(GitLab unavailable)"; return; }
+  user=$(glab_retry api user) || { glab_down end-day "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
+  glab_up
   me=$(jq -r .id <<<"$user"); username=$(jq -r .username <<<"$user")
   # after/before are exclusive dates in UTC; widen by a day, then keep only
   # events whose local date is the one asked for.
   events=$(glab_retry api --paginate "users/$me/events?after=$prev&before=$next&per_page=100" | jq -s --arg d "$day" '
     add // [] | map(select((.created_at | sub("\\.[0-9]+"; "") | fromdateiso8601 | strflocaltime("%Y-%m-%d")) == $d))
-    | map(select(.action_name | test("^(pushed|deleted)") | not))') || { echo "(GitLab unavailable)"; return; }
+    | map(select(.action_name | test("^(pushed|deleted)") | not))') || { glab_down end-day "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
   [ "$(jq length <<<"$events")" -gt 0 ] || { echo "(none)"; return; }
 
   # One line per MR: what I did to it, and whose it is.
@@ -95,12 +114,17 @@ collect_gitlab() {
 
 collect_jira() {
   section "Jira status changes"
-  [ -n "${JIRA_EMAIL:-}" ] && [ -n "${JIRA_API_TOKEN:-}" ] || { echo "(JIRA_EMAIL/JIRA_API_TOKEN unset)"; return; }
+  : "${JIRA_EMAIL:=$(secret JIRA_USER 2>/dev/null)}" "${JIRA_API_TOKEN:=$(secret JIRA_TOKEN 2>/dev/null)}"
+  [ -n "$JIRA_EMAIL" ] && [ -n "$JIRA_API_TOKEN" ] || { echo "(Jira credentials missing: JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env)"; return; }
   curl -sf -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -G "$JIRA_BASE/rest/api/3/search/jql" \
     --data-urlencode "jql=status CHANGED BY currentUser() DURING (\"$day\", \"$next\")" \
     --data-urlencode fields=status,summary,issuetype \
     | jq -r '.issues[] | "- \(.key) → \(.fields.status.name) (\(.fields.issuetype.name)): \(.fields.summary)"' \
-    | grep . || echo "(none, or Jira unavailable — token may have expired)"
+    | grep . || {
+      # only a failed request is friction; no status changes is a normal day
+      [ "${PIPESTATUS[0]}" -eq 0 ] || friction_log --source end-day auth "Jira unavailable, token may have expired"
+      echo "(none, or Jira unavailable — token may have expired)"
+    }
 }
 
 collect_claude() {
@@ -136,6 +160,37 @@ collect_claude() {
       [ -z "$last" ] || sed 's/^/- replied: /' <<<"$last"
       echo
     done
+}
+
+# Same shape as collect_claude, from pi's session transcripts: one JSONL per session,
+# a {type:"session",cwd} head line and {type:"message",message:{role,content[]}} entries.
+collect_pi() {
+  section "Pi sessions"
+  local from to
+  from=$(epoch "$day"); to=$(epoch "$next")
+  [ -d "$PI_DIR/sessions" ] || { echo "(no pi sessions)"; return; }
+  # mtime only prefilters: a session started earlier and used today still counts, and the
+  # jq pass below keeps just the messages whose timestamp falls inside the day.
+  find "$PI_DIR/sessions" -name '*.jsonl' -newermt "$day 00:00:00" 2>/dev/null | sort | while read -r f; do
+    jq -s -r --argjson from "$from" --argjson to "$to" --arg builtins "$PI_BUILTINS" '
+      def day_ts: .timestamp | sub("\\.[0-9]+"; "") | fromdateiso8601;
+      def utext: [.message.content[]? | select(.type == "text") | .text] | join(" ") | gsub("\\s+"; " ");
+      (map(select(.type == "session")) | .[-1].cwd // "") as $cwd
+      | map(select(.type == "message" and (day_ts >= $from) and (day_ts < $to))) as $msgs
+      | ($msgs | map(select(.message.role == "user") | utext)
+          # injected notices and built-in commands are how I drive pi, not work
+          | map(select((test("^\\[(acp_|bg-|background)|^# Artifact|^<|^Recovery notice")
+                        or test("^/(\($builtins))(\\s|$)")) | not))
+          | map(.[0:220])) as $asked
+      | ($msgs | map(select(.message.role == "assistant") | utext)
+          | map(select(length > 80) | .[0:350])) as $replied
+      | if ($asked | length) == 0 then empty else
+          "### \($cwd | sub(".*/"; "")) — \($asked[0][0:60]) (from \($msgs[0] | day_ts | strflocaltime("%H:%M")))\n",
+          ($asked[] | "- asked: \(.)"),
+          ($replied | .[-3:] | .[] | "- replied: \(.)"),
+          ""
+        end' "$f" 2>/dev/null || echo "(unreadable: $f)"
+  done
 }
 
 save() {
@@ -186,11 +241,31 @@ PY
   echo "$file"
 }
 
+save_block() { # name: stdin between <!-- name:start/end --> at the end of the diary
+  local file="$DIARY_DIR/$day.md" block
+  block=$(cat)
+  [ -n "$block" ] || { echo "end-day: nothing on stdin" >&2; exit 1; }
+  [ -f "$file" ] || { echo "end-day: no diary $file (save the report first)" >&2; exit 1; }
+  BLOCK="$block" NAME="$1" python3 - "$file" <<'PY'
+import os, re, sys
+path = sys.argv[1]
+text = open(path).read()
+start, end = f"<!-- {os.environ['NAME']}:start -->", f"<!-- {os.environ['NAME']}:end -->"
+block = f"{start}\n{os.environ['BLOCK'].strip()}\n{end}"
+if start in text and end in text:
+    text = re.sub(re.escape(start) + r".*?" + re.escape(end), lambda _: block, text, flags=re.S)
+else:
+    text = text.rstrip("\n") + "\n\n" + block + "\n"
+open(path, "w").write(text)
+PY
+  echo "$file"
+}
+
 # The projects /end-day has to consolidate: those whose log/ has a "## DATE <title>"
 # entry, or whose decisions/ has a file with "date: DATE" in its frontmatter.
 touched() {
   local dir
-  for dir in "$WIKI_DIR"/projects/*/; do
+  for dir in "$WIKI_DIR"/work/projects/*/; do
     [ -d "$dir" ] || continue
     if grep -qs "^## $day " "$dir"log/*.md || grep -qs "^date: $day[[:space:]]*$" "$dir"decisions/*.md; then
       basename "$dir"
@@ -205,16 +280,20 @@ entries() {
   case "$project" in
     */*|*..*) echo "end-day: entries: project must be a plain name, not a path ($project)" >&2; exit 1 ;;
   esac
-  awk -v d="$day" '/^## /{on=index($0,"## " d " ")==1} on' "$WIKI_DIR/projects/$project"/log/*.md 2>/dev/null || true
+  awk -v d="$day" '/^## /{on=index($0,"## " d " ")==1} on' "$WIKI_DIR/work/projects/$project"/log/*.md 2>/dev/null || true
 }
 
 case "$cmd" in
   collect)
     printf '# Work digest for %s\n' "$day"
-    collect_commits; collect_gitlab; collect_jira; collect_claude ;;
+    collect_commits; collect_gitlab; collect_jira
+    if [ "$SESSIONS" = pi ]; then collect_pi; else collect_claude; fi ;;
   save) save $save_opt ;;
+  friction) save_block friction ;;
+  words) save_block words ;;
+  drills) save_block drills ;;
   touched) touched ;;
   entries) entries "${2:-}" ;;
-  -h|--help|"") sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; [ -n "$cmd" ] ;;
+  -h|--help|"") sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; [ -n "$cmd" ] ;;
   *) echo "end-day: unknown command $cmd" >&2; exit 1 ;;
 esac
