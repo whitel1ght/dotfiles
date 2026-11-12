@@ -61,10 +61,11 @@ chmod +x "$STUBS/jira-api"
 
 # glab api [--paginate] <endpoint>: one fixture per endpoint, named after
 # project id and MR iid (approvals default to none); GLAB_FAIL=<substring>
-# makes matching calls fail.
+# makes matching calls fail; GLAB_WARN_TEXT is written to stderr on every call.
 cat > "$STUBS/glab" <<'STUB'
 #!/bin/bash
 echo "$*" >> "${FIX:?}/glab.log"
+[ -n "${GLAB_WARN_TEXT:-}" ] && echo "$GLAB_WARN_TEXT" >&2
 [ -n "${GLAB_SLEEP_ON:-}" ] && case "$*" in *"$GLAB_SLEEP_ON"*) sleep 30 ;; esac
 [ -n "${GLAB_FAIL:-}" ] && case "$*" in *"$GLAB_FAIL"*) exit 1 ;; esac
 [ -n "${GLAB_FAIL_EXACT:-}" ] && [ "$*" = "$GLAB_FAIL_EXACT" ] && { [ -n "${GLAB_ERR_TEXT:-}" ] && echo "$GLAB_ERR_TEXT" >&2; exit 1; }
@@ -545,6 +546,29 @@ out=$(JIRA_SLEEP=30 CHANGES_SINCE_CALL_TIMEOUT=1 CHANGES_SINCE_BACKOFF=0 CHANGES
 assert_eq "75" "$rc" "a Jira timeout with a failing probe: exit 75"
 assert_contains "$(errs)" "timed out" "the timeout message wins over the offline one"
 assert_not_contains "$(errs)" "offline" "and the probe is not consulted"
+
+echo "changes-since — glab stderr is held, not lost"
+base_mr
+clean=$(run)
+base_mr
+out=$(GLAB_WARN_TEXT="glab: warning x" run); rc=$?
+assert_eq "0" "$rc" "a successful glab call that warns on stderr: exit 0"
+assert_contains "$(errs)" "glab: warning x" "the warning is shown"
+assert_eq "$clean" "$out" "stdout is the same as without the warning"
+base_mr
+out=$(GLAB_FAIL_EXACT='api projects/2/merge_requests/2231' GLAB_ERR_TEXT="glab: detail boom" run); rc=$?
+assert_eq "1" "$rc" "MR detail fails with a glab message: exit 1"
+assert_eq "glab: detail boom" "$(errs | sed -n 1p)" "glab's text comes first"
+assert_eq "changes-since: MR lookup failed for 2!2231" "$(errs | tail -n 1)" "and the MR lookup line last"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(GLAB_WARN_TEXT="glab: warning y" GLAB_SLEEP_ON="todos" run --peek); rc=$?
+assert_eq "75" "$rc" "a glab timeout with a warning: exit 75"
+assert_eq "glab: warning y" "$(errs | sed -n 1p)" "glab's text comes before the timeout message"
+assert_contains "$(errs)" "timed out" "and the timeout message follows"
+reset; cursor 2026-10-08T07:00:00Z
+out=$(JIRA_MISSING="JIRA_TOKEN missing in /x/secrets.env" CHANGES_SINCE_BACKOFF=0 CHANGES_SINCE_NET_PROBE=false run); rc=$?
+assert_eq "1" "$rc" "a missing secret is checked before the probe: exit 1 even when offline"
+assert_contains "$(cat "$FIX/friction.log" 2>/dev/null)" "JIRA_USER/JIRA_TOKEN" "and logs the credentials message"
 
 echo "changes-since — background waiter"
 reset; cursor 2026-10-08T07:00:00Z
