@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Gate before any review or re-review of someone else's MR (D-011: never one on an MR
+# I already approved). Run it first; dispatch the review only on exit 0.
+#
+#   review-gate <project path> <iid>      e.g. review-gate ecfx/ecfx-dashboard 2202
+#
+# Exit 0  not approved by me: the review may go ahead
+#      1  approved by me ("already approved by you"): reply only, class `me`
+#      3  unknown (no GitLab user, or the approvals lookup failed): skip the review this time
+#      2  bad usage
+# One line on stdout (exit 0) or stderr (otherwise) says why.
+set -euo pipefail
+
+path="${1:-}" iid="${2:-}"
+case "$iid" in ''|*[!0-9]*) path="" ;; esac
+[ -n "$path" ] || { echo "usage: review-gate <project path> <iid>" >&2; exit 2; }
+
+unknown() { echo "review-gate: unknown, $1: skip the review this time" >&2; exit 3; }
+
+me=$(glab api user 2>/dev/null | jq -er .username 2>/dev/null) || unknown "cannot resolve the GitLab user"
+resp=$(glab api "projects/${path//\//%2F}/merge_requests/$iid/approvals" 2>/dev/null) || unknown "approvals of $path!$iid unavailable"
+jq -e '.approved_by | type == "array"' <<<"$resp" >/dev/null 2>&1 || unknown "approvals of $path!$iid unreadable"
+
+if jq -e --arg me "$me" 'any(.approved_by[]; .user.username == $me)' <<<"$resp" >/dev/null; then
+  echo "review-gate: $path!$iid already approved by you" >&2
+  exit 1
+fi
+echo "review-gate: $path!$iid not approved by you"

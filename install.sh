@@ -172,7 +172,7 @@ for name in art cards changes-since clean-worktrees clipboard-copy coach-fix coa
     drills docs-check ecfx-daily-commits ecfx-docker end-day friction friction-cards friction-ledger \
     friction-mine frictions glab-gate ideas jira-api jira-issue jt mr-ship mr-watch \
     newsboat-urls notes open-path opencode-console-auth pi-autoupdate pi-contract \
-    pi-parity plink repos-sync run-day-inbox-answer session-picker start-day sync-tickets system-check \
+    pi-parity plink repos-sync review-gate run-day-inbox-answer session-picker start-day sync-tickets system-check \
     team-plugins-sync tmux-prune vault-check wiki-commit wiki-sync words wt proxyctl; do
     link_command "$name"
 done
