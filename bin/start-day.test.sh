@@ -3,6 +3,8 @@
 # on PATH, so nothing here reaches GitLab; carry-over and Jira are pointed at
 # an empty sandbox / disabled so only Ready to merge is under test.
 set -uo pipefail
+# Never fall back to the real secrets file (scripts read Jira credentials from it).
+export SECRETS_FILE=/nonexistent/secrets.env
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$TEST_DIR/start-day"
@@ -18,7 +20,17 @@ assert_eq() { [ "$1" = "$2" ] && pass "$3" || fail "$3" "expected [$1] got [$2]"
 SANDBOX="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$SANDBOX"' EXIT
 STUBS="$SANDBOX/stubs"; FIX="$SANDBOX/fixtures"; STATE="$SANDBOX/state"; DIARY="$SANDBOX/diary"
+# The outage marker (glab-gate) lives in the friction dir: keep it out of the real one.
+export FRICTION_DIR="$SANDBOX/friction-state"
 mkdir -p "$STUBS" "$FIX" "$STATE" "$DIARY"
+# Never run the real repos-sync: it would fetch and fast-forward the repos in ~/projects.
+printf '#!/bin/bash\n[ -z "${REPOS_SYNC_SILENT:-}" ] || exit 0\necho "- ecfx-dashboard: main fast-forwarded 2 commit(s)"\necho "9 GitLab repos: 1 updated, 8 up to date, 0 left alone, 0 failed"\n' >"$STUBS/repos-sync"
+chmod +x "$STUBS/repos-sync"
+export START_DAY_REPOS_SYNC="$STUBS/repos-sync"
+# Nor the real team-plugins-sync: it would update the installed Claude plugins and run plink.
+printf '#!/bin/bash\necho "- backend: 1.0.5 → 1.0.7"\necho "team plugins: 1 updated, 0 failed; pi skills regenerated; new sessions load them"\n' >"$STUBS/team-plugins-sync"
+chmod +x "$STUBS/team-plugins-sync"
+export START_DAY_TEAM_PLUGINS_SYNC="$STUBS/team-plugins-sync"
 # A dummy, older diary entry: collect_carryover pipes ls through grep, and an
 # empty DIARY_DIR (grep matches nothing) trips set -o pipefail and aborts the
 # whole run. Real usage never hits this since ~/wiki/diary is never empty.
@@ -26,12 +38,18 @@ echo '### ECFX' > "$DIARY/2020-01-01.md"
 
 cat > "$STUBS/glab" <<'EOF'
 #!/bin/bash
-[ -n "${GLAB_DOWN:-}" ] && exit 1
 FIX="${FIX:?}"
+echo "$*" >> "$FIX/glab.log"
+[ -n "${GLAB_DOWN:-}" ] && exit 1
 case "$*" in
     "api user") echo '{"username":"me"}' ;;
     *todos*) cat "$FIX/todos.json" 2>/dev/null || echo '[]' ;;
-    *merge_requests\?scope=created_by_me\&state=opened*) cat "$FIX/mrs.json" ;;
+    *merge_requests\?scope=created_by_me\&state=opened*) cat "$FIX/mrs.json" 2>/dev/null || echo '[]' ;;
+    *merge_requests/*/approvals)
+        echo "$*" >> "$FIX/approvals.log"
+        [ -n "${APPROVALS_FAIL:-}" ] && exit 1
+        id=$(echo "$*" | sed -E 's#.*projects/([^/]+)/merge_requests/([0-9]+)/approvals.*#\1-\2#')
+        cat "$FIX/approvals-$id.json" 2>/dev/null || echo '{"approved_by":[]}' ;;
     *merge_requests/*/blocks)
         id=$(echo "$*" | sed -E 's#.*merge_requests/([0-9]+)/blocks.*#\1#')
         cat "$FIX/blocks-$id.json" 2>/dev/null || echo '[]' ;;
@@ -50,7 +68,7 @@ esac
 EOF
 chmod +x "$STUBS/glab"
 
-reset() { rm -rf "$FIX" "$STATE"; mkdir -p "$FIX" "$STATE"; }
+reset() { rm -rf "$FIX" "$STATE" "$FRICTION_DIR"; mkdir -p "$FIX" "$STATE"; }
 
 # MRs deliberately carry no updated_at, so "My open MRs" treats them all as
 # idle and never touches the notes endpoint our stub doesn't model.
@@ -63,7 +81,7 @@ blocks() { printf '%s\n' "$2" > "$FIX/blocks-$1.json"; }
 
 run() {
     (unset JIRA_EMAIL JIRA_API_TOKEN
-     PATH="$STUBS:$PATH" FIX="$FIX" DIARY_DIR="$DIARY" START_DAY_STATE="$STATE" START_DAY_POLL_DELAY=0 \
+     PATH="$STUBS:$PATH" FIX="$FIX" DIARY_DIR="$DIARY" START_DAY_STATE="$STATE" START_DAY_POLL_DELAY=0 START_DAY_RETRY_SLEEP=0 \
      START_DAY_REPO_ORDER="${TEST_REPO_ORDER:-}" "$SCRIPT" "$@" 2>&1)
 }
 ready() { printf '%s\n' "$1" | awk '/^## Ready to merge/{f=1;next} /^## /{if(f)exit} f'; }
@@ -148,6 +166,23 @@ assert_contains "$out" "ecfx/ecfx-backend!8001 waits on ecfx/ecfx-backend!8000 (
 assert_lacks "$out" "- ecfx/ecfx-backend!8000 " "the draft MR itself is never listed as its own line"
 assert_lacks "$out" "u8000" "the draft MR's own line never appears"
 
+echo "start-day — My draft MRs: every open draft, however old"
+drafts() { printf '%s\n' "$1" | awk '/^## My draft MRs/{f=1;next} /^## /{if(f)exit} f'; }
+reset
+cat > "$FIX/mrs.json" <<EOF
+[{"project_id":1,"iid":5568,"references":{"full":"ecfx/ecfx-backend!5568"},"title":"Draft: feat(ECFX-5412): old one","source_branch":"a","target_branch":"master","draft":true,"web_url":"u5568","updated_at":"2026-08-19T10:00:00Z"},
+ $(mr 1 8001 "ecfx/ecfx-backend!8001" "ready one" "b" "master" false "u8001")]
+EOF
+detail mergeable 8001
+out=$(drafts "$(run collect --since 2026-11-01T00:00:00Z)")
+assert_contains "$out" "- ecfx/ecfx-backend!5568 feat(ECFX-5412): old one — updated 2026-08-19" "an idle draft is listed, without the Draft: prefix"
+assert_lacks "$out" "ready one" "a ready MR is not a draft"
+reset
+echo '[]' > "$FIX/mrs.json"
+assert_contains "$(drafts "$(run collect --since 2026-11-01T00:00:00Z)")" "(none)" "no drafts says so"
+reset
+assert_contains "$(GLAB_DOWN=1 drafts "$(GLAB_DOWN=1 run collect --since 2026-11-01T00:00:00Z)")" "(GitLab unavailable)" "GitLab down says so, not (none)"
+
 echo "start-day — Ready to merge: checking is re-polled then resolved"
 reset
 cat > "$FIX/mrs.json" <<EOF
@@ -184,11 +219,83 @@ TEST_REPO_ORDER=
 
 echo "start-day — GitLab failure doesn't abort collect"
 reset
-out=$(GLAB_DOWN=1 run collect --since 2026-09-20T00:00:00Z)
+out=$(GLAB_DOWN=1 START_DAY_TRIAGE=/nonexistent run collect --since 2026-09-20T00:00:00Z)
 assert_contains "$out" "## Ready to merge" "the section heading still prints"
 assert_contains "$(ready "$out")" "(GitLab unavailable)" "Ready to merge reports GitLab unavailable"
 assert_contains "$out" "## Review queue" "collect keeps running the rest of the digest"
-assert_contains "$out" "## Jira" "including the final section"
+assert_contains "$out" "## Team plugins" "including the final section"
+# The best-effort merged-since lookup is not gated; the review-queue triage is a plugin script, switched off here.
+gated() { grep -vc 'state=merged' "$FIX/glab.log"; }
+assert_eq "2" "$(gated)" "the failing probe is tried twice, no gated call behind it (the outage is held)"
+out=$(START_DAY_TRIAGE=/nonexistent run collect --since 2026-09-20T00:00:00Z)
+assert_contains "$(ready "$out")" "(GitLab unavailable)" "a run inside the 15-minute window prints GitLab unavailable"
+assert_eq "2" "$(gated)" "and makes no probe, MR-list or to-dos call"
+assert_eq "" "$(cat "$FRICTION_DIR"/*.jsonl 2>/dev/null | sed -n '2,$p')" "and logs no second service_down"
+printf '%s\n' "$(($(date +%s) - 901))" > "$FRICTION_DIR/gitlab-down"
+out=$(START_DAY_TRIAGE=/nonexistent run collect --since 2026-09-20T00:00:00Z)
+[ "$(gated)" -gt 1 ] && pass "after the window GitLab is probed again" || fail "after the window GitLab is probed again" "$(gated) calls"
+unset -f gated
+
+echo "start-day — one dropped GitLab call is not an outage (F-117)"
+FLAKY="$SANDBOX/flaky"; mkdir -p "$FLAKY"
+cat > "$FLAKY/glab" <<'EOS'
+#!/bin/bash
+[ -z "${GLAB_ALWAYS_FAIL:-}" ] || exit 1
+n=$(cat "$FIX/glab.count" 2>/dev/null || echo 0); echo $((n + 1)) > "$FIX/glab.count"
+[ "$n" -gt 0 ] || exit 1
+exec "$STUBS/glab" "$@"
+EOS
+printf '#!/bin/bash\nprintf "%%s\\n" "$*" >> "$FIX/friction.log"\n' > "$FLAKY/friction"
+chmod +x "$FLAKY/glab" "$FLAKY/friction"
+flaky_run() {
+    (unset JIRA_EMAIL JIRA_API_TOKEN
+     PATH="$FLAKY:$STUBS:$PATH" STUBS="$STUBS" FIX="$FIX" DIARY_DIR="$DIARY" START_DAY_STATE="$STATE" START_DAY_POLL_DELAY=0 \
+     START_DAY_RETRY_SLEEP=0 START_DAY_TRIAGE=/nonexistent START_DAY_REPO_ORDER= "$SCRIPT" collect --since 2026-09-20T00:00:00Z 2>&1)
+}
+section_of() { printf '%s\n' "$2" | awk -v h="## $1" 'index($0, h) == 1 {f=1; next} /^## /{if(f)exit} f'; }
+reset
+cat > "$FIX/mrs.json" <<EOF
+[$(mr 2 700 "ecfx/ecfx-dashboard!700" "isolated fix" "dmitry/iso" "master" false "u700")]
+EOF
+detail mergeable 700
+echo '[{"action_name":"review_requested","target_type":"MergeRequest","target_url":"u9","project":{"path_with_namespace":"ecfx/ecfx-dashboard"},"target":{"iid":9,"title":"Flaky review"},"author":{"username":"bob"},"created_at":"2026-09-21T00:00:00Z"}]' > "$FIX/todos.json"
+out=$(flaky_run)
+assert_contains "$(section_of "My open MRs" "$out")" "ecfx/ecfx-dashboard!700" "first glab call fails, My open MRs is still filled"
+assert_contains "$(ready "$out")" "- ecfx/ecfx-dashboard!700 isolated fix — u700" "and so is Ready to merge"
+assert_contains "$(section_of "GitLab to-dos (pending)" "$out")" "Flaky review" "and so is the to-dos section"
+assert_lacks "$out" "(GitLab unavailable)" "no section says GitLab is unavailable"
+assert_eq "no" "$([ -e "$FRICTION_DIR/gitlab-down" ] && echo yes || echo no)" "no gitlab-down marker is written"
+assert_eq "0" "$(cat "$FIX/friction.log" 2>/dev/null | grep -c service_down)" "and no service_down line is logged"
+reset
+out=$(GLAB_ALWAYS_FAIL=1 flaky_run)
+assert_contains "$(section_of "My open MRs" "$out")" "(GitLab unavailable)" "glab failing every call prints (GitLab unavailable)"
+assert_eq "yes" "$([ -e "$FRICTION_DIR/gitlab-down" ] && echo yes || echo no)" "and writes the marker"
+assert_eq "1" "$(cat "$FIX/friction.log" 2>/dev/null | grep -c service_down)" "and logs exactly one service_down line"
+
+
+echo "start-day — repos"
+reset
+out=$(run collect --since 2026-09-20T00:00:00Z)
+repos=$(awk '/^## Repos/{f=1;next} /^## /{if(f)exit} f' <<<"$out" | sed '/./,$!d')
+plugins=$(awk '/^## Team plugins/{f=1;next} /^## /{if(f)exit} f' <<<"$out" | sed '/./,$!d')
+assert_eq "## Repos (fetched from GitLab)|## Team plugins" "$(grep '^## ' <<<"$out" | tail -2 | paste -sd '|' -)" "Repos, then Team plugins, printed last"
+assert_contains "$repos" "- ecfx-dashboard: main fast-forwarded 2 commit(s)" "with what repos-sync printed"
+assert_contains "$repos" "9 GitLab repos:" "and its summary"
+assert_contains "$plugins" "- backend: 1.0.5 → 1.0.7" "and what team-plugins-sync printed"
+assert_contains "$plugins" "team plugins: 1 updated" "with its summary"
+cat >"$STUBS/order-repos" <<EOF
+#!/bin/bash
+sleep 1; echo repos >>"$SANDBOX/order"
+EOF
+printf '#!/bin/bash\necho plugins >>"%s/order"\n' "$SANDBOX" >"$STUBS/order-plugins"
+chmod +x "$STUBS/order-repos" "$STUBS/order-plugins"; rm -f "$SANDBOX/order"
+START_DAY_REPOS_SYNC="$STUBS/order-repos" START_DAY_TEAM_PLUGINS_SYNC="$STUBS/order-plugins" run collect --since 2026-09-20T00:00:00Z >/dev/null
+assert_eq "repos plugins" "$(paste -sd ' ' - <"$SANDBOX/order")" "team plugins update only after repos-sync has moved the clone"
+out=$(REPOS_SYNC_SILENT=1 run collect --since 2026-09-20T00:00:00Z)
+assert_contains "$out" "(repos-sync printed nothing)" "an empty run says so"
+out=$(START_DAY_REPOS_SYNC=/nonexistent/repos-sync START_DAY_TEAM_PLUGINS_SYNC=/nonexistent/team-plugins-sync run collect --since 2026-09-20T00:00:00Z)
+assert_contains "$out" "## Jira" "a missing repos-sync or team-plugins-sync does not stop the digest"
+assert_contains "$out" "## Team plugins" "and both sections still print"
 
 todos() { awk '/^## GitLab to-dos/{f=1;next} /^## /{if(f)exit} f' <<<"$1" | sed '/./,$!d'; }
 
@@ -207,10 +314,180 @@ echo '[]' > "$FIX/todos.json"
 assert_eq "(none)" "$(todos "$(run collect --since 2026-09-20T00:00:00Z)")" "no to-dos prints (none)"
 out=$(GLAB_DOWN=1 run collect --since 2026-09-20T00:00:00Z)
 assert_eq "(GitLab unavailable)" "$(todos "$out")" "GitLab down is noted, and the digest keeps going"
-assert_contains "$out" "## Jira" "including the final section"
+assert_contains "$out" "## Team plugins" "including the final section"
 reset
 echo '{"message":"401 Unauthorized"}' > "$FIX/todos.json"
 assert_eq "(none)" "$(todos "$(run collect --since 2026-09-20T00:00:00Z)")" "an unexpected non-array body is treated as none, not a crash"
+
+echo "start-day — GitLab to-dos on MRs I already approved (D-011)"
+reset
+cat > "$FIX/todos.json" <<'JSON'
+[{"id":1,"project":{"id":3,"path_with_namespace":"ecfx/ecfx-backend"},"author":{"username":"bkeeling"},"action_name":"review_requested","target_type":"MergeRequest","target":{"iid":6610,"project_id":3,"title":"Delete Retrieve request","author":{"username":"bkeeling"},"web_url":"w6610"},"target_url":"w6610","body":"b","created_at":"2026-10-08T06:00:00.000Z"},
+ {"id":2,"project":{"id":3,"path_with_namespace":"ecfx/ecfx-backend"},"author":{"username":"bkeeling"},"action_name":"mentioned","target_type":"MergeRequest","target":{"iid":6610,"project_id":3,"title":"Delete Retrieve request","author":{"username":"bkeeling"},"web_url":"w6610"},"target_url":"w6610#n","body":"b","created_at":"2026-10-08T06:10:00.000Z"},
+ {"id":3,"project":{"id":3,"path_with_namespace":"ecfx/ecfx-backend"},"author":{"username":"carol"},"action_name":"review_requested","target_type":"MergeRequest","target":{"iid":6611,"project_id":3,"title":"Other","author":{"username":"carol"},"web_url":"w6611"},"target_url":"w6611","body":"b","created_at":"2026-10-08T06:20:00.000Z"},
+ {"id":4,"project":{"id":3,"path_with_namespace":"ecfx/ecfx-backend"},"author":{"username":"carol"},"action_name":"mentioned","target_type":"MergeRequest","target":{"iid":6612,"project_id":3,"title":"Mine","author":{"username":"me"},"web_url":"w6612"},"target_url":"w6612","body":"b","created_at":"2026-10-08T06:30:00.000Z"}]
+JSON
+echo '{"approved_by":[{"user":{"username":"bkeeling"}},{"user":{"username":"me"}}]}' > "$FIX/approvals-3-6610.json"
+echo '{"approved_by":[{"user":{"username":"someone"}}]}' > "$FIX/approvals-3-6611.json"
+out=$(todos "$(run collect --since 2026-09-20T00:00:00Z)")
+assert_eq "- [review requested] ecfx/ecfx-backend!6610 Delete Retrieve request (approved by you — no review) — @bkeeling — w6610
+- [mentioned] ecfx/ecfx-backend!6610 Delete Retrieve request (approved by you — no review) — @bkeeling — w6610#n
+- [review requested] ecfx/ecfx-backend!6611 Other — @carol — w6611
+- [mentioned] ecfx/ecfx-backend!6612 Mine — @carol — w6612" "$out" "to-dos on an MR I approved are marked; others and my own MR are not"
+assert_eq "1" "$(grep -c 'merge_requests/6610/approvals' "$FIX/approvals.log")" "one approvals call per MR, though two to-dos point at it"
+assert_eq "0" "$(grep -c 'merge_requests/6612/approvals' "$FIX/approvals.log")" "no approvals call for my own MR"
+out=$(APPROVALS_FAIL=1 run collect --since 2026-09-20T00:00:00Z)
+assert_eq "- [review requested] ecfx/ecfx-backend!6610 Delete Retrieve request — @bkeeling — w6610" "$(todos "$out" | head -1)" "a failed approvals lookup leaves the to-do listed, unmarked"
+assert_contains "$out" "## Jira" "and the digest keeps going"
+
+echo "start-day — GitLab to-dos on MRs whose last review from me is unaddressed (F-050)"
+reset
+cat > "$STUBS/triage.py" <<'EOF'
+import os, sys
+sys.stdout.write(open(os.environ["FIX"] + "/triage.json").read())
+EOF
+cat > "$FIX/todos.json" <<'JSON'
+[{"id":1,"project":{"id":3,"path_with_namespace":"ecfx/ecfx-backend"},"author":{"username":"carol"},"action_name":"review_requested","target_type":"MergeRequest","target":{"iid":6611,"project_id":3,"title":"Other","author":{"username":"carol"},"web_url":"w6611"},"target_url":"w6611","body":"b","created_at":"2026-10-08T06:20:00.000Z"},
+ {"id":2,"project":{"id":3,"path_with_namespace":"ecfx/ecfx-backend"},"author":{"username":"dan"},"action_name":"review_requested","target_type":"MergeRequest","target":{"iid":6620,"project_id":3,"title":"Fresh","author":{"username":"dan"},"web_url":"w6620"},"target_url":"w6620","body":"b","created_at":"2026-10-08T06:40:00.000Z"}]
+JSON
+echo '{"buckets":{"review_now":[{"ref":"ecfx/ecfx-backend!6620","title":"Fresh","author":"dan","context":"first time at you"}],"waiting_on_author":[{"ref":"ecfx/ecfx-backend!6611","title":"Other","author":"carol","context":"no activity since your last review"}]}}' > "$FIX/triage.json"
+out=$(START_DAY_TRIAGE="$STUBS/triage.py" run collect --since 2026-09-20T00:00:00Z)
+assert_eq "- [review requested] ecfx/ecfx-backend!6611 Other (waiting on author — my last review is unaddressed, leave out) — @carol — w6611
+- [review requested] ecfx/ecfx-backend!6620 Fresh — @dan — w6620" "$(todos "$out")" "a to-do on an MR waiting on its author is marked; a fresh one is not"
+assert_contains "$out" "- [waiting_on_author] ecfx/ecfx-backend!6611 Other — @carol: no activity since your last review" "the review queue still lists it, from the same triage run"
+out=$(START_DAY_TRIAGE=/nonexistent/triage.py run collect --since 2026-09-20T00:00:00Z)
+assert_eq "- [review requested] ecfx/ecfx-backend!6611 Other — @carol — w6611" "$(todos "$out" | head -1)" "without triage the to-do is listed, unmarked"
+
+echo "start-day — QA candidates (Ready for QA, not mine)"
+reset
+# curl answers only the Ready for QA search; the ledger stub answers per key.
+cat > "$STUBS/curl" <<'EOF'
+#!/bin/bash
+for a in "$@"; do case "$a" in jql=*) jql="${a#jql=}" ;; esac; done
+echo "${jql:-}" >> "$FIX/jql.log"
+case "${jql:-}" in
+  *"Ready for QA"*) [ -n "${QA_JIRA_DOWN:-}" ] && exit 22; cat "$FIX/qa.json" ;;
+  *) echo '{"issues":[]}' ;;
+esac
+EOF
+cat > "$STUBS/qa-ledger.py" <<'EOF'
+import json, sys
+stages = {
+    "ECFX-1": {},
+    "ECFX-2": {"review": {"state": "done", "holder": None}},
+    "ECFX-3": {"review": {"state": "live", "holder": {"holder": "Ann@mac/qa-review", "stage": "review"}}},
+}
+key = sys.argv[-1]
+if key not in stages:
+    sys.exit(3)
+print(json.dumps({"key": key, "stages": stages[key]}))
+EOF
+chmod +x "$STUBS/curl"
+qa_issue() { printf '{"key":"%s","fields":{"summary":"%s","priority":{"name":"%s"},"issuetype":{"name":"%s"},"assignee":%s}}' "$1" "$2" "$3" "$4" "$5"; }
+cat > "$FIX/qa.json" <<EOF
+{"issues":[$(qa_issue ECFX-1 "Roles page read-only" Highest Bug '{"displayName":"Bill"}'),
+$(qa_issue ECFX-2 "Paging parameter" High Task '{"displayName":"Adam"}'),
+$(qa_issue ECFX-3 "Decrypt stream" Medium Task null),
+$(qa_issue ECFX-4 "Title provider refactor" Low Task '{"displayName":"EJ"}')]}
+EOF
+run_qa() {
+    (PATH="$STUBS:$PATH" FIX="$FIX" DIARY_DIR="$DIARY" START_DAY_STATE="$STATE" START_DAY_POLL_DELAY=0 \
+     JIRA_EMAIL=me@x JIRA_API_TOKEN=t START_DAY_QA_LEDGER="${QA_LEDGER:-$STUBS/qa-ledger.py}" START_DAY_TRIAGE=/nonexistent \
+     REPOS_SYNC_SILENT=1 "$SCRIPT" collect --since 2026-09-20T00:00:00Z 2>&1)
+}
+qa() { printf '%s\n' "$1" | awk '/^## QA candidates/{f=1;next} /^## /{if(f)exit} f'; }
+out=$(qa "$(run_qa)")
+assert_contains "$(cat "$FIX/jql.log")" 'status = "Ready for QA" AND (assignee != currentUser() OR assignee is EMPTY)' "searches Ready for QA tickets that are not mine"
+assert_contains "$out" "- ECFX-1 [Highest] Bug, Bill: Roles page read-only — QA: unclaimed" "an untouched ticket reads unclaimed"
+assert_contains "$out" "- ECFX-2 [High] Task, Adam: Paging parameter — QA: review done" "a reviewed ticket shows its stages"
+assert_contains "$out" "- ECFX-3 [Medium] Task, unassigned: Decrypt stream — QA: review live (Ann@mac/qa-review)" "a live claim names who holds it"
+assert_contains "$out" "- ECFX-4 [Low] Task, EJ: Title provider refactor — QA: ledger unavailable" "a ledger failure is shown, not read as unclaimed"
+out=$(qa "$(QA_LEDGER=/nonexistent/qa_ledger.py run_qa)")
+assert_contains "$out" "QA: ledger unknown (no claude-components checkout)" "without the ledger tool each ticket says so"
+cat > "$FIX/qa.json" <<<'{"issues":[]}'
+assert_eq "(none)" "$(qa "$(run_qa)" | sed '/^$/d')" "no Ready for QA tickets prints (none)"
+out=$(qa "$(QA_JIRA_DOWN=1 run_qa)")
+assert_contains "$out" "(Jira unavailable)" "a failed search says so"
+out=$(run collect --since 2026-09-20T00:00:00Z)
+assert_contains "$(qa "$out")" "(Jira credentials missing" "without credentials the section says so"
+rm -f "$STUBS/curl" "$STUBS/qa-ledger.py"
+
+echo "start-day — Jira mentions of me"
+reset
+# curl answers by URL: myself, the mention search, each ticket's comments and changelog.
+cat > "$STUBS/curl" <<'EOF'
+#!/bin/bash
+for a in "$@"; do case "$a" in http*) url="$a" ;; jql=*) jql="${a#jql=}" ;; esac; done
+echo "${jql:-$url}" >> "$FIX/jira.log"
+case "$url" in
+  */myself) cat "$FIX/myself.json" ;;
+  */search/jql) case "${jql:-}" in
+      *"text ~"*) [ -n "${MENTIONS_DOWN:-}" ] && exit 22; cat "$FIX/mentions.json" ;;
+      *) echo '{"issues":[]}' ;;
+    esac ;;
+  */comment) k="${url%/comment}"; cat "$FIX/comments-${k##*/}.json" ;;
+  */issue/*) cat "$FIX/changelog-${url##*/}.json" ;;
+  *) exit 22 ;;
+esac
+EOF
+chmod +x "$STUBS/curl"
+echo '{"accountId":"acc-me","timeZone":"America/Los_Angeles"}' > "$FIX/myself.json"
+adf() { # text [mention-account-id]
+  jq -cn --arg t "$1" --arg id "${2:-}" '{type: "doc", version: 1, content: [{type: "paragraph", content:
+    ((if $id == "" then [] else [{type: "mention", attrs: {id: $id, text: "@Me"}}] end) + [{type: "text", text: $t}])}]}'
+}
+comment() { # id author-id author-name created body
+  jq -cn --arg id "$1" --arg aid "$2" --arg who "$3" --arg at "$4" --argjson body "$5" \
+    '{id: $id, author: {accountId: $aid, displayName: $who}, created: $at, updated: $at, body: $body}'
+}
+issue() { # key summary status created description
+  jq -cn --arg k "$1" --arg s "$2" --arg st "$3" --arg c "$4" --argjson d "$5" \
+    '{key: $k, fields: {summary: $s, status: {name: $st}, created: $c, reporter: {accountId: "acc-mel", displayName: "Melissa"}, description: $d}}'
+}
+none='null'
+cat > "$FIX/mentions.json" <<EOF
+{"issues":[$(issue ECFX-100 "Timeload export" "To-Do" 2026-10-01T10:00:00.000-0700 "$none"),
+ $(issue ECFX-200 "Cases filters" "In Progress" 2026-10-01T10:00:00.000-0700 "$none"),
+ $(issue ECFX-300 "Subtype mapping" "To-Do" 2026-11-07T09:00:00.000-0800 "$(adf " please size this" acc-me)"),
+ $(issue ECFX-400 "Old spec" "To-Do" 2026-09-01T09:00:00.000-0700 "$(adf " owns the API part" acc-me)")]}
+EOF
+cat > "$FIX/comments-ECFX-100.json" <<EOF
+{"comments":[$(comment 3 acc-bill Bill 2026-11-08T09:00:00.000-0800 "$(adf "unrelated note, no mention")"),
+ $(comment 2 acc-shoha Shoha 2026-11-07T16:10:25.973-0800 "$(adf " could you pull which firms exported a time load report" acc-me)"),
+ $(comment 1 acc-ann Ann 2026-11-01T10:00:00.000-0700 "$(adf " an old question from last week" acc-me)")]}
+EOF
+cat > "$FIX/comments-ECFX-200.json" <<EOF
+{"comments":[$(comment 5 acc-me Me 2026-11-06T10:00:00.000-0800 "$(adf "will do")"),
+ $(comment 4 acc-levi Levi 2026-11-06T08:40:04.096-0800 "$(adf " QA found one bug on the Cases page" acc-me)")]}
+EOF
+echo '{"comments":[]}' > "$FIX/comments-ECFX-300.json"
+echo '{"comments":[]}' > "$FIX/comments-ECFX-400.json"
+echo '{"changelog":{"histories":[{"created":"2026-11-08T11:00:00.000-0800","author":{"accountId":"acc-dave","displayName":"Dave"},"items":[{"field":"description"}]},{"created":"2026-09-02T11:00:00.000-0700","author":{"accountId":"acc-dave","displayName":"Dave"},"items":[{"field":"description"}]}]}}' > "$FIX/changelog-ECFX-400.json"
+run_mentions() {
+    (PATH="$STUBS:$PATH" FIX="$FIX" DIARY_DIR="$DIARY" START_DAY_STATE="$STATE" START_DAY_POLL_DELAY=0 TZ=UTC \
+     JIRA_EMAIL=me@x JIRA_API_TOKEN=t START_DAY_QA_LEDGER=/nonexistent START_DAY_TRIAGE=/nonexistent \
+     REPOS_SYNC_SILENT=1 "$SCRIPT" collect --since 2026-11-06T07:28:40Z 2>&1)
+}
+mentions() { printf '%s\n' "$1" | awk '/^## Jira mentions of me/{f=1;next} /^## /{if(f)exit} f' | sed '/^$/d'; }
+full=$(run_mentions); out=$(mentions "$full")
+assert_contains "$(cat "$FIX/jira.log")" 'project = ECFX AND text ~ "acc-me" AND updated >= "2026/11/05 23:28"' "searches mentions of the accountId from myself, the window in Jira's time zone"
+assert_contains "$(cat "$FIX/jira.log")" 'assignee CHANGED TO currentUser() AFTER "2026/11/05 23:28"' "the other Jira searches use Jira's time zone too"
+assert_contains "$out" '- ECFX-100 [To-Do] Timeload export — comment by Shoha, Sun 00:10 — awaiting reply: "@Me could you pull which firms exported a time load report"' "a mention is listed with ticket, status, author, local time and text, awaiting reply"
+assert_lacks "$out" "unrelated note" "a comment without a mention is ignored"
+assert_lacks "$out" "an old question" "a mention older than the window is ignored"
+assert_contains "$out" '- ECFX-200 [In Progress] Cases filters — comment by Levi, Fri 16:40 — replied: "@Me QA found one bug on the Cases page"' "a mention I answered since is marked replied"
+assert_contains "$out" '- ECFX-300 [To-Do] Subtype mapping — description by Melissa, Sat 17:00 — awaiting reply: "@Me please size this"' "a new ticket whose description mentions me is listed"
+assert_contains "$out" '- ECFX-400 [To-Do] Old spec — description edit by Dave, Sun 19:00 — awaiting reply' "an older ticket's description counts when edited in the window"
+assert_eq "4" "$(grep -c '^- ' <<<"$out")" "one line per mention, nothing else"
+echo '{"issues":[]}' > "$FIX/mentions.json"
+assert_eq "(none)" "$(mentions "$(run_mentions)")" "no mentions prints (none)"
+full=$(MENTIONS_DOWN=1 run_mentions)
+assert_eq "(Jira unavailable)" "$(mentions "$full")" "a failed search says so"
+assert_contains "$full" "## Team plugins" "and the digest keeps going"
+echo '{}' > "$FIX/myself.json"
+assert_eq "(Jira unavailable)" "$(mentions "$(run_mentions)")" "no accountId from myself says Jira unavailable"
+assert_contains "$(mentions "$(run collect --since 2026-11-06T07:28:40Z)")" "(Jira credentials missing" "without credentials the section says so"
+rm -f "$STUBS/curl"
 
 echo "start-day save — trailing diary refs"
 reset
@@ -221,6 +498,85 @@ assert_eq "- [ ] ECFX-1 thing dashboard!1  [↗][dashboard!1]
 
 [dashboard!1]: https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/1" "$saved" "save files the plan with trailing refs"
 rm -f "$DIARY/$(date +%F).md"
+
+echo "start-day save — one line per ticket"
+save() { (PATH="$STUBS:$PATH" DIARY_DIR="$DIARY" START_DAY_STATE="$STATE" "$SCRIPT" save 2>&1 >/dev/null); }
+reset
+err=$(printf '%s\n' '**Merge**' '- [ ] merge backend!6718 (ecfx-14260)' '**First**' '- [ ] ECFX-14260 reply to @bob on backend!6718' | save); rc=$?
+assert_eq 1 "$rc" "a ticket on two lines is refused"
+assert_contains "$err" "ecfx-14260" "the refusal names the ticket"
+[ ! -e "$DIARY/$(date +%F).md" ] && pass "nothing is filed when refused" || fail "nothing is filed when refused" "diary was written"
+err=$(printf '%s\n' '- [ ] ecfx-14260 backend!6718: reply to @bob, then merge' '  - [ ] reply to @bob (ecfx-14260)' '  - [ ] merge' \
+  '- [ ] ecfx-17419 dashboard half waits on ecfx-17418' '- [ ] ecfx-17418 offer Retry only for recoverable failures' \
+  '- [ ] reply to @anna in DM' '- [ ] review @carol'"'"'s dashboard!9' | save); rc=$?
+assert_eq 0 "$rc" "children, later mentions and keyless lines are not duplicates ($err)"
+rm -f "$DIARY/$(date +%F).md"
+
+echo "start-day save — a new-format day refuses old-style lines"
+reset
+mkdir -p "$DIARY/.agent"
+printf '# agent notes %s\n' "$(date +%F)" > "$DIARY/.agent/$(date +%F).md"
+err=$(printf '%s\n' '- [ ] ecfx-1 thing · waiting on Levi' | save); rc=$?
+assert_eq 1 "$rc" "a ' · ' line is refused on a new-format day"
+assert_contains "$err" "ecfx-1 thing · waiting on Levi" "and the refusal names the line"
+err=$(printf '%s\n' '- [ ] ecfx-1 thing' '  - [ ] step  [↗][dashboard!1]' | save); rc=$?
+assert_eq 1 "$rc" "a child with [↗] is refused"
+assert_contains "$err" "[↗][dashboard!1]" "and the refusal names it"
+err=$(printf '%s\n' '- [ ] ecfx-1 thing' '' '[dashboard!1]: https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/1' | save); rc=$?
+assert_eq 1 "$rc" "a [label]: url line is refused"
+[ ! -e "$DIARY/$(date +%F).md" ] && pass "nothing is filed when refused" || fail "nothing is filed when refused" "diary was written"
+err=$(printf '%s\n' '**Now**' '- [ ] ecfx-1 thing' '  - [ ] step' '- [ ] reply to Levi <!-- p3 -->' | save); rc=$?
+assert_eq 0 "$rc" "a clean plan is saved on a new-format day ($err)"
+rm -f "$DIARY/$(date +%F).md"
+rm -f "$DIARY/.agent/$(date +%F).md"
+err=$(printf '%s\n' '- [ ] ecfx-1 thing · waiting on Levi' | save); rc=$?
+assert_eq 0 "$rc" "the same plan saves on an old-format day ($err)"
+rm -f "$DIARY/$(date +%F).md"
+
+echo "start-day — carry-over shows the last day's agent notes"
+reset
+ago() { date -v-"$1"d +%F 2>/dev/null || date -d "$1 days ago" +%F; }
+last=$(ago 1)
+printf '%s\n' '### ECFX' '- [ ] ECFX-17482 dashboard fix' > "$DIARY/$last.md"
+mkdir -p "$DIARY/.agent"
+printf '%s\n' '<!-- written by day-agent, do not edit -->' "# agent notes $last" '## ecfx-17482' \
+  '- mr: dashboard!2289 https://gitlab.com/ecfx/ecfx-dashboard/-/merge_requests/2289' '- 11:40 done: merged dec5a42eb2' > "$DIARY/.agent/$last.md"
+out=$(run collect --since 2026-09-20T00:00:00Z)
+assert_contains "$out" "Agent notes from $last:" "the carry-over names the agent notes' day"
+assert_contains "$out" "## ecfx-17482" "the carry-over shows the agent file's sections"
+assert_contains "$out" "- 11:40 done: merged dec5a42eb2" "the carry-over shows the agent entries"
+assert_lacks "$out" "do not edit" "the <!-- lines of the agent file are dropped"
+rm -rf "$DIARY/.agent" "$DIARY/$last.md"
+
+echo "start-day — carry-over without agent notes"
+reset
+last=$(ago 3)
+printf '%s\n' '### ECFX' '- [ ] ECFX-17482 dashboard fix' > "$DIARY/$last.md"
+out=$(run collect --since 2026-09-20T00:00:00Z)
+assert_contains "$out" "(no agent notes)" "a day without an agent file says so"
+assert_contains "$out" "- [ ] ECFX-17482 dashboard fix" "the diary dump is still printed"
+rm -f "$DIARY/$last.md"
+
+echo "start-day — items left off a plan stay open"
+reset
+two=$(ago 2); one=$(ago 1); today=$(date +%F)
+printf '%s\n' '### ECFX' '<!-- start-day:start -->' '**Today**' '- [ ] ecfx-300 investigate the filter bug' '- [X] ecfx-301 merged' '<!-- start-day:end -->' > "$DIARY/$two.md"
+printf '%s\n' '### ECFX' '<!-- start-day:start -->' '**First**' '- [/] ecfx-302 answer Bob' '<!-- start-day:end -->' > "$DIARY/$one.md"
+out=$(run collect --since 2026-09-20T00:00:00Z)
+still=$(awk '/^## Still open from earlier plans/{f=1;next} /^## /{if(f)exit} f' <<<"$out")
+assert_contains "$still" "- [ ] ecfx-300 investigate the filter bug" "an item open two days ago but missing from yesterday's plan is listed"
+assert_contains "$still" "first planned $two, 2 days open, last on the plan $two (Today)" "with when it was planned"
+assert_contains "$still" "- [/] ecfx-302 answer Bob" "yesterday's open item too"
+assert_lacks "$still" "ecfx-301" "a ticked item is not"
+mkdir -p "$DIARY/.agent"; printf '# agent notes %s\n' "$today" > "$DIARY/.agent/$today.md"
+err=$(printf '%s\n' '**First**' '- [/] ecfx-302 answer Bob, then merge' | save); rc=$?
+assert_eq 0 "$rc" "save passes a plan that leaves an open item out"
+assert_contains "$err" "still open but not on this plan (tracked, listed again tomorrow): ecfx-300 investigate the filter bug" "and names it, without refusing"
+assert_contains "$(PATH="$STUBS:$PATH" DIARY_DIR="$DIARY" "$TEST_DIR/plan-open" list --date "$(date -v+1d +%F 2>/dev/null || date -d tomorrow +%F)")" "ecfx-300 investigate the filter bug" "the next day it is listed again: omission never closes it"
+err=$(printf '%s\n' '**First**' '- [/] ecfx-302 answer Bob' '**Today**' '- [-] ecfx-300 investigate the filter bug' | save)
+assert_lacks "$err" "still open" "a plan with every open item says nothing"
+assert_lacks "$(DIARY_DIR="$DIARY" "$TEST_DIR/plan-open" list)" "ecfx-300" "the user's [-] dismisses it"
+rm -rf "$DIARY/.agent" "$DIARY/$two.md" "$DIARY/$one.md" "$DIARY/$today.md"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

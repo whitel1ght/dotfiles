@@ -12,16 +12,33 @@
 # collect reads, each best-effort (a failing source prints a note, the rest run):
 #   carry-over    the ### ECFX section of the last diary entry before today:
 #                 unticked items, the plan, and the day's report
+#   still open    every plan item of the last 30 days not yet ticked [X] or
+#                 dismissed [-], wherever it was left off (`plan-open list
+#                 --record`, which also records the ones over 30 days as expired;
+#                 START_DAY_RECORD=0 leaves the agent file alone)
 #   my MRs        comments from others, approvals and pipeline state on my open
 #                 MRs active since then (idle ones in one line), and which merged
 #   ready to merge  my open MRs that are mergeable now, or blocked only by
 #                 another of my own open MRs (stacked branch, GitLab /blocks, or
 #                 same ticket in an upstream repo), in merge order
 #   review queue  MRs waiting on me, from mr-review-queue's triage script
+#                 ($START_DAY_TRIAGE overrides its path)
 #   gitlab to-dos GitLab's pending to-dos (assigned, mentioned, review requested,
-#                 failed pipelines), one line each, oldest first
+#                 failed pipelines), one line each, oldest first; someone else's
+#                 MR I already approved says "(approved by you — no review)", one
+#                 the triage put in waiting_on_author says "(waiting on author — my
+#                 last review is unaddressed, leave out)"
 #   jira          tickets newly assigned to me, my tickets others touched, and
 #                 my To-Do backlog
+#   jira mentions comments (and descriptions) on any ECFX ticket that mention me,
+#                 made or edited since then, each "awaiting reply" or "replied"
+#   repos        `repos-sync` ($START_DAY_REPOS_SYNC overrides its path): every
+#                 GitLab repo in ~/projects fetched and its default branch
+#                 fast-forwarded where safe; started first, in the background,
+#                 and printed last
+#   team plugins  `team-plugins-sync` ($START_DAY_TEAM_PLUGINS_SYNC overrides
+#                 it), right after repos-sync in the same background job:
+#                 team Claude plugins updated to the clone, pi's skills by plink
 # Slack and the calendar come through claude.ai connectors, which the command
 # reads itself; there's no script access to either.
 set -euo pipefail
@@ -35,6 +52,11 @@ START_DAY_REPO_ORDER="${START_DAY_REPO_ORDER:-ecfx-protobufs ecfx-backend}"
 START_DAY_POLL_DELAY="${START_DAY_POLL_DELAY:-2}"
 
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
+# Jira timestamps (2026-11-07T16:10:25.973-0800) to UTC, comparable with $SINCE as strings.
+JQ_UTC='def utc: if test("Z$") or test("\\+00:?00$") then sub("\\.[0-9]+"; "") | sub("\\+00:?00$"; "Z")
+  else capture("^(?<t>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<s>[+-])(?<h>[0-9]{2}):?(?<m>[0-9]{2})$")
+    | ((.t + "Z") | fromdateiso8601) - ((.s + "1" | tonumber) * ((.h | tonumber) * 3600 + (.m | tonumber) * 60)) | todate end;
+'
 epoch_of() { date -j -u -f %Y-%m-%dT%H:%M:%SZ "$1" +%s 2>/dev/null || date -u -d "$1" +%s; }
 section() { printf '\n## %s\n\n' "$1"; }
 
@@ -48,13 +70,45 @@ collect_carryover() {
   echo "From $last:"; echo
   awk '/^### ECFX/ { on = 1; next } on && /^#{1,3} / { exit } on' "$DIARY_DIR/$last.md" | grep -v '^<!--' | grep . \
     || echo "(empty)"
+  local agent="$DIARY_DIR/.agent/$last.md"
+  if [ -f "$agent" ]; then
+    printf '\nAgent notes from %s:\n' "$last"
+    grep -v '^<!--' "$agent" || true
+  else
+    echo "(no agent notes)"
+  fi
+}
+
+# Leaving an item off a plan never closes it (decision 0014): only [X], [-] or a
+# dismissed note on the user's word does, or 30 days.
+collect_still_open() {
+  section "Still open from earlier plans"
+  if [ "${START_DAY_RECORD:-1}" = 0 ]; then "$HERE/plan-open" list 2>&1 || echo "(plan-open failed)"
+  else "$HERE/plan-open" list --record 2>&1 || echo "(plan-open failed)"; fi
+}
+
+glab_held() { local rc=0; "$HERE/glab-gate" check || rc=$?; [ "$rc" -eq 1 ]; }
+glab_down() { "$HERE/glab-gate" down --source "$@" || true; }
+glab_up() { "$HERE/glab-gate" up || true; }
+# glab_retry <glab args>: gitlab.com drops about 1 call in 30 (F-021, F-117), so a failed call is
+# tried once more after START_DAY_RETRY_SLEEP seconds (default 1) before anyone calls glab_down.
+# Only the successful attempt's output is printed, so a --paginate page cut off mid-body is
+# never joined to the retry.
+glab_retry() {
+  local out
+  if out=$(glab "$@"); then printf '%s\n' "$out"; return 0; fi
+  sleep "${START_DAY_RETRY_SLEEP:-1}"
+  out=$(glab "$@") || return 1
+  printf '%s\n' "$out"
 }
 
 collect_my_mrs() {
   section "My open MRs"
   local me mrs
-  me=$(glab api user | jq -r .username) || { echo "(GitLab unavailable)"; return; }
-  mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { echo "(GitLab unavailable)"; return; }
+  glab_held && { echo "(GitLab unavailable)"; return; }
+  me=$(glab_retry api user | jq -r .username) || { glab_down start-day "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
+  mrs=$(glab_retry api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { glab_down start-day "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
+  glab_up
   ME_USERNAME="$me"; MY_MRS_JSON="$mrs"
   [ "$(jq length <<<"$mrs")" -gt 0 ] || echo "(none)"
   # Detail only for MRs touched since then; long-idle ones get one line, since
@@ -172,12 +226,24 @@ def topo($compids; $byid):
 JQ
 )
 
+# Every open draft, however old: "My open MRs" details only what moved lately, so a
+# finished draft that stops moving would never come up again.
+collect_my_drafts() {
+  section "My draft MRs"
+  local mrs="${MY_MRS_JSON:-}"
+  [ -n "$mrs" ] || { echo "(GitLab unavailable)"; return; }
+  [ "$(jq '[.[] | select(.draft)] | length' <<<"$mrs")" -gt 0 ] || { echo "(none)"; return; }
+  jq -r '.[] | select(.draft)
+    | "- \(.references.full) \(.title | sub("^draft: *"; ""; "i")) — updated \((.updated_at // "?")[0:10])"' <<<"$mrs"
+}
+
 collect_ready_to_merge() {
   section "Ready to merge"
   local mrs
   mrs="${MY_MRS_JSON:-}"
   if [ -z "$mrs" ]; then
-    mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { echo "(GitLab unavailable)"; return; }
+    glab_held && { echo "(GitLab unavailable)"; return; }
+    mrs=$(glab_retry api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { glab_down start-day "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
   fi
   [ "$(jq length <<<"$mrs")" -gt 0 ] || { echo "(none)"; return; }
 
@@ -302,30 +368,69 @@ collect_ready_to_merge() {
 collect_review_queue() {
   section "Review queue (MRs waiting on me)"
   local triage
-  triage=$(ls "$HOME"/.claude/plugins/cache/*/shared/*/skills/mr-review-queue/scripts/triage.py 2>/dev/null | sort -V | tail -1 || true)
-  [ -n "$triage" ] || { echo "(mr-review-queue not installed)"; return; }
-  python3 "$triage" 2>/dev/null | jq -r '
+  triage="${START_DAY_TRIAGE:-$(ls ~/.claude/plugins/cache/*/shared/*/skills/mr-review-queue/scripts/triage.py 2>/dev/null | sort -V | tail -1 || true)}"
+  [ -n "$triage" ] && [ -f "$triage" ] || { echo "(mr-review-queue not installed)"; return; }
+  # kept for collect_gitlab_todos, which marks to-dos on MRs waiting on their author (F-050)
+  TRIAGE_JSON=$(python3 "$triage" 2>/dev/null) || TRIAGE_JSON=""
+  [ -n "$TRIAGE_JSON" ] || { echo "(triage failed)"; return; }
+  jq -r '
     .buckets | to_entries[] | select(.value | length > 0) | .key as $b
     | if ($b == "already_approved" or $b == "draft") then "- \($b): \(.value | length) (\(.value | map(.ref) | join(", ")))"
       else (.value[] | "- [\($b)] \(.ref) \(.title) — @\(.author)\(if .context then ": \(.context)" else "" end)") end' \
-    || echo "(triage failed)"
+    <<<"$TRIAGE_JSON" 2>/dev/null || echo "(triage failed)"
 }
 
 collect_gitlab_todos() {
   section "GitLab to-dos (pending)"
   local todos
-  todos=$(glab api --paginate 'todos?state=pending&per_page=100' | jq -s 'add // []') || { echo "(GitLab unavailable)"; return; }
-  jq -r 'if type == "array" and length > 0 then
+  glab_held && { echo "(GitLab unavailable)"; return; }
+  todos=$(glab_retry api --paginate 'todos?state=pending&per_page=100' | jq -s 'add // []') || { glab_down start-day "GitLab unavailable"; echo "(GitLab unavailable)"; return; }
+  # D-011: mark others' MRs I already approved; a failed lookup leaves them unmarked.
+  local me approved='[]' ref iid
+  me="${ME_USERNAME:-$(glab api user 2>/dev/null | jq -r '.username // empty' 2>/dev/null || true)}"
+  if [ -n "$me" ]; then
+    while IFS=$'\t' read -r ref iid; do
+      glab api "projects/$ref/merge_requests/$iid/approvals" 2>/dev/null \
+        | jq -e --arg me "$me" 'any(.approved_by[]?; .user.username == $me)' >/dev/null 2>&1 \
+        && approved=$(jq -c --arg k "$ref:$iid" '. + [$k]' <<<"$approved")
+    done < <(jq -r --arg me "$me" 'if type == "array" then
+        [.[] | select(.target_type == "MergeRequest" and (.target.author.username // "") != $me)
+         | [((.target.project_id // .project.id // (.project.path_with_namespace | @uri)) | tostring), (.target.iid | tostring)]]
+        | unique[] | @tsv else empty end' <<<"$todos")
+  fi
+  local waiting
+  waiting=$(jq -c '[.buckets.waiting_on_author[]?.ref]' <<<"${TRIAGE_JSON:-}" 2>/dev/null) || waiting='[]'
+  [ -n "$waiting" ] || waiting='[]'
+  jq -r --argjson approved "$approved" --argjson waiting "$waiting" 'if type == "array" and length > 0 then
       sort_by(.created_at)[]
-      | "- [\(.action_name | gsub("_"; " "))] \(.project.path_with_namespace // "?")\(if .target_type == "MergeRequest" then "!" else "#" end)\(.target.iid // "?") \(.target.title // .body) — @\(.author.username // "?") — \(.target_url // .target.web_url // "")"
+      | (((.target.project_id // .project.id // (.project.path_with_namespace | @uri)) | tostring) + ":" + (.target.iid | tostring)) as $k
+      | "\(.project.path_with_namespace // "")!\(.target.iid // "")" as $ref
+      | (if .target_type != "MergeRequest" then ""
+         elif any($approved[]; . == $k) then " (approved by you — no review)"
+         elif any($waiting[]; . == $ref) then " (waiting on author — my last review is unaddressed, leave out)"
+         else "" end) as $mark
+      | "- [\(.action_name | gsub("_"; " "))] \(.project.path_with_namespace // "?")\(if .target_type == "MergeRequest" then "!" else "#" end)\(.target.iid // "?") \(.target.title // .body)\($mark) — @\(.author.username // "?") — \(.target_url // .target.web_url // "")"
     else "(none)" end' <<<"$todos"
 }
 
+jira_get() { curl -sf -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -G "$JIRA_BASE/rest/api/3/$1" "${@:2}"; }
+
 collect_jira() {
   section "Jira"
-  [ -n "${JIRA_EMAIL:-}" ] && [ -n "${JIRA_API_TOKEN:-}" ] || { echo "(JIRA_EMAIL/JIRA_API_TOKEN unset)"; return; }
-  local since_jql
-  since_jql=$(date -r "$(epoch_of "$SINCE")" '+%Y/%m/%d %H:%M' 2>/dev/null || date -d "$SINCE" '+%Y/%m/%d %H:%M')
+  : "${JIRA_EMAIL:=$(secret JIRA_USER 2>/dev/null)}" "${JIRA_API_TOKEN:=$(secret JIRA_TOKEN 2>/dev/null)}"
+  [ -n "$JIRA_EMAIL" ] && [ -n "$JIRA_API_TOKEN" ] || { echo "(Jira credentials missing: JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env)"; return; }
+  local since_jql tz
+  # JQL reads dates in the Jira profile's time zone, not this machine's; myself also gives
+  # the accountId collect_jira_mentions searches for.
+  JIRA_ME=$(jira_get myself 2>/dev/null) || JIRA_ME='{}'
+  tz=$(jq -r '.timeZone // empty' <<<"$JIRA_ME" 2>/dev/null) || tz=""
+  JIRA_ACCOUNT_ID=$(jq -r '.accountId // empty' <<<"$JIRA_ME" 2>/dev/null) || JIRA_ACCOUNT_ID=""
+  if [ -n "$tz" ]; then
+    since_jql=$(TZ="$tz" date -r "$(epoch_of "$SINCE")" '+%Y/%m/%d %H:%M' 2>/dev/null || TZ="$tz" date -d "$SINCE" '+%Y/%m/%d %H:%M')
+  else
+    since_jql=$(date -r "$(epoch_of "$SINCE")" '+%Y/%m/%d %H:%M' 2>/dev/null || date -d "$SINCE" '+%Y/%m/%d %H:%M')
+  fi
+  JIRA_SINCE="$since_jql"
   jql() {
     curl -sf -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -G "$JIRA_BASE/rest/api/3/search/jql" \
       --data-urlencode "jql=$1" --data-urlencode fields=status,summary,issuetype,priority --data-urlencode maxResults=15 \
@@ -341,6 +446,94 @@ collect_jira() {
     || echo "(none, or Jira unavailable — token may have expired)"
 }
 
+MENTIONS_JQ='
+def mentions($me): any(.. | objects; .type == "mention" and .attrs.id == $me);
+def plain: [.. | objects
+    | if .type == "text" then .text
+      elif .type == "mention" or .type == "emoji" then (.attrs.text // .attrs.shortName // "")
+      elif .type == "inlineCard" then (.attrs.url // "")
+      elif (.type | IN("paragraph", "heading", "listItem", "hardBreak", "codeBlock", "blockquote")) then " "
+      else empty end] | join("") | gsub("\\s+"; " ") | sub("^ "; "");
+def short: if length > 200 then .[0:200] + "…" else . end;
+($c.comments // []) as $cs
+| ([$cs[] | select(.author.accountId == $me) | .created | utc] | max // "") as $mine
+| $issue.fields as $f
+| ( [ $cs[] | select(.author.accountId != $me) | select(.body | mentions($me))
+      | (.created | utc) as $created
+      | {at: (if $created >= $since then $created else (.updated | utc) end), edited: ($created < $since),
+         who: .author.displayName, what: "comment", body}
+      | select(.at >= $since) ]
+  + ( if ($f.description | mentions($me)) | not then []
+      elif ($f.created | utc) >= $since then
+        [{at: ($f.created | utc), edited: false, who: ($f.reporter.displayName // "?"), what: "description", body: $f.description,
+          mine: (($f.reporter.accountId // "") == $me)}] | map(select(.mine | not))
+      else [ ($cl.changelog.histories // [])[] | select(any(.items[]?; .field == "description"))
+             | select((.created | utc) >= $since and .author.accountId != $me)
+             | {at: (.created | utc), edited: false, who: .author.displayName, what: "description edit", body: $f.description} ] | .[0:1]
+      end ) )
+| sort_by(.at)[]
+| "- \($issue.key) [\($f.status.name // "?")] \($f.summary) — \(.what) by \(.who), \(.at | fromdateiso8601 | strflocaltime("%a %H:%M"))\(if .edited then " (edited)" else "" end) — \(if $mine > .at then "replied" else "awaiting reply" end): \"\(.body | plain | short)\""
+'
+
+# Comments (and descriptions) on any ECFX ticket that mention me, made or edited since then.
+# Jira indexes a mention under the person's accountId, so `text ~ "<accountId>"` finds the
+# tickets cheaply: on 2026-11-09 it found the same two as reading every comment on all 325
+# tickets updated over that weekend. A hit is someone else's comment whose ADF body has a mention
+# node with my accountId (from collect_jira's myself call), among each ticket's newest 100;
+# "replied" when I commented on the ticket after it.
+collect_jira_mentions() {
+  section "Jira mentions of me"
+  [ -n "${JIRA_EMAIL:-}" ] && [ -n "${JIRA_API_TOKEN:-}" ] || { echo "(Jira credentials missing: JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env)"; return; }
+  [ -n "${JIRA_ACCOUNT_ID:-}" ] && [ -n "${JIRA_SINCE:-}" ] || { echo "(Jira unavailable)"; return; }
+  local issues issue key comments changelog lines any=0
+  issues=$(jira_get search/jql \
+    --data-urlencode "jql=project = ECFX AND text ~ \"$JIRA_ACCOUNT_ID\" AND updated >= \"$JIRA_SINCE\" ORDER BY updated DESC" \
+    --data-urlencode fields=summary,status,created,reporter,description --data-urlencode maxResults=50) || { echo "(Jira unavailable)"; return; }
+  while IFS= read -r issue; do
+    [ -n "$issue" ] || continue
+    key=$(jq -r .key <<<"$issue")
+    comments=$(jira_get "issue/$key/comment" --data-urlencode orderBy=-created --data-urlencode maxResults=100) \
+      || { echo "- $key: (comments unavailable)"; any=1; continue; }
+    changelog='{}'
+    # A description that mentions me on an older ticket counts only if it was edited since then.
+    if jq -e --arg me "$JIRA_ACCOUNT_ID" --arg since "$SINCE" "$JQ_UTC"'
+        any(.fields.description | .. | objects; .type == "mention" and .attrs.id == $me) and ((.fields.created | utc) < $since)' \
+        <<<"$issue" >/dev/null 2>&1; then
+      changelog=$(jira_get "issue/$key" --data-urlencode fields=created --data-urlencode expand=changelog) || changelog='{}'
+    fi
+    lines=$(jq -rn --argjson issue "$issue" --argjson c "$comments" --argjson cl "$changelog" \
+      --arg me "$JIRA_ACCOUNT_ID" --arg since "$SINCE" "$JQ_UTC$MENTIONS_JQ" 2>/dev/null) || lines="- $key: (comments unreadable)"
+    [ -n "$lines" ] && { printf '%s\n' "$lines"; any=1; }
+  done < <(jq -c '.issues[]?' <<<"$issues")
+  [ "$any" -eq 1 ] || echo "(none)"
+}
+
+# Tickets someone else finished that we could test with the claude-components QA skills: Ready for
+# QA, not mine, with each one's QA ledger state (unclaimed = nobody has started QA on it). The
+# ledger tool reads its own Jira credentials; any failure there is shown, never read as unclaimed.
+collect_qa_candidates() {
+  section "QA candidates (Ready for QA, not mine)"
+  [ -n "${JIRA_EMAIL:-}" ] && [ -n "${JIRA_API_TOKEN:-}" ] || { echo "(Jira credentials missing: JIRA_USER/JIRA_TOKEN in ~/.secrets/secrets.env)"; return; }
+  local issues ledger rows key prio type who summary state
+  issues=$(curl -sf -u "$JIRA_EMAIL:$JIRA_API_TOKEN" -G "$JIRA_BASE/rest/api/3/search/jql" \
+    --data-urlencode 'jql=project = ECFX AND status = "Ready for QA" AND (assignee != currentUser() OR assignee is EMPTY) ORDER BY priority DESC, updated DESC' \
+    --data-urlencode fields=summary,priority,issuetype,assignee --data-urlencode maxResults=15) || { echo "(Jira unavailable)"; return; }
+  rows=$(jq -r '.issues[]? | [.key, (.fields.priority.name // "-"), (.fields.issuetype.name // "-"), (.fields.assignee.displayName // "unassigned"), .fields.summary] | @tsv' <<<"$issues")
+  [ -n "$rows" ] || { echo "(none)"; return; }
+  ledger="${START_DAY_QA_LEDGER:-${CLAUDE_COMPONENTS_DIR:-$HOME/projects/claude-components}/plugins/ops/lib/qa_ledger.py}"
+  while IFS=$'\t' read -r key prio type who summary; do
+    if [ ! -f "$ledger" ]; then
+      state="ledger unknown (no claude-components checkout)"
+    else
+      state=$(python3 "$ledger" --json status "$key" </dev/null 2>/dev/null | jq -r '
+        .stages | if length == 0 then "unclaimed"
+        else to_entries | map("\(.key) \(.value.state)\(if .value.holder then " (\(.value.holder.holder // "?"))" else "" end)") | join(", ") end' 2>/dev/null || true)
+      [ -n "$state" ] || state="ledger unavailable"
+    fi
+    echo "- $key [$prio] $type, $who: $summary — QA: $state"
+  done <<<"$rows"
+}
+
 case "${1:-}" in
   collect)
     shift
@@ -349,12 +542,38 @@ case "${1:-}" in
     elif [ -s "$STATE_DIR/last-run" ]; then SINCE=$(cat "$STATE_DIR/last-run")
     else SINCE=$(iso $((now - 86400 - 10#$(date +%H) * 3600 - 10#$(date +%M) * 60 - 10#$(date +%S) + 8 * 3600))); fi
     mkdir -p "$STATE_DIR"; iso "$now" > "$STATE_DIR/pending"
-    printf '# Since %s (%s local)\n' "$SINCE" "$(date -r "$(epoch_of "$SINCE")" '+%a %H:%M' 2>/dev/null || echo ?)"
-    collect_carryover; collect_my_mrs; collect_ready_to_merge; collect_review_queue; collect_gitlab_todos; collect_jira ;;
+    printf '# Since %s (%s local)\n' "$SINCE" "$(date -r "$(epoch_of "$SINCE")" '+%a %H:%M' 2>/dev/null || date -d "@$(epoch_of "$SINCE")" '+%a %H:%M' 2>/dev/null || echo ?)"
+    repos_out="$(mktemp)"; plugins_out="$(mktemp)"
+    # team plugins after repos-sync, so they update from the clone it just fast-forwarded
+    ( "${START_DAY_REPOS_SYNC:-$HERE/repos-sync}" >"$repos_out" 2>&1
+      "${START_DAY_TEAM_PLUGINS_SYNC:-$HERE/team-plugins-sync}" >"$plugins_out" 2>&1 ) </dev/null & repos_pid=$!
+    collect_carryover; collect_still_open; collect_my_mrs; collect_my_drafts; collect_ready_to_merge; collect_review_queue; collect_gitlab_todos; collect_jira; collect_jira_mentions; collect_qa_candidates
+    wait "$repos_pid" || true
+    section "Repos (fetched from GitLab)"
+    if [ -s "$repos_out" ]; then cat "$repos_out"; else echo "(repos-sync printed nothing)"; fi
+    section "Team plugins"
+    if [ -s "$plugins_out" ]; then cat "$plugins_out"; else echo "(team-plugins-sync printed nothing)"; fi
+    rm -f "$repos_out" "$plugins_out" ;;
   save)
-    file=$("$HERE/end-day" save "$(date +%F)" --plan)
+    plan=$(cat)
+    dups=$(printf '%s\n' "$plan" | sed -nE 's/^- \[.\] //p' | sed 's/ · .*//' \
+      | perl -ne 'print lc "$1\n" if /\b([a-z]{2,10}-\d{2,6})\b/i' | sort | uniq -d | paste -sd ' ' -)
+    if [ -n "$dups" ]; then
+      echo "start-day: one line per ticket; $dups is on more than one line. Merge them into one item (steps as sentences or indented child checkboxes) and save again." >&2
+      exit 1
+    fi
+    if [ -f "$DIARY_DIR/.agent/$(date +%F).md" ]; then
+      bad=$(printf '%s\n' "$plan" | grep -m1 -E '^[[:space:]]*-[[:space:]]\[.\].*( · |\[↗\])|^\[[^]]+\]:[[:space:]]*[^[:space:]]' || true)
+      if [ -n "$bad" ]; then
+        echo "start-day: this day keeps its links in the agent file; no ' · ', '[↗]' or '[label]: url' in plan lines. Offending line: $bad" >&2
+        exit 1
+      fi
+    fi
+    left=$(printf '%s\n' "$plan" | "$HERE/plan-open" missing 2>/dev/null | paste -sd ';' - | sed 's/;/; /g') || left=""
+    file=$(printf '%s\n' "$plan" | "$HERE/end-day" save "$(date +%F)" --plan)
     "$HERE/diary-links" "$file" || echo "start-day: diary-links failed on $file" >&2
-    if [ -s "$STATE_DIR/pending" ]; then mv "$STATE_DIR/pending" "$STATE_DIR/last-run"; fi ;;
+    if [ -s "$STATE_DIR/pending" ]; then mv "$STATE_DIR/pending" "$STATE_DIR/last-run"; fi
+    [ -z "$left" ] || echo "start-day: saved; still open but not on this plan (tracked, listed again tomorrow): $left" >&2 ;;
   -h|--help|"") sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; [ -n "${1:-}" ] ;;
   *) echo "start-day: unknown command $1" >&2; exit 1 ;;
 esac
