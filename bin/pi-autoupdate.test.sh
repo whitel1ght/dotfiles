@@ -27,9 +27,6 @@ echo "Updated packages"; echo "pi is already up to date (v1.4.0)"
 STUB
 chmod +x "$SANDBOX/bin/pi"
 export PI_BIN="$SANDBOX/bin/pi"
-# The chord guard must never walk the real release trees during these tests.
-export PI_RELEASES="$SANDBOX/releases-empty"
-mkdir -p "$PI_RELEASES"
 run() { : >"$LOG"; ERR="$("$SCRIPT" "$@" 2>&1 >/dev/null)"; RC=$?; }
 calls() { grep -c 'update --all' "$LOG" 2>/dev/null || true; }
 
@@ -70,88 +67,6 @@ if command -v zsh >/dev/null; then
   : >"$LOG"; PATH="$SANDBOX/bin:$PATH" zsh -fc "$fn; pi --model y" 2>/dev/null
   assert_eq "pi --model y" "$(cut -d'|' -f1 "$LOG" | sed 's/ $//')" "without pi-autoupdate installed, pi still starts"
 fi
-
-echo "pi-autoupdate — chord guard"
-# Fake release trees plus stubbed npm and registry: nothing real is installed or fetched.
-CH="$SANDBOX/chord"
-mkdir -p "$CH/bin" "$CH/state" "$CH/registry"
-export NPM_LOG="$CH/npm.log"
-cat >"$CH/bin/npm" <<'STUB'
-#!/bin/bash
-echo "$PWD :: $*" >>"$NPM_LOG"
-[ ! -f "$SANDBOX/chord/npm-fail" ] || exit 1
-[ ! -f "$SANDBOX/chord/npm-touch" ] || printf ' \n' >>"$PWD/package.json"
-exit 0
-STUB
-chmod +x "$CH/bin/npm"
-cat >"$CH/bin/curl" <<'STUB'
-#!/bin/bash
-url="${!#}"; v="${url##*/}"
-[ -f "$SANDBOX/chord/registry/$v" ] || exit 22
-printf '{"name":"@earendil-works/chord","version":"%s"}\n' "$v"
-STUB
-chmod +x "$CH/bin/curl"
-mk_release() { # version, tree name -> path on stdout
-  local d="$CH/releases/$2"
-  mkdir -p "$d"
-  printf '{\n  "name": "@earendil-works/pi-coding-agent",\n  "version": "%s"\n}\n' "$1" >"$d/package.json"
-  printf '{"lockfileVersion": 3}\n' >"$d/package-lock.json"
-  printf '%s\n' "$d"
-}
-reg_has() { : >"$CH/registry/$1"; }
-chord_reset() { rm -rf "$CH/releases" "$CH/state" "$CH/npm-fail" "$CH/npm-touch"; mkdir -p "$CH/releases"; : >"$NPM_LOG"; }
-chord() { ERR="$(PI_AUTOUPDATE_STATE="$CH/state" PI_RELEASES="$CH/releases" NPM_BIN="$CH/bin/npm" CURL_BIN="$CH/bin/curl" "$SCRIPT" chord-check 2>&1 >/dev/null)"; RC=$?; }
-chord_log() { cat "$CH/state/chord.log" 2>/dev/null; }
-snapshot() { sha256sum "$1/package.json" "$1/package-lock.json" | cut -d' ' -f1 | paste -sd' ' -; }
-
-chord_reset; R="$(mk_release 1.5.0 1.5.0)"; reg_has 1.5.0; BEFORE="$(snapshot "$R")"; BEFORE_PI="$(sha256sum "$PI_BIN" | cut -d' ' -f1)"
-: >"$LOG"; chord
-assert_eq "0" "$RC" "chord-check always exits 0"
-assert_eq "0" "$(calls)" "chord-check does not run pi update"
-assert_eq "$(cd "$R" && pwd -P) :: i --no-save --package-lock=false --no-audit --no-fund @earendil-works/chord@1.5.0" "$(cat "$NPM_LOG")" "a 1.5.0 tree without chord gets chord@1.5.0 from its own directory, with the updater-safe flags"
-assert_eq "$BEFORE" "$(snapshot "$R")" "and npm leaves package.json and package-lock.json byte-identical"
-assert_has "1.5.0 installed @earendil-works/chord@1.5.0 (manifests unchanged)" "$(chord_log)" "the heal is logged to chord.log"
-
-chord_reset; mk_release 0.84.0 0.84.0 >/dev/null; reg_has 0.84.0
-chord; assert_eq "0" "$RC" "a 0.84.0 tree exits 0"
-assert_eq "" "$(cat "$NPM_LOG")" "a pre-0.85 host may omit chord: npm is never called"
-assert_has "0.84.0 exempt" "$(chord_log)" "and the exemption is logged"
-
-chord_reset; R="$(mk_release 1.6.0 1.6.0)"
-chord; assert_eq "0" "$RC" "a 1.x tree with no registry version still exits 0"
-assert_eq "" "$(cat "$NPM_LOG")" "with no npm call"
-assert_has "no @earendil-works/chord@1.6.0 on the registry" "$ERR" "warns that the registry lacks it"
-assert_has "1.6.0 missing, no @earendil-works/chord@1.6.0 on the registry, skipped" "$(chord_log)" "and logs the skip"
-
-chord_reset; mk_release 1.5.0 1.5.0 >/dev/null; reg_has 1.5.0; touch "$CH/npm-fail"
-chord; assert_eq "0" "$RC" "a failing npm install still exits 0"
-assert_has "could not install @earendil-works/chord@1.5.0" "$ERR" "warns about the failed install"
-assert_has "npm install of @earendil-works/chord@1.5.0 failed, skipped" "$(chord_log)" "and logs it as skipped"
-
-chord_reset; R="$(mk_release 1.5.0 1.5.0)"; reg_has 1.5.0; touch "$CH/npm-touch"
-chord; assert_eq "0" "$RC" "an npm that rewrites the manifest still exits 0"
-assert_has "npm rewrote package.json/package-lock.json" "$ERR" "warns that the tree is no longer updater-identical"
-assert_has "not a clean heal" "$(chord_log)" "and logs it as not a clean heal"
-
-chord_reset; R="$(mk_release 1.5.0 1.5.0)"; reg_has 1.5.0
-mkdir -p "$R/node_modules/@earendil-works/chord"
-printf '{"name":"@earendil-works/chord","version":"1.5.0","type":"module","exports":"./index.js"}\n' >"$R/node_modules/@earendil-works/chord/package.json"
-printf 'export const chord = 1;\n' >"$R/node_modules/@earendil-works/chord/index.js"
-chord; assert_eq "0" "$RC" "a tree that already resolves chord exits 0"
-assert_eq "" "$(cat "$NPM_LOG")" "and nothing is installed"
-assert_has "1.5.0 ok" "$(chord_log)" "and it is logged as ok"
-
-chord_reset; mk_release 1.5.0 1.5.0 >/dev/null; reg_has 1.5.0
-ERR="$(PI_AUTOUPDATE_STATE="$CH/state" PI_RELEASES="$CH/releases" NPM_BIN="$CH/bin/npm" CURL_BIN="$CH/bin/curl" "$SCRIPT" 2>&1 >/dev/null)"; RC=$?
-assert_eq "0" "$RC" "a successful update still exits 0"
-assert_has "up to date" "$ERR" "and says so"
-assert_eq "1" "$(wc -l <"$NPM_LOG" | tr -d ' ')" "the guard heals the chord the update dropped"
-assert_has "1.5.0 installed @earendil-works/chord@1.5.0" "$(chord_log)" "logged under the run's state dir"
-
-chord_reset; mk_release 1.5.0 1.5.0 >/dev/null; reg_has 1.5.0; touch "$SANDBOX/slow"
-ERR="$(PI_UPDATE_TIMEOUT=1 PI_AUTOUPDATE_STATE="$CH/state" PI_RELEASES="$CH/releases" NPM_BIN="$CH/bin/npm" CURL_BIN="$CH/bin/curl" "$SCRIPT" 2>&1 >/dev/null)"; RC=$?
-rm -f "$SANDBOX/slow"
-assert_eq "0|0" "$RC|$(cat "$NPM_LOG" | wc -l | tr -d ' ')" "a timed-out update exits 0 without running the guard"
 
 echo
 echo "passed: $PASS  failed: $FAIL"

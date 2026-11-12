@@ -11,25 +11,12 @@
     "./packages/pi-recap",
     "npm:pi-memory",
     "npm:pi-background-tasks",
-    {
-      "source": "npm:pi-subagents@0.76.0",
-      "skills": [],
-      "prompts": []
-    },
     "npm:@dietrichgebert/ponytail",
     "npm:pi-lens",
     "npm:billion-context",
     "npm:pi-playwright"
   ],
-  "subagents": {
-    "modelScope": {
-      "allow": [
-        "scoped"
-      ],
-      "enforce": true,
-      "strict": true
-    }
-  },
+  "skills": ["skills-team"],
   "theme": "dark/dark",
   "enabledModels": [
     "openai/gpt-6.1-sol",

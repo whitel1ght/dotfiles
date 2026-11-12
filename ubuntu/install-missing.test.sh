@@ -30,7 +30,7 @@ grep -q 'DRY RUN: no packages, downloads, Pi settings, services, or keyboard map
 grep -q 'tmux:         3.5a' <<<"$preview"
 grep -q 'fzf:          0.61.3' <<<"$preview"
 grep -q 'keyd:         v2.6.0' <<<"$preview"
-grep -q 'npm:pi-subagents@0.76.0 only' <<<"$preview"
+grep -q 'repo pi-sub extension, linked by bin/plink' <<<"$preview"
 [ ! -e "$LOG" ]
 [ ! -e "$HOME/.local" ]
 

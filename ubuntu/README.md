@@ -43,7 +43,8 @@ Preview first (this is the default; it performs no downloads or changes):
 Then, when ready, install the pinned tmux 3.5a and fzf 0.61.3 under
 `~/.local/opt/dotfiles-toolchain`, put symlinks in `~/.local/bin`, install
 `bat`/`fd-find` (and create compatibility links if needed), build/install keyd
-v2.6.0, and install only the pinned `pi-subagents@0.76.0` package:
+v2.6.0, and check that Pi's delegation comes from this repo's `pi-sub`
+extension:
 
 ```bash
 ./ubuntu/install-missing.sh --apply
@@ -71,7 +72,7 @@ before enabling/restarting the service. Never pass a wildcard. For a fresh host,
 vendor/product prefix against keyboard devices in sysfs and requires typing
 `APPLY <id-1> <id-2>` interactively.
 
-If the Pi CLI is intentionally absent, `--skip-pi` skips the package installation.
+If the Pi CLI is intentionally absent, `--skip-pi` skips the delegation check.
 The updater never installs provider credentials, downloads local models, changes
 the sing-box proxy, links dotfiles, or refreshes all Pi packages.
 
@@ -230,8 +231,8 @@ Pi's `bin/plink` links individual settings/resources into `~/.pi/agent`; it
 preserves auth, sessions, installations and foreign links. `settings.json` is
 seeded as a per-host file instead of linked, because Pi writes changelog markers
 and device identity into it; a legacy link is converted into a copy and never
-re-created. After setup, review `pi/settings.json` (shared packages and the
-`subagents` policy) and `~/.pi/agent/settings.json` (this host's provider, model,
+re-created. After setup, review `pi/settings.json` (the shared package list) and
+`~/.pi/agent/settings.json` (this host's provider, model,
 and pool), then explicitly refresh packages with `pi update --extensions`.
 OpenAI/OpenCode login and local-model serving are manual. Local endpoints stay
 on loopback. No API credentials or machine-specific model downloads are stored
