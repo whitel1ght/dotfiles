@@ -8,18 +8,27 @@
 #
 # Each ticket is judged on ALL of its MRs, across every repo, found by the key in
 # the branch name (title as fallback): any open ready MR → In MR; otherwise any
-# open draft → In Progress; otherwise merged → In QA. Closed MRs don't count.
+# open draft → In Progress; otherwise merged → Ready for QA (not In QA: QA
+# has not started, and they move it on themselves). Closed MRs don't count.
 #
-# Changes only go forward (To-Do → In Progress → In MR → In QA), because they are
-# applied unattended: a draft follow-up must not pull a ticket back out of QA.
-# A ticket behind its MRs is reported, never moved back. Tickets assigned to
+# Changes only go forward (To-Do → In Progress → In MR → Ready for QA)
+# because they are applied unattended: a draft follow-up must not pull a ticket back out
+# of QA.
+# A ticket merged and already In QA is in step: nothing moved, nothing printed. A ticket
+# behind its MRs is reported, never moved back. Tickets assigned to
 # someone else, or in any other status (Rejected Incomplete, Awaiting Details,
 # Done, Closed), are left alone.
+#
+# A Bug whose MRs all merged is not moved to Ready for QA while its Resolution Summary
+# (customfield_10604) is empty: Jira refuses that move with HTTP 400. It is counted as
+# needs_summary and listed, so the session can draft the summary and move it with
+# `jira-write --resolution-summary`.
 #
 # Every MR is also linked on its ticket with the same globalId GitLab's own
 # integration uses, so a link that already exists is updated, not duplicated.
 #
-# Needs JIRA_EMAIL and JIRA_API_TOKEN (~/.config/mrglass/secrets.env) and glab.
+# Needs JIRA_USER and JIRA_TOKEN in ~/.secrets/secrets.env (or JIRA_EMAIL and
+# JIRA_API_TOKEN in the environment) and glab.
 set -euo pipefail
 
 JIRA_BASE="${JIRA_BASE:-https://ecfxdev.atlassian.net}"
@@ -38,8 +47,9 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-: "${JIRA_EMAIL:?sync-tickets: JIRA_EMAIL unset — see ~/.config/mrglass/secrets.env}"
-: "${JIRA_API_TOKEN:?sync-tickets: JIRA_API_TOKEN unset — see ~/.config/mrglass/secrets.env}"
+: "${JIRA_EMAIL:=$(secret JIRA_USER 2>/dev/null)}" "${JIRA_API_TOKEN:=$(secret JIRA_TOKEN 2>/dev/null)}"
+: "${JIRA_EMAIL:?sync-tickets: JIRA_USER missing — add it with \`secrets\`}"
+: "${JIRA_API_TOKEN:?sync-tickets: JIRA_TOKEN missing — add it with \`secrets\`}"
 
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 
@@ -64,7 +74,7 @@ jira() {
   code="${out##*$'\n'}"
   case "$code" in
     2*) printf '%s' "${out%$'\n'*}" ;;
-    401|403) echo "sync-tickets: Jira returned $code — JIRA_API_TOKEN has likely expired" >&2; return 1 ;;
+    401|403) echo "sync-tickets: Jira returned $code — JIRA_TOKEN has likely expired" >&2; return 1 ;;
     *) echo "sync-tickets: Jira $method $path returned $code" >&2; return 1 ;;
   esac
 }
@@ -97,23 +107,26 @@ plan=$(jq -rn --argjson recent "$recent" --argjson open "$open" --arg p "$JIRA_P
   | select($m | length > 0)
   | (if any($m[]; .state == "opened" and (.draft | not)) then "In MR"
      elif any($m[]; .state == "opened") then "In Progress"
-     else "In QA" end) as $target
+     else "Ready for QA" end) as $target
   | [$k, $target, ($m | map({url: .web_url, ref: .references.full, title}) | tojson | @base64)] | @tsv')
 
 rank() {
   case "$1" in
-    To-Do) echo 0 ;; "In Progress") echo 1 ;; "In MR") echo 2 ;; "In QA") echo 3 ;; *) echo -1 ;;
+    To-Do) echo 0 ;; "In Progress") echo 1 ;; "In MR") echo 2 ;; "Ready for QA") echo 3 ;; "In QA") echo 4 ;; *) echo -1 ;;
   esac
 }
 
-# In MR is only reachable from In Progress, so a To-Do ticket takes two steps.
+# Without a direct transition it steps to the nearest status below the target that Jira
+# offers (Ready for QA: In MR, else In Progress), so a To-Do ticket may take several steps.
 transition_to() {
   local key="$1" target="$2" step id
-  for step in 1 2 3; do
+  for step in 1 2 3 4; do
     [ "$(jira GET "/rest/api/3/issue/$key?fields=status" | jq -r .fields.status.name)" = "$target" ] && return 0
     id=$(jira GET "/rest/api/3/issue/$key/transitions" \
       | jq -r --arg t "$target" '.transitions as $all
-          | (($all | map(select(.to.name == $t)) | first) // ($all | map(select(.to.name == "In Progress")) | first))
+          | (($all | map(select(.to.name == $t)) | first)
+             // (if $t == "Ready for QA" then ($all | map(select(.to.name == "In MR")) | first) else null end)
+             // ($all | map(select(.to.name == "In Progress")) | first))
           | .id // empty')
     [ -n "$id" ] || { echo "sync-tickets: no transition from $key towards $target" >&2; return 1; }
     jira POST "/rest/api/3/issue/$key/transitions" "{\"transition\":{\"id\":\"$id\"}}" >/dev/null || return 1
@@ -121,12 +134,13 @@ transition_to() {
   return 1
 }
 
-moved=0 linked=0 behind=0 skipped=0 failed=0
+moved=0 linked=0 behind=0 skipped=0 needs_summary=0 failed=0
+needs_keys=()
 while IFS=$'\t' read -r key target mrs_b64; do
   [ -n "${key:-}" ] || continue
   mrs=$(base64 -d <<<"$mrs_b64")
   refs=$(jq -r 'map(.ref | sub("^.*/"; "")) | join(", ")' <<<"$mrs")
-  issue=$(jira GET "/rest/api/3/issue/$key?fields=status,assignee") || { failed=$((failed + 1)); continue; }
+  issue=$(jira GET "/rest/api/3/issue/$key?fields=status,assignee,issuetype,customfield_10604") || { failed=$((failed + 1)); continue; }
   status=$(jq -r .fields.status.name <<<"$issue")
   assignee=$(jq -r '.fields.assignee.accountId // ""' <<<"$issue")
 
@@ -140,9 +154,13 @@ while IFS=$'\t' read -r key target mrs_b64; do
   fi
 
   if [ "$(rank "$target")" -gt "$(rank "$status")" ]; then
-    if [ "$dry" -eq 1 ]; then echo "  would  $key $status → $target ($refs)"; moved=$((moved + 1))
+    if [ "$target" = "Ready for QA" ] && jq -e '.fields.issuetype.name == "Bug" and .fields.customfield_10604 == null' <<<"$issue" >/dev/null; then
+      needs_summary=$((needs_summary + 1)); needs_keys+=("$key")
+      [ "$verbose" -eq 1 ] && echo "  wait   $key — Bug needs a Resolution Summary; move it with jira-write --resolution-summary"
+    elif [ "$dry" -eq 1 ]; then echo "  would  $key $status → $target ($refs)"; moved=$((moved + 1))
     elif transition_to "$key" "$target"; then echo "  moved  $key $status → $target ($refs)"; moved=$((moved + 1))
     else failed=$((failed + 1)); fi
+  elif [ "$status" = "In QA" ] && [ "$target" = "Ready for QA" ]; then :  # QA picked it up: in step
   elif [ "$(rank "$target")" -lt "$(rank "$status")" ]; then
     echo "  behind $key is $status, MRs say $target ($refs) — left alone"; behind=$((behind + 1))
   fi
@@ -165,7 +183,8 @@ while IFS=$'\t' read -r key target mrs_b64; do
   done < <(jq -c '.[]' <<<"$mrs")
 done <<<"$plan"
 
-echo "since $since: $moved moved, $linked linked, $behind behind, $skipped skipped, $failed failed$([ "$dry" -eq 1 ] && echo ' (dry run)')"
+echo "since $since: $moved moved, $linked linked, $behind behind, $skipped skipped, $needs_summary needs_summary, $failed failed$([ "$dry" -eq 1 ] && echo ' (dry run)')"
+[ "$needs_summary" -eq 0 ] || echo "needs summary: $(IFS=,; echo "${needs_keys[*]}" | sed 's/,/, /g')"
 
 if [ "$dry" -eq 0 ] && [ "$failed" -eq 0 ]; then
   mkdir -p "$(dirname "$STATE_FILE")"

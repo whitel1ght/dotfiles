@@ -11,15 +11,20 @@ Run exactly this, once, and nothing else:
 
 The script does all the work and has already applied its changes when it returns.
 Don't re-run it, don't call Jira or GitLab yourself, and don't try to fix anything.
+A ticket whose MRs are all merged goes to Ready for QA, never In QA: QA has not started,
+and they move it on themselves.
 
 Reply with a short summary of its output:
 
 - **Moved** tickets, as `KEY: from → to`.
 - **Linked** MRs, as a count per ticket.
 - **Behind** tickets, verbatim, since they need a human decision.
+- **Needs summary** keys (the `needs summary:` line), verbatim: merged Bugs left in place
+  because Jira wants a Resolution Summary first; the user drafts it and moves them with
+  `jira-write --resolution-summary`.
 - The final summary line.
 
 Leave out skipped tickets unless `-v` was passed. If the script failed, show its error
 line. If the error mentions an expired token, add that a new one comes from
 https://id.atlassian.com/manage-profile/security/api-tokens and goes in
-`~/.config/mrglass/secrets.env`.
+`~/.secrets/secrets.env` as `JIRA_TOKEN` (the user edits it with `secrets`; you never open it).
