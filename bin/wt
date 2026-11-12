@@ -6,9 +6,9 @@
 #                                   exists locally or on origin, else created
 #                                   from the default branch: the local one when
 #                                   it has commits origin lacks, else origin's
-#                                   (default: name). A repo with a package-lock.json gets
-#                                   node_modules from nm-clone when it is
-#                                   installed (macOS only)
+#                                   (default: name). A repo with a
+#                                   package-lock.json gets node_modules from
+#                                   nm-clone when it is installed (macOS only)
 #   wt move <worktree> [name]       move an existing worktree into the layout
 #   wt ls                           every worktree of every repo in the projects
 #                                   root, out-of-place ones marked
