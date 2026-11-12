@@ -2,17 +2,30 @@
 # prod-kube-preflight [context]: check, before a `kubectl --context prod01` step, that the Duplo
 # sign-in behind the context's exec credential is still valid. kubectl runs `duploctl jit k8s
 # --interactive`, which opens a browser login and blocks when the session has expired (after sleep,
-# say); this runs the same command with stdin closed, bounded to 15 s, and never blocks.
+# say). duploctl has no non-interactive probe, so this reads its cache first (portal token and the
+# tenant's k8s credential, each with an expiry) and starts duploctl only when one is still valid;
+# that run is bounded to 15 s with stdin closed. An expired cache never starts duploctl, so no
+# browser tab is opened and killed.
 #   exit 0  valid session (ExecCredential expires in the future)
-#   exit 2  duploctl failed for another reason (network, bad output): message on stderr, no card
-#   exit 3  hung or expired: prints the login line, files one decision card (not one per call)
-# Overrides: PROD_KUBE_PREFLIGHT_LIMIT (seconds, default 15), DECIDE_BIN (default decide).
+#   exit 2  duploctl failed for another reason (network, bad output), no kubectl, no exec
+#           credential: message on stderr, no card
+#   exit 3  expired or hung: prints the login line, files one decision card (not one per call)
+# Overrides: PROD_KUBE_PREFLIGHT_LIMIT (seconds, default 15), DECIDE_BIN (default decide),
+# PROD_KUBE_PREFLIGHT_CACHE (duploctl cache dir, default --cachedir arg or ~/.duplo/cache).
 set -uo pipefail
 
 CTX="${1:-prod01}"
 LIMIT="${PROD_KUBE_PREFLIGHT_LIMIT:-15}"
 DECIDE="${DECIDE_BIN:-decide}"
 TITLE="Duplo sign-in expired for kubectl $CTX"
+
+if ! command -v kubectl >/dev/null 2>&1 && [ -d "$HOME/.docker/bin" ]; then
+  PATH="$PATH:$HOME/.docker/bin"
+fi
+if ! command -v kubectl >/dev/null 2>&1; then
+  echo "prod-kube-preflight: kubectl not found" >&2
+  exit 2
+fi
 
 cfg="$(kubectl config view --raw -o json 2>/dev/null || true)"
 user="$(jq -r --arg c "$CTX" '[.contexts[]? | select(.name == $c) | .context.user][0] // empty' <<<"$cfg" 2>/dev/null || true)"
@@ -25,6 +38,29 @@ if [ "${#cmd[@]}" -eq 0 ]; then
 fi
 login="${cmd[*]}"
 
+# value of a --flag in the exec args
+arg() { local i; for ((i = 0; i < ${#cmd[@]} - 1; i++)); do [ "${cmd[i]}" = "$1" ] && { echo "${cmd[i + 1]}"; return; }; done; }
+host="$(arg --host)"; host="${host#*://}"; host="${host%%/*}"
+tenant="$(arg --tenant)"
+cache="${PROD_KUBE_PREFLIGHT_CACHE:-$(arg --cachedir)}"
+cache="${cache:-$HOME/.duplo/cache}"
+
+# epoch seconds of an ISO-8601 field of a cache file; 0 when missing or unparseable
+expiry() {
+  [ -f "$1" ] || { echo 0; return; }
+  jq -r "$2 // empty | sub(\"\\\\.[0-9]+\"; \"\") | sub(\"\\\\+00:00\$\"; \"Z\") | fromdateiso8601" "$1" 2>/dev/null || echo 0
+}
+now_s="$(date -u +%s)"
+portal="$(expiry "$cache/$host,duplo-creds.json" .Expiration)"
+k8s="$(expiry "$cache/$host,plan,$tenant,k8s-creds.json" .status.expirationTimestamp)"
+: "${portal:=0}" "${k8s:=0}"
+
+expired=""
+if [ "$portal" -le "$now_s" ] && [ "$k8s" -le "$now_s" ]; then
+  expired="the cached Duplo token and k8s credential in $cache are expired or missing"
+fi
+
+if [ -z "$expired" ]; then
 OUT="$(mktemp)"
 ERR="$(mktemp)"
 trap 'rm -f "$OUT" "$ERR"' EXIT
@@ -43,7 +79,6 @@ perl -e '
 ' "$LIMIT" "${cmd[@]}" >"$OUT" 2>"$ERR"
 rc=$?
 
-expired=""
 if [ "$rc" -eq 124 ]; then
   expired="no answer within ${LIMIT}s, the interactive login is waiting"
 elif [ "$rc" -ne 0 ]; then
@@ -60,12 +95,14 @@ else
     [[ "${exp%%.*}Z" > "$now" ]] || expired="the session expired at $exp"
   fi
 fi
+fi
 
 [ -z "$expired" ] && exit 0
 
 echo "Duplo sign-in expired for $CTX ($expired). Run in a terminal: $login"
 
-if ! "$DECIDE" list --json 2>/dev/null | grep -qF "$TITLE"; then
+open="$("$DECIDE" list --json 2>/dev/null)"
+if ! grep -qF -- "$TITLE" <<<"$open"; then
   "$DECIDE" add --key '' --source prod-kube-preflight --blocks "kubectl $CTX step" \
     --question "$TITLE: sign in again?" \
     --option "You run \`$login\` in a terminal and sign in; the agent then retries the kubectl step" \
