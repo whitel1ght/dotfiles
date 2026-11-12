@@ -4,8 +4,9 @@
 #
 #   wt add <repo> <name> [branch]   create one; the branch is checked out if it
 #                                   exists locally or on origin, else created
-#                                   from origin's default branch (default: name).
-#                                   A repo with a package-lock.json gets
+#                                   from the default branch: the local one when
+#                                   it has commits origin lacks, else origin's
+#                                   (default: name). A repo with a package-lock.json gets
 #                                   node_modules from nm-clone when it is
 #                                   installed (macOS only)
 #   wt move <worktree> [name]       move an existing worktree into the layout
@@ -75,8 +76,15 @@ add_at() { # clone name branch
     || git -C "$clone" show-ref -q --verify "refs/remotes/origin/$branch"; then
     git -C "$clone" worktree add -q "$dest" "$branch"
   else
-    local base
+    local base local_default
     base=$(git -C "$clone" symbolic-ref -q --short refs/remotes/origin/HEAD || echo origin/master)
+    # the local default branch when it has commits origin lacks (dotfiles and decisions are never
+    # pushed); otherwise origin's, current after the fetch above
+    local_default="${base#origin/}"
+    if git -C "$clone" show-ref -q --verify "refs/heads/$local_default" &&
+      [ "$(git -C "$clone" rev-list --count "$base..refs/heads/$local_default")" -gt 0 ]; then
+      base="$local_default"
+    fi
     git -C "$clone" worktree add -q --no-track -b "$branch" "$dest" "$base"
   fi
   [ ! -f "$dest/.gitmodules" ] || git -C "$dest" submodule update -q --init --recursive
