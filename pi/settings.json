@@ -16,7 +16,7 @@
     "npm:billion-context",
     "npm:pi-playwright"
   ],
-  "skills": ["skills-team"],
+  "skills": [],
   "theme": "dark/dark",
   "enabledModels": [
     "qwen-token-plan/qwen3.8-max",
