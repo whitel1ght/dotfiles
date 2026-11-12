@@ -60,7 +60,8 @@ assert_link "$HOME_DIR/.local/bin/proxyctl" "$TEST_DIR/bin/proxyctl" 'keeps Ubun
 assert_link "$HOME_DIR/.local/bin/clipboard-copy" "$TEST_DIR/bin/clipboard-copy" 'links Linux clipboard helper'
 for helper in wiki-sync repos-sync team-plugins-sync system-check jira-api jira-issue \
     day-status day-agent friction friction-cards decisions decide run-day-inbox-answer pi-autoupdate \
-    plan-open plan-pick secret secrets secrets-guard gitlab-api-guard tmux-here handoff-open; do
+    plan-open plan-pick secret secrets secrets-guard gitlab-api-guard tmux-here handoff-open \
+    dot-land; do
     assert_link "$HOME_DIR/.local/bin/$helper" "$TEST_DIR/bin/$helper" "links $helper"
 done
 assert_link "$HOME_DIR/.local/bin/decide" "$TEST_DIR/bin/decide" 'preserves source decide symlink target'
