@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Print the tmux pane (%N) the caller runs in, even when $TMUX is not set (a harness can start its
+# shell without it).
+#
+#   tmux-here
+#
+# $TMUX_PANE when it names a live pane; else the pane whose process is an ancestor of this one;
+# else the active pane of the most recently active client. Exit 1, printing nothing, with no tmux
+# server or no pane to pick. day-plan and handoff-open use it.
+set -uo pipefail
+
+case "${1:-}" in -h|--help) sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
+
+command -v tmux >/dev/null 2>&1 && tmux list-sessions >/dev/null 2>&1 || exit 1
+
+if [ -n "${TMUX_PANE:-}" ]; then
+  p="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_id}' 2>/dev/null)"
+  [ -z "$p" ] || { echo "$p"; exit 0; }
+fi
+
+panes="$(tmux list-panes -a -F '#{pane_pid} #{pane_id}' 2>/dev/null || true)"
+pid=$$
+while [ -n "$pid" ] && [ "$pid" -gt 1 ]; do
+  p="$(awk -v p="$pid" '$1 == p { print $2; exit }' <<<"$panes")"
+  [ -z "$p" ] || { echo "$p"; exit 0; }
+  pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+done
+
+client="$(tmux list-clients -F '#{client_activity} #{client_name}' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
+[ -n "$client" ] || exit 1
+p="$(tmux display-message -p -c "$client" '#{pane_id}' 2>/dev/null)"
+[ -n "$p" ] || exit 1
+echo "$p"
