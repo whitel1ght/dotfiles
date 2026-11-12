@@ -33,7 +33,7 @@ old link recorded beside it. Edit `pi/settings.json` for the shared declaration
 | Agent-directory item | Source in this repo |
 | --- | --- |
 | `settings.json` | seeded from `pi/settings.json`: shared packages, `skills`, theme; provider/model and machine keys are per-host |
-| `models.json` | `pi/models.json`: local models and OpenCode Go overrides |
+| `models.json` | `pi/models.json`: local models |
 | `mcp-servers.json` | `pi/mcp-servers.json`: MCP definitions with environment references |
 | `APPEND_SYSTEM.md`, `model-selection.md` | `pi/`: global assistant rules and delegation policy |
 | `AGENTS.md` | `claude/CLAUDE.md`: shared personal instructions |
@@ -53,40 +53,33 @@ marks the session for the daily extension's idle ideas review.
 
 ## Models and authentication
 
-The startup default in the repo seed is **`opencode-go/longcat-2.5`**, authored on
-the Mac. A host without that provider's login sets its own `defaultProvider`,
-`defaultModel`, and `enabledModels` in its per-host `~/.pi/agent/settings.json`;
-seeding never overwrites an existing file, so those host overrides survive
-re-installs. On this Ubuntu host the default is `qwen-token-plan/qwen3.8-max`
-with the pool `qwen-token-plan/qwen3.8-max` and
-`qwen-token-plan/deepseek-v4.1-flash`. Changing the default affects new
-sessions, not the model of an already running session.
+The startup default is **`qwen-token-plan/qwen3.8-max`**. Changing the default
+affects new sessions, not the model of an already running session.
 
-The repo seed's session pool is:
+The repo seed's session pool uses the same provider:
 
-- `openai/gpt-6.1-sol`
-- `ollama/qwen2.5-coder:14b-16k`
+- `qwen-token-plan/qwen3.8-max`
+- `qwen-token-plan/qwen3.8-flash`
+- `qwen-token-plan/deepseek-v4.1-flash`
 
-The OpenAI model requires a usable OpenAI login. The Ollama model requires a
-local Ollama service with that exact model loaded; it is not downloaded or
-started by the dotfiles installer. The default model is not automatically added
-to the scoped delegation pool. Use `/scoped-models` to change the live pool and
-edit `enabledModels` for the persistent selection. Do not silently route a
-missing model to a different provider or paid account.
+`qwen-token-plan` is Pi's built-in provider, so `models.json` carries no entry
+for it. The default model is not automatically added to the scoped delegation
+pool. Use `/scoped-models` to change the live pool and edit `enabledModels` for
+the persistent selection. A host that needs different providers sets its own
+`defaultProvider`, `defaultModel`, and `enabledModels` in its per-host
+`~/.pi/agent/settings.json`; seeding never overwrites an existing file, so those
+host overrides survive re-installs. Do not silently route a missing model to a
+different provider or paid account.
 
-### OpenCode Go
+### OpenCode Go (removed)
 
-`models.json` overrides Pi's built-in `opencode-go` provider to use OpenCode
-Console endpoints (`opencode.ai/inference/go/...`). Credentials come from
-`bin/opencode-console-auth`, linked into `~/.local/bin/`: its `token` and `org`
-commands read OpenCode's local credential and supply the bearer token and
-`x-opencode-org-id` header. No token is committed in this repo.
-
-Sign in with `opencode auth login opencode`. If the token expires, run OpenCode
-to refresh it. Avoid a stale `opencode-go` key in Pi's `auth.json`, which can
-supersede the configured credential source. `qwen3.8-flash` and `minimax-m3`
-have full Anthropic-endpoint overrides; other models rely on Pi's registry plus
-the provider-level overrides. The standalone `longcat` provider was removed.
+The `opencode-go` override is gone from `models.json` (2026-11-06). Its `apiKey`
+ran `bin/opencode-console-auth`, so an expired Console token, or no `opencode` at
+all, made every model refresh warn `Could not refresh opencode-go`. To bring it
+back, restore the block from git history, sign in with
+`opencode auth login opencode`, and avoid a stale `opencode-go` key in Pi's
+`auth.json`. The helper `bin/opencode-console-auth` and its `~/.local/bin` link
+stay, but nothing in this branch calls it now.
 
 ### Local models and secrets
 

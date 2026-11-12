@@ -1,6 +1,6 @@
 {
-  "defaultModel": "longcat-2.5",
-  "defaultProvider": "opencode-go",
+  "defaultModel": "qwen3.8-max",
+  "defaultProvider": "qwen-token-plan",
   "packages": [
     "git:github.com/obra/superpowers",
     "npm:pi-web-access",
@@ -19,7 +19,8 @@
   "skills": ["skills-team"],
   "theme": "dark/dark",
   "enabledModels": [
-    "openai/gpt-6.1-sol",
-    "ollama/qwen2.5-coder:14b-16k"
+    "qwen-token-plan/qwen3.8-max",
+    "qwen-token-plan/qwen3.8-flash",
+    "qwen-token-plan/deepseek-v4.1-flash"
   ]
 }
