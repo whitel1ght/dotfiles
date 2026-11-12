@@ -20,7 +20,9 @@
 #   certs/          copied from the main checkout (a symlink would show up as
 #                   untracked, since .gitignore matches /certs/ as a directory)
 #   submodules      initialised when missing (src/protobufs)
-#   node_modules    `npm ci` when missing or older than package-lock.json
+#   node_modules    when missing or older than package-lock.json: a clone of the
+#                   install cached for that lockfile (nm-clone), else `npm ci`,
+#                   whose result is cached for the next worktree
 # and the pane runs `nvm use`, so the worktree's .nvmrc picks the Node version.
 # src/protobufs-ts is left to dev.sh, which builds it when it's missing.
 set -euo pipefail
@@ -54,6 +56,7 @@ SESSION="${DEV_SESSION:-servers}"
 WINDOW="${DEV_WINDOW:-dashboard dev}"
 MATCH="${DEV_MATCH:-vite}"          # what a process on the port must be for us to stop it
 WAIT="${DEV_WAIT:-120}"
+NM="$(command -v nm-clone || echo "$HOME/.local/bin/nm-clone")"
 
 die() { echo "dev: $*" >&2; exit 1; }
 
@@ -118,6 +121,13 @@ prepare() {
     echo "initialising submodules"
     git -C "$dir" submodule update --init --quiet
   fi
+  if [ -f "$dir/package-lock.json" ] && [ -x "$NM" ]; then
+    if [ -d "$dir/node_modules" ] && [ "$dir/package-lock.json" -nt "$dir/node_modules/.package-lock.json" ]; then
+      echo "node_modules is older than package-lock.json: replacing it"
+      rm -rf "$dir/node_modules"
+    fi
+    [ -e "$dir/node_modules" ] || "$NM" "$dir" || true
+  fi
 }
 
 serve() {
@@ -125,10 +135,11 @@ serve() {
   prepare "$dir"
   # nvm loads only in interactive shells, and a tmux pane command isn't one, so the
   # pane loads it itself and picks the worktree's .nvmrc: each branch gets the Node
-  # it pins. npm ci runs in the pane, not here: it can take a minute and its output
-  # belongs next to the server's. The shell stays open afterwards so a crash stays
-  # readable.
-  run='export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"; nvm_sh="$NVM_DIR/nvm.sh"; if [ -s "$nvm_sh" ]; then . "$nvm_sh"; nvm use --silent 2>/dev/null || nvm use --silent default 2>/dev/null || nvm use --silent node; fi; if [ ! -d node_modules ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then npm ci; fi && npm run dev; echo; echo "[dev server exited]"; exec "${SHELL:-zsh}" -l'
+  # it pins. npm ci (only when prepare found no cached install to clone) runs in the
+  # pane, not here: it can take a minute and its output belongs next to the server's;
+  # its result is cached for the next worktree on that lockfile. The shell stays open
+  # afterwards so a crash stays readable.
+  run='export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"; nvm_sh="$NVM_DIR/nvm.sh"; if [ -s "$nvm_sh" ]; then . "$nvm_sh"; nvm use --silent 2>/dev/null || nvm use --silent default 2>/dev/null || nvm use --silent node; fi; if [ ! -d node_modules ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then npm ci && { '"$(printf %q "$NM")"' --save . || true; }; fi && npm run dev; echo; echo "[dev server exited]"; exec "${SHELL:-zsh}" -l'
   if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
     tmux new-session -d -s "$SESSION" -n "$WINDOW" -c "$dir" "$run"
   elif ! tmux list-windows -t "=$SESSION" -F '#W' | grep -qx "$WINDOW"; then
