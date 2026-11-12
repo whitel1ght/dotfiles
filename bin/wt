@@ -4,7 +4,10 @@
 #
 #   wt add <repo> <name> [branch]   create one; the branch is checked out if it
 #                                   exists locally or on origin, else created
-#                                   from origin's default branch (default: name)
+#                                   from origin's default branch (default: name).
+#                                   A repo with a package-lock.json gets
+#                                   node_modules from nm-clone when it is
+#                                   installed (macOS only)
 #   wt move <worktree> [name]       move an existing worktree into the layout
 #   wt ls                           every worktree of every repo in the projects
 #                                   root, out-of-place ones marked
@@ -77,7 +80,17 @@ add_at() { # clone name branch
     git -C "$clone" worktree add -q --no-track -b "$branch" "$dest" "$base"
   fi
   [ ! -f "$dest/.gitmodules" ] || git -C "$dest" submodule update -q --init --recursive
+  [ ! -f "$dest/package-lock.json" ] || node_modules_for "$dest"
   echo "$dest"
+}
+
+# A clone of the cached install for the worktree's lockfile (nm-clone); a miss leaves
+# node_modules missing, for npm ci. Never fails the add, and prints only on stderr.
+node_modules_for() {
+  local nm
+  nm=$(command -v nm-clone || echo "$HOME/.local/bin/nm-clone")
+  [ -x "$nm" ] || return 0
+  "$nm" "$1" >&2 || true
 }
 
 move() {
