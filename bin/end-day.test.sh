@@ -92,6 +92,37 @@ echo "end-day — input checks"
 printf '' | "$SCRIPT" save 2026-01-07 >/dev/null 2>&1 && fail "refuses an empty report" "exit 0" || pass "refuses an empty report"
 "$SCRIPT" collect 26-1-1 >/dev/null 2>&1 && fail "rejects a malformed date" "exit 0" || pass "rejects a malformed date"
 
+echo "end-day collect — glab retry"
+STUBS="$SANDBOX/stubs"; mkdir -p "$STUBS" "$SANDBOX/empty" "$SANDBOX/no-claude"
+cat > "$STUBS/glab" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$*" >> "$GLAB_LOG"
+case "$*" in
+  *"api user"*)
+    [ "$(grep -c 'api user' "$GLAB_LOG")" -ge 2 ] || exit 1
+    echo '{"id": 7, "username": "me"}' ;;
+  *) echo '[]' ;;
+esac
+STUB
+chmod +x "$STUBS/glab"
+collect() {
+  GLAB_LOG="$SANDBOX/glab.log" PATH="$STUBS:$PATH" PROJECTS_DIR="$SANDBOX/empty" \
+    CLAUDE_DIR="$SANDBOX/no-claude" JIRA_EMAIL= JIRA_API_TOKEN= END_DAY_RETRY_SLEEP=0 \
+    "$SCRIPT" collect 2026-10-09 2>&1
+}
+out="$(collect)"
+assert_eq "2" "$(grep -c 'api user' "$SANDBOX/glab.log")" "a failed glab api user is tried once more"
+assert_eq "no" "$(grep -q 'GitLab unavailable' <<<"$out" && echo yes || echo no)" "and the retry's answer is the one reported"
+rm -f "$SANDBOX/glab.log"
+cat > "$STUBS/glab" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$*" >> "$GLAB_LOG"
+exit 1
+STUB
+out="$(collect)"
+assert_eq "2" "$(grep -c 'api user' "$SANDBOX/glab.log")" "a call that keeps failing stops after two attempts"
+assert_eq "1" "$(grep -c 'GitLab unavailable' <<<"$out")" "and GitLab is reported unavailable once"
+
 echo "end-day touched"
 WIKI="$SANDBOX/wiki"
 mkdir -p "$WIKI/projects/ecfx/log" "$WIKI/projects/ecfx/decisions" "$WIKI/projects/epicmax/log" "$WIKI/projects/epicmax/decisions" "$WIKI/projects/personal/log"

@@ -50,6 +50,16 @@ shift_day() { date -j -v"$2"d -f %F "$1" +%F 2>/dev/null || date -d "$1 $2 day" 
 next=$(shift_day "$day" +1)
 prev=$(shift_day "$day" -1)
 
+# glab_retry <glab args>: gitlab.com drops about 1 call in 30 (F-021, F-117), so a failed call is
+# tried once more after END_DAY_RETRY_SLEEP seconds (default 1). Only the successful attempt's
+# output is printed, so a --paginate page cut off mid-body is never joined to the retry.
+glab_retry() {
+  local out
+  if out=$(glab "$@"); then printf '%s\n' "$out"; return 0; fi
+  sleep "${END_DAY_RETRY_SLEEP:-1}"
+  out=$(glab "$@") || return 1
+  printf '%s\n' "$out"
+}
 section() { printf '\n## %s\n\n' "$1"; }
 
 collect_commits() {
@@ -60,11 +70,11 @@ collect_commits() {
 collect_gitlab() {
   section "GitLab activity"
   local user me username events
-  user=$(glab api user) || { echo "(GitLab unavailable)"; return; }
+  user=$(glab_retry api user) || { echo "(GitLab unavailable)"; return; }
   me=$(jq -r .id <<<"$user"); username=$(jq -r .username <<<"$user")
   # after/before are exclusive dates in UTC; widen by a day, then keep only
   # events whose local date is the one asked for.
-  events=$(glab api --paginate "users/$me/events?after=$prev&before=$next&per_page=100" | jq -s --arg d "$day" '
+  events=$(glab_retry api --paginate "users/$me/events?after=$prev&before=$next&per_page=100" | jq -s --arg d "$day" '
     add // [] | map(select((.created_at | sub("\\.[0-9]+"; "") | fromdateiso8601 | strflocaltime("%Y-%m-%d")) == $d))
     | map(select(.action_name | test("^(pushed|deleted)") | not))') || { echo "(GitLab unavailable)"; return; }
   [ "$(jq length <<<"$events")" -gt 0 ] || { echo "(none)"; return; }
