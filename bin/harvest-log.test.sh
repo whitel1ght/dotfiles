@@ -59,6 +59,14 @@ class H(BaseHTTPRequestHandler):
         if not self.headers.get("User-Agent"):
             return self.reply(400, {"error": "user agent required"})
         s = load()
+        if s.get("html"):
+            body = b"<html>\n<body>\nBad gateway\n</body>\n</html>\n"
+            self.send_response(s["html"])
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if method == "GET" and u.path == "/v2/users/me":
             return self.reply(200, {"id": 42})
         if method == "GET" and u.path == "/v2/company":
@@ -195,6 +203,26 @@ assert_has "ECFX" "$OUT" "lists the projects it has"
 HARVEST_TOKEN=bad run "$D"
 assert_eq 1 "$RC" "rejected token: exit 1"
 assert_has "401" "$OUT" "shows the status"
+for code in 200 502; do
+    printf '{"html":%s,"company":{},"assignments":[],"entries":[]}\n' "$code" >"$SANDBOX/state.json"
+    run "$D"
+    assert_eq 1 "$RC" "an HTML $code: exit 1"
+    assert_eq 1 "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" "an HTML $code: one line, no traceback"
+done
+state '{"wants_timestamp_timers":false}' '[]'
+HARVEST_HOURS=abc run "$D"
+assert_eq 1 "$RC" "bad HARVEST_HOURS: exit 1"
+assert_eq 1 "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" "bad HARVEST_HOURS: one line"
+assert_has "HARVEST_HOURS" "$OUT" "names the variable"
+HARVEST_API="http://127.0.0.1:9" run "$D"
+assert_eq 1 "$RC" "API unreachable: exit 1"
+assert_eq 1 "$(printf '%s\n' "$OUT" | wc -l | tr -d ' ')" "API unreachable: one line"
+
+echo "== an inactive task of the same name is ignored =="
+ASSIGN='[{"project":{"id":7,"name":"ECFX","code":null},"task_assignments":[{"is_active":false,"task":{"id":69,"name":"Programming"}},{"is_active":true,"task":{"id":70,"name":"Programming"}}]}]'
+state '{"wants_timestamp_timers":false}' '[]'
+run "$D"
+assert_eq 70 "$(writes | jq -r '.body.task_id')" "the active Programming task"
 
 echo
 echo "passed: $PASS, failed: $FAIL"

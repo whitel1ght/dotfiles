@@ -19,6 +19,7 @@ HARVEST_API, HARVEST_DIARY_DIR and HARVEST_SECRET_BIN override the endpoints (te
 """
 
 import datetime as dt
+import http.client
 import json
 import os
 import re
@@ -34,7 +35,6 @@ DIARY = Path(os.environ.get("HARVEST_DIARY_DIR", "~/wiki/diary")).expanduser()
 SECRET_BIN = os.environ.get("HARVEST_SECRET_BIN", "secret")
 PROJECT = os.environ.get("HARVEST_PROJECT", "ecfx")
 TASK = os.environ.get("HARVEST_TASK", "programming")
-HOURS = float(os.environ.get("HARVEST_HOURS", "8"))
 AGENT = "harvest-log (personal dotfiles script)"
 
 
@@ -61,8 +61,8 @@ def credential(name: str) -> str:
     value = os.environ.get(name, "")
     if not value:
         try:
-            value = subprocess.run([SECRET_BIN, name], capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout.strip()
-        except OSError:
+            value = subprocess.run([SECRET_BIN, name], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=10).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
             value = ""
     if not value:
         raise Skip(f"no {name}: add it with `secrets` (a Harvest personal access token and its account id)")
@@ -87,9 +87,13 @@ class Harvest:
             with urllib.request.urlopen(req, timeout=30) as r:
                 return json.load(r)
         except urllib.error.HTTPError as e:
-            raise Fail(f"{method} {path}: HTTP {e.code} {e.read().decode(errors='replace')[:200]}")
+            raise Fail(f"{method} {path}: HTTP {e.code} {' '.join(e.read().decode(errors='replace').split())[:200]}")
         except urllib.error.URLError as e:
             raise Fail(f"{method} {path}: {e.reason}")
+        except ValueError:
+            raise Fail(f"{method} {path}: the answer is not JSON")
+        except (OSError, http.client.HTTPException) as e:
+            raise Fail(f"{method} {path}: {e!r}")
 
     def pages(self, path: str, key: str, query: dict) -> list:
         out, page = [], 1
@@ -120,12 +124,16 @@ def main(argv: list[str]) -> int:
         return 1
     day = args[0] if args else dt.date.today().isoformat()
     try:
+        try:
+            hours = float(os.environ.get("HARVEST_HOURS", "8"))
+        except ValueError:
+            raise Fail(f"HARVEST_HOURS={os.environ['HARVEST_HOURS']!r} is not a number")
         notes = report(day)
         h = Harvest(credential("HARVEST_TOKEN"), credential("HARVEST_ACCOUNT_ID"))
         me = h.call("GET", "/v2/users/me")["id"]
         assignments = h.pages("/v2/users/me/project_assignments", "project_assignments", {})
         pa = pick(assignments, PROJECT, "project", lambda a: [a["project"]["name"], a["project"].get("code")])
-        ta = pick(pa["task_assignments"], TASK, "task", lambda t: [t["task"]["name"]])
+        ta = pick([t for t in pa["task_assignments"] if t.get("is_active", True)], TASK, "task", lambda t: [t["task"]["name"]])
         project, task = pa["project"], ta["task"]
         where = f"{project['name']}/{task['name']} {day}"
         entries = [e for e in h.pages("/v2/time_entries", "time_entries",
@@ -147,7 +155,7 @@ def main(argv: list[str]) -> int:
             body.update(started_time="9:00am", ended_time="5:00pm")
             span = "9:00am-5:00pm"
         else:
-            body["hours"] = int(HOURS) if HOURS.is_integer() else HOURS
+            body["hours"] = int(hours) if hours.is_integer() else hours
             span = f"{body['hours']}h"
         if dry:
             print(f"harvest: would create {where}, {span}")
@@ -160,6 +168,9 @@ def main(argv: list[str]) -> int:
         return 2
     except Fail as f:
         print(f"harvest: failed: {f}")
+        return 1
+    except Exception as e:
+        print(f"harvest: failed: {e!r}")
         return 1
 
 
