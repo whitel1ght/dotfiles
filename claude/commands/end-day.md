@@ -2,7 +2,7 @@
 description: Standup report of the day's work across commits, MRs, Jira and all Claude sessions, filed in the diary, then folded into the project memory in ~/wiki
 argument-hint: [yesterday | YYYY-MM-DD]
 model: sonnet
-allowed-tools: Bash(~/.local/bin/sync-tickets:*), Bash(~/.local/bin/end-day:*), Bash(~/.local/bin/diary-links:*), Bash(~/.local/bin/day-agent:*), Bash(DAY_AGENT_DATE=* ~/.local/bin/day-agent:*), Bash(~/.local/bin/friction-mine:*), Bash(~/.local/bin/friction-ledger:*), Bash(~/.local/bin/coach-fix:*), Agent, Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Bash(fd:*), Bash(grep:*), Bash(glab api:*), Bash(jq:*), Bash(printf:*), Bash(cat:*), Bash(wc:*), Bash([:*), Bash(test:*), Bash(git -C * diff:*), Bash(wt add:*), Read, Edit, Write
+allowed-tools: Bash(~/.local/bin/sync-tickets:*), Bash(~/.local/bin/end-day:*), Bash(~/.local/bin/harvest-log:*), Bash(~/.local/bin/diary-links:*), Bash(~/.local/bin/day-agent:*), Bash(DAY_AGENT_DATE=* ~/.local/bin/day-agent:*), Bash(~/.local/bin/friction-mine:*), Bash(~/.local/bin/friction-ledger:*), Bash(~/.local/bin/coach-fix:*), Agent, Bash(qmd:*), Bash(git -C ~/wiki:*), Bash(date:*), Bash(awk:*), Bash(rg:*), Bash(sort:*), Bash(tr:*), Bash(ls:*), Bash(mv:*), Bash(mkdir:*), Bash(fd:*), Bash(grep:*), Bash(glab api:*), Bash(jq:*), Bash(printf:*), Bash(cat:*), Bash(wc:*), Bash([:*), Bash(test:*), Bash(git -C * diff:*), Bash(wt add:*), Read, Edit, Write
 disable-model-invocation: true
 ---
 
@@ -122,6 +122,17 @@ REPORT
 
 `save` replaces the block it wrote on an earlier run and never touches my own lines, so
 running it again the same day is safe. When the diary already has a `<!-- daily-report:start -->` block for the day, read it first and build on it: keep every Done line that carries an MR link or other evidence, and only add new material or move a line forward. Never regress a line, for example `Done` to `In progress`, because this run's digest is thinner than the earlier one. When the diary's block already has a `**Standup**` paragraph, rewrite it for the whole day rather than appending. Links in the report may be written inline or as trailing `[↗][label]` refs; `save` converts them to refs. Note the path it printed, then continue with the next section.
+
+## Harvest
+
+Put the saved report into the day's Harvest time entry (project ecfx, task Programming):
+
+```bash
+DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
+~/.local/bin/harvest-log "$DAY"
+```
+
+It copies the diary's `daily-report` block, nothing else, into the entry's notes and prints one line: `created …, 8h` (the day had no entry; I adjust the hours in Harvest myself), `updated the notes … (Nh kept)` (the hours are never touched), `already up to date`, `skipped: …` (exit 2: no report block, or no `HARVEST_TOKEN` / `HARVEST_ACCOUNT_ID`, which I add with `secrets`) or `failed: …` (exit 1). Repeat that line in the closing message, never in the diary. Harvest never blocks the rest: on a skip or a failure go on to the next section. A second /end-day the same day replaces the notes with the new report.
 
 ## Unreported activity
 

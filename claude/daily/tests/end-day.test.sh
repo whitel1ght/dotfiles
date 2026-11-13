@@ -9,6 +9,17 @@ echo "== original behaviour is kept =="
 has "$F" "~/.local/bin/end-day collect" "still collects the day"
 has "$F" "~/.local/bin/end-day save" "still files the report"
 
+echo "== harvest: the saved report goes to the day's Harvest entry =="
+for f in "$F" "$TEST_DIR/../../../pi/prompts/end-day.md"; do
+  side="$(basename "$(dirname "$f")")"
+  has "$f" "## Harvest" "$side: harvest step exists"
+  has "$f" '~/.local/bin/harvest-log "$DAY"' "$side: runs harvest-log for the day"
+  has "$f" "Harvest never blocks the rest" "$side: a skip or failure never stops end-day"
+  has "$f" "Repeat that line in the closing message, never in the diary" "$side: its line goes to the closing message"
+  awk '/^## File it/{a=NR} /^## Harvest/{b=NR} /^## Unreported activity/{c=NR} END{exit !(a&&b&&c&&a<b&&b<c)}' "$f" && pass "$side: harvest runs right after the report is saved" || fail "$side: harvest order" "wrong order in $f"
+done
+has "$F" "Bash(~/.local/bin/harvest-log:*)" "claude: allows harvest-log"
+
 echo "== unreported activity (spec 4.9 safety net) =="
 has "$F" "## Unreported activity" "section exists"
 has "$F" "**Unplanned**" "adds under the Unplanned group"

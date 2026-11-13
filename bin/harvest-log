@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Put the day's report from the diary into Harvest, as the notes of the day's time entry.
+
+  harvest-log [--dry-run] [DATE]
+
+DATE (default today) picks ~/wiki/diary/DATE.md; the text between <!-- daily-report:start -->
+and <!-- daily-report:end --> becomes the notes, without the markers, `[↗][label]` refs and
+`[label]: url` lines. The entry is the user's one for DATE on project HARVEST_PROJECT
+(default "ecfx") and task HARVEST_TASK (default "programming"), names or codes matched
+case-insensitively. When it exists only its notes change (the hours stay the user's); when the
+day has none it is created with HARVEST_HOURS (default 8), or 9:00am-5:00pm on an account that
+tracks time with start and end times. The same notes again write nothing.
+
+Credentials: HARVEST_TOKEN (a personal access token) and HARVEST_ACCOUNT_ID, from the
+environment or `secret NAME` (add them with `secrets`).
+
+Exit 0 done, 2 skipped (no report block, no credentials), 1 error. One line of output.
+HARVEST_API, HARVEST_DIARY_DIR and HARVEST_SECRET_BIN override the endpoints (tests).
+"""
+
+import datetime as dt
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+API = os.environ.get("HARVEST_API", "https://api.harvestapp.com").rstrip("/")
+DIARY = Path(os.environ.get("HARVEST_DIARY_DIR", "~/wiki/diary")).expanduser()
+SECRET_BIN = os.environ.get("HARVEST_SECRET_BIN", "secret")
+PROJECT = os.environ.get("HARVEST_PROJECT", "ecfx")
+TASK = os.environ.get("HARVEST_TASK", "programming")
+HOURS = float(os.environ.get("HARVEST_HOURS", "8"))
+AGENT = "harvest-log (personal dotfiles script)"
+
+
+class Skip(Exception):
+    pass
+
+
+class Fail(Exception):
+    pass
+
+
+def report(day: str) -> str:
+    path = DIARY / f"{day}.md"
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    m = re.search(r"<!-- daily-report:start -->\n(.*?)<!-- daily-report:end -->", text, re.S)
+    if not m or not m.group(1).strip():
+        raise Skip(f"no daily-report block in {path}")
+    lines = [l for l in m.group(1).splitlines() if not re.match(r"^\[[^\]]+\]: \S+\s*$", l)]
+    body = "\n".join(re.sub(r"\s*\[↗\]\[[^\]]+\]", "", l).rstrip() for l in lines)
+    return re.sub(r"\n{3,}", "\n\n", body).strip()
+
+
+def credential(name: str) -> str:
+    value = os.environ.get(name, "")
+    if not value:
+        try:
+            value = subprocess.run([SECRET_BIN, name], capture_output=True, text=True, stdin=subprocess.DEVNULL).stdout.strip()
+        except OSError:
+            value = ""
+    if not value:
+        raise Skip(f"no {name}: add it with `secrets` (a Harvest personal access token and its account id)")
+    return value
+
+
+class Harvest:
+    def __init__(self, token: str, account: str):
+        self.headers = {
+            "Authorization": f"Bearer {token}",
+            "Harvest-Account-Id": account,
+            "User-Agent": AGENT,
+            "Accept": "application/json",
+        }
+
+    def call(self, method: str, path: str, query: dict | None = None, body: dict | None = None) -> dict:
+        url = f"{API}{path}" + (f"?{urllib.parse.urlencode(query)}" if query else "")
+        data = json.dumps(body).encode() if body is not None else None
+        headers = dict(self.headers, **({"Content-Type": "application/json"} if data else {}))
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            raise Fail(f"{method} {path}: HTTP {e.code} {e.read().decode(errors='replace')[:200]}")
+        except urllib.error.URLError as e:
+            raise Fail(f"{method} {path}: {e.reason}")
+
+    def pages(self, path: str, key: str, query: dict) -> list:
+        out, page = [], 1
+        while page:
+            r = self.call("GET", path, dict(query, page=page, per_page=2000))
+            out += r.get(key, [])
+            page = r.get("next_page")
+        return out
+
+
+def pick(items: list, want: str, label: str, names) -> dict:
+    w = want.casefold()
+    exact = [i for i in items if w in (n.casefold() for n in names(i) if n)]
+    if len(exact) == 1:
+        return exact[0]
+    loose = [i for i in items if any(w in n.casefold() for n in names(i) if n)]
+    if len(exact) == 0 and len(loose) == 1:
+        return loose[0]
+    have = ", ".join(sorted({names(i)[0] for i in items})) or "none"
+    raise Fail(f"{label} {want!r} matches {len(exact) or len(loose)} of: {have} (set HARVEST_{label.upper()})")
+
+
+def main(argv: list[str]) -> int:
+    dry = "--dry-run" in argv
+    args = [a for a in argv if a != "--dry-run"]
+    if len(args) > 1 or (args and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", args[0])):
+        print(__doc__.strip(), file=sys.stderr)
+        return 1
+    day = args[0] if args else dt.date.today().isoformat()
+    try:
+        notes = report(day)
+        h = Harvest(credential("HARVEST_TOKEN"), credential("HARVEST_ACCOUNT_ID"))
+        me = h.call("GET", "/v2/users/me")["id"]
+        assignments = h.pages("/v2/users/me/project_assignments", "project_assignments", {})
+        pa = pick(assignments, PROJECT, "project", lambda a: [a["project"]["name"], a["project"].get("code")])
+        ta = pick(pa["task_assignments"], TASK, "task", lambda t: [t["task"]["name"]])
+        project, task = pa["project"], ta["task"]
+        where = f"{project['name']}/{task['name']} {day}"
+        entries = [e for e in h.pages("/v2/time_entries", "time_entries",
+                                      {"user_id": me, "project_id": project["id"], "from": day, "to": day})
+                   if e["task"]["id"] == task["id"]]
+        if entries:
+            e = sorted(entries, key=lambda e: e["id"])[0]
+            if (e.get("notes") or "").strip() == notes:
+                print(f"harvest: {where} entry {e['id']} already up to date ({e['hours']}h)")
+                return 0
+            if dry:
+                print(f"harvest: would update the notes of {where} entry {e['id']} ({e['hours']}h kept)")
+                return 0
+            h.call("PATCH", f"/v2/time_entries/{e['id']}", body={"notes": notes})
+            print(f"harvest: updated the notes of {where} entry {e['id']} ({e['hours']}h kept)")
+            return 0
+        body = {"project_id": project["id"], "task_id": task["id"], "spent_date": day, "notes": notes}
+        if h.call("GET", "/v2/company").get("wants_timestamp_timers"):
+            body.update(started_time="9:00am", ended_time="5:00pm")
+            span = "9:00am-5:00pm"
+        else:
+            body["hours"] = int(HOURS) if HOURS.is_integer() else HOURS
+            span = f"{body['hours']}h"
+        if dry:
+            print(f"harvest: would create {where}, {span}")
+            return 0
+        e = h.call("POST", "/v2/time_entries", body=body)
+        print(f"harvest: created {where} entry {e['id']}, {span}")
+        return 0
+    except Skip as s:
+        print(f"harvest: skipped: {s}")
+        return 2
+    except Fail as f:
+        print(f"harvest: failed: {f}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

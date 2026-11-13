@@ -482,6 +482,11 @@ if [ -f "$DOTFILES_DIR/bin/end-day" ]; then
     create_symlink "$DOTFILES_DIR/bin/end-day" "$HOME/.local/bin/end-day"
 fi
 
+# harvest-log puts /end-day's report into the day's Harvest time entry.
+if [ -f "$DOTFILES_DIR/bin/harvest-log" ]; then
+    create_symlink "$DOTFILES_DIR/bin/harvest-log" "$HOME/.local/bin/harvest-log"
+fi
+
 # start-day gathers overnight activity for /start-day and files the plan in the diary.
 if [ -f "$DOTFILES_DIR/bin/start-day" ]; then
     create_symlink "$DOTFILES_DIR/bin/start-day" "$HOME/.local/bin/start-day"
