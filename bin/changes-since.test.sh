@@ -660,6 +660,16 @@ assert_contains "$(errs)" "timed out" "stderr says it timed out, not a host abor
 assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "the cursor did not move"
 unset CHANGES_SINCE_DEADLINE
 
+unset CHANGES_SINCE_DEADLINE
+
+reset; cursor 2026-10-08T07:00:00Z
+echo "[$(todo 1 review_requested alice 100 3 2026-10-08T07:10:00Z)]" > "$FIX/todos.json"
+out=$(CHANGES_SINCE_DEADLINE=3 CHANGES_SINCE_TEST_PROTECTED_SLEEP=4 run); rc=$?
+assert_eq "0" "$rc" "a run past the deadline inside the print-and-move section finishes in the grace: exit 0"
+assert_eq "assigned" "$(jq -r .kind <<<"$out")" "its events are printed"
+[ "$(cat "$STATE/default")" != "2026-10-08T07:00:00Z" ] && pass "and the cursor moved" || fail "and the cursor moved" "unchanged"
+assert_eq "" "$(errs)" "no timed-out message"
+
 echo "changes-since — help"
 assert_contains "$("$SCRIPT" --help)" "changes-since [--cursor NAME] [--peek]" "--help prints the usage line"
 

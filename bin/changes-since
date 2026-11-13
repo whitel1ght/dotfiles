@@ -42,8 +42,11 @@
 # hard whole-run deadline, CHANGES_SINCE_DEADLINE seconds (90): the script
 # re-runs itself under a watchdog that stops the whole process group, prints
 # "changes-since: timed out" and exits 75, with no cursor move. The daily
-# watchers kill a run only at 120 s, so a slow source ends as a skipped tick,
-# never as a mid-run abort (F-153). A call that times out twice fails the run with exit 75 and "timed out" on
+# watchers kill a run only at 120 s, so a slow source never ends as a mid-run
+# abort (F-153): the Claude watcher skips the tick on exit 75, pi reports it as
+# a timeout. A run that finishes inside the 2 s grace after the deadline ignores
+# TERM while it prints and moves the cursor, and exits 0 with its events.
+# A call that times out twice fails the run with exit 75 and "timed out" on
 # stderr, no service_down line and no cursor move: the caller skips that tick.
 # The one exception is the approvals lookup behind approved_by_me (one call per
 # MR): one attempt, no retry, CHANGES_SINCE_APPROVALS_TIMEOUT seconds (5) each and
@@ -74,17 +77,27 @@ if [ -z "${CHANGES_SINCE_WATCHDOG:-}" ]; then
     my $t = shift;
     my $pid = fork // exit 127;
     if (!$pid) { setpgrp(0, 0); exec @ARGV; exit 127 }
+    my $status;
+    my $reap = sub { $status = $? if !defined $status && waitpid($pid, 1) == $pid };
+    my $code = sub { $_[0] & 127 ? 128 + ($_[0] & 127) : $_[0] >> 8 };
     my $stop = sub {
       kill "TERM", -$pid;
       my $end = time + 2;
-      while (time < $end && kill 0, -$pid) { select undef, undef, undef, 0.1; waitpid $pid, 1 }
-      kill "KILL", -$pid; waitpid $pid, 0;
+      while (time < $end && kill 0, -$pid) { select undef, undef, undef, 0.1; $reap->() }
+      kill "KILL", -$pid;
+      if (!defined $status) { waitpid $pid, 0; $status = $? }
     };
-    $SIG{ALRM} = sub { $stop->(); print STDERR "changes-since: timed out (run deadline ${t}s); skipping this tick\n"; exit 75 };
+    $SIG{ALRM} = sub {
+      $reap->();
+      exit $code->($status) if defined $status;
+      $stop->();
+      exit 0 if $status == 0;
+      print STDERR "changes-since: timed out (run deadline ${t}s); skipping this tick\n"; exit 75;
+    };
     $SIG{INT} = $SIG{TERM} = sub { $stop->(); exit 130 };
     alarm $t;
     waitpid $pid, 0;
-    exit($? & 127 ? 128 + ($? & 127) : $? >> 8);
+    exit $code->($?);
   ' "${CHANGES_SINCE_DEADLINE:-90}" "${BASH:-/bin/bash}" "$0" "$@"
 fi
 
@@ -357,6 +370,8 @@ out=$(jq -sc '
   | map(select(.kind != "ticket_updated" or (.ticket as $t | $assigned | index($t) | not)))
   | group_by([.kind, .repo, .mr, (if .mr == null then .ticket else null end)])
   | map(max_by(.at)) | sort_by(.at, .kind) | .[]' "$EVENTS") || die "could not assemble events"
+trap '' TERM
+[ -z "${CHANGES_SINCE_TEST_PROTECTED_SLEEP:-}" ] || sleep "$CHANGES_SINCE_TEST_PROTECTED_SLEEP"
 [ -z "$out" ] || printf '%s\n' "$out"
 if [ "$peek" -eq 0 ]; then
   mkdir -p "$STATE_DIR"
