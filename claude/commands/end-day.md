@@ -132,7 +132,7 @@ DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$AR
 ~/.local/bin/harvest-log "$DAY"
 ```
 
-It copies the diary's `daily-report` block, nothing else, into the entry's notes and prints one line: `created …, 8h` (the day had no entry; I adjust the hours in Harvest myself), `updated the notes … (Nh kept)` (the hours are never touched), `already up to date`, `skipped: …` (exit 2: no report block, or no `HARVEST_TOKEN` / `HARVEST_ACCOUNT_ID`, which I add with `secrets`) or `failed: …` (exit 1). Repeat that line in the closing message, never in the diary. Harvest never blocks the rest: on a skip or a failure go on to the next section. A second /end-day the same day replaces the notes with the new report.
+It copies the **Done** and **In progress** sections of the diary's `daily-report` block, nothing else (no Standup, no Blocked / waiting), into the entry's notes and prints one line: `created …, 8h` (the day had no entry; I adjust the hours in Harvest myself), `updated the notes … (Nh kept)` (the hours are never touched), `already up to date`, `skipped: …` (exit 2: no report block or no Done / In progress in it, or no `HARVEST_TOKEN` / `HARVEST_ACCOUNT_ID`, which I add with `secrets`) or `failed: …` (exit 1). Repeat that line in the closing message, never in the diary. Harvest never blocks the rest: on a skip or a failure go on to the next section. A second /end-day the same day replaces the notes with the new report.
 
 ## Unreported activity
 

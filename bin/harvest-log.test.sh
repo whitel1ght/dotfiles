@@ -125,8 +125,8 @@ export HARVEST_API="http://127.0.0.1:$(cat "$SANDBOX/port")"
 diary() { # date body-of-report-block
     printf '# %s\n\n## Work\n\n### ECFX\n\n<!-- daily-report:start -->\n%s\n<!-- daily-report:end -->\n\n## Personal\n- [X] walk\n' "$1" "$2" >"$HARVEST_DIARY_DIR/$1.md"
 }
-REPORT=$'**Standup**\nMerged backend!6974.\n\n**Done**\n- ECFX-7538 alert: backend!6974 merged  [↗][backend!6974]\n\n[backend!6974]: https://gitlab.com/ecfx/ecfx-backend/-/merge_requests/6974'
-WANT=$'**Standup**\nMerged backend!6974.\n\n**Done**\n- ECFX-7538 alert: backend!6974 merged'
+REPORT=$'**Standup**\nMerged backend!6974.\n\n**Done**\n- ECFX-7538 alert: backend!6974 merged  [↗][backend!6974]\n\n**In progress**\n- ECFX-18448 counts request — dashboard!2302\n\n**Blocked / waiting**\n- backend!7007 — approvals\n\n[backend!6974]: https://gitlab.com/ecfx/ecfx-backend/-/merge_requests/6974'
+WANT=$'**Done**\n- ECFX-7538 alert: backend!6974 merged\n\n**In progress**\n- ECFX-18448 counts request — dashboard!2302'
 writes() { jq -c 'select(.method != "GET")' "$SANDBOX/requests.log"; }
 run() { OUT="$("$SCRIPT" "$@" 2>&1)"; RC=$?; }
 
@@ -139,8 +139,8 @@ assert_has "created" "$OUT" "says it created the entry"
 assert_has "8" "$OUT" "names the 8 hours"
 assert_eq 1 "$(writes | wc -l | tr -d ' ')" "one write: a meetings entry the same day is not ours"
 assert_eq '{"project_id":7,"task_id":70,"spent_date":"2026-11-13","hours":8}' "$(writes | jq -c '.body | {project_id, task_id, spent_date, hours}')" "POSTs ecfx/programming, 8h, that day"
-assert_eq "$WANT" "$(writes | jq -r '.body.notes')" "notes are the daily-report block, markers and link refs dropped"
-assert_eq "" "$(writes | jq -r '.body.notes' | rg 'Personal|walk|daily-report')" "nothing outside the block"
+assert_eq "$WANT" "$(writes | jq -r '.body.notes')" "notes are the block's Done and In progress sections, link refs dropped"
+assert_eq "" "$(writes | jq -r '.body.notes' | rg 'Personal|walk|daily-report|Standup|Blocked')" "no Standup, no Blocked, nothing outside the block"
 
 echo "== update notes only when the entry exists =="
 state '{"wants_timestamp_timers":false}' '[{"id":5,"spent_date":"2026-11-13","hours":3.5,"notes":"old","user":{"id":42},"project":{"id":7},"task":{"id":70},"is_running":true}]'
@@ -185,6 +185,11 @@ printf '# x\n\nnothing\n' >"$HARVEST_DIARY_DIR/2026-11-02.md"
 run 2026-11-02
 assert_eq 2 "$RC" "no block: exit 2"
 assert_eq "" "$(cat "$SANDBOX/requests.log")" "no request at all"
+diary 2026-11-03 $'**Standup**\nA quiet day.'
+run 2026-11-03
+assert_eq 2 "$RC" "a block with no Done or In progress: exit 2"
+assert_has "no Done or In progress" "$OUT" "says why"
+assert_eq "" "$(cat "$SANDBOX/requests.log")" "and sends nothing"
 printf '#!/bin/sh\nexit 1\n' >"$SANDBOX/secret"; chmod +x "$SANDBOX/secret"
 OUT="$(env -u HARVEST_TOKEN HARVEST_SECRET_BIN="$SANDBOX/secret" "$SCRIPT" "$D" 2>&1)"; RC=$?
 assert_eq 2 "$RC" "no token: exit 2"

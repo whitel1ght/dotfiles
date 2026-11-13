@@ -3,8 +3,9 @@
 
   harvest-log [--dry-run] [DATE]
 
-DATE (default today) picks ~/wiki/diary/DATE.md; the text between <!-- daily-report:start -->
-and <!-- daily-report:end --> becomes the notes, without the markers, `[↗][label]` refs and
+DATE (default today) picks ~/wiki/diary/DATE.md; the **Done** and **In progress** sections of
+the text between <!-- daily-report:start --> and <!-- daily-report:end --> become the notes
+(Standup, Blocked / waiting and any other section dropped), without `[↗][label]` refs and
 `[label]: url` lines. The entry is the user's one for DATE on project HARVEST_PROJECT
 (default "ecfx") and task HARVEST_TASK (default "programming"), names or codes matched
 case-insensitively. When it exists only its notes change (the hours stay the user's); when the
@@ -14,7 +15,7 @@ tracks time with start and end times. The same notes again write nothing.
 Credentials: HARVEST_TOKEN (a personal access token) and HARVEST_ACCOUNT_ID, from the
 environment or `secret NAME` (add them with `secrets`).
 
-Exit 0 done, 2 skipped (no report block, no credentials), 1 error. One line of output.
+Exit 0 done, 2 skipped (no report block or no Done/In progress in it, no credentials), 1 error. One line of output.
 HARVEST_API, HARVEST_DIARY_DIR and HARVEST_SECRET_BIN override the endpoints (tests).
 """
 
@@ -36,6 +37,7 @@ SECRET_BIN = os.environ.get("HARVEST_SECRET_BIN", "secret")
 PROJECT = os.environ.get("HARVEST_PROJECT", "ecfx")
 TASK = os.environ.get("HARVEST_TASK", "programming")
 AGENT = "harvest-log (personal dotfiles script)"
+SECTIONS = {"done", "in progress"}
 
 
 class Skip(Exception):
@@ -52,9 +54,17 @@ def report(day: str) -> str:
     m = re.search(r"<!-- daily-report:start -->\n(.*?)<!-- daily-report:end -->", text, re.S)
     if not m or not m.group(1).strip():
         raise Skip(f"no daily-report block in {path}")
-    lines = [l for l in m.group(1).splitlines() if not re.match(r"^\[[^\]]+\]: \S+\s*$", l)]
-    body = "\n".join(re.sub(r"\s*\[↗\]\[[^\]]+\]", "", l).rstrip() for l in lines)
-    return re.sub(r"\n{3,}", "\n\n", body).strip()
+    kept, keep = [], False
+    for l in m.group(1).splitlines():
+        heading = re.match(r"^\*\*(.+?)\*\*\s*$", l)
+        if heading:
+            keep = heading.group(1).strip().lower() in SECTIONS
+        if keep and not re.match(r"^\[[^\]]+\]: \S+\s*$", l):
+            kept.append(re.sub(r"\s*\[↗\]\[[^\]]+\]", "", l).rstrip())
+    body = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+    if not body:
+        raise Skip(f"no Done or In progress section in the daily-report block of {path}")
+    return body
 
 
 def credential(name: str) -> str:
