@@ -308,11 +308,13 @@ test("the Slack check: from 15:00 every 20 min, once per slot, between turns, re
   const { root, stateDir, watcher } = setup();
   assert.equal(watcher.checkSlack(false, H(14, 59)), null);
   assert.equal(watcher.checkSlack(true, H(15)), null);
-  assert.equal(watcher.checkSlack(false, H(15)), "[daily-slack] check 1/10: run /slack-check.");
+  assert.equal(watcher.checkSlack(false, H(15)), "[daily-slack] check 1/20: run /slack-check.");
   assert.equal(watcher.checkSlack(false, H(15, 10)), null);
   assert.equal(readFileSync(join(stateDir, `${DAY}.slack`), "utf8"), "slot=0\n");
-  assert.equal(watcher.checkSlack(false, H(16, 5)), "[daily-slack] check 4/10: run /slack-check.");
-  assert.equal(watcher.checkSlack(false, H(18, 20)), null);
+  assert.equal(watcher.checkSlack(false, H(16, 5)), "[daily-slack] check 4/20: run /slack-check.");
+  assert.equal(watcher.checkSlack(false, H(18, 20)), "[daily-slack] check 11/20: run /slack-check.");
+  assert.equal(watcher.checkSlack(false, H(21, 20)), "[daily-slack] check 20/20: run /slack-check.");
+  assert.equal(watcher.checkSlack(false, H(21, 40)), null);
   rmSync(root, { recursive: true });
 });
 

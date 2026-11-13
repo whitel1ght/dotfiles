@@ -623,12 +623,12 @@ test('from 15:00 the day session gets a Slack check every 20 min, once per slot,
   await s.clock.advance(31_000)
   expect(slackPrompts(s.prompts)).toEqual([])
   await s.clock.advance(MIN)
-  expect(slackPrompts(s.prompts)).toEqual(['[daily-slack] check 1/10: run /daily:slack-check.'])
+  expect(slackPrompts(s.prompts)).toEqual(['[daily-slack] check 1/20: run /daily:slack-check.'])
   expect(s.files[SLACK]).toBe('slot=0\n')
   await s.clock.advance(10 * MIN)
   expect(slackPrompts(s.prompts)).toHaveLength(1)
   await s.clock.advance(10 * MIN)
-  expect(slackPrompts(s.prompts)).toEqual(['[daily-slack] check 1/10: run /daily:slack-check.', '[daily-slack] check 2/10: run /daily:slack-check.'])
+  expect(slackPrompts(s.prompts)).toEqual(['[daily-slack] check 1/20: run /daily:slack-check.', '[daily-slack] check 2/20: run /daily:slack-check.'])
 })
 
 test('no Slack check in a session that does not own the day', async ($, on) => {

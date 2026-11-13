@@ -238,7 +238,7 @@ async function nudgePlan($: EngineInterface, ctx: DayCtx): Promise<boolean> {
   return true
 }
 
-// From 15:00, every 20 min, 10 checks: /daily:slack-check between turns (mod/slack.ts). The slot is
+// From 15:00, every 20 min, 20 checks (until 21:30): /daily:slack-check between turns (mod/slack.ts). The slot is
 // recorded before the prompt goes out, so a failing write never repeats it every tick.
 let hasSlackFailed = false
 

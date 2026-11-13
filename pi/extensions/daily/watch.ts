@@ -166,7 +166,7 @@ export class DayWatcher {
   }
 
   /**
-   * Called on the 30 s tick, between turns: from 15:00 local time, every 20 min, 10 checks, the
+   * Called on the 30 s tick, between turns: from 15:00 local time, every 20 min, 20 checks (until 21:30), the
    * /slack-check prompt (mod/slack.ts). The slot is recorded first, so a failing write never
    * repeats it every tick.
    */

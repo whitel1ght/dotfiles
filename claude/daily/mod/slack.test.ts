@@ -8,16 +8,17 @@ test('no slot before 15:00', async () => {
   expect(dueSlot(at('14:59')!)).toBe(null)
 })
 
-test('ten slots, 20 minutes apart, from 15:00 to 18:00', async () => {
+test('twenty slots, 20 minutes apart, from 15:00 to 21:20', async () => {
   expect(dueSlot(at('15:00')!)).toBe(0)
   expect(dueSlot(at('15:19')!)).toBe(0)
   expect(dueSlot(at('15:20')!)).toBe(1)
-  expect(dueSlot(at('18:00')!)).toBe(9)
-  expect(dueSlot(at('18:19')!)).toBe(9)
+  expect(dueSlot(at('18:20')!)).toBe(10)
+  expect(dueSlot(at('21:20')!)).toBe(19)
+  expect(dueSlot(at('21:39')!)).toBe(19)
 })
 
-test('no slot from 18:20 on', async () => {
-  expect(dueSlot(at('18:20')!)).toBe(null)
+test('no slot from 21:40 on', async () => {
+  expect(dueSlot(at('21:40')!)).toBe(null)
   expect(dueSlot(at('23:59')!)).toBe(null)
 })
 
@@ -53,6 +54,6 @@ test('nothing while a turn runs, outside the owner session, or after the day rep
 })
 
 test('the prompts name the check and the harness command', async () => {
-  expect(slackPrompt(0)).toBe('[daily-slack] check 1/10: run /daily:slack-check.')
-  expect(piSlackPrompt(9)).toBe('[daily-slack] check 10/10: run /slack-check.')
+  expect(slackPrompt(0)).toBe('[daily-slack] check 1/20: run /daily:slack-check.')
+  expect(piSlackPrompt(19)).toBe('[daily-slack] check 20/20: run /slack-check.')
 })

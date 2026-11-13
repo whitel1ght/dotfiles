@@ -1,14 +1,15 @@
 // Slack messages arrive and get sent all day, but /start-day reads Slack once in the morning, so a
 // plan line like "send the draft in Dave's DM (you)" stayed open after it went out, and a DM that
 // came in at 16:00 reached no plan (2026-11-11, D-753). From 15:00 local time the owner session
-// gets a [daily-slack] prompt every 20 min, 10 checks (15:00 to 18:00), between turns, to run
+// gets a [daily-slack] prompt every 20 min, 20 checks (15:00 to 21:20, so until 21:30; widened from
+// 18:00 on 2026-11-13), between turns, to run
 // /daily:slack-check. A slot missed while the Mac slept or a turn ran fires once, as the latest
 // due slot. The last slot sent is kept in <date>.slack, so a reloaded mod does not send it again.
 // Harness-free: the Claude mod and pi's daily extension both use it.
 
 export const SLACK_START_MIN = 15 * 60
 export const SLACK_EVERY_MIN = 20
-export const SLACK_CHECKS = 10
+export const SLACK_CHECKS = 20
 
 const prompt = (cmd: string, slot: number) => `[daily-slack] check ${slot + 1}/${SLACK_CHECKS}: run ${cmd}.`
 export const slackPrompt = (slot: number) => prompt('/daily:slack-check', slot)
@@ -16,7 +17,7 @@ export const piSlackPrompt = (slot: number) => prompt('/slack-check', slot)
 
 export const slackPath = (stateDir: string, day: string) => `${stateDir}/${day}.slack`
 
-// minutes since local midnight → the slot due now (0-based), or null outside 15:00-18:19
+// minutes since local midnight → the slot due now (0-based), or null outside 15:00-21:39
 export function dueSlot(localMinutes: number): number | null {
   if (localMinutes < SLACK_START_MIN) return null
   const slot = Math.floor((localMinutes - SLACK_START_MIN) / SLACK_EVERY_MIN)

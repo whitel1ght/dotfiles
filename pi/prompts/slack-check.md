@@ -1,10 +1,10 @@
 ---
-description: Check Slack since the last check, tick plan lines whose message the user has sent, put new requests on the plan (run by the day session's [daily-slack] timer, 15:00-18:00, or by hand)
+description: Check Slack since the last check, tick plan lines whose message the user has sent, put new requests on the plan (run by the day session's [daily-slack] timer, 15:00-21:30, or by hand)
 ---
 
 `/start-day` reads Slack once in the morning. This check catches what changed since then. Run it
-in the day session: on a `[daily-slack] check N/10` prompt from the watcher (from 15:00 local time,
-every 20 min, 10 checks), or when the user types it. Slack is read only: never send, react, draft or
+in the day session: on a `[daily-slack] check N/20` prompt from the watcher (from 15:00 local time,
+every 20 min, 20 checks, the last at 21:20), or when the user types it. Slack is read only: never send, react, draft or
 edit anything, and file no decision.
 
 Each bash call is a new shell: use literal values, not variables from an earlier call.
