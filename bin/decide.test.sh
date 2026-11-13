@@ -153,7 +153,12 @@ check "concurrent reply and answer: neither is lost (15 runs)" "0" "$lost"
 echo "wrapper"
 out="$(DECISIONS_BIN=/nonexistent "$SCRIPT" count 2>&1)"; code=$?
 check "a missing binary exits 1" "1" "$code"
-has "a missing binary says how to build it" "$out" "install.sh"
+# main points at ./install.sh; this branch points at ubuntu/README.md, because here the
+# Rust binary is built explicitly from an existing clone, not by the installer.
+case "$out" in
+  *install.sh*|*README.md*) pass "a missing binary says how to build it" ;;
+  *) fail "a missing binary says how to build it" "no build pointer in: $out" ;;
+esac
 legacy="$RUN_DAY_STATE_DIR/decisions/D-900.md"
 printf -- '---\nid: D-900\nday: 2026-10-19\nkey: ECFX-9\nmr: ""\nasked: 2026-10-19T09:00:00+03:00\nblocks: ""\nstatus: open\n---\n## Question\nLegacy?\n\n## Options\n1. yes (recommended)\n2. no\n' > "$legacy"
 has "a file written by the Python decide is listed" "$(run list)" "D-900"
