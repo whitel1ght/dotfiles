@@ -664,7 +664,7 @@ unset CHANGES_SINCE_DEADLINE
 
 reset; cursor 2026-10-08T07:00:00Z
 echo "[$(todo 1 review_requested alice 100 3 2026-10-08T07:10:00Z)]" > "$FIX/todos.json"
-out=$(CHANGES_SINCE_DEADLINE=3 CHANGES_SINCE_TEST_PROTECTED_SLEEP=4 run); rc=$?
+out=$(CHANGES_SINCE_DEADLINE=3 CHANGES_SINCE_TEST_PROTECTED_SLEEP=3.5 run); rc=$?
 assert_eq "0" "$rc" "a run past the deadline inside the print-and-move section finishes in the grace: exit 0"
 assert_eq "assigned" "$(jq -r .kind <<<"$out")" "its events are printed"
 [ "$(cat "$STATE/default")" != "2026-10-08T07:00:00Z" ] && pass "and the cursor moved" || fail "and the cursor moved" "unchanged"

@@ -74,6 +74,7 @@ set -euo pipefail
 if [ -z "${CHANGES_SINCE_WATCHDOG:-}" ]; then
   export CHANGES_SINCE_WATCHDOG=1
   exec perl -e '
+    use Time::HiRes qw(time);
     my $t = shift;
     my $pid = fork // exit 127;
     if (!$pid) { setpgrp(0, 0); exec @ARGV; exit 127 }
