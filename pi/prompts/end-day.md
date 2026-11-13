@@ -196,20 +196,18 @@ Scripts do the bookkeeping and the model only judges new friction. Mine the day 
 
 ```bash
 DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
-M="${TMPDIR:-/tmp}/friction-$DAY.json"; A="${M%.json}.apply.json"; R="${M%.json}.reply.json"; K="${M%.json}.concepts.json"
+M="${TMPDIR:-/tmp}/friction-$DAY.json"; A="${M%.json}.apply.json"; R="${M%.json}.reply.json"
 ~/.local/bin/friction-mine --date "$DAY" >"$M" && ~/.local/bin/friction-ledger apply --date "$DAY" --mine-json "$M" >"$A" &&
-  jq -c '[(.concepts // [])[:15][] | .question |= .[:300] | .answer |= .[:1500]]' "$M" >"$K" &&
-  jq -c --slurpfile k "$K" '{new: (.new | length), needs_proposal: (.needs_proposal | length), regressed: (.regressed | length), user_signals: (.user_signals | length), concepts: ($k[0] | length)}' "$A"
+  jq -c '{new: (.new | length), needs_proposal: (.needs_proposal | length), regressed: (.regressed | length), user_signals: (.user_signals | length)}' "$A"
 ```
 
-It writes `{new, needs_proposal, regressed, corrections, user_signals}` to `$A` and the day's concept candidates to `$K` (at most 15 concepts, each question cut to 300 chars and answer to 1500, so the cheap model's input stays small), and prints the counts: `user_signals` are my prompts that may hold a standing direction or a frustration (none once the day was already ingested, so a re-run adds nothing). If either command is missing or fails, say so in one line and go on to the commit: friction never blocks the report. If `new`, `needs_proposal`, `user_signals` and `concepts` are all 0, say so in one line and skip to the diary step: no subagent for nothing. Otherwise launch one subagent, the cheapest suitable model in the live `<subagent_models>` list (per `~/projects/dotfiles/pi/model-selection.md`: bounded reading and classification): `subagent({ role: "researcher", model: <that model>, cwd: "~/projects/dotfiles", label: "friction", task: <the brief below, with the real paths of $A, $K and $R (print them with `echo "$A" "$K" "$R"`) in place of <A>, <K> and <R>> })`. Then end the turn. On the `[pi-sub]` wake-up check that the reply file exists and continue from the next paragraph.
+It writes `{new, needs_proposal, regressed, corrections, user_signals}` to `$A` and prints the counts: `user_signals` are my prompts that may hold a standing direction or a frustration (none once the day was already ingested, so a re-run adds nothing). If either command is missing or fails, say so in one line and go on to the commit: friction never blocks the report. If `new`, `needs_proposal` and `user_signals` are all 0, say so in one line and skip to the diary step: no subagent for nothing. Otherwise launch one subagent, the cheapest suitable model in the live `<subagent_models>` list (per `~/projects/dotfiles/pi/model-selection.md`: bounded reading and classification): `subagent({ role: "researcher", model: <that model>, cwd: "~/projects/dotfiles", label: "friction", task: <the brief below, with the real paths of $A and $R (print them with `echo "$A" "$R"`) in place of <A> and <R>> })`. Then end the turn. On the `[pi-sub]` wake-up check that the reply file exists and continue from the next paragraph.
 
-> Classify friction from my daily workflow and propose fixes. Read `<A>` (JSON: `new` items first seen today, `needs_proposal` items that qualify for a fix, `user_signals` my own prompts of the day with their `harness`; items have an id, signature, samples and evidence `path:line`, readable, only when a sample is not enough) and `<K>` (JSON array of `concepts`: explanations I asked for, each with `harness`, `session`, `at`, `question`, `answer`) and run `~/.local/bin/friction-ledger directions render` for the active directions. Write your reply to `<R>` as ONE JSON object and nothing else; write no other file.
+> Classify friction from my daily workflow and propose fixes. Read `<A>` (JSON: `new` items first seen today, `needs_proposal` items that qualify for a fix, `user_signals` my own prompts of the day with their `harness`; items have an id, signature, samples and evidence `path:line`, readable, only when a sample is not enough) and run `~/.local/bin/friction-ledger directions render` for the active directions. Write your reply to `<R>` as ONE JSON object and nothing else; write no other file.
 > `items` is keyed by F id. For every item in `new`: `class` is `env` (auth, MCP, network, service down), `instruction` (a prompt or skill is wrong), `script` (a bug in our code), `model` (model behaviour) or `external` (a blocker outside us: another ticket, an approval); `diagnosis` is one line of at most 20 words. For every item in `needs_proposal` and not `external`: `rung` and `proposal`, or `nofix` when no change to our code, config or prompts would prevent it: the guard or harness refused correctly, the rule already exists in CLAUDE.md or the skill and the model slipped anyway, or it was a one-off model mistake. `nofix` is one line saying which; it closes the entry as `wontfix`, so it never reaches the friction deck. Propose only what a builder could change; between a vague prompt nudge and `nofix`, choose `nofix`. Pick the cheapest rung that works: `script` (retry/backoff, health gate, preflight check, cache, fallback source, background waiter), then `config` (re-auth, env var, settings, dropping a dead step), then `prompt` (prompt/skill/command text, only when the problem is the model's judgement). `proposal` is markdown: the rung, why each lower rung does not fit, the target files in `~/projects/dotfiles` (`bin/`, `claude/`, `pi/`), and a test that proves it (a `bin/<x>.test.sh` case or similar).
 > For each `user_signals` item (`text` is what I typed, `prev_assistant` what the model had just said): a standing rule I want kept from now on goes in `directions` (`rule` an imperative one-liner, `scope` one of global, run-day, reviews, a repo, or a skill/command name, `quote` at most 100 chars, `harness` copied from the signal; add `same_as: "D-NNN"` when it restates an active direction). Where I was annoyed at what the system did, add to `frustrations` (`what_went_wrong`, `class` as above, `sig_hint` a short stable phrase naming the failure, so the same failure on another day gets the same hint) and ALWAYS give it `rung` and `proposal` as above. Anything else (a one-off instruction for that task, a question, a plain correction) appears nowhere. Be strict: when in doubt, leave it out.
 > Items of kind `repeat` (the same request asked again and again), `restated` (a direction I keep restating) and `secret` (a secret found in a file (location only)) are in `new`/`needs_proposal` like the rest. `repeat`: the proposal names the skill or command to create (rung `prompt` or `script`). `restated`: the proposal says which of two fixes it is: keep it as a standing direction, with a line `Direction: <the rule as an imperative one-liner>` and a line `Scope: <global, run-day, reviews, a repo, or a skill/command name>`; or enforce it in a script, with no `Direction:` line. `secret`: the proposal is user steps (rotate the key, remove the line, use `$(secret NAME)`), never an automatic fix; the model never sees or asks for the value. Any proposal that touches a guard, a permission or allow/deny rule, a hook, auto mode or a settings file must contain the exact change, one line each: `Change: <file or key>: <before> → <after>`.
-> For each `<K>` concept that is a real explanation of how something works (not a task request, a status question or debugging of one specific failure), add to `cards` one `{front, back, tags, source}`: `front` a question I could answer from memory, `back` distilled from the answer in at most 4 lines, `tags` from ecfx, tech, setup, `source` the concept's session file plus its date (from `session` and `at`). Be strict: when in doubt, leave it out.
-> Reply shape: `{"items":{"F-001":{"class":"env","diagnosis":"...","rung":"config","proposal":"..."}},"directions":[{"rule":"...","scope":"global","quote":"...","harness":"claude"}],"frustrations":[{"what_went_wrong":"...","class":"env","sig_hint":"...","rung":"script","proposal":"..."}],"cards":[{"front":"...","back":"...","tags":["tech"],"source":"<session> 2026-01-01"}]}`; `rung` and `proposal` go together and are omitted for an item without a proposal (`"nofix":"..."` takes their place); empty parts may be left out.
+> Reply shape: `{"items":{"F-001":{"class":"env","diagnosis":"...","rung":"config","proposal":"..."}},"directions":[{"rule":"...","scope":"global","quote":"...","harness":"claude"}],"frustrations":[{"what_went_wrong":"...","class":"env","sig_hint":"...","rung":"script","proposal":"..."}]}`; `rung` and `proposal` go together and are omitted for an item without a proposal (`"nofix":"..."` takes their place); empty parts may be left out.
 
 Then apply the whole reply with one command; the script validates it and applies nothing when anything is invalid:
 
@@ -218,7 +216,7 @@ DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$AR
 ~/.local/bin/friction-ledger ingest "${TMPDIR:-/tmp}/friction-$DAY.reply.json" --date "$DAY"
 ```
 
-It sets class, diagnosis and proposals (`proposed` for an item with one, `wontfix` for `external` and for a `nofix` verdict), adds directions (active from the next session with no confirmation; the diary lists them so I can retire them) and records frustrations (the script sets `proposed` from their second day), and adds the `cards` to the quiz deck with `cards add` (once per date; an invalid card rejects the whole reply). A `secret` item always gets `safety: true`, and /start-day shows it as the user's own steps, never as a job. Nothing from cards or coach items goes into the diary report. On an error, relaunch the subagent once with the error text appended; a second failure is left for tomorrow. Never retype or edit its data by hand.
+It sets class, diagnosis and proposals (`proposed` for an item with one, `wontfix` for `external` and for a `nofix` verdict), adds directions (active from the next session with no confirmation; the diary lists them so I can retire them) and records frustrations (the script sets `proposed` from their second day). A `secret` item always gets `safety: true`, and /start-day shows it as the user's own steps, never as a job. Nothing from coach items goes into the diary report. On an error, relaunch the subagent once with the error text appended; a second failure is left for tomorrow. Never retype or edit its data by hand.
 
 Then file the section in the diary and let the commit below pick up `work/friction/`:
 
@@ -230,44 +228,6 @@ S="$(~/.local/bin/friction-ledger diary-section --date "$DAY" --mine-json "$M")"
 ```
 
 `end-day friction` puts it between its own markers at the end of the diary, so a re-run replaces it and the report is never touched. Mention the counts in one line.
-
-## Words
-
-File the day's word progress in its own diary block, skipped silently when `words` is not installed or there are no word cards yet:
-
-```bash
-DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
-L="$(command -v ~/.local/bin/words >/dev/null && ~/.local/bin/words stats --date "$DAY" --line)"; if [ -n "$L" ]; then printf '%s\n' "$L" | ~/.local/bin/end-day words "$DAY"; fi
-```
-
-The line reads `Words: R reviewed, N new, K known of T · streak S days`; `end-day words` keeps it between its own markers at the end of the diary, outside the report block. Never tick or write a habit line for words in the diary.
-
-## Drills
-
-Turn new commands into drills, then file the day's drill line. List the tools-manual rows for
-commands we built that have no drill yet with `~/.local/bin/drills candidates --json` (an array
-of `{command, page, row}`). Take at most 5, in order. For each, decide from its row:
-
-- not a shell command or alias we built (a hook, a library, a guard) or no sensible goal can be
-  written: `~/.local/bin/drills skip "<command>" --reason "<why>"`;
-- else write a goal in plain words that names what I want, not the command (for example "Show how
-  many friction cards are waiting."), the canonical command, and `accept`: the words a typed line
-  must hold, in order, the first being the command, with concrete example values when it takes
-  arguments ("handoff-open ECFX-123 ~/projects/worktrees/ecfx-dashboard/ECFX-123"); and `run`:
-  `yes` only when the command is safe to run at any time with no special arguments (it shows,
-  lists or looks something up), else `no` (it is then checked, never run); when unsure, `no`.
-  Then `~/.local/bin/drills add --goal "<goal>" --cmd "<command>" --accept "<accept>" --run <yes|no> --back "<the full command>" --page <page> --from manual`.
-
-Then file the day's line in its own diary block, skipped silently when `drills` is not installed
-or there are no drill cards yet:
-
-```bash
-DAY="$(case "$ARGUMENTS" in (yesterday) date -v-1d +%F ;; (20??-??-??) echo "$ARGUMENTS" ;; (*) date +%F ;; esac)"
-L="$(command -v ~/.local/bin/drills >/dev/null && ~/.local/bin/drills stats --date "$DAY" --line)"; if [ -n "$L" ]; then printf '%s\n' "$L" | ~/.local/bin/end-day drills "$DAY"; fi
-```
-
-The line reads `Drills: R right of N · streak S days`. Mention the new drills in one line to me,
-never in the diary report.
 
 ## Check the system
 

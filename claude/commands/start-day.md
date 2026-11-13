@@ -2,7 +2,7 @@
 description: Plan the working day from overnight reviews, tickets, Slack, meetings and yesterday's leftovers, filed in the diary
 argument-hint: [--since 2026-09-24T15:00:00Z]
 model: sonnet
-allowed-tools: Bash(~/.local/bin/start-day:*), Bash(~/.local/bin/day-agent:*), Bash(day-agent:*), Bash(~/.local/bin/sync-tickets:*), Bash(~/.local/bin/clean-worktrees:*), Bash(~/.local/bin/friction-ledger:*), Bash(~/.local/bin/cards:*), Bash(~/.local/bin/words:*), Bash(~/.local/bin/drills:*), Bash(~/.local/bin/friction-cards:*), Bash(date:*), Bash(rg:*)
+allowed-tools: Bash(~/.local/bin/start-day:*), Bash(~/.local/bin/day-agent:*), Bash(day-agent:*), Bash(~/.local/bin/sync-tickets:*), Bash(~/.local/bin/clean-worktrees:*), Bash(~/.local/bin/friction-ledger:*), Bash(~/.local/bin/friction-cards:*), Bash(date:*), Bash(rg:*)
 disable-model-invocation: true
 ---
 
@@ -230,11 +230,11 @@ Leave out the Meetings line when there are none.
 
 ## 4. Coach
 
-The friction queue count, then a short card quiz. This step never blocks the plan:
+The friction queue count, and once a month the tool review. This step never blocks the plan:
 if a command here fails or returns nothing, print one line (or nothing when there is nothing
 to show) and go on to step 5. Nothing from this step goes into the diary, and the plan
-written in step 3 never mentions the coach. Keep two counts for the log: `offered` (the
-queue count N, or 0) and `cards` (the quiz count). Every command here that takes a date
+written in step 3 never mentions the coach. Keep one count for the log: `offered` (the
+queue count N, or 0). Every command here that takes a date
 takes today's date inline, as `--date "$(date +%F)"`.
 
 ```bash
@@ -244,41 +244,16 @@ takes today's date inline, as `--date "$(date +%F)"`.
 When it prints a number N, print one line: friction queue: N waiting (`` ` f``). Otherwise
 print nothing. Count N in `offered`.
 
-**Words.** Run `~/.local/bin/words today` (Merriam-Webster's word of the day becomes a word
-card; it prints the slug, or nothing when already saved or offline). Then
-`~/.local/bin/words pending`: when it lists words I looked up in the book reader, print one line,
-"Looked up yesterday: a, b, c. Keep any?", and run `~/.local/bin/words keep <the ones I keep>`
-(all, some, or none: then `~/.local/bin/words pending --clear`). No answer: leave them, they are
-offered again tomorrow. Words never go into the diary here.
-
-**Quiz.** Run `~/.local/bin/cards due --limit 5 --exclude-tag word --exclude-tag drill --json`, then
-`~/.local/bin/cards due --limit 3 --tag word --json` (each an array of `{slug, front, back,
-tags, new}`; the word cards come after the others; nothing due means no quiz). A word card's
-front asks the meaning, with the sentence it was met in when there is one; show it as it is.
-One card at a time: show the `front` and wait for my
-answer in my own words. Compare it to the `back`: 3 = complete and right, 2 = right with
-gaps, 1 = partly right, 0 = wrong or "don't know". Give one line of feedback, show the
-`back`, then run `~/.local/bin/cards grade <slug> <0-3>` and count the card in `cards`. If I
-give no answer, or you cannot grade it, do not call `cards grade`; the card stays due.
-`skip` ends the quiz (the remaining cards stay due); `drop` runs
-`~/.local/bin/cards drop <slug>` and moves to the next card.
-
-**Drills.** After the quiz (or when nothing was due), run
-`~/.local/bin/drills open --date "$(date +%F)"` and print its one line (`opened …:drills`,
-`focused …:drills`, or `drills need tmux`). It opens a tmux window where I type the real commands
-for up to 5 goals or 5 minutes; the window grades each drill and closes itself. Go on at once:
-do not wait for the drill window. Nothing from it goes into the diary here.
-
 ### Monthly tool review
 
-On the first /start-day of a month, offer it once, after the quiz. It is the first run of
+On the first /start-day of a month, offer it once, after the queue count. It is the first run of
 the month when `~/wiki/work/friction/coach-log.md` has no row starting `| YYYY-MM-` for
 this month (`rg -c "^\| $(date +%Y-%m)-" ~/wiki/work/friction/coach-log.md` finds none or
 the file is missing). Ask one line: "Monthly tool review: run it now? (yes/no)".
 
 On no, or no answer, do nothing more: the coach log row written below ends the offer for
 this month, so it is not asked again before next month. On yes, start ONE research subagent in the background (the Agent tool, general-purpose, run in the background) and do not wait
-for it: carry on with the quiz summary and the coach log below. Its brief (it knows nothing
+for it: carry on with the coach log below. Its brief (it knows nothing
 else; put the real date in place of `<T>`):
 
 > Review the user's tools, read-only, and write down only what you can support. You never install
@@ -312,7 +287,7 @@ the entries it recorded are still offered later. The review never blocks the pla
 Last, log the counts (this replaces today's row if /start-day runs twice):
 
 ```bash
-~/.local/bin/friction-ledger coach-log --date "$(date +%F)" --offered <N or 0> --answered 0 --landed 0 --failed 0 --cards <quiz count>
+~/.local/bin/friction-ledger coach-log --date "$(date +%F)" --offered <N or 0> --answered 0 --landed 0 --failed 0 --cards 0
 ```
 
 ## 5. File it

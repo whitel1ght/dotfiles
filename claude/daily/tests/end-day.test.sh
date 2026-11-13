@@ -76,13 +76,12 @@ for f in "$F" "$P"; do
   has "$f" "ask once" "$side: asks once for all install findings"
 done
 
-echo "== coach: concepts, cards, secret =="
+echo "== coach: no quiz cards, secret =="
 for f in "$F" "$P"; do
   side="$(basename "$(dirname "$f")")"
-  has "$f" '`concepts`' "$side: brief receives concepts"
-  has "$f" '`cards`' "$side: reply may carry cards"
-  has "$f" "15 concepts" "$side: concept candidates are capped"
-  has "$f" "1500" "$side: answers are cut for the brief"
+  lacks "$f" 'concepts' "$side: the brief gets no concept candidates (quiz out of the day, 2026-11-13)"
+  lacks "$f" '"cards":' "$side: the reply shape has no cards"
+  lacks "$f" "quiz deck" "$side: no cards are added to the quiz"
   has "$f" '`secret`' "$side: secret items are handled"
   has "$f" '`restated`' "$side: restated items are handled"
   has "$f" "never sees or asks for the value" "$side: the model never touches the secret value"
@@ -106,45 +105,15 @@ for f in "$F" "$P"; do
 done
 has "$F" "Bash(~/.local/bin/coach-fix:*)" "claude: allows coach-fix"
 
-echo "== words: the day's progress =="
+echo "== no words or drills in the day (2026-11-13) =="
 for f in "$F" "$P"; do
   side="$(basename "$(dirname "$f")")"
-  has "$f" "## Words" "$side: words step exists"
-  has "$f" '~/.local/bin/words stats --date "$DAY" --line' "$side: reads the day's words line"
-  has "$f" '~/.local/bin/end-day words "$DAY"' "$side: files it in its own block"
-  has "$f" "command -v ~/.local/bin/words" "$side: skipped when words is missing"
-  lacks "$f" "merriam-webster word of the day" "$side: the diary habit line is never written"
-  awk '/^## Reflect on friction/{a=NR} /^## Words/{b=NR} /^## Check the system/{c=NR} END{exit !(a&&b&&c&&a<b&&b<c)}' "$f" && pass "$side: words sits after friction" || fail "$side: words order" "wrong order in $f"
-  step="$(grep 'command -v ~/.local/bin/words' "$f")"
-  home="$(mktemp -d)"
-  HOME="$home" DAY=2026-10-27 bash -c "$step" && pass "$side: no words installed: the step exits 0" || fail "$side: skip exit" "exit $? with no words"
-  mkdir -p "$home/.local/bin"; printf '#!/bin/sh\n' >"$home/.local/bin/words"; chmod +x "$home/.local/bin/words"
-  HOME="$home" DAY=2026-10-27 bash -c "$step" && pass "$side: no word cards yet: the step exits 0" || fail "$side: skip exit" "exit $? with an empty line"
-  printf '#!/bin/sh\necho "Words: 1 reviewed for $3"\n' >"$home/.local/bin/words"
-  printf '#!/bin/sh\n{ echo "$*"; cat; } >"$HOME/filed"\n' >"$home/.local/bin/end-day"; chmod +x "$home/.local/bin/end-day"
-  HOME="$home" DAY=2026-10-27 bash -c "$step"
-  got="$(paste -sd '|' "$home/filed" 2>/dev/null)"
-  [ "$got" = "words 2026-10-27|Words: 1 reviewed for 2026-10-27" ] && pass "$side: the day's line reaches end-day words" || fail "$side: filed line" "got [$got]"
-  rm -rf "$home"
+  lacks "$f" "## Words" "$side: no words step"
+  lacks "$f" "## Drills" "$side: no drills step"
+  lacks "$f" "~/.local/bin/words" "$side: no words line"
+  lacks "$f" "~/.local/bin/drills" "$side: no new drills"
 done
-has "$F" "Bash(~/.local/bin/words:*)" "claude: allows words"
-
-echo "== drills: new drills and the day's line =="
-for f in "$F" "$P"; do
-  side="$(basename "$(dirname "$f")")"
-  has "$f" "## Drills" "$side: drills step exists"
-  has "$f" "~/.local/bin/drills candidates --json" "$side: lists commands with no drill yet"
-  has "$f" "at most 5" "$side: at most 5 new drills a day"
-  has "$f" "when unsure, \`no\`" "$side: unsure means checked, not run"
-  has "$f" "~/.local/bin/drills skip" "$side: rejected rows are skipped for good"
-  has "$f" '~/.local/bin/drills stats --date "$DAY" --line' "$side: reads the day's drills line"
-  has "$f" '~/.local/bin/end-day drills "$DAY"' "$side: files it in its own block"
-  awk '/^## Words/{a=NR} /^## Drills/{b=NR} /^## Check the system/{c=NR} END{exit !(a&&b&&c&&a<b&&b<c)}' "$f" && pass "$side: drills sits after words" || fail "$side: drills order" "wrong order in $f"
-  step="$(grep 'command -v ~/.local/bin/drills' "$f")"
-  home="$(mktemp -d)"
-  HOME="$home" DAY=2026-10-27 bash -c "$step" && pass "$side: no drills installed: the step exits 0" || fail "$side: skip exit" "exit $? with no drills"
-  rm -rf "$home"
-done
-has "$F" "Bash(~/.local/bin/drills:*)" "claude: allows drills"
+lacks "$F" "Bash(~/.local/bin/words:*)" "claude: no words permission"
+lacks "$F" "Bash(~/.local/bin/drills:*)" "claude: no drills permission"
 
 finish
