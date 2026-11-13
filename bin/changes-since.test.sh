@@ -650,6 +650,16 @@ assert_eq "75" "$rc" "the whole-run budget caps a long per-call bound: exit 75"
 [ "$elapsed" -le 4 ] && pass "within the budget (${elapsed}s)" || fail "within the budget" "took ${elapsed}s"
 unset CHANGES_SINCE_CALL_TIMEOUT CHANGES_SINCE_BACKOFF CHANGES_SINCE_BUDGET
 
+reset; cursor 2026-10-08T07:00:00Z
+start=$SECONDS
+out=$(CHANGES_SINCE_DEADLINE=2 CHANGES_SINCE_NET_PROBE='sleep 30' JIRA_MYSELF_FAIL=1 run); rc=$?
+elapsed=$((SECONDS - start))
+assert_eq "75|" "$rc|$out" "a step outside the per-call bounds stalls: the hard deadline exits 75, nothing on stdout"
+assert_contains "$(errs)" "timed out" "stderr says it timed out, not a host abort"
+[ "$elapsed" -le 6 ] && pass "within the deadline (${elapsed}s)" || fail "within the deadline" "took ${elapsed}s"
+assert_eq "2026-10-08T07:00:00Z" "$(cat "$STATE/default")" "the cursor did not move"
+unset CHANGES_SINCE_DEADLINE
+
 echo "changes-since — help"
 assert_contains "$("$SCRIPT" --help)" "changes-since [--cursor NAME] [--peek]" "--help prints the usage line"
 

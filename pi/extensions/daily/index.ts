@@ -321,7 +321,7 @@ export function guardVerdict(
 function changesSince(): Promise<Exec> {
   const cmd = 'exec "$(command -v changes-since || echo "$HOME/.local/bin/changes-since")" --cursor run-day';
   return new Promise((resolve) => {
-    execFile("/bin/sh", ["-c", cmd], { timeout: 60_000, maxBuffer: 4 << 20 }, (err, stdout, stderr) => {
+    execFile("/bin/sh", ["-c", cmd], { timeout: 120_000, maxBuffer: 4 << 20 }, (err, stdout, stderr) => {
       const e = err as (NodeJS.ErrnoException & { killed?: boolean; code?: number | string }) | null;
       const code = !e ? 0 : e.killed ? 124 : typeof e.code === "number" ? e.code : 1;
       resolve({ code, stdout: String(stdout), stderr: String(stderr || e?.message || "") });

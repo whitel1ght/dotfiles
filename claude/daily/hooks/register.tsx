@@ -546,7 +546,7 @@ async function watch($: EngineInterface) {
     if (!ctx || !ctx.active || !(await isOwner($, ctx.day))) return
     const ran = await $.process.run(
       ['/bin/sh', '-c', 'exec "$(command -v changes-since || echo "$HOME/.local/bin/changes-since")" --cursor run-day'],
-      { timeoutMs: 60_000 },
+      { timeoutMs: 120_000 },
     )
     if (ran.exitCode === CHANGES_SINCE_TIMED_OUT || ran.exitCode === 124) {
       skipTick($, `changes-since timed out (exit ${ran.exitCode}): ${ran.stderr.split('\n')[0]}`)

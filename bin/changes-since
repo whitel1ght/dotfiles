@@ -37,8 +37,13 @@
 # Every Jira and glab call is bounded: CHANGES_SINCE_CALL_TIMEOUT seconds (10),
 # one retry after CHANGES_SINCE_BACKOFF seconds (1) on a timeout or any other
 # failure (gitlab.com drops connections now and then; F-021), and the whole run stops at
-# CHANGES_SINCE_BUDGET seconds (40), inside the 60 s the daily watcher allows. A
-# call that times out twice fails the run with exit 75 and "timed out" on
+# CHANGES_SINCE_BUDGET seconds (40). Whatever the per-call bounds miss (the
+# probe, glab-gate, wait-for, a stalled jq, a Mac that slept mid-run) hits a
+# hard whole-run deadline, CHANGES_SINCE_DEADLINE seconds (90): the script
+# re-runs itself under a watchdog that stops the whole process group, prints
+# "changes-since: timed out" and exits 75, with no cursor move. The daily
+# watchers kill a run only at 120 s, so a slow source ends as a skipped tick,
+# never as a mid-run abort (F-153). A call that times out twice fails the run with exit 75 and "timed out" on
 # stderr, no service_down line and no cursor move: the caller skips that tick.
 # The one exception is the approvals lookup behind approved_by_me (one call per
 # MR): one attempt, no retry, CHANGES_SINCE_APPROVALS_TIMEOUT seconds (5) each and
@@ -62,6 +67,26 @@
 #
 # Needs jira-api (it reads the Jira token from ~/.secrets), glab and jq.
 set -euo pipefail
+
+if [ -z "${CHANGES_SINCE_WATCHDOG:-}" ]; then
+  export CHANGES_SINCE_WATCHDOG=1
+  exec perl -e '
+    my $t = shift;
+    my $pid = fork // exit 127;
+    if (!$pid) { setpgrp(0, 0); exec @ARGV; exit 127 }
+    my $stop = sub {
+      kill "TERM", -$pid;
+      my $end = time + 2;
+      while (time < $end && kill 0, -$pid) { select undef, undef, undef, 0.1; waitpid $pid, 1 }
+      kill "KILL", -$pid; waitpid $pid, 0;
+    };
+    $SIG{ALRM} = sub { $stop->(); print STDERR "changes-since: timed out (run deadline ${t}s); skipping this tick\n"; exit 75 };
+    $SIG{INT} = $SIG{TERM} = sub { $stop->(); exit 130 };
+    alarm $t;
+    waitpid $pid, 0;
+    exit($? & 127 ? 128 + ($? & 127) : $? >> 8);
+  ' "${CHANGES_SINCE_DEADLINE:-90}" "${BASH:-/bin/bash}" "$0" "$@"
+fi
 
 JIRA_BASE="${JIRA_BASE:-https://ecfxdev.atlassian.net}"
 JIRA_PROJECT="${JIRA_PROJECT:-ECFX}"
