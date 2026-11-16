@@ -25,6 +25,8 @@ export type Meta = {
   started_at: string;
   owner_session: string;
   owner_pid: number;
+  /** The pi process that spawned the agent; the decisions deck attaches the agent to that session. */
+  parent_pid?: number;
   handoff_from?: string;
   idle_minutes: number;
   max_minutes: number;

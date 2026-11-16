@@ -108,6 +108,18 @@ function piPrint(): string {
   return fingerprint([...PI_PLAYBOOK, ...code].map(read));
 }
 
+/** Fire-and-forget: tells the decisions deck whether this pi session is working; a missing `decide` is ignored. */
+export function reportSessionState(state: "working" | "idle"): void {
+  if (process.env.PI_SUBAGENT) return;
+  try {
+    spawn("decide", ["session-state", "--pid", String(process.pid), state], { detached: true, stdio: "ignore" })
+      .on("error", () => {})
+      .unref();
+  } catch {
+    // swallowed on purpose
+  }
+}
+
 /** Fire-and-forget: a missing or failing friction must never slow or change the caller. */
 export function friction(kind: string, msg: string, source = "daily-guard"): void {
   try {
@@ -395,9 +407,11 @@ function registerWatch(pi: ExtensionAPI, getUi: () => Ui, getSession: () => stri
   });
   pi.on("agent_start", () => {
     activity.turnRunning = true;
+    reportSessionState("working");
   });
   pi.on("agent_end", () => {
     activity.turnRunning = false;
+    reportSessionState("idle");
   });
 
   const stop = () => {

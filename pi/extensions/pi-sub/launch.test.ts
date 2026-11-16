@@ -194,6 +194,17 @@ test("wrapper writes exit.json and result.md", async () => {
   }
 });
 
+test("meta.json records the spawning process as parent_pid", async () => {
+  const root = sandbox();
+  try {
+    const { meta, dir } = await runChild();
+    assert.equal(meta.parent_pid, process.pid);
+    assert.equal(JSON.parse(readFileSync(join(dir, "meta.json"), "utf8")).parent_pid, process.pid);
+  } finally {
+    cleanup(root);
+  }
+});
+
 test("non-zero pi exit is a failure", async () => {
   const root = sandbox();
   process.env.FAKE_EXIT = "1";

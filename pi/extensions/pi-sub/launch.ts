@@ -122,6 +122,7 @@ export function launch(o: LaunchOpts): Meta {
     started_at: new Date().toISOString(),
     owner_session: o.ownerSession,
     owner_pid: o.ownerPid,
+    parent_pid: process.pid,
     idle_minutes: o.idleMinutes ?? 0,
     max_minutes: o.maxMinutes,
     argv,

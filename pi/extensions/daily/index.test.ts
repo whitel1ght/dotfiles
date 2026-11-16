@@ -682,3 +682,70 @@ test("system map: before_agent_start sets the section, and never throws without 
   rmSync(root, { recursive: true, force: true });
   delete process.env.SYSTEM_MAP;
 });
+
+/** A `decide` on PATH that records its argv, one line per call. */
+function fakeDecide(root: string) {
+  const bin = join(root, "bin");
+  const log = join(root, "decide.log");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "decide"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\n`);
+  chmodSync(join(bin, "decide"), 0o755);
+  return { bin, log };
+}
+
+/** Every handler the extension registers per event; `fire` runs them all, as pi would. */
+function loadHandlers() {
+  const handlers: Record<string, Array<(event: unknown, ctx: unknown) => unknown>> = {};
+  daily({ on: (event: string, cb: (e: unknown, c: unknown) => unknown) => (handlers[event] ??= []).push(cb), registerTool: () => {}, registerCommand: () => {}, registerEntryRenderer: () => {} } as never);
+  return (event: string) => handlers[event]?.forEach((cb) => cb({}, { ui: undefined }));
+}
+
+async function waitForLines(path: string, n: number) {
+  for (let i = 0; i < 100 && !(existsSync(path) && readFileSync(path, "utf8").trim().split("\n").length >= n); i++) await new Promise((r) => setTimeout(r, 20));
+}
+
+test("agent_start and agent_end tell the deck working and idle", async () => {
+  const { root } = sandbox();
+  const { bin, log } = fakeDecide(root);
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  try {
+    const fire = loadHandlers();
+    fire("agent_start");
+    await waitForLines(log, 1);
+    fire("agent_end");
+    await waitForLines(log, 2);
+    assert.deepEqual(readFileSync(log, "utf8").trim().split("\n"), [
+      `session-state --pid ${process.pid} working`,
+      `session-state --pid ${process.pid} idle`,
+    ]);
+  } finally {
+    process.env.PATH = path;
+    cleanup(root);
+  }
+});
+
+test("a PI_SUBAGENT process never reports session state, and a missing decide does not throw", async () => {
+  const { root } = sandbox();
+  const { bin, log } = fakeDecide(root);
+  const path = process.env.PATH;
+  try {
+    process.env.PATH = `${bin}:${path}`;
+    process.env.PI_SUBAGENT = "1";
+    const fire = loadHandlers();
+    fire("agent_start");
+    fire("agent_end");
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(existsSync(log), false);
+    delete process.env.PI_SUBAGENT;
+    process.env.PATH = join(root, "nowhere");
+    const again = loadHandlers();
+    assert.doesNotThrow(() => again("agent_start"));
+    assert.doesNotThrow(() => again("agent_end"));
+    await new Promise((r) => setTimeout(r, 100));
+  } finally {
+    delete process.env.PI_SUBAGENT;
+    process.env.PATH = path;
+    cleanup(root);
+  }
+});
