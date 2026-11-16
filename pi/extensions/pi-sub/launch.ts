@@ -29,6 +29,17 @@ export type LaunchOpts = {
 
 const runMjs = fileURLToPath(new URL("./run.mjs", import.meta.url));
 
+/**
+ * Guards every subagent loads, whatever --no-extensions turns off: claude-hooks
+ * runs Claude's PreToolUse hooks (secrets, credentials, GitLab API writes,
+ * /mr-description) on bash, and secrets-guard keeps the file tools out of the
+ * secrets folder. A fixer without them once read prod CI tokens into its transcript.
+ */
+export const GUARD_EXTENSIONS = [
+  fileURLToPath(new URL("../claude-hooks/index.ts", import.meta.url)),
+  fileURLToPath(new URL("../secrets-guard/index.ts", import.meta.url)),
+];
+
 /** Where the pi-lens / pi-web-access / pi-playwright packages live. */
 export function npmRoot(): string {
   return process.env.PI_SUB_NPM_ROOT ?? join(homedir(), ".pi", "agent", "npm", "node_modules");
@@ -77,6 +88,7 @@ export function buildArgv(o: {
     "--no-prompt-templates",
     "--tools", o.role.tools.join(","),
   ];
+  for (const guard of GUARD_EXTENSIONS) argv.push("-e", guard);
   if (provider !== undefined) argv.push("--provider", provider);
   argv.push("--model", model, "--append-system-prompt", o.promptFile);
   for (const skill of o.skills) argv.push("--skill", skill);
@@ -94,6 +106,10 @@ export function buildArgv(o: {
 export function launch(o: LaunchOpts): Meta {
   if (!existsSync(o.cwd)) {
     throw new Error(`pi-sub: cwd does not exist: ${o.cwd}`);
+  }
+  const missing = GUARD_EXTENSIONS.filter((g) => !existsSync(g));
+  if (missing.length > 0) {
+    throw new Error(`pi-sub: guard extension missing, not starting an unguarded subagent: ${missing.join(", ")}`);
   }
   const id = newId(new Date());
   const dir = join(stateDir(), id);

@@ -114,6 +114,9 @@ jq -e --arg g "$TEST_DIR/bin/docker-guard" \
 jq -e --arg g "$TEST_DIR/bin/gitlab-api-guard" \
     '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[].command] | index($g) != null' "$settings" >/dev/null \
     && pass "Claude runs gitlab-api-guard before Bash" || fail "Claude runs gitlab-api-guard before Bash" "$(jq -c .hooks.PreToolUse "$settings" 2>&1)"
+jq -e --arg g "$TEST_DIR/bin/credentials-guard" \
+    '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[].command] | index($g) != null' "$settings" >/dev/null \
+    && pass "Claude runs credentials-guard before Bash" || fail "Claude runs credentials-guard before Bash" "$(jq -c .hooks.PreToolUse "$settings" 2>&1)"
 jq -e --arg c "$TEST_DIR/bin/dashboard-check" \
     '[.hooks.PostToolUse[]? | select(.matcher == "Edit|Write|MultiEdit") | .hooks[].command] | index($c) != null' "$settings" >/dev/null \
     && pass "Claude runs dashboard-check after edits" || fail "Claude runs dashboard-check after edits" "$(jq -c .hooks.PostToolUse "$settings" 2>&1)"
@@ -165,6 +168,8 @@ n="$(jq --arg g "$TEST_DIR/bin/docker-guard" '[.hooks.PreToolUse[]?.hooks[]? | s
 [ "$n" = "1" ] && pass "re-run adds the docker hook once" || fail "re-run adds the docker hook once" "found $n"
 n="$(jq --arg g "$TEST_DIR/bin/gitlab-api-guard" '[.hooks.PreToolUse[]?.hooks[]? | select(.command == $g)] | length' "$SANDBOX/.claude/settings.json")"
 [ "$n" = "1" ] && pass "re-run adds the gitlab-api hook once" || fail "re-run adds the gitlab-api hook once" "found $n"
+n="$(jq --arg g "$TEST_DIR/bin/credentials-guard" '[.hooks.PreToolUse[]?.hooks[]? | select(.command == $g)] | length' "$SANDBOX/.claude/settings.json")"
+[ "$n" = "1" ] && pass "re-run adds the credentials hook once" || fail "re-run adds the credentials hook once" "found $n"
 n="$(jq --arg c "$TEST_DIR/bin/dashboard-check" '[.hooks.PostToolUse[]?.hooks[]? | select(.command == $c)] | length' "$SANDBOX/.claude/settings.json")"
 [ "$n" = "1" ] && pass "re-run adds the dashboard-check hook once" || fail "re-run adds the dashboard-check hook once" "found $n"
 n="$(jq '[.hooks.PreToolUse[]?.hooks[]?, .hooks.PostToolUse[]?.hooks[]? | select(.command | startswith("/other/"))] | length' "$SANDBOX/.claude/settings.json")"

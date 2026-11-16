@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { buildArgv, extraExtensions, launch, npmRoot } from "./launch.ts";
+import { buildArgv, extraExtensions, GUARD_EXTENSIONS, launch, npmRoot } from "./launch.ts";
 import { readMeta } from "./state.ts";
 import type { Role } from "./roles.ts";
 
@@ -101,6 +101,8 @@ test("argv matches the spec order", () => {
     "--no-context-files",
     "--no-prompt-templates",
     "--tools", "read,edit,bash",
+    "-e", GUARD_EXTENSIONS[0],
+    "-e", GUARD_EXTENSIONS[1],
     "--provider", "prov",
     "--model", "sub/model",
     "--append-system-prompt", "/tmp/prompt.md",

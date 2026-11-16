@@ -366,7 +366,8 @@ fi
 # Claude's file tools out. docker-guard refuses a Gradle test run while Docker is
 # down (it would hang on Testcontainers). gitlab-api-guard refuses a GitLab API
 # write whose body comes from stdin or that lacks a JSON content type.
-# dashboard-check lints a .ts/.vue file Claude just edited in ecfx-dashboard
+# credentials-guard keeps CI variables, keyrings and credential files out of
+# agent transcripts. dashboard-check lints a .ts/.vue file Claude just edited in ecfx-dashboard
 # (PostToolUse; pi has no such event). Merged, not linked, since Claude Code
 # rewrites settings.json; re-runs leave one copy of each.
 settings="$HOME/.claude/settings.json"
@@ -374,12 +375,14 @@ mkdir -p "$HOME/.claude"
 [ -f "$settings" ] || echo '{}' > "$settings"
 tmp="$(mktemp)"
 if jq --arg g "$DOTFILES_DIR/bin/secrets-guard" --arg d "$DOTFILES_DIR/bin/docker-guard" \
-      --arg a "$DOTFILES_DIR/bin/gitlab-api-guard" --arg c "$DOTFILES_DIR/bin/dashboard-check" '
+      --arg a "$DOTFILES_DIR/bin/gitlab-api-guard" --arg k "$DOTFILES_DIR/bin/credentials-guard" \
+      --arg c "$DOTFILES_DIR/bin/dashboard-check" '
     def without($cmds): [.[]? | select([.hooks[]?.command] - $cmds == [.hooks[]?.command])];
-    .hooks.PreToolUse = ((.hooks.PreToolUse | without([$g, $d, $a]))
+    .hooks.PreToolUse = ((.hooks.PreToolUse | without([$g, $d, $a, $k]))
         + [{matcher: "Bash", hooks: [{type: "command", command: $g}]},
            {matcher: "Bash", hooks: [{type: "command", command: $d}]},
-           {matcher: "Bash", hooks: [{type: "command", command: $a}]}])
+           {matcher: "Bash", hooks: [{type: "command", command: $a}]},
+           {matcher: "Bash", hooks: [{type: "command", command: $k}]}])
     | .hooks.PostToolUse = ((.hooks.PostToolUse | without([$c]))
         + [{matcher: "Edit|Write|MultiEdit", hooks: [{type: "command", command: $c, timeout: 40}]}])
     | (.permissions.deny // []) as $deny
