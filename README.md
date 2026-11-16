@@ -51,6 +51,12 @@ credentials, SSH trust, model downloads and app databases never belong in this
 repository. Do not put `HTTP_PROXY`/`HTTPS_PROXY` variables in shell config;
 the sing-box TUN handles routing below the application layer.
 
+Agent guards: run `CLAUDE_HOOKS=1 ./install.sh` once on a machine that runs pi
+agents (MR watching). It registers secrets-guard, gitlab-api-guard,
+credentials-guard and the claude-components `/mr-description` gate as
+PreToolUse Bash hooks in `~/.claude/settings.json`; pi runs them through the
+`claude-hooks` extension, and pi-sub refuses to start a subagent without it.
+
 ## Implementation and tests
 
 The migration and platform-specific decisions are recorded in

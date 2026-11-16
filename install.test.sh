@@ -153,6 +153,11 @@ mkdir -p "$HOOK_HOME/.claude"
 cat > "$HOOK_HOME/.claude/settings.json" <<'JSON'
 {"customSetting":true,"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"user-start"}]}],"WorktreeCreate":[{"hooks":[{"type":"command","command":"user-create"}]}]}}
 JSON
+FAKE_CC="$SANDBOX/claude-components"
+mkdir -p "$FAKE_CC/plugins/shared/hooks"
+printf '#!/bin/sh\nexit 0\n' > "$FAKE_CC/plugins/shared/hooks/mr-description-review.sh"
+chmod +x "$FAKE_CC/plugins/shared/hooks/mr-description-review.sh"
+export CLAUDE_COMPONENTS_DIR="$FAKE_CC"
 env HOME="$HOOK_HOME" XDG_CONFIG_HOME="$HOOK_HOME/.config" CLAUDE_HOOKS=1 \
     bash "$SCRIPT" > "$SANDBOX/hooks.log" 2>&1
 HOME="$HOOK_HOME" jq -e '.customSetting == true
@@ -169,6 +174,13 @@ HOME="$HOOK_HOME" jq -e --arg g "$TEST_DIR/bin/secrets-guard" --arg a "$TEST_DIR
   "$HOOK_HOME/.claude/settings.json" >/dev/null \
     && pass 'registers the Linux agent guards before Bash' \
     || fail 'registers the Linux agent guards before Bash' 'guard hooks absent'
+HOME="$HOOK_HOME" jq -e --arg k "$TEST_DIR/bin/credentials-guard" \
+    --arg m "$FAKE_CC/plugins/shared/hooks/mr-description-review.sh" '
+  ([.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]? | select(.command == $k)] | length) == 1
+  and ([.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]? | select(.command == $m)] | length) == 1' \
+  "$HOOK_HOME/.claude/settings.json" >/dev/null \
+    && pass 'registers credentials-guard and the /mr-description gate for pi' \
+    || fail 'registers credentials-guard and the /mr-description gate for pi' "$(jq -c .hooks.PreToolUse "$HOOK_HOME/.claude/settings.json")"
 HOME="$HOOK_HOME" jq -e '
   (.permissions.deny // []) as $d
   | (["Read(~/.secrets/**)", "Edit(~/.secrets/**)", "Read(~/.config/ecfx/jira.env)"] - $d) == []' \

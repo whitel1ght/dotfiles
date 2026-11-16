@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { buildArgv, extraExtensions, launch, npmRoot } from "./launch.ts";
+import { buildArgv, extraExtensions, GUARD_EXTENSIONS, launch, npmRoot } from "./launch.ts";
 import { readMeta } from "./state.ts";
 import type { Role } from "./roles.ts";
 
@@ -101,6 +101,8 @@ test("argv matches the spec order", () => {
     "--no-context-files",
     "--no-prompt-templates",
     "--tools", "read,edit,bash",
+    "-e", GUARD_EXTENSIONS[0],
+    "-e", GUARD_EXTENSIONS[1],
     "--provider", "prov",
     "--model", "sub/model",
     "--append-system-prompt", "/tmp/prompt.md",
@@ -189,6 +191,17 @@ test("wrapper writes exit.json and result.md", async () => {
     assert.equal(echoed.argv[echoed.argv.length - 1], "do the thing");
     assert.ok(existsSync(join(dir, "events.jsonl")));
     assert.ok(existsSync(join(dir, "stderr.log")));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("meta.json records the spawning process as parent_pid", async () => {
+  const root = sandbox();
+  try {
+    const { meta, dir } = await runChild();
+    assert.equal(meta.parent_pid, process.pid);
+    assert.equal(JSON.parse(readFileSync(join(dir, "meta.json"), "utf8")).parent_pid, process.pid);
   } finally {
     cleanup(root);
   }

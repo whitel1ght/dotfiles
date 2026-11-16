@@ -208,13 +208,21 @@ link_dir_contents "$DOTFILES_DIR/claude/commands" "$HOME/.claude/commands"
 # guards before every Bash call, and deny rules that keep Claude's file tools out
 # of ~/.secrets. Existing hooks are merged, not replaced. docker-guard and
 # dashboard-check are macOS-side helpers and are not registered here.
+# pi reads the same hooks through its claude-hooks extension, and pi-sub loads
+# that extension into every fixer, so on a pi-only host this is what guards
+# watch-mrs: credentials-guard keeps CI variables and token stores out of
+# transcripts, and the ECFX /mr-description gate is registered straight from a
+# claude-components clone (no Claude plugin install needed).
 install_claude_hooks() {
-    local settings="$HOME/.claude/settings.json" tmp create remove secrets gitlab backup
+    local settings="$HOME/.claude/settings.json" tmp create remove secrets gitlab creds mrdesc backup
     command -v jq >/dev/null 2>&1 || { log_warn 'jq missing; cannot configure Claude hooks'; return 0; }
     create="$HOME/.local/bin/wt hook-create"
     remove="$HOME/.local/bin/wt hook-remove"
     secrets="$DOTFILES_DIR/bin/secrets-guard"
     gitlab="$DOTFILES_DIR/bin/gitlab-api-guard"
+    creds="$DOTFILES_DIR/bin/credentials-guard"
+    mrdesc="${CLAUDE_COMPONENTS_DIR:-$HOME/projects/claude-components}/plugins/shared/hooks/mr-description-review.sh"
+    [ -x "$mrdesc" ] || { log_warn "No /mr-description gate: $mrdesc is missing"; mrdesc=""; }
     mkdir -p "$(dirname "$settings")"
     if [ -L "$settings" ]; then
         log_warn "Leaving symlinked Claude settings untouched: $settings"
@@ -223,7 +231,7 @@ install_claude_hooks() {
     [ -f "$settings" ] || printf '{}\n' > "$settings"
     tmp="$(mktemp "${settings}.XXXXXX")"
     if ! jq --arg create "$create" --arg remove "$remove" --arg secrets "$secrets" \
-        --arg gitlab "$gitlab" '
+        --arg gitlab "$gitlab" --arg creds "$creds" --arg mrdesc "$mrdesc" '
         def ensure_hook($key; $command):
           .hooks[$key] = ((.hooks[$key] // []) + [{hooks:[{type:"command", command:$command}]}]
             | unique_by(tojson));
@@ -231,9 +239,12 @@ install_claude_hooks() {
         .hooks = (.hooks // {})
         | ensure_hook("WorktreeCreate"; $create)
         | ensure_hook("WorktreeRemove"; $remove)
-        | .hooks.PreToolUse = ((.hooks.PreToolUse | without_cmds([$secrets, $gitlab]))
+        | .hooks.PreToolUse = ((.hooks.PreToolUse | without_cmds([$secrets, $gitlab, $creds])
+                | map(select([.hooks[]?.command | endswith("/plugins/shared/hooks/mr-description-review.sh")] | any | not)))
             + [{matcher:"Bash", hooks:[{type:"command", command:$secrets}]},
-               {matcher:"Bash", hooks:[{type:"command", command:$gitlab}]}])
+               {matcher:"Bash", hooks:[{type:"command", command:$gitlab}]},
+               {matcher:"Bash", hooks:[{type:"command", command:$creds}]}]
+            + (if $mrdesc == "" then [] else [{matcher:"Bash", hooks:[{type:"command", command:$mrdesc}]}] end))
         | (.permissions.deny // []) as $deny
         | .permissions.deny = $deny + (["Read(~/.secrets/**)", "Edit(~/.secrets/**)",
             "Read(~/.config/ecfx/jira.env)"] - $deny)
