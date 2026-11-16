@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
-# Fuzzy picker over today's plan: a ticket opens in `jt`, an MR opens in the browser.
+# Picker over today's plan that also searches Jira and GitLab: a ticket opens in `jt`, an MR
+# opens in the browser.
 #
-#   plan-pick [--list]
+#   plan-pick [--list | --search QUERY]
+#
+# Typing filters the plan rows (fuzzy, ignoring case; exact when the query holds a number).
+# When the query holds a number of 2+ digits (18778,
+# ecfx-18778, backend!6889), the rows found for it in Jira and GitLab follow the plan's, plan or
+# not: the ticket KEY (ECFX-<n>, or the query's own KEY-<n>), the group's MRs with iid n and the
+# ECFX tickets their titles name, the MRs with KEY in the title, then the tickets whose text
+# mentions KEY. The picker runs `plan-pick --search {q}` on every change (fzf --disabled); the
+# remote part waits PLAN_PICK_DEBOUNCE (0.25 s) first, so fzf kills it while you are still
+# typing, and its answer is cached per number for the life of the picker. A failed source shows
+# as an `info` row. --search prints the rows for QUERY.
 #
 # Rows (--list prints them, tab-separated kind<TAB>id<TAB>label<TAB>target), in plan order, each
 # line's MRs after it: a `ticket` row for every top-level plan line with a ticket key, then the
@@ -10,12 +21,14 @@
 # $DIARY_DIR/.agent/<date>.md exists): the MRs are `day-agent mrs` rows for that key. Old format:
 # they are the line's `[↗][label]` refs, resolved through the block's `[label]: url`
 # definitions; definitions no line references come last, labelled without a key. Rows are
-# de-duplicated by target. With no plan or no rows it prints "plan-pick: nothing to pick" on
-# stderr and exits 0 without starting fzf.
+# de-duplicated by target, remote rows against plan rows too. With no plan rows --list prints
+# "plan-pick: nothing to pick" on stderr and exits 0; the picker still opens, for searching.
 # Picking a ticket replaces the picker with `jt KEY` (same tmux popup, jt's pager stays until q);
-# picking an MR opens its url and exits; cancelling exits 0.
+# picking an MR opens its url and exits; an info row or cancelling exits 0.
 # DIARY_DIR (default ~/wiki/diary) and DAY_AGENT_DATE (default today) pick the plan.
-# Tests and stubs: PLAN_PICK_FZF, PLAN_PICK_JT, PLAN_PICK_OPEN (default fzf, jt, open).
+# Tests and stubs: PLAN_PICK_FZF, PLAN_PICK_JT, PLAN_PICK_OPEN, PLAN_PICK_GLAB, PLAN_PICK_JIRA
+# (default fzf, jt, open, glab, jira-api next to this script), PLAN_PICK_GROUP (ecfx),
+# PLAN_PICK_PROJECT (ECFX), PLAN_PICK_CACHE (a dir; the picker makes and removes its own).
 set -euo pipefail
 
 DIARY_DIR="${DIARY_DIR:-$HOME/wiki/diary}"
@@ -23,12 +36,17 @@ DATE="${DAY_AGENT_DATE:-$(date +%F)}"
 FZF="${PLAN_PICK_FZF:-fzf}"
 JT="${PLAN_PICK_JT:-jt}"
 OPEN="${PLAN_PICK_OPEN:-open}"
+GLAB="${PLAN_PICK_GLAB:-glab}"
+JIRA="${PLAN_PICK_JIRA:-$(dirname "$0")/jira-api}"
+GROUP="${PLAN_PICK_GROUP:-ecfx}"
+PROJECT="${PLAN_PICK_PROJECT:-ECFX}"
 T=$'\t'
 
-list=0
+list=0 search=0 query=""
 case "${1:-}" in
   -h|--help) sed -n '2,/^[^#]/{/^#/s/^# \{0,1\}//p;}' "$0"; exit 0 ;;
   --list) list=1 ;;
+  --search) search=1; query="${2:-}" ;;
   "") ;;
   *) echo "plan-pick: unknown option $1" >&2; exit 2 ;;
 esac
@@ -104,23 +122,126 @@ if [ -z "$agent_rows" ]; then
   done <<<"$defs"
 fi
 
-if [ -z "$rows" ]; then
-  echo "plan-pick: nothing to pick" >&2
+if [ "$list" = 1 ]; then
+  if [ -z "$rows" ]; then
+    echo "plan-pick: nothing to pick" >&2
+  else
+    printf '%s' "$rows"
+  fi
   exit 0
 fi
 
-if [ "$list" = 1 ]; then
-  printf '%s' "$rows"
+GQL_IID='query($iid: String!) { group(fullPath: "'"$GROUP"'") { mergeRequests(iids: [$iid],
+  includeSubgroups: true, first: 20) { nodes { reference(full: true) title state webUrl } } } }'
+GQL_TITLE='query($key: String!) { group(fullPath: "'"$GROUP"'") { mergeRequests(search: $key, in: [TITLE],
+  includeSubgroups: true, first: 30, sort: CREATED_DESC) { nodes { reference(full: true) title state webUrl } } } }'
+
+# jira_rows JQL: the matching issues as ticket rows
+jira_rows() {
+  local body resp
+  body=$(jq -nc --arg jql "$1" '{jql: $jql, fields: ["status", "summary"], maxResults: 20}')
+  resp=$("$JIRA" POST search/jql "$body" 2>/dev/null) || return 1
+  jq -e '.issues | type == "array"' <<<"$resp" >/dev/null 2>&1 || return 1
+  jq -r '.issues[] | [.key, .fields.status.name, .fields.summary] | map(gsub("\t"; " "))
+    | "ticket\t\(.[0] | ascii_downcase)\t\(.[0]) · \(.[1]) · \(.[2])\t\(.[0])"' <<<"$resp"
+}
+
+# gitlab GQL NAME=VALUE: the group's MRs the query finds, as mr rows (repo!iid without the group prefix)
+gitlab() {
+  local resp
+  resp=$("$GLAB" api graphql -f query="$1" -f "$2" 2>/dev/null) || return 1
+  jq -e '.data.group.mergeRequests.nodes | type == "array"' <<<"$resp" >/dev/null 2>&1 || return 1
+  jq -r --arg g "$GROUP" '.data.group.mergeRequests.nodes[]
+    | (.reference | sub("^" + $g + "/"; "") | sub("^" + $g + "-"; "")) as $ref
+    | "mr\t\($ref)\t\($ref) · \(.state) · \(.title | gsub("\t"; " "))\t\(.webUrl)"' <<<"$resp"
+}
+
+# emit ROWS: print the rows whose target is not printed yet; with a cache, keep them in $part
+emit() {
+  local k i l t
+  [ -n "$1" ] || return 0
+  [ -z "$part" ] || printf '%s\n' "$1" >>"$part"
+  while IFS="$T" read -r k i l t; do
+    [ -n "$k" ] || continue
+    case "$seen" in *$'\n'"$t"$'\n'*) continue ;; esac
+    seen="$seen$t"$'\n'
+    printf '%s\t%s\t%s\t%s\n' "$k" "$i" "$l" "$t"
+  done <<<"$1"
+}
+
+# remote KEY N: emit the Jira and GitLab rows for ticket KEY and MR iid N in the order the header
+# names, each section as soon as it and the ones above it are in (fzf shows them as they come)
+remote() {
+  local key="$1" n="$2" tmp a b j a_ok=1 b_ok=1 j_ok=1 keys more
+  tmp=$(mktemp -d)
+  gitlab "$GQL_IID" iid="$n" >"$tmp/a" & a=$!
+  gitlab "$GQL_TITLE" key="$key" >"$tmp/b" & b=$!
+  jira_rows "key = $key OR (project = $PROJECT AND text ~ \"$key\") ORDER BY updated DESC" >"$tmp/j" & j=$!
+  wait "$j" || j_ok=0
+  [ "$j_ok" = 0 ] || emit "$(awk -F'\t' -v k="$key" '$4 == k' "$tmp/j")"
+  wait "$a" || a_ok=0
+  if [ "$a_ok" = 1 ]; then
+    emit "$(cat "$tmp/a")"
+    keys=$(cut -f3 "$tmp/a" | grep -oiE "(^|[^A-Za-z0-9])$PROJECT-[0-9]+" | grep -oE '[A-Za-z]+-[0-9]+' \
+      | tr '[:lower:]' '[:upper:]' | grep -vx -- "$key" | sort -u | paste -sd, - || true)
+    if [ -n "$keys" ]; then
+      if more=$(jira_rows "key in ($keys)"); then emit "$more"; else j_ok=0; fi
+    fi
+  fi
+  wait "$b" || b_ok=0
+  [ "$b_ok" = 0 ] || emit "$(cat "$tmp/b")"
+  [ "$j_ok" = 0 ] || emit "$(awk -F'\t' -v k="$key" '$4 != k' "$tmp/j")"
+  [ "$a_ok$b_ok" = 11 ] || printf 'info\t\tgitlab: search failed\tgitlab\n'
+  [ "$j_ok" = 1 ] || printf 'info\t\tjira: search failed\tjira\n'
+  rm -rf "$tmp"
+  [ "$a_ok$b_ok$j_ok" = 111 ]
+}
+
+if [ "$search" = 1 ]; then
+  num_re='(([A-Za-z][A-Za-z0-9]{1,9})-)?([0-9]{2,7})'
+  number=0
+  if [[ $query =~ $num_re ]]; then
+    number=1 n="${BASH_REMATCH[3]}"
+    key=$(printf '%s-%s' "${BASH_REMATCH[2]:-$PROJECT}" "$n" | tr '[:lower:]' '[:upper:]')
+  fi
+  shown=$rows
+  if [ -n "${query//[[:space:]]/}" ]; then
+    exact=""; [ "$number" = 0 ] || exact=--exact
+    shown=$(printf '%s' "$rows" | fzf --filter="$query" -i $exact --delimiter='\t' --nth=3 || true)
+  fi
+  seen=$'\n' part=""
+  emit "$shown"
+  if [ "$number" = 1 ]; then
+    cached="${PLAN_PICK_CACHE:-}/$key.$n"
+    if [ -n "${PLAN_PICK_CACHE:-}" ] && [ -f "$cached" ]; then
+      emit "$(cat "$cached")"
+    else
+      sleep "${PLAN_PICK_DEBOUNCE:-0.25}"
+      if [ -n "${PLAN_PICK_CACHE:-}" ]; then part="$cached.$$"; : >"$part"; fi
+      if remote "$key" "$n"; then
+        [ -z "$part" ] || mv "$part" "$cached"
+      else
+        [ -z "$part" ] || rm -f "$part"
+      fi
+    fi
+  fi
   exit 0
 fi
+
+cache=$(mktemp -d "${TMPDIR:-/tmp}/plan-pick.XXXXXX")
+trap 'rm -rf "$cache"' EXIT
+export DIARY_DIR DAY_AGENT_DATE="$DATE" PLAN_PICK_CACHE="$cache"
+self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
 rc=0
-pick=$(printf '%s' "$rows" | $FZF --height=100% --with-nth=3 --delimiter='\t') || rc=$?
+pick=$(printf '%s' "$rows" | $FZF --height=100% --with-nth=3 --delimiter='\t' --disabled --prompt='plan> ' \
+  --header='type a ticket or MR number to search Jira and GitLab too' \
+  --bind="change:reload:$(printf '%q' "$self") --search {q}") || rc=$?
 [ "$rc" = 0 ] && [ -n "$pick" ] || exit 0
 
 kind="${pick%%$T*}"
 target="${pick##*$T}"
 case "$kind" in
-  ticket) exec $JT "$target" ;;
+  ticket) rm -rf "$cache"; exec $JT "$target" ;;
   mr) $OPEN "$target" ;;
 esac
