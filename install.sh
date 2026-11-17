@@ -240,13 +240,14 @@ install_claude_hooks() {
         .hooks = (.hooks // {})
         | ensure_hook("WorktreeCreate"; $create)
         | ensure_hook("WorktreeRemove"; $remove)
+        | (.hooks.PreToolUse | without_cmds([$secrets, $gitlab, $creds])) as $pre
         # Without a clone this run keeps the gate already registered rather than dropping it.
-        | .hooks.PreToolUse = ((.hooks.PreToolUse | without_cmds([$secrets, $gitlab, $creds])
-                | map(select($mrdesc == "" or (is_mrdesc | not))))
+        | .hooks.PreToolUse = ([$pre[] | select(is_mrdesc | not)]
             + [{matcher:"Bash", hooks:[{type:"command", command:$secrets}]},
                {matcher:"Bash", hooks:[{type:"command", command:$gitlab}]},
                {matcher:"Bash", hooks:[{type:"command", command:$creds}]}]
-            + (if $mrdesc == "" then [] else [{matcher:"Bash", hooks:[{type:"command", command:$mrdesc}]}] end))
+            + (if $mrdesc == "" then [$pre[] | select(is_mrdesc)]
+               else [{matcher:"Bash", hooks:[{type:"command", command:$mrdesc}]}] end))
         | (.permissions.deny // []) as $deny
         | .permissions.deny = $deny + (["Read(~/.secrets/**)", "Edit(~/.secrets/**)",
             "Read(~/.config/ecfx/jira.env)"] - $deny)
