@@ -42,7 +42,7 @@ brew "awscli"
 brew "bash"
 # Clone of cat(1) with syntax highlighting and Git integration
 brew "bat"
-# Web server; bin/localsites runs it as the loopback-only proxy for http://articles.localhost
+# Web server; bin/localsites runs it as the loopback-only proxy for http://articles.localhost and learn.localhost
 brew "caddy"
 # Images in the terminal (Kitty graphics, symbols elsewhere); used by img-preview
 brew "chafa"

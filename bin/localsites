@@ -1,6 +1,7 @@
 #!/bin/bash
 # localsites: friendly names for local web apps through a loopback-only Caddy proxy.
 #   http://articles.localhost  → articles (127.0.0.1:8765)
+#   http://learn.localhost     → learn (127.0.0.1:8767)
 #   http://chat.localhost      → Open WebUI (127.0.0.1:8080)
 #
 #   localsites status      is the proxy running, and what each name answers

@@ -12,6 +12,10 @@ http://articles.localhost {
 	reverse_proxy 127.0.0.1:8765
 }
 
+http://learn.localhost {
+	reverse_proxy 127.0.0.1:8767
+}
+
 http://chat.localhost {
 	reverse_proxy 127.0.0.1:8080
 }

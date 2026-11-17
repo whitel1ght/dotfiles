@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Local sites proxy (http://articles.localhost, http://chat.localhost). A LaunchDaemon: only root
+<!-- Local sites proxy (http://articles.localhost, http://learn.localhost, http://chat.localhost). A LaunchDaemon: only root
      may bind port 80 on loopback. `localsites install` fills in __CADDY__, __CONFIG__ and __LOG__
      and loads it from /Library/LaunchDaemons. caddy and the config are root-owned copies, so nothing
      running as the user can change what this root process runs or serves. -->
