@@ -153,13 +153,15 @@ mkdir -p "$HOOK_HOME/.claude"
 cat > "$HOOK_HOME/.claude/settings.json" <<'JSON'
 {"customSetting":true,"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"user-start"}]}],"WorktreeCreate":[{"hooks":[{"type":"command","command":"user-create"}]}]}}
 JSON
+# A minimal claude-components clone: plink regenerates team skills from the
+# same clone, so it needs a marketplace (empty) as well as the gate script.
 FAKE_CC="$SANDBOX/claude-components"
-mkdir -p "$FAKE_CC/plugins/shared/hooks"
+mkdir -p "$FAKE_CC/plugins/shared/hooks" "$FAKE_CC/.claude-plugin"
+printf '{"plugins":[]}\n' > "$FAKE_CC/.claude-plugin/marketplace.json"
 printf '#!/bin/sh\nexit 0\n' > "$FAKE_CC/plugins/shared/hooks/mr-description-review.sh"
 chmod +x "$FAKE_CC/plugins/shared/hooks/mr-description-review.sh"
-export CLAUDE_COMPONENTS_DIR="$FAKE_CC"
 env HOME="$HOOK_HOME" XDG_CONFIG_HOME="$HOOK_HOME/.config" CLAUDE_HOOKS=1 \
-    bash "$SCRIPT" > "$SANDBOX/hooks.log" 2>&1
+    CLAUDE_COMPONENTS_DIR="$FAKE_CC" bash "$SCRIPT" > "$SANDBOX/hooks.log" 2>&1
 HOME="$HOOK_HOME" jq -e '.customSetting == true
   and any(.hooks.SessionStart[]?.hooks[]?; .command == "user-start")
   and any(.hooks.WorktreeCreate[]?.hooks[]?; .command == "user-create")
@@ -196,6 +198,11 @@ env HOME="$HOOK_HOME" XDG_CONFIG_HOME="$HOOK_HOME/.config" CLAUDE_HOOKS=1 \
 after="$(sha256sum "$HOOK_HOME/.claude/settings.json")"
 [ "$before" = "$after" ] && pass 'Claude hook merge is idempotent' \
     || fail 'Claude hook merge is idempotent' 'rerun changed settings'
+HOME="$HOOK_HOME" jq -e --arg m "$FAKE_CC/plugins/shared/hooks/mr-description-review.sh" '
+  ([.hooks.PreToolUse[]? | .hooks[]? | select(.command == $m)] | length) == 1' \
+  "$HOOK_HOME/.claude/settings.json" >/dev/null \
+    && pass 'a re-run without the claude-components clone keeps the /mr-description gate' \
+    || fail 'a re-run without the claude-components clone keeps the /mr-description gate' 'gate dropped'
 
 # Auto-compact is only set when missing, so a hand-set value survives a re-run.
 jq '.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = "70"' "$HOOK_HOME/.claude/settings.json" \

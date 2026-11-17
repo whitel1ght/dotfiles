@@ -236,11 +236,13 @@ install_claude_hooks() {
           .hooks[$key] = ((.hooks[$key] // []) + [{hooks:[{type:"command", command:$command}]}]
             | unique_by(tojson));
         def without_cmds($cmds): [.[]? | select(([.hooks[]?.command] - $cmds) == [.hooks[]?.command])];
+        def is_mrdesc: [.hooks[]?.command | endswith("/plugins/shared/hooks/mr-description-review.sh")] | any;
         .hooks = (.hooks // {})
         | ensure_hook("WorktreeCreate"; $create)
         | ensure_hook("WorktreeRemove"; $remove)
+        # Without a clone this run keeps the gate already registered rather than dropping it.
         | .hooks.PreToolUse = ((.hooks.PreToolUse | without_cmds([$secrets, $gitlab, $creds])
-                | map(select([.hooks[]?.command | endswith("/plugins/shared/hooks/mr-description-review.sh")] | any | not)))
+                | map(select($mrdesc == "" or (is_mrdesc | not))))
             + [{matcher:"Bash", hooks:[{type:"command", command:$secrets}]},
                {matcher:"Bash", hooks:[{type:"command", command:$gitlab}]},
                {matcher:"Bash", hooks:[{type:"command", command:$creds}]}]
