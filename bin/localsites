@@ -35,6 +35,23 @@ need_root() {
     exit 1
 }
 
+# bootout returns before launchd has removed the job; bootstrapping then fails with error 5 (I/O error)
+wait_unloaded() {
+    local i
+    for i in $(seq 20); do
+        "$LAUNCHCTL" print "system/$LABEL" >/dev/null 2>&1 || return 0
+        sleep "${LOCALSITES_POLL_SLEEP:-0.5}"
+    done
+}
+
+bootstrap_retry() {
+    "$LAUNCHCTL" bootstrap system "$DAEMON" && return 0
+    sleep "${LOCALSITES_RETRY_SLEEP:-1}"
+    "$LAUNCHCTL" bootstrap system "$DAEMON" && return 0
+    echo "localsites: launchctl bootstrap failed twice; try: sudo $(readlink -f "$0") start" >&2
+    exit 1
+}
+
 names() { sed -n 's#^http://\([a-z0-9.-]*\.localhost\) {$#\1#p' "$SRC"; }
 
 case "${1:-status}" in
@@ -55,11 +72,17 @@ case "${1:-status}" in
             "$PLIST_SRC" > "$DAEMON.new"
         chown "$OWNER:$GROUP" "$DAEMON.new" && chmod 644 "$DAEMON.new" && mv "$DAEMON.new" "$DAEMON"
         "$LAUNCHCTL" bootout "system/$LABEL" 2>/dev/null || true
-        "$LAUNCHCTL" bootstrap system "$DAEMON" && echo "localsites: running — $(names | sed 's#^#http://#' | tr '\n' ' ')"
+        wait_unloaded
+        bootstrap_retry \
+            && echo "localsites: running — $(names | sed 's#^#http://#' | tr '\n' ' ')"
         ;;
     start)
         need_root start
-        "$LAUNCHCTL" bootstrap system "$DAEMON"
+        if "$LAUNCHCTL" print "system/$LABEL" >/dev/null 2>&1; then
+            echo "localsites: already running"
+            exit 0
+        fi
+        bootstrap_retry
         ;;
     stop)
         need_root stop

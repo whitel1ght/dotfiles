@@ -18,12 +18,30 @@ assert_has() { case "$2" in *"$1"*) pass "$3" ;; *) fail "$3" "[$1] not in [$2]"
 SANDBOX="$(cd "$(mktemp -d)" && pwd -P)"
 PIDS=()
 trap 'for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null; done; [ "$FAIL" -gt 0 ] && tail -5 "$SANDBOX/caddy.log"; rm -rf "${SANDBOX:?}"' EXIT
-printf '#!/bin/sh\necho "$*" >>"%s/launchctl.log"\n' "$SANDBOX" >"$SANDBOX/launchctl"
+# Stub state in $SANDBOX: loaded (job exists), linger (print still reports loaded N times after
+# bootout), bootstrap_fails (bootstrap fails N times). Bootstrap while lingering fails like error 5.
+cat >"$SANDBOX/launchctl" <<'STUB'
+#!/bin/sh
+D="$(dirname "$0")"
+echo "$*" >>"$D/launchctl.log"
+n() { cat "$D/$1" 2>/dev/null || echo 0; }
+case "$1" in
+    bootout) rm -f "$D/loaded"; echo "$(n linger)" >"$D/pending" ;;
+    print)
+        [ -e "$D/loaded" ] && exit 0
+        p="$(n pending)"; [ "$p" -gt 0 ] && { echo $((p - 1)) >"$D/pending"; exit 0; }
+        exit 1 ;;
+    bootstrap)
+        [ "$(n pending)" -gt 0 ] && exit 5
+        f="$(n bootstrap_fails)"; [ "$f" -gt 0 ] && { echo $((f - 1)) >"$D/bootstrap_fails"; exit 5; }
+        touch "$D/loaded" ;;
+esac
+STUB
 chmod +x "$SANDBOX/launchctl"
 
 ls_env() {
     LOCALSITES_ETC="$SANDBOX/etc" LOCALSITES_LIBEXEC="$SANDBOX/libexec" LOCALSITES_DAEMON="$SANDBOX/local.localsites.plist" \
-    LOCALSITES_LOG="$SANDBOX/localsites.log" LOCALSITES_LAUNCHCTL="$SANDBOX/launchctl" \
+    LOCALSITES_POLL_SLEEP=0 LOCALSITES_RETRY_SLEEP=0 LOCALSITES_LOG="$SANDBOX/localsites.log" LOCALSITES_LAUNCHCTL="$SANDBOX/launchctl" \
     LOCALSITES_OWNER="$(id -un)" LOCALSITES_GROUP="$(id -gn)" "$@"
 }
 
@@ -51,6 +69,32 @@ printf "http://x.localhost {\n\tno_such_directive\n}\n" >"$SANDBOX/bad.Caddyfile
 OUT="$(LOCALSITES_UID=0 LOCALSITES_SRC="$SANDBOX/bad.Caddyfile" ls_env "$CMD" install 2>&1)"; RC=$?
 assert_eq "1" "$RC" "an invalid Caddyfile is not installed"
 cmp -s "$CADDYFILE" "$SANDBOX/etc/Caddyfile" && pass "and the running copy stays" || fail "the running copy stays" "changed"
+
+echo 3 >"$SANDBOX/linger"; : >"$SANDBOX/launchctl.log"; rm -f "$SANDBOX/pending"
+OUT="$(LOCALSITES_UID=0 ls_env "$CMD" install 2>&1)"; RC=$?
+assert_eq "0" "$RC" "reinstall succeeds while launchd is still removing the job"
+LOG="$(cat "$SANDBOX/launchctl.log")"
+assert_eq "4" "$(grep -c '^print' <<<"$LOG" | tr -d ' ')" "install polls print until the job is gone (3 loaded, then gone)"
+assert_eq "bootstrap" "$(tail -1 <<<"$LOG" | cut -d' ' -f1)" "and bootstraps only after that"
+rm -f "$SANDBOX/linger" "$SANDBOX/pending"
+
+: >"$SANDBOX/launchctl.log"; echo 1 >"$SANDBOX/bootstrap_fails"
+OUT="$(LOCALSITES_UID=0 ls_env "$CMD" install 2>&1)"; RC=$?
+assert_eq "0" "$RC" "a first bootstrap failure is retried"
+assert_eq "2" "$(grep -c '^bootstrap' "$SANDBOX/launchctl.log")" "with exactly one retry"
+
+echo 5 >"$SANDBOX/bootstrap_fails"
+OUT="$(LOCALSITES_UID=0 ls_env "$CMD" install 2>&1)"; RC=$?
+assert_eq "1" "$RC" "two bootstrap failures exit 1"
+assert_has "sudo" "$OUT" "and name the command to run"
+assert_has "start" "$OUT" "start"
+rm -f "$SANDBOX/bootstrap_fails"
+
+touch "$SANDBOX/loaded"; : >"$SANDBOX/launchctl.log"
+OUT="$(LOCALSITES_UID=0 ls_env "$CMD" start 2>&1)"; RC=$?
+assert_eq "0" "$RC" "start on a loaded job exits 0"
+assert_has "already running" "$OUT" "and says already running"
+assert_eq "0" "$(grep -c '^bootstrap' "$SANDBOX/launchctl.log" | tr -d ' ')" "without bootstrapping"
 
 LOCALSITES_UID=0 ls_env "$CMD" uninstall >/dev/null 2>&1
 assert_eq "none" "$(ls "$SANDBOX/etc" "$SANDBOX/libexec" "$SANDBOX/local.localsites.plist" 2>/dev/null | tr -d '\n' || true)none" "uninstall removes the daemon, config and binary"
