@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""jokes-week — the week's funniest jokes, scraped from upvote-ranked sources and LLM-curated.
+
+Sources (all no-login, English, human-ranked):
+  - Arctic Shift's Reddit archive: top posts of the last week from JOKES_SUBS
+    (default r/Jokes, r/dadjokes, r/puns, r/cleanjokes, r/humor, r/Punny, r/OneLiners).
+    Reddit's own API 403s anonymous scripts; Arctic Shift mirrors it with scores and permalinks.
+  - dailyjokes.co latest page (dated daily jokes, community-rated).
+
+Pipeline: fetch -> keep fresh text jokes (score >= JOKES_MIN_SCORE where votes exist) ->
+dedupe reposts by normalized-text hash -> top JOKES_LLM_POOL by score go to `pi -p`
+(JOKES_MODEL), which picks the JOKES_TOP_N funniest, preferring dad jokes / wordplay and
+current-topic jokes -> print the list and save it to JOKES_OUT_DIR/YYYY-MM-DD.md.
+
+Env (all optional, mostly for tests):
+  JOKES_OUT_DIR   output dir        (default ~/.local/share/jokes-week)
+  JOKES_MODEL     pi model for ranking (default qwen-token-plan/qwen3.8-flash)
+  JOKES_SUBS      comma-separated subreddits
+  JOKES_DAYS      freshness window in days (default 7)
+  JOKES_MIN_SCORE minimum upvotes for reddit posts (default 50)
+  JOKES_TOP_N     jokes in the final list (default 20)
+  JOKES_LLM_POOL  candidates offered to the LLM (default 120)
+  JOKES_NOW       epoch seconds standing in for "now"
+  JOKES_SKIP_DAILYJOKES=1  skip the dailyjokes.co source
+Flags: --no-llm ranks by upvotes only (no pi call); --json prints candidates instead of ranking.
+"""
+import hashlib
+import html
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+OUT_DIR = os.environ.get("JOKES_OUT_DIR", os.path.join(HOME, ".local/share/jokes-week"))
+MODEL = os.environ.get("JOKES_MODEL", "qwen-token-plan/qwen3.8-flash")
+SUBS = os.environ.get(
+    "JOKES_SUBS", "Jokes,dadjokes,puns,cleanjokes,humor,Punny,OneLiners"
+).split(",")
+DAYS = int(os.environ.get("JOKES_DAYS", "7"))
+MIN_SCORE = int(os.environ.get("JOKES_MIN_SCORE", "50"))
+TOP_N = int(os.environ.get("JOKES_TOP_N", "20"))
+LLM_POOL = int(os.environ.get("JOKES_LLM_POOL", "120"))
+NOW = float(os.environ.get("JOKES_NOW", time.time()))
+UA = "jokes-week/1.0 (personal weekly joke digest)"
+ARCTIC = "https://arctic-shift.photon-reddit.com/api/posts/search"
+MAX_LEN = 2500  # joke-shaped text only; link posts and essays are out (dailyjokes.co runs long)
+
+
+def fetch(url):
+    r = subprocess.run(
+        ["curl", "-sL", "-A", UA, "--max-time", "30", url],
+        capture_output=True, text=True,
+    )
+    return r.stdout
+
+
+def log(msg):
+    print(msg, file=sys.stderr)
+
+
+def norm_key(text):
+    norm = re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+    return hashlib.md5(norm[:300].encode()).hexdigest()
+
+
+def fetch_reddit(sub, since):
+    """Week of posts from one subreddit, newest first, paginated with before=<oldest seen>."""
+    posts, before, pages = [], None, 0
+    while pages < 10:
+        url = f"{ARCTIC}?subreddit={sub}&after={int(since)}&limit=100"
+        if before:
+            url += f"&before={before}"
+        data = None
+        for attempt in (1, 2):
+            try:
+                resp = json.loads(fetch(url))
+                data = resp.get("data")
+                if data is None and attempt == 1:
+                    log(f"warning: {sub}: {str(resp.get('error'))[:80]}; retrying")
+                    time.sleep(5)
+                    continue
+                break
+            except json.JSONDecodeError:
+                if attempt == 1:
+                    time.sleep(5)
+                    continue
+                log(f"warning: {sub}: bad response, stopping at {len(posts)} posts")
+                return posts
+        data = data or []
+        pages += 1
+        posts.extend(data)
+        if len(data) < 100:
+            break
+        before = min(p["created_utc"] for p in data)
+        time.sleep(1)
+    return posts
+
+
+def reddit_candidates(since):
+    out = []
+    for sub in [s.strip() for s in SUBS if s.strip()]:
+        kept = 0
+        for p in fetch_reddit(sub, since):
+            text = (p.get("title") or "").strip()
+            body = (p.get("selftext") or "").strip()
+            if body:
+                text = f"{text}\n{body}" if text else body
+            score = p.get("score") or 0
+            if not text or score < MIN_SCORE or len(text) > MAX_LEN:
+                continue
+            if p.get("created_utc", 0) < since:
+                continue
+            out.append({
+                "source": f"r/{sub}",
+                "text": text,
+                "score": score,
+                "url": "https://www.reddit.com" + (p.get("permalink") or ""),
+                "created": p.get("created_utc", 0),
+            })
+            kept += 1
+        log(f"r/{sub}: {kept} candidates")
+        time.sleep(1)
+    return out
+
+
+TAG_RE = re.compile(r"<[^>]+>")
+
+
+def strip_html(s):
+    return re.sub(r"\s+", " ", html.unescape(TAG_RE.sub(" ", s))).strip()
+
+
+def dailyjokes_candidates(since):
+    """dailyjokes.co latest page: dated, community-rated jokes; no vote counts exposed, score None."""
+    page = fetch("https://www.dailyjokes.co/Latest-Jokes/")
+    out = []
+    for block in page.split('<div class="joke">')[1:]:
+        m_date = re.search(r'<div class="joke_date">(\d{2})/(\d{2})/(\d{4})', block)
+        m_link = re.search(r'<div class="joke_title"><a href="([^"]+)"', block)
+        m_text = re.search(r'<div class="joke_text">(.*?)<div class="joke_footer"', block, re.S)
+        if not (m_date and m_text):
+            continue
+        created = time.mktime(time.strptime(m_date.group(0)[-10:], "%m/%d/%Y"))
+        if created < since:
+            continue
+        text = strip_html(m_text.group(1))
+        if not text or len(text) > MAX_LEN:
+            continue
+        out.append({
+            "source": "dailyjokes.co",
+            "text": text,
+            "score": None,
+            "url": m_link.group(1) if m_link else "https://www.dailyjokes.co/Latest-Jokes/",
+            "created": created,
+        })
+    log(f"dailyjokes.co: {len(out)} candidates")
+    return out
+
+
+def dedupe(cands):
+    seen, out = set(), []
+    for c in cands:
+        k = norm_key(c["text"])
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(c)
+    return out
+
+
+def llm_rank(pool):
+    """Ask pi to order the pool funniest-first; returns indices into pool."""
+    listing = "\n\n".join(
+        f"[{i}] ({c['source']}, {c['score'] if c['score'] is not None else '?'} pts)\n{c['text'][:800]}"
+        for i, c in enumerate(pool)
+    )
+    prompt = (
+        "You are picking the funniest jokes of the week. Below are candidate jokes in brackets "
+        "with their source and upvotes. Choose the best, at most "
+        f"{min(TOP_N, len(pool))}. Prefer, in order: dad jokes and silly wordplay/puns; jokes about "
+        "current events or trending topics; then anything else genuinely funny. Ignore jokes that "
+        "are not in English, are truncated mid-punchline, or need image context. Upvotes are a hint, "
+        "not the answer. Reply with ONLY the bracket numbers, funniest first, comma-separated, "
+        "e.g. 12,3,47\n\n" + listing
+    )
+    r = subprocess.run(
+        ["pi", "-p", "--model", MODEL],
+        input=prompt, capture_output=True, text=True, timeout=600,
+    )
+    nums = [int(n) for n in re.findall(r"\d+", r.stdout) if int(n) < len(pool)]
+    if not nums:
+        raise RuntimeError(f"no picks in pi output: {r.stdout[:200]!r} {r.stderr[:200]!r}")
+    seen, order = set(), []
+    for n in nums:
+        if n not in seen:
+            seen.add(n)
+            order.append(n)
+    return order[:TOP_N]
+
+
+def by_score(cands):
+    return sorted(cands, key=lambda c: (c["score"] is not None, c["score"] or 0), reverse=True)
+
+
+def render(picks):
+    day = time.strftime("%Y-%m-%d", time.localtime(NOW))
+    lines = [f"# Funniest jokes of the week — {day}", ""]
+    for n, c in enumerate(picks, 1):
+        score = f"{c['score']} pts · " if c.get("score") is not None else ""
+        lines += [f"## {n}. {c['source']}", "", c["text"], "", f"{score}{c['url']}", ""]
+    return "\n".join(lines)
+
+
+def main():
+    args = sys.argv[1:]
+    since = NOW - DAYS * 86400
+    cands = reddit_candidates(since)
+    if not os.environ.get("JOKES_SKIP_DAILYJOKES"):
+        cands += dailyjokes_candidates(since)
+    cands = dedupe(cands)
+    if not cands:
+        log("no candidates found; nothing to rank")
+        return 1
+    log(f"{len(cands)} unique candidates")
+
+    if "--json" in args:
+        print(json.dumps(cands, indent=1))
+        return 0
+
+    ranked = by_score(cands)
+    if "--no-llm" in args:
+        picks = ranked[:TOP_N]
+    else:
+        pool = ranked[:LLM_POOL]
+        try:
+            picks = [pool[i] for i in llm_rank(pool)]
+        except Exception as e:
+            log(f"warning: LLM ranking failed ({e}); falling back to upvote order")
+            picks = ranked[:TOP_N]
+
+    md = render(picks)
+    os.makedirs(OUT_DIR, exist_ok=True)
+    path = os.path.join(OUT_DIR, time.strftime("%Y-%m-%d", time.localtime(NOW)) + ".md")
+    with open(path, "w") as f:
+        f.write(md + "\n")
+    print(md)
+    log(f"saved: {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
