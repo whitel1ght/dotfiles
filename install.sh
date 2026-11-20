@@ -787,6 +787,11 @@ if [ -f "$DOTFILES_DIR/bin/art" ]; then
     create_symlink "$DOTFILES_DIR/bin/art" "$HOME/.local/bin/art"
 fi
 
+# jokes-week prints the week's funniest jokes (Reddit archive + dailyjokes.co, LLM-picked).
+if [ -f "$DOTFILES_DIR/bin/jokes-week" ]; then
+    create_symlink "$DOTFILES_DIR/bin/jokes-week" "$HOME/.local/bin/jokes-week"
+fi
+
 # dev switches the dashboard dev server between worktrees (tmux window dev:dashboard).
 if [ -f "$DOTFILES_DIR/bin/dev" ]; then
     create_symlink "$DOTFILES_DIR/bin/dev" "$HOME/.local/bin/dev"
