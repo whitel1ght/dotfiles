@@ -75,7 +75,8 @@ EOF
 chmod +x "$BIN/curl" "$BIN/pi"
 
 export PATH="$BIN:$PATH" JOKES_NOW="$NOW" JOKES_SUBS=TestSub \
-  JOKES_OUT_DIR="$SANDBOX/out" JOKES_MIN_SCORE=50 JOKES_TOP_N=3
+  JOKES_OUT_DIR="$SANDBOX/out" JOKES_MIN_SCORE=50 JOKES_TOP_N=3 \
+  JOKES_WIKI_DIR="$SANDBOX/wiki"
 
 echo "llm-ranked run"
 out="$("$SCRIPT" 2>"$SANDBOX/err")"
@@ -94,6 +95,9 @@ hasnt "story-length post filtered at the default cap" "$out" "Story length"
 hasnt "image post filtered" "$out" "Meme caption"
 hasnt "old daily joke filtered" "$out" "Old joke E text"
 check "saved to out dir" "1" "$(ls "$SANDBOX/out" | grep -c '\.md$')"
+check "saved to wiki dir" "1" "$(ls "$SANDBOX/wiki" | grep -c '\.md$')"
+JOKES_WIKI_DIR="$SANDBOX/nowhere/wiki" "$SCRIPT" --no-llm >/dev/null 2>&1
+check "skips wiki copy when the wiki is absent" "0" "$([ -d "$SANDBOX/nowhere/wiki" ] && echo 1 || echo 0)"
 has "log counts candidates" "$(cat "$SANDBOX/err")" "unique candidates"
 
 echo "--no-llm ranks by score"

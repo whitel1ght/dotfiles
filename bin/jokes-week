@@ -15,6 +15,7 @@ current-topic jokes -> print the list and save it to JOKES_OUT_DIR/YYYY-MM-DD.md
 
 Env (all optional, mostly for tests):
   JOKES_OUT_DIR   output dir        (default ~/.local/share/jokes-week)
+  JOKES_WIKI_DIR  wiki backup copy  (default ~/wiki/jokes-week; needs ~/wiki to exist)
   JOKES_MODEL     pi model for ranking (default qwen-token-plan/qwen3.8-flash)
   JOKES_SUBS      comma-separated subreddits
   JOKES_DAYS      freshness window in days (default 7)
@@ -37,6 +38,7 @@ import time
 
 HOME = os.path.expanduser("~")
 OUT_DIR = os.environ.get("JOKES_OUT_DIR", os.path.join(HOME, ".local/share/jokes-week"))
+WIKI_DIR = os.environ.get("JOKES_WIKI_DIR", os.path.join(HOME, "wiki/jokes-week"))
 MODEL = os.environ.get("JOKES_MODEL", "qwen-token-plan/qwen3.8-flash")
 SUBS = os.environ.get(
     "JOKES_SUBS", "Jokes,dadjokes,puns,cleanjokes,Punny,OneLiners"
@@ -246,12 +248,21 @@ def main():
             picks = ranked[:TOP_N]
 
     md = render(picks)
+    fname = time.strftime("%Y-%m-%d", time.localtime(NOW)) + ".md"
     os.makedirs(OUT_DIR, exist_ok=True)
-    path = os.path.join(OUT_DIR, time.strftime("%Y-%m-%d", time.localtime(NOW)) + ".md")
+    path = os.path.join(OUT_DIR, fname)
     with open(path, "w") as f:
         f.write(md + "\n")
     print(md)
     log(f"saved: {path}")
+
+    # backup copy in the wiki; wiki-sync commits it, so git history + VPS push come free
+    if os.path.isdir(os.path.dirname(WIKI_DIR)):
+        os.makedirs(WIKI_DIR, exist_ok=True)
+        wpath = os.path.join(WIKI_DIR, fname)
+        with open(wpath, "w") as f:
+            f.write(md + "\n")
+        log(f"wiki: {wpath}")
     return 0
 
 
