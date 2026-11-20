@@ -74,18 +74,18 @@ def fetch_reddit(sub, since):
         if before:
             url += f"&before={before}"
         data = None
-        for attempt in (1, 2):
+        for attempt in (1, 2, 3):
             try:
                 resp = json.loads(fetch(url))
                 data = resp.get("data")
-                if data is None and attempt == 1:
-                    log(f"warning: {sub}: {str(resp.get('error'))[:80]}; retrying")
-                    time.sleep(5)
+                if data is None and attempt < 3:
+                    log(f"warning: {sub}: {str(resp.get('error'))[:80]}; retrying in {5 * attempt}s")
+                    time.sleep(5 * attempt)
                     continue
                 break
             except json.JSONDecodeError:
-                if attempt == 1:
-                    time.sleep(5)
+                if attempt < 3:
+                    time.sleep(5 * attempt)
                     continue
                 log(f"warning: {sub}: bad response, stopping at {len(posts)} posts")
                 return posts
@@ -95,7 +95,7 @@ def fetch_reddit(sub, since):
         if len(data) < 100:
             break
         before = min(p["created_utc"] for p in data)
-        time.sleep(1)
+        time.sleep(2)
     return posts
 
 
@@ -122,7 +122,7 @@ def reddit_candidates(since):
             })
             kept += 1
         log(f"r/{sub}: {kept} candidates")
-        time.sleep(1)
+        time.sleep(3)
     return out
 
 
