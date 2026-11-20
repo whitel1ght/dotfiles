@@ -3,8 +3,9 @@
 
 Sources (all no-login, English, human-ranked):
   - Arctic Shift's Reddit archive: top posts of the last week from JOKES_SUBS
-    (default r/Jokes, r/dadjokes, r/puns, r/cleanjokes, r/humor, r/Punny, r/OneLiners).
+    (default r/Jokes, r/dadjokes, r/puns, r/cleanjokes, r/Punny, r/OneLiners).
     Reddit's own API 403s anonymous scripts; Arctic Shift mirrors it with scores and permalinks.
+    Image/video posts (post_hint) are skipped: a meme caption is not a text joke.
   - dailyjokes.co latest page (dated daily jokes, community-rated).
 
 Pipeline: fetch -> keep fresh text jokes (score >= JOKES_MIN_SCORE where votes exist) ->
@@ -18,6 +19,7 @@ Env (all optional, mostly for tests):
   JOKES_SUBS      comma-separated subreddits
   JOKES_DAYS      freshness window in days (default 7)
   JOKES_MIN_SCORE minimum upvotes for reddit posts (default 50)
+  JOKES_MAX_LEN   max chars of a joke text (default 240, about two lines)
   JOKES_TOP_N     jokes in the final list (default 20)
   JOKES_LLM_POOL  candidates offered to the LLM (default 120)
   JOKES_NOW       epoch seconds standing in for "now"
@@ -37,7 +39,7 @@ HOME = os.path.expanduser("~")
 OUT_DIR = os.environ.get("JOKES_OUT_DIR", os.path.join(HOME, ".local/share/jokes-week"))
 MODEL = os.environ.get("JOKES_MODEL", "qwen-token-plan/qwen3.8-flash")
 SUBS = os.environ.get(
-    "JOKES_SUBS", "Jokes,dadjokes,puns,cleanjokes,humor,Punny,OneLiners"
+    "JOKES_SUBS", "Jokes,dadjokes,puns,cleanjokes,Punny,OneLiners"
 ).split(",")
 DAYS = int(os.environ.get("JOKES_DAYS", "7"))
 MIN_SCORE = int(os.environ.get("JOKES_MIN_SCORE", "50"))
@@ -46,7 +48,7 @@ LLM_POOL = int(os.environ.get("JOKES_LLM_POOL", "120"))
 NOW = float(os.environ.get("JOKES_NOW", time.time()))
 UA = "jokes-week/1.0 (personal weekly joke digest)"
 ARCTIC = "https://arctic-shift.photon-reddit.com/api/posts/search"
-MAX_LEN = 2500  # joke-shaped text only; link posts and essays are out (dailyjokes.co runs long)
+MAX_LEN = int(os.environ.get("JOKES_MAX_LEN", "240"))  # one/two-liners only; story-length posts are out
 
 
 def fetch(url):
@@ -109,6 +111,8 @@ def reddit_candidates(since):
             if body:
                 text = f"{text}\n{body}" if text else body
             score = p.get("score") or 0
+            if p.get("post_hint") not in (None, "self"):
+                continue  # image/video posts: meme captions, not text jokes
             if not text or score < MIN_SCORE or len(text) > MAX_LEN:
                 continue
             if p.get("created_utc", 0) < since:

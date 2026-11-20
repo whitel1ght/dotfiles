@@ -24,6 +24,7 @@ OLD=$((NOW - 8 * 86400))
 FRESH_DATE="$(date -r "$FRESH" +%m/%d/%Y)"
 OLD_DATE="$(date -r "$OLD" +%m/%d/%Y)"
 LONG="$(python3 -c 'print("x " * 1400)')"
+STORY="$(python3 -c 'print("y " * 150)')"  # 300 chars: past the default 240 cap
 
 cat > "$SANDBOX/reddit.json" <<EOF
 {"data": [
@@ -32,7 +33,9 @@ cat > "$SANDBOX/reddit.json" <<EOF
  {"title": "Joke B", "selftext": "", "score": 300, "created_utc": $FRESH, "permalink": "/r/TestSub/comments/b1"},
  {"title": "Low score joke", "selftext": "", "score": 10, "created_utc": $FRESH, "permalink": "/r/TestSub/comments/c1"},
  {"title": "Old joke", "selftext": "", "score": 900, "created_utc": $OLD, "permalink": "/r/TestSub/comments/d1"},
- {"title": "Too long", "selftext": "$LONG", "score": 700, "created_utc": $FRESH, "permalink": "/r/TestSub/comments/e1"}
+ {"title": "Too long", "selftext": "$LONG", "score": 700, "created_utc": $FRESH, "permalink": "/r/TestSub/comments/e1"},
+ {"title": "Story length", "selftext": "$STORY", "score": 600, "created_utc": $FRESH, "permalink": "/r/TestSub/comments/f1"},
+ {"title": "Meme caption", "selftext": "", "score": 800, "created_utc": $FRESH, "permalink": "/r/TestSub/comments/g1", "post_hint": "image"}
 ]}
 EOF
 
@@ -87,6 +90,8 @@ check "repost deduped (A appears once)" "1" "$(printf '%s\n' "$out" | grep -c 'J
 hasnt "low-score filtered" "$out" "Low score joke"
 hasnt "old post filtered" "$out" "Old joke"
 hasnt "too-long post filtered" "$out" "Too long"
+hasnt "story-length post filtered at the default cap" "$out" "Story length"
+hasnt "image post filtered" "$out" "Meme caption"
 hasnt "old daily joke filtered" "$out" "Old joke E text"
 check "saved to out dir" "1" "$(ls "$SANDBOX/out" | grep -c '\.md$')"
 has "log counts candidates" "$(cat "$SANDBOX/err")" "unique candidates"
