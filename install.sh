@@ -368,7 +368,8 @@ fi
 # write whose body comes from stdin or that lacks a JSON content type.
 # credentials-guard keeps CI variables, keyrings and credential files out of
 # agent transcripts. dashboard-check lints a .ts/.vue file Claude just edited in ecfx-dashboard
-# (PostToolUse; pi has no such event). Merged, not linked, since Claude Code
+# (PostToolUse; pi has no such event). `session-save hook` (SessionEnd) saves a session
+# marked with /learn-mark to ~/wiki/learning/sessions/. Merged, not linked, since Claude Code
 # rewrites settings.json; re-runs leave one copy of each.
 settings="$HOME/.claude/settings.json"
 mkdir -p "$HOME/.claude"
@@ -376,7 +377,7 @@ mkdir -p "$HOME/.claude"
 tmp="$(mktemp)"
 if jq --arg g "$DOTFILES_DIR/bin/secrets-guard" --arg d "$DOTFILES_DIR/bin/docker-guard" \
       --arg a "$DOTFILES_DIR/bin/gitlab-api-guard" --arg k "$DOTFILES_DIR/bin/credentials-guard" \
-      --arg c "$DOTFILES_DIR/bin/dashboard-check" '
+      --arg c "$DOTFILES_DIR/bin/dashboard-check" --arg s "$DOTFILES_DIR/bin/session-save hook" '
     def without($cmds): [.[]? | select([.hooks[]?.command] - $cmds == [.hooks[]?.command])];
     .hooks.PreToolUse = ((.hooks.PreToolUse | without([$g, $d, $a, $k]))
         + [{matcher: "Bash", hooks: [{type: "command", command: $g}]},
@@ -385,6 +386,8 @@ if jq --arg g "$DOTFILES_DIR/bin/secrets-guard" --arg d "$DOTFILES_DIR/bin/docke
            {matcher: "Bash", hooks: [{type: "command", command: $k}]}])
     | .hooks.PostToolUse = ((.hooks.PostToolUse | without([$c]))
         + [{matcher: "Edit|Write|MultiEdit", hooks: [{type: "command", command: $c, timeout: 40}]}])
+    | .hooks.SessionEnd = ((.hooks.SessionEnd | without([$s]))
+        + [{hooks: [{type: "command", command: $s, timeout: 10}]}])
     | (.permissions.deny // []) as $deny
     | .permissions.deny = $deny + (["Read(~/.secrets/**)", "Edit(~/.secrets/**)",
         "Read(~/.config/ecfx/jira.env)"] - $deny)' "$settings" > "$tmp"; then
@@ -762,6 +765,17 @@ fi
 # mr-ship takes an MR out of draft, assigns me and requests the standing reviewers; driven by /ship-mr.
 if [ -f "$DOTFILES_DIR/bin/mr-ship" ]; then
     create_symlink "$DOTFILES_DIR/bin/mr-ship" "$HOME/.local/bin/mr-ship"
+fi
+
+# session-save keeps marked learning sessions in ~/wiki/learning/sessions/ (/learn-mark,
+# /learn-save, pi's learning-sessions extension); qmd searches them as `learning-sessions`.
+if [ -f "$DOTFILES_DIR/bin/session-save" ]; then
+    create_symlink "$DOTFILES_DIR/bin/session-save" "$HOME/.local/bin/session-save"
+fi
+if command -v qmd >/dev/null 2>&1 && [ -d "$HOME/wiki" ] \
+    && ! qmd collection list 2>/dev/null | grep -q '^learning-sessions '; then
+    qmd collection add "$HOME/wiki" --name learning-sessions --mask 'learning/sessions/*.md' >/dev/null 2>&1 \
+        || log_warn "Could not add the learning-sessions qmd collection"
 fi
 
 # prod-kube-preflight checks the Duplo sign-in before a kubectl prod01 step; driven by /run-day.

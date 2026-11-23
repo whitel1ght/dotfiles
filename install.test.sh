@@ -172,6 +172,10 @@ n="$(jq --arg g "$TEST_DIR/bin/credentials-guard" '[.hooks.PreToolUse[]?.hooks[]
 [ "$n" = "1" ] && pass "re-run adds the credentials hook once" || fail "re-run adds the credentials hook once" "found $n"
 n="$(jq --arg c "$TEST_DIR/bin/dashboard-check" '[.hooks.PostToolUse[]?.hooks[]? | select(.command == $c)] | length' "$SANDBOX/.claude/settings.json")"
 [ "$n" = "1" ] && pass "re-run adds the dashboard-check hook once" || fail "re-run adds the dashboard-check hook once" "found $n"
+n="$(jq --arg s "$TEST_DIR/bin/session-save hook" '[.hooks.SessionEnd[]?.hooks[]? | select(.command == $s)] | length' "$SANDBOX/.claude/settings.json")"
+[ "$n" = "1" ] && pass "re-run adds the session-save SessionEnd hook once" || fail "re-run adds the session-save SessionEnd hook once" "found $n"
+[ -L "$SANDBOX/.local/bin/session-save" ] && pass "session-save is linked into ~/.local/bin" \
+    || fail "session-save is linked into ~/.local/bin" "$(ls -l "$SANDBOX/.local/bin/session-save" 2>&1)"
 n="$(jq '[.hooks.PreToolUse[]?.hooks[]?, .hooks.PostToolUse[]?.hooks[]? | select(.command | startswith("/other/"))] | length' "$SANDBOX/.claude/settings.json")"
 [ "$n" = "2" ] && pass "re-run keeps other tools' hooks" || fail "re-run keeps other tools' hooks" "found $n"
 n="$(jq '[.permissions.deny[] | select(. == "Read(~/.secrets/**)")] | length' "$SANDBOX/.claude/settings.json")"

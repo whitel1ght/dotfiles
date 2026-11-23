@@ -64,6 +64,9 @@ check "exactly one file remains, under the new name" \
 check "--title wins over the log" \
   '"$SCRIPT" save --harness claude --session "$SID" --title "My Notes!" >/dev/null && [ "$(ls "$SESSION_SAVE_DIR")" = "2026-11-20-my-notes-11111111.md" ]'
 
+check "an empty --title keeps the session's title" \
+  '"$SCRIPT" save --harness claude --session "$SID" --title "" >/dev/null && [ "$(ls "$SESSION_SAVE_DIR")" = "2026-11-20-borrow-checker-11111111.md" ]'
+
 echo "claude: edge cases"
 E=22222222-0000-0000-0000-000000000000
 grep -v '"type": "user"' "$DATA/claude.jsonl" | sed "s/$SID/$E/g" >"$CLAUDE_PROJECTS_DIR/-Users-x-projects-rust/$E.jsonl"
@@ -93,6 +96,28 @@ check "pi: bash result left out" '! has "pi bash output zzz"'
 check "pi: an abandoned branch is left out" '! has "Abandoned branch answer"'
 "$SCRIPT" save --harness pi --session "$PSID" >/dev/null 2>&1; rc=$?
 check "pi: --transcript is required" '[ "$rc" -eq 1 ]'
+
+echo "marking and the Claude hook"
+rm -rf "$SESSION_SAVE_DIR"
+cp "$DATA/claude.jsonl" "$LOG"
+out="$("$SCRIPT" mark --harness claude "$SID")"
+check "mark prints marked" '[ "$out" = marked ] && [ -f "$SESSION_SAVE_STATE/marked/$SID" ]'
+check "is-marked: marked session exits 0" '"$SCRIPT" is-marked "$SID"'
+check "is-marked: unknown session exits 1" '! "$SCRIPT" is-marked 33333333-unknown'
+hook() { printf '%s' "$1" | "$SCRIPT" hook >"$TMP/hout" 2>"$TMP/herr"; }
+hook "{\"session_id\":\"$SID\",\"transcript_path\":\"$LOG\",\"reason\":\"exit\"}"; rc=$?
+check "hook saves a marked session" '[ "$rc" -eq 0 ] && [ -f "$F" ]'
+check "hook prints nothing" '[ ! -s "$TMP/hout" ] && [ ! -s "$TMP/herr" ]'
+rm -rf "$SESSION_SAVE_DIR"
+hook "{\"session_id\":\"$E\",\"transcript_path\":\"$LOG\"}"; rc=$?
+check "hook: unmarked session writes nothing, exit 0, silent" \
+  '[ "$rc" -eq 0 ] && [ ! -d "$SESSION_SAVE_DIR" ] && [ ! -s "$TMP/hout" ] && [ ! -s "$TMP/herr" ]'
+hook "{\"session_id\":\"$SID\",\"transcript_path\":\"$TMP/missing.jsonl\"}"; rc=$?
+check "hook: missing transcript writes nothing, exit 0, silent" \
+  '[ "$rc" -eq 0 ] && [ ! -d "$SESSION_SAVE_DIR" ] && [ ! -s "$TMP/hout" ] && [ ! -s "$TMP/herr" ]'
+check "hook: a failure leaves one line in errors.log" '[ "$(wc -l <"$SESSION_SAVE_STATE/errors.log")" -eq 1 ]'
+hook "not json"; rc=$?
+check "hook: bad JSON exits 0, silent" '[ "$rc" -eq 0 ] && [ ! -s "$TMP/hout" ] && [ ! -s "$TMP/herr" ]'
 
 echo
 echo "passed: $PASS  failed: $FAIL"

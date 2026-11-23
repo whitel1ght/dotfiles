@@ -5,6 +5,11 @@ r"""Save a Claude Code or pi session as Markdown in ~/wiki/learning/sessions/ (D
       Convert the session log and write YYYY-MM-DD-<slug>-<sid8>.md; prints the path.
       A re-save rewrites the same session's file (the old name goes if the title changed).
       A log with no typed user message writes nothing. Exit 1: no log found.
+  session-save mark --harness claude|pi SID    mark the session: it saves when it closes
+  session-save is-marked SID                   exit 0 when marked, else 1
+  session-save hook                            Claude's SessionEnd hook: reads {session_id,
+      transcript_path} on stdin and saves a marked session; always exits 0 and prints nothing,
+      errors go to $SESSION_SAVE_STATE/errors.log
 
 The file keeps the user's and the assistant's text in full. A tool call is one line
 (`> ran <Tool>: <its input, cut to 200 chars>`); tool output is left out except a subagent's
@@ -261,16 +266,65 @@ def find_log(harness, sid, transcript):
     return None
 
 
-def cmd_save(a):
-    log = find_log(a.harness, a.session, a.transcript)
+def save_session(harness, sid, transcript=None, title=None):
+    """Write the session's file; None when it has no typed user message. LookupError: no log."""
+    log = find_log(harness, sid, transcript)
     if not log:
-        print(f"session-save: no {a.harness} log for session {a.session}", file=sys.stderr)
-        return 1
-    s = (load_claude if a.harness == "claude" else load_pi)(log, a.session)
+        raise LookupError(f"no {harness} log for session {sid}")
+    s = (load_claude if harness == "claude" else load_pi)(log, sid)
     if not s.typed():
-        return 0
-    s.title = a.title or s.title or s.typed()[0]["parts"][0].splitlines()[0][:60]
-    print(write(s, render(s)))
+        return None
+    s.title = title or s.title or s.typed()[0]["parts"][0].splitlines()[0][:60]
+    return write(s, render(s))
+
+
+def marker(sid):
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", sid or "") or sid.strip(".") == "":
+        raise ValueError(f"bad session id: {sid!r}")
+    return state_dir() / "marked" / sid
+
+
+def cmd_save(a):
+    try:
+        path = save_session(a.harness, a.session, a.transcript, a.title)
+    except (LookupError, ValueError) as e:
+        print(f"session-save: {e}", file=sys.stderr)
+        return 1
+    if path:
+        print(path)
+    return 0
+
+
+def cmd_mark(a):
+    m = marker(a.session)
+    m.parent.mkdir(parents=True, exist_ok=True)
+    m.write_text(a.harness + "\n")
+    print("marked")
+    return 0
+
+
+def cmd_is_marked(a):
+    try:
+        return 0 if marker(a.session).is_file() else 1
+    except ValueError:
+        return 1
+
+
+def cmd_hook(_a):
+    """Claude's SessionEnd hook: save a marked session. Never fails, never prints."""
+    try:
+        data = json.loads(sys.stdin.read() or "{}")
+        sid = data.get("session_id", "")
+        if not marker(sid).is_file():
+            return 0
+        save_session("claude", sid, data.get("transcript_path") or None)
+    except Exception as e:  # noqa: BLE001 - a session's exit must never fail on this
+        try:
+            state_dir().mkdir(parents=True, exist_ok=True)
+            with open(state_dir() / "errors.log", "a") as fh:
+                fh.write(f"{dt.datetime.now().astimezone().isoformat(timespec='seconds')} hook: {e}\n")
+        except OSError:
+            pass
     return 0
 
 
@@ -282,8 +336,14 @@ def main(argv):
     sv.add_argument("--session", required=True)
     sv.add_argument("--transcript")
     sv.add_argument("--title")
+    mk = sub.add_parser("mark")
+    mk.add_argument("--harness", choices=["claude", "pi"], required=True)
+    mk.add_argument("session")
+    im = sub.add_parser("is-marked")
+    im.add_argument("session")
+    sub.add_parser("hook")
     a = p.parse_args(argv)
-    return {"save": cmd_save}[a.cmd](a)
+    return {"save": cmd_save, "mark": cmd_mark, "is-marked": cmd_is_marked, "hook": cmd_hook}[a.cmd](a)
 
 
 if __name__ == "__main__":
