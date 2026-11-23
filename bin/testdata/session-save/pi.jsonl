@@ -1,0 +1,11 @@
+{"type": "session", "version": 3, "id": "aaaaaaaa-pi00-7000-8000-000000000001", "timestamp": "2026-11-21T08:00:00.000Z", "cwd": "/Users/x/projects/go"}
+{"type": "model_change", "id": "m1", "parentId": null, "timestamp": "2026-11-21T08:00:00.100Z", "provider": "p", "modelId": "m"}
+{"type": "message", "id": "s1", "parentId": "m1", "timestamp": "2026-11-21T08:00:00.200Z", "message": {"role": "system", "content": "system prompt text"}}
+{"type": "message", "id": "u1", "parentId": "s1", "timestamp": "2026-11-21T08:00:01.000Z", "message": {"role": "user", "content": [{"type": "text", "text": "How do goroutines get scheduled?"}]}}
+{"type": "message", "id": "x1", "parentId": "u1", "timestamp": "2026-11-21T08:00:02.000Z", "message": {"role": "assistant", "content": [{"type": "text", "text": "Abandoned branch answer"}]}}
+{"type": "message", "id": "a1", "parentId": "u1", "timestamp": "2026-11-21T08:00:05.000Z", "message": {"role": "assistant", "content": [{"type": "thinking", "thinking": "pi private thoughts"}, {"type": "text", "text": "The Go runtime uses an M:N scheduler."}, {"type": "toolCall", "id": "c1", "name": "bash", "arguments": {"command": "OPENAI_KEY=sk-abcdefghijklmnopqrstuvwx go env"}}]}}
+{"type": "message", "id": "r1", "parentId": "a1", "timestamp": "2026-11-21T08:00:06.000Z", "message": {"role": "toolResult", "toolCallId": "c1", "toolName": "bash", "content": [{"type": "text", "text": "pi bash output zzz"}], "isError": false}}
+{"type": "message", "id": "a2", "parentId": "r1", "timestamp": "2026-11-21T08:00:07.000Z", "message": {"role": "assistant", "content": [{"type": "toolCall", "id": "c2", "name": "subagent", "arguments": {"task": "Read the scheduler source"}}]}}
+{"type": "message", "id": "r2", "parentId": "a2", "timestamp": "2026-11-21T08:00:30.000Z", "message": {"role": "toolResult", "toolCallId": "c2", "toolName": "subagent", "content": [{"type": "text", "text": "Subagent says: runqueues per P"}], "isError": false}}
+{"type": "custom", "customType": "pi-recap:state", "data": {}, "id": "c9", "parentId": "r2", "timestamp": "2026-11-21T08:00:31.000Z"}
+{"type": "message", "id": "a3", "parentId": "c9", "timestamp": "2026-11-21T08:00:32.000Z", "message": {"role": "assistant", "content": [{"type": "text", "text": "Each P has a local run queue."}]}}

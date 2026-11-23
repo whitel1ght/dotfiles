@@ -168,6 +168,44 @@ def load_claude(path, sid):
     return s
 
 
+def pi_branch(path):
+    """pi's entries form a tree (parentId); keep the path from the root to the last entry."""
+    recs = list(records(path))
+    header = next((r for r in recs if r.get("type") == "session"), {})
+    by_id = {r["id"]: r for r in recs if r.get("type") != "session" and r.get("id")}
+    chain, node = [], next((r for r in reversed(recs) if r.get("type") != "session"), None)
+    while node is not None and len(chain) <= len(by_id):
+        chain.append(node)
+        node = by_id.get(node.get("parentId"))
+    return header, list(reversed(chain))
+
+
+def load_pi(path, sid):
+    s = Session(sid, "pi")
+    header, chain = pi_branch(path)
+    s.cwd = header.get("cwd", "")
+    for rec in chain:
+        if rec.get("type") != "message":
+            continue
+        msg, at = rec.get("message") or {}, when(rec.get("timestamp"))
+        content, role = msg.get("content"), msg.get("role")
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
+        if role == "user":
+            for part in content or []:
+                if part.get("type") == "text":
+                    s.add("you", at, redact(part.get("text", "")))
+        elif role == "assistant":
+            for part in content or []:
+                if part.get("type") == "text":
+                    s.add("claude", at, redact(part.get("text", "")))
+                elif part.get("type") == "toolCall":
+                    s.add("claude", at, tool_line(part.get("name"), part.get("arguments")))
+        elif role == "toolResult" and msg.get("toolName") in SUBAGENT_TOOLS:
+            s.add("claude", at, details(redact(result_text(content))))
+    return s
+
+
 def slug(title):
     words = re.findall(r"[a-z0-9]+", title.lower())
     return "-".join(words)[:50].rstrip("-") or "session"
@@ -228,7 +266,7 @@ def cmd_save(a):
     if not log:
         print(f"session-save: no {a.harness} log for session {a.session}", file=sys.stderr)
         return 1
-    s = load_claude(log, a.session)
+    s = (load_claude if a.harness == "claude" else load_pi)(log, a.session)
     if not s.typed():
         return 0
     s.title = a.title or s.title or s.typed()[0]["parts"][0].splitlines()[0][:60]

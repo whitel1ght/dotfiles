@@ -74,6 +74,26 @@ check "unknown session exits 1" '[ "$rc" -eq 1 ]'
 out="$(python3 -W error::SyntaxWarning -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' "$SCRIPT" 2>&1)"
 check "compiles without a SyntaxWarning (F-152)" '[ -z "$out" ]'
 
+echo "pi: save"
+PSID=aaaaaaaa-pi00-7000-8000-000000000001
+out="$("$SCRIPT" save --harness pi --session "$PSID" --transcript "$DATA/pi.jsonl" 2>"$TMP/err")"; rc=$?
+P="$SESSION_SAVE_DIR/2026-11-21-how-do-goroutines-get-scheduled-aaaaaaaa.md"
+check "pi: exits 0 and prints the path" '[ "$rc" -eq 0 ] && [ "$out" = "$P" ]'
+body="$(cat "$P" 2>/dev/null)"
+check "pi: harness pi" 'has "harness: pi"'
+check "pi: title is the first user text" 'has "title: How do goroutines get scheduled?"'
+check "pi: cwd from the session header" 'has "cwd: /Users/x/projects/go"'
+check "pi: user text kept" 'has "## You · 08:00" && has "How do goroutines get scheduled?"'
+check "pi: assistant text kept" 'has "## pi · 08:00" && has "The Go runtime uses an M:N scheduler." && has "Each P has a local run queue."'
+check "pi: system text left out" '! has "system prompt text"'
+check "pi: thinking left out" '! has "pi private thoughts"'
+check "pi: tool call one line, secret redacted" 'has "> ran bash: OPENAI_KEY=[redacted] go env"'
+check "pi: subagent result in details" 'has "<details><summary>Subagent report</summary>" && has "Subagent says: runqueues per P"'
+check "pi: bash result left out" '! has "pi bash output zzz"'
+check "pi: an abandoned branch is left out" '! has "Abandoned branch answer"'
+"$SCRIPT" save --harness pi --session "$PSID" >/dev/null 2>&1; rc=$?
+check "pi: --transcript is required" '[ "$rc" -eq 1 ]'
+
 echo
 echo "passed: $PASS  failed: $FAIL"
 [ "$FAIL" -eq 0 ]
