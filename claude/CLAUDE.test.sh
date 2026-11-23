@@ -50,6 +50,7 @@ questions=$(section "$MD" Questions)
 has "$questions" "goes to the decisions deck through \`ask_user\`, in every session" "every question goes to the decisions deck"
 has "$questions" "Never use the question form (AskUserQuestion)" "F-014 no question form"
 has "$questions" "Every option on a card names who acts" "options name who acts (2026-11-05)"
+has "$questions" "goes in its own fenced block in the card's Context" "commands on a card are copyable (D-1306)"
 has "$questions" "Never write I," "no first person in options"
 has "$questions" "when I answer in the chat, \`withdraw\` the card" "an answer in the chat withdraws the card"
 has "$questions" "also file it with \`tell_user\`" "a late answer also goes to the deck"

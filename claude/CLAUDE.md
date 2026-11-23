@@ -33,6 +33,8 @@ Global instructions applied across all projects. Keep this short — project-lev
 - Every option on a card names who acts. On a card "you" means me, and you are "the agent":
   "The agent runs it through the admin pod", "You merge it in the GitLab UI". Never write I,
   me, my or we in an option: I can't tell which side it means, and the server refuses it.
+- A command I should run goes in its own fenced block in the card's Context, never only
+  inside an option or a sentence: the deck shows it whole and copies it with `c`.
 - When you answer a question I sent while you were busy (mid-task, agents running), give the
   answer in the chat and also file it with `tell_user`, so it waits for me in the deck.
 - When a plan or artifact already names the next step, do that step; ask only about a
