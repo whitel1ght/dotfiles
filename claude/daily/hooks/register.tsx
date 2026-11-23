@@ -20,6 +20,7 @@ import { nextPlanLines, planPrompt, untracked } from '../mod/planlines.ts'
 import { formatSlot, parseClock, parseSlot, slackDue, slackPath, slackPrompt } from '../mod/slack.ts'
 import { CLAUDE_PLAYBOOK, UPDATE_ARGS, fingerprint, parsePrint, playbookPath, shouldResume } from '../mod/update.ts'
 import { RESTART_ARGS, restartFor, restartPath } from '../mod/restart.ts'
+import type { RestartWhen } from '../mod/restart.ts'
 import { ASK_NUDGE, BUSY_NOTE, FORM_DENY, FORM_TOOLS, isBusyPrompt, nextAsk, shouldNudgeAsk } from '../mod/ask.ts'
 import { FOLLOWUP_MS, followupPrompt, parseCards, pendingFollowups } from '../mod/followup.ts'
 
@@ -143,12 +144,12 @@ async function resumeIfUpdated($: EngineInterface) {
 // (session.start) or in place (the inbox tick), it claims the day, which records the owner and the
 // playbook print, and resumes the day with the playbook read afresh. The marker goes first, so it
 // restarts once. True when it restarted.
-async function restartIfAsked($: EngineInterface): Promise<boolean> {
+async function restartIfAsked($: EngineInterface, when: RestartWhen, known?: Day | null): Promise<boolean> {
   try {
-    const day = await today($)
+    const day = known === undefined ? await today($) : known
     if (!day) return false
     const path = restartPath(day.statePath.replace(/\/[^/]+$/, ''), day.today)
-    if (!restartFor(await readOr($, path), await $.session.id())) return false
+    if (!restartFor(await readOr($, path), await $.session.id(), when)) return false
     await $.process.run(['rm', '-f', path])
     await claimDay($)
     $.ui.log('daily: day-restart asked for a restart; resuming the day')
@@ -163,6 +164,12 @@ async function restartIfAsked($: EngineInterface): Promise<boolean> {
 // The system session (marked by /daily:system) reviews ideas when idle (mod/ideas.ts): one nudge
 // per idle stretch, then none until the user writes again.
 const idle = { lastUserAt: 0, lastTurnEndAt: 0, waiting: false, isChecking: false }
+
+// When this process's mod started. Within RESPAWN_GRACE_MS of it, a tick still counts as the
+// start for a respawn marker: day-restart rewrites the marker when the respawned session comes
+// back under a new id, which can land after session.start.
+const boot = { startedAt: 0 }
+const RESPAWN_GRACE_MS = 120_000
 
 async function markerPath($: EngineInterface): Promise<string | null> {
   const home = await $.env.get('HOME')
@@ -635,9 +642,10 @@ async function watchInbox($: EngineInterface) {
   if (flags.isListing) return
   flags.isListing = true
   try {
-    // An in-place restart (`day-restart --in-place`, or an interactive day session).
-    if (await restartIfAsked($)) return
     const ctx = await load($)
+    // An in-place restart (`day-restart --in-place`, or an interactive day session).
+    const when = (await $.clock.now()) - boot.startedAt < RESPAWN_GRACE_MS ? 'start' : 'tick'
+    if (ctx && (await restartIfAsked($, when, ctx.day))) return
     if (!ctx || !ctx.active) return
     // Every session counts the inbox for its status line; only the owner is told.
     const owns = await isOwner($, ctx.day)
@@ -685,6 +693,7 @@ export const register: Register = on => {
       void watchInbox($)
     })
     idle.lastUserAt = await $.clock.now()
+    boot.startedAt = idle.lastUserAt
     $.clock.every(IDEAS_MS, () => {
       void nudgeIdeas($)
     })
@@ -692,7 +701,7 @@ export const register: Register = on => {
       void deliverFollowups($)
     })
     void (async () => {
-      if (!(await restartIfAsked($))) await resumeIfUpdated($)
+      if (!(await restartIfAsked($, 'start'))) await resumeIfUpdated($)
     })()
     return next(e)
   })

@@ -24,14 +24,15 @@ cat > "$SANDBOX/bin/claude" <<'EOF'
 case "$1" in
     agents) cat "$AGENTS" ;;
     respawn) echo "respawn $2" >> "$LOG"; [ -z "${RESPAWN_FAIL:-}" ] || exit 1
-             # the respawned session is idle
-             jq 'map(.state = "idle")' "$AGENTS" > "$AGENTS.tmp" && mv "$AGENTS.tmp" "$AGENTS" ;;
+             # the respawned session is idle, in a new process; NEW_ID: under a new session id
+             jq --arg n "${NEW_ID:-}" 'map(.state = "idle" | .pid += 1 | if $n != "" then .sessionId = $n else . end)' \
+                 "$AGENTS" > "$AGENTS.tmp" && mv "$AGENTS.tmp" "$AGENTS" ;;
 esac
 EOF
 chmod +x "$SANDBOX/bin/claude"
 
 session() { # sessionId short name kind state
-    printf '{"sessionId":"%s","id":"%s","name":"%s","kind":"%s","state":"%s","status":"%s"}' "$1" "$2" "$3" "$4" "$5" \
+    printf '{"sessionId":"%s","id":"%s","name":"%s","kind":"%s","state":"%s","status":"%s","pid":100}' "$1" "$2" "$3" "$4" "$5" \
         "$([ "$5" = working ] && echo busy || echo idle)"
 }
 transcript() { # sessionId command
@@ -42,6 +43,10 @@ transcript() { # sessionId command
 printf '{"type":"user","timestamp":"%s","message":{"content":[{"type":"tool_result","content":"<command-name>/start-day</command-name>"}]}}\n' \
     "$(date -u +%FT%T.000Z)" > "$CFG/projects/-x/sys-1.jsonl"
 transcript day-1 start-day
+# A later dry run in another session does not claim the day; neither does a session with no
+# transcript, nor one whose transcript ends in a half-written line.
+printf '{"type":"user","timestamp":"%s","message":{"content":"<command-name>/daily:run-day</command-name> <command-args>--dry</command-args>"}}\n{"type":"us' \
+    "$(date -u +%FT%T.999Z)" > "$CFG/projects/-x/dry-1.jsonl"
 
 printf -- '- ecfx-1 | class=auto | agent=a1 | round=- | worktree=/w | mr=- | retries=0 | needs_you=no | owner=main\n- ecfx-2 | class=auto | agent=- | round=- | worktree=- | mr=- | retries=0 | needs_you=no | owner=main\n' > "$STATE/$T.md"
 
@@ -52,7 +57,7 @@ restart() {
 }
 
 echo "day-restart — finding the day session"
-echo "[$(session sys-1 s1 system background working),$(session day-1 d1 main background idle)]" > "$AGENTS"
+echo "[$(session sys-1 s1 system background working),$(session gone-1 g1 x background idle),$(session dry-1 r1 dry background idle),$(session day-1 d1 main background idle)]" > "$AGENTS"
 out="$(restart -n)"
 assert_contains "$out" "would restart main (day-1): respawn" "no owner: the session that ran /start-day today, not one that quoted it"
 assert_contains "$out" "its agents on ecfx-1 would stop" "names the agents the respawn stops"
@@ -63,7 +68,7 @@ out="$(restart)"; rc=$?
 assert_eq 0 "$rc" "exits 0"
 assert_eq "respawn d1" "$(cat "$LOG")" "respawns it by its short id"
 assert_eq "day-1" "$(cat "$STATE/$T.owner")" "records it as the day's owner"
-assert_eq "day-1" "$(cat "$STATE/$T.restart")" "and leaves the marker the mod resumes from"
+assert_eq "$(printf 'day-1\nrespawn')" "$(cat "$STATE/$T.restart")" "and leaves a respawn marker the new process resumes from"
 assert_contains "$out" "agents on ecfx-1 are re-dispatched" "says what happens to its agents"
 
 echo "day-restart — waits for the turn to end"
@@ -80,9 +85,12 @@ assert_eq "respawn d1" "$(cat "$LOG")" "--now respawns it mid-turn"
 echo "day-restart — in place"
 rm -f "$STATE/$T.restart"
 echo "[$(session day-1 d1 main background working)]" > "$AGENTS"
+out="$(restart --in-place)"; rc=$?
+assert_eq 1 "$rc" "--in-place waits for the turn to end too"
+echo "[$(session day-1 d1 main background idle)]" > "$AGENTS"
 out="$(restart --in-place)"
 assert_eq "" "$(cat "$LOG")" "--in-place respawns nothing"
-assert_eq "day-1" "$(cat "$STATE/$T.restart")" "it only leaves the marker"
+assert_eq "$(printf 'day-1\nin-place')" "$(cat "$STATE/$T.restart")" "it only leaves an in-place marker"
 assert_contains "$out" "in place within 30 s" "and says the session resumes by itself"
 rm -f "$STATE/$T.restart"
 echo "[$(session int-1 i1 desk interactive idle)]" > "$AGENTS"
@@ -109,7 +117,15 @@ mv "$STATE/off.md" "$STATE/$T.md"
 echo "[$(session day-1 d1 main background idle)]" > "$AGENTS"
 out="$(RESPAWN_FAIL=1 restart)"; rc=$?
 assert_eq 1 "$rc" "a failed respawn fails"
-assert_contains "$out" "resume in that session picks it up" "and says the marker still works"
+assert_contains "$out" "resumes in place instead" "and says it falls back"
+assert_eq "$(printf 'day-1\nin-place')" "$(cat "$STATE/$T.restart")" "with an in-place marker the old process takes"
+
+echo "day-restart — a session that comes back under a new id"
+echo "[$(session day-1 d1 main background idle)]" > "$AGENTS"
+NEW_ID=day-9 restart >/dev/null
+assert_eq "day-9" "$(cat "$STATE/$T.owner")" "the owner follows the new id"
+assert_eq "$(printf 'day-9\nrespawn')" "$(cat "$STATE/$T.restart")" "and so does the marker"
+echo "[$(session day-1 d1 main background idle)]" > "$AGENTS"
 
 echo "day-restart — detached"
 out="$(restart --detach --now)"
