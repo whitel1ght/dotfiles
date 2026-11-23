@@ -105,9 +105,15 @@ fi
 
 # The MR is ready, so its ticket is In MR (ticket-move: only my own, only forward). Jira
 # failing does not fail the ship; sync-tickets catches the miss at end of day.
-key="$(jq -r '[.source_branch, .title] | map(scan("ECFX-[0-9]+")) | first // empty' <<<"$view")"
-tm="${MR_SHIP_TICKET_MOVE:-$(command -v ticket-move || echo "$HOME/.local/bin/ticket-move")}"
-if [ -n "$key" ] && [ "$tm" != 0 ] && [ -x "$tm" ]; then
-    "$tm" "$key" "In MR" --by mr-ship || echo "mr-ship: $key not moved to In MR; sync-tickets will retry" >&2
+key="$(jq -r --arg p "${JIRA_PROJECT:-ECFX}" '[.source_branch, .title] | map(scan("\($p)-[0-9]+")) | first // empty' <<<"$view")"
+src="$0"
+while [ -L "$src" ]; do d="$(dirname "$src")"; src="$(readlink "$src")"; case "$src" in /*) ;; *) src="$d/$src" ;; esac; done
+tm="${MR_SHIP_TICKET_MOVE:-$(command -v ticket-move || echo "$(dirname "$src")/ticket-move")}"
+if [ -n "$key" ] && [ "$tm" != 0 ]; then
+    if [ ! -x "$tm" ]; then
+        echo "mr-ship: no ticket-move at $tm, $key not moved to In MR (run install.sh)" >&2
+    else
+        "$tm" "$key" "In MR" --by mr-ship || echo "mr-ship: $key not moved to In MR; sync-tickets will retry" >&2
+    fi
 fi
 exit 0

@@ -136,14 +136,20 @@ worktree() { # key age(touch -t stamp or "now")
 worktree ECFX-20 now
 worktree ECFX-21 202001010000
 worktree ECFX-1 now
+# a second worktree of one ticket is not a key: it must not reach Jira and fail the run
+worktree ECFX-20-2 now
 mkdir -p "$WT/ecfx-backend/review-55"
 issue ECFX-20 "To-Do" me
 issue ECFX-21 "To-Do" me
 
+# Run through a link in another folder, as ~/.local/bin/sync-tickets is: ticket-move is
+# found next to the real script, not next to the link.
+mkdir -p "$SANDBOX/bin"
+ln -s "$SCRIPT" "$SANDBOX/bin/sync-tickets"
 run() {
     PATH="$STUBS:$PATH" FIX="$FIX" JIRA_EMAIL=e JIRA_API_TOKEN=t WORKTREES_DIR="$WT" \
     TICKET_MOVE_LOG="$SANDBOX/state/moves.log" \
-    SYNC_TICKETS_STATE="$SANDBOX/state/last-run" "$SCRIPT" "$@" 2>&1
+    SYNC_TICKETS_STATE="$SANDBOX/state/last-run" "$SANDBOX/bin/sync-tickets" "$@" 2>&1
 }
 status_of() { jq -r .fields.status.name "$FIX/issue/$1"; }
 
@@ -174,9 +180,15 @@ assert_contains "$out" "would  link ECFX-1 ← backend!10" "links an MR missing 
 [ -e "$FIX/writes.log" ] && fail "dry run writes nothing" "$(cat "$FIX/writes.log")" || pass "dry run writes nothing"
 [ -e "$SANDBOX/state/last-run" ] && fail "dry run leaves the state file alone" "written" \
     || pass "dry run leaves the state file alone"
+assert_contains "$out" "drift (dry run, nothing moved): the day would have missed ECFX-1, " "a dry run labels its drift as not applied"
+assert_lacks "$out" "drift: the day missed" "and never claims a real miss"
 
 echo "sync-tickets — apply"
 out="$(run --since 1d)"
+assert_lacks "$(cat "$FIX/writes.log")" "ECFX-4/remotelink" "no MR link on someone else's ticket"
+assert_lacks "$(cat "$FIX/writes.log")" "ECFX-5/remotelink" "no MR link on a ticket in a status outside the flow"
+assert_lacks "$out" "ECFX-20-2" "a second worktree of a ticket is not sent to Jira"
+assert_contains "$out" "0 failed" "and fails nothing"
 [ "$(status_of ECFX-1)" = "In MR" ] && pass "moves ECFX-1 to In MR" || fail "moves ECFX-1 to In MR" "$(status_of ECFX-1)"
 [ "$(status_of ECFX-6)" = "In MR" ] && pass "takes To-Do to In MR via In Progress" \
     || fail "takes To-Do to In MR via In Progress" "$(status_of ECFX-6)"
@@ -214,6 +226,15 @@ assert_contains "$(cat "$SANDBOX/state/moves.log")" "ECFX-20	To-Do	In Progress	s
 echo "sync-tickets — a second run finds nothing to fix"
 out="$(run --since 1d)"
 assert_lacks "$out" "drift:" "no drift once everything is in step"
+
+echo "sync-tickets — --since as a plain date or with an offset"
+for since in "$(date +%F)" "$(date +%FT00:00:00%z | sed 's/\(..\)$/:\1/')"; do
+    worktree ECFX-22 now; issue ECFX-22 "To-Do" me
+    out="$(run --since "$since")"
+    assert_lacks "$out" "worktrees not checked" "--since $since is read"
+    [ "$(status_of ECFX-22)" = "In Progress" ] && pass "and the worktree check runs with it" \
+        || fail "and the worktree check runs with it ($since)" "$(status_of ECFX-22)"
+done
 
 echo "sync-tickets — expired token"
 out="$(JIRA_FAIL=1 run --since 1d)"; rc=$?

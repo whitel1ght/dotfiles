@@ -35,6 +35,7 @@ echo "[$(mr ECFX-31 merged false 3),$(mr ECFX-32 merged false 4)]" > "$FIX/merge
 
 cat > "$STUBS/glab" <<'EOF'
 #!/bin/bash
+[ -z "${GLAB_FAIL:-}" ] || { echo "glab: 401 Unauthorized" >&2; exit 1; }
 case "$*" in
     *state=opened*) cat "$FIX/open.json" ;;
     *state=merged*) cat "$FIX/merged.json" ;;
@@ -136,7 +137,13 @@ assert_eq 3 "$rc" "exits 3"
 assert_contains "$out" "wait   ECFX-31 — Bug needs a Resolution Summary" "says what it waits on"
 assert_eq "In MR" "$(status_of ECFX-31)" "and stays"
 
+echo "ticket-move — GitLab down"
+issue ECFX-31 "In MR" me
+GLAB_FAIL=1 move ECFX-31 --from-mrs >/dev/null; assert_eq 1 "$?" "a GitLab failure fails the move, not 'no MRs'"
+assert_eq "In MR" "$(status_of ECFX-31)" "and nothing moves"
+
 echo "ticket-move — usage"
+move ECFX-123-2 "In Progress" >/dev/null; assert_eq 2 "$?" "a worktree name that is not exactly a key is refused"
 move ECFX-1 "In QA" >/dev/null; assert_eq 2 "$?" "In QA is never a target (QA moves it)"
 move nonsense "In MR" >/dev/null; assert_eq 2 "$?" "a non-key is refused"
 move ECFX-1 >/dev/null; assert_eq 2 "$?" "a target or --from-mrs is required"

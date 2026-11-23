@@ -43,10 +43,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 key=$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')
-case "$key" in
-  [A-Z]*-[0-9]*) ;;
-  *) echo "usage: ticket-move <KEY> \"In Progress\"|\"In MR\"|\"Ready for QA\"|--from-mrs [-n] [-v] [--by NAME]" >&2; exit 2 ;;
-esac
+[[ "$key" =~ ^[A-Z][A-Z0-9]*-[0-9]+$ ]] \
+  || { echo "usage: ticket-move <KEY> \"In Progress\"|\"In MR\"|\"Ready for QA\"|--from-mrs [-n] [-v] [--by NAME]" >&2; exit 2; }
 [ "$from_mrs" -eq 1 ] || [ -n "$target" ] || { echo "ticket-move: name a status or pass --from-mrs" >&2; exit 2; }
 
 rank() {
@@ -65,12 +63,13 @@ fi
 : "${JIRA_EMAIL:?ticket-move: JIRA_USER missing — add it with \`secrets\`}"
 : "${JIRA_API_TOKEN:?ticket-move: JIRA_TOKEN missing — add it with \`secrets\`}"
 
-# Prints the body; fails with the HTTP status so an expired token reads as one.
+# Prints the body; fails with the HTTP status so an expired token reads as one. Time-boxed:
+# mr-ship waits on this, and a Jira that never answers must not hang a ship.
 jira() {
   local method="$1" path="$2" out code
   local data=()
   [ -z "${3:-}" ] || data=(--data "$3")
-  out=$(curl -sS -X "$method" -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+  out=$(curl -sS --connect-timeout 10 --max-time 30 -X "$method" -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
     -H 'Accept: application/json' -H 'Content-Type: application/json' \
     ${data[@]+"${data[@]}"} -w '\n%{http_code}' "$JIRA_BASE$path")
   code="${out##*$'\n'}"
@@ -85,8 +84,10 @@ jira() {
 mrs_target() {
   local since project="${key%%-*}" open merged
   since=$(date -u -v-"${MERGED_DAYS}"d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "-$MERGED_DAYS days" +%Y-%m-%dT%H:%M:%SZ)
-  open=$(glab api --paginate "merge_requests?scope=created_by_me&state=opened&per_page=100" | jq -s 'add // []')
-  merged=$(glab api --paginate "merge_requests?scope=created_by_me&state=merged&updated_after=$since&per_page=100" | jq -s 'add // []')
+  # A GitLab failure must fail the move, not read as "no MRs" (errexit is off in here).
+  open=$(glab api --paginate "merge_requests?scope=created_by_me&state=opened&per_page=100") || return 1
+  merged=$(glab api --paginate "merge_requests?scope=created_by_me&state=merged&updated_after=$since&per_page=100") || return 1
+  open=$(jq -s 'add // []' <<<"$open") && merged=$(jq -s 'add // []' <<<"$merged") || return 1
   jq -rn --argjson mrs "$(jq -s 'add | unique_by(.id)' <<<"$open$merged")" --arg k "$key" --arg p "$project" '
     [$mrs[] | select(first((.source_branch, .title) | scan("\($p)-[0-9]+")) // "" | . == $k)] as $m
     | select($m | length > 0)

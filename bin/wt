@@ -78,11 +78,25 @@ add_at() { # clone name branch
 ticket_started() {
   local tm log
   [[ "$1" =~ ^${JIRA_PROJECT:-ECFX}-[0-9]+$ ]] || return 0
-  tm="${WT_TICKET_MOVE:-$(command -v ticket-move || echo "$HOME/.local/bin/ticket-move")}"
-  [ "$tm" != 0 ] && [ -x "$tm" ] || return 0
+  tm="${WT_TICKET_MOVE:-$(command -v ticket-move || echo "$(real_dir)/ticket-move")}"
+  [ "$tm" != 0 ] || return 0
   log="${XDG_STATE_HOME:-$HOME/.local/state}/ticket-move/wt.log"
   mkdir -p "$(dirname "$log")"
+  if [ ! -x "$tm" ]; then
+    echo "$(date -u +%FT%TZ) $1: no ticket-move at $tm, not moved (run install.sh)" >>"$log"
+    return 0
+  fi
   ("$tm" "$1" "In Progress" --by wt >>"$log" 2>&1 &)
+}
+
+# This script's own folder in dotfiles, through the ~/.local/bin link.
+real_dir() {
+  local src="$0" dir
+  while [ -L "$src" ]; do
+    dir=$(dirname "$src"); src=$(readlink "$src")
+    case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+  done
+  dirname "$src"
 }
 
 # A clone of the cached install for the worktree's lockfile (nm-clone); a miss leaves
