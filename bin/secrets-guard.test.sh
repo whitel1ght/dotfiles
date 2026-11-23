@@ -136,6 +136,8 @@ printf '{"tool_name":"Read","tool_input":{"file_path":"/x"}}' | "$SCRIPT" >/dev/
 [ $? -eq 0 ] && pass "non-Bash tools pass (deny rules cover them)" || fail "non-Bash tools pass" "blocked"
 printf 'not json' | "$SCRIPT" >/dev/null 2>&1
 [ $? -eq 0 ] && pass "bad input never blocks" || fail "bad input never blocks" "blocked"
+out="$(python3 -W error -c 'import sys; compile(open(sys.argv[1]).read(), sys.argv[1], "exec")' "$SCRIPT" 2>&1)" \
+    && pass "compiles without a SyntaxWarning (F-152)" || fail "compiles without a SyntaxWarning (F-152)" "$out"
 
 echo
 echo "passed: $PASS  failed: $FAIL"
