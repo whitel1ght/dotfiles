@@ -42,7 +42,7 @@ SECRET_PATTERNS = [
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----|$)"),
 ]
-ENV_SECRET = re.compile(r"\b([A-Z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD))=\S+")
+ENV_SECRET = re.compile(r"\b([A-Z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD))=(\"[^\"]*\"|'[^']*'|\S+)")
 SUBAGENT_TOOLS = {"Agent", "Task", "subagent"}
 TOOL_KEYS = ("command", "file_path", "path", "pattern", "url", "query", "description", "prompt")
 SUMMARY_LEN = 200
@@ -61,10 +61,10 @@ def claude_dir():
 
 
 def redact(text):
-    text = ENV_SECRET.sub(lambda m: m.group(1) + "=[redacted]", text)
+    # Token shapes first: a NAME= prefix must not split a private key block before it is matched.
     for rx in SECRET_PATTERNS:
         text = rx.sub("[redacted]", text)
-    return text
+    return ENV_SECRET.sub(lambda m: m.group(1) + "=[redacted]", text)
 
 
 def when(ts):
@@ -75,13 +75,16 @@ def when(ts):
 
 
 def clean_user_text(text):
-    text = re.sub(r"<system-reminder>.*?</system-reminder>", "", text, flags=re.S)
-    text = re.sub(r"<local-command-(caveat|stdout|stderr)>.*?</local-command-\1>", "", text, flags=re.S)
+    """Return (text, typed): a slash command shows as typed but is not a message of the user's."""
+    for tag in ("system-reminder", "task-notification", "bash-stdout", "bash-stderr",
+                "local-command-caveat", "local-command-stdout", "local-command-stderr"):
+        text = re.sub(rf"<{tag}>.*?</{tag}>", "", text, flags=re.S)
     m = re.search(r"<command-name>(.*?)</command-name>", text, flags=re.S)
     if m:
         args = re.search(r"<command-args>(.*?)</command-args>", text, flags=re.S)
-        text = f"{m.group(1).strip()} {args.group(1).strip() if args else ''}"
-    return text.strip()
+        return f"{m.group(1).strip()} {args.group(1).strip() if args else ''}".strip(), False
+    text = re.sub(r"<bash-input>(.*?)</bash-input>", lambda b: f"! {b.group(1).strip()}", text, flags=re.S)
+    return text.strip(), True
 
 
 def tool_line(name, args):
@@ -110,19 +113,22 @@ def details(text):
 class Session:
     def __init__(self, sid, harness):
         self.id, self.harness = sid, harness
-        self.cwd, self.title, self.turns = "", None, []
+        self.cwd, self.title, self.ai_title, self.turns, self.prompts = "", None, None, [], []
 
-    def add(self, role, at, part):
+    def add(self, role, at, part, typed=False):
         part = part.strip()
         if not part:
             return
+        if typed:
+            self.prompts.append(part)
         if self.turns and self.turns[-1]["role"] == role:
             self.turns[-1]["parts"].append(part)
         else:
             self.turns.append({"role": role, "at": at, "parts": [part]})
 
-    def typed(self):
-        return [t for t in self.turns if t["role"] == "you"]
+    def user(self, at, raw):
+        text, typed = clean_user_text(raw)
+        self.add("you", at, redact(text), typed)
 
     def started(self):
         return next((t["at"] for t in self.turns if t["at"]), None) or dt.datetime.now().astimezone()
@@ -147,7 +153,12 @@ def load_claude(path, sid):
         if kind == "custom-title" and rec.get("customTitle"):
             s.title = rec["customTitle"]
             continue
+        if kind == "ai-title" and rec.get("aiTitle"):
+            s.ai_title = rec["aiTitle"]
+            continue
         if kind not in ("user", "assistant") or rec.get("isSidechain"):
+            continue
+        if rec.get("isCompactSummary") or rec.get("isVisibleInTranscriptOnly"):
             continue
         s.cwd = rec.get("cwd") or s.cwd
         at = when(rec.get("timestamp"))
@@ -156,11 +167,11 @@ def load_claude(path, sid):
             if rec.get("isMeta"):
                 continue
             if isinstance(content, str):
-                s.add("you", at, redact(clean_user_text(content)))
+                s.user(at, content)
                 continue
             for part in content or []:
                 if part.get("type") == "text":
-                    s.add("you", at, redact(clean_user_text(part.get("text", ""))))
+                    s.user(at, part.get("text", ""))
                 elif part.get("type") == "tool_result" and tools.get(part.get("tool_use_id")) in SUBAGENT_TOOLS:
                     s.add("claude", at, details(redact(result_text(part.get("content")))))
         else:
@@ -189,6 +200,8 @@ def load_pi(path, sid):
     s = Session(sid, "pi")
     header, chain = pi_branch(path)
     s.cwd = header.get("cwd", "")
+    s.title = next((r["name"] for r in reversed(list(records(path)))
+                    if r.get("type") == "session_info" and r.get("name")), None)
     for rec in chain:
         if rec.get("type") != "message":
             continue
@@ -199,7 +212,7 @@ def load_pi(path, sid):
         if role == "user":
             for part in content or []:
                 if part.get("type") == "text":
-                    s.add("you", at, redact(part.get("text", "")))
+                    s.add("you", at, redact(part.get("text", "")), typed=True)
         elif role == "assistant":
             for part in content or []:
                 if part.get("type") == "text":
@@ -272,9 +285,13 @@ def save_session(harness, sid, transcript=None, title=None):
     if not log:
         raise LookupError(f"no {harness} log for session {sid}")
     s = (load_claude if harness == "claude" else load_pi)(log, sid)
-    if not s.typed():
+    if not s.prompts:
         return None
-    s.title = title or s.title or s.typed()[0]["parts"][0].splitlines()[0][:60]
+    m = marker(sid)
+    if title and m.is_file():
+        write_marker(m, harness, title)
+    title = title or marked_title(m)
+    s.title = title or s.title or s.ai_title or s.prompts[0].splitlines()[0][:60]
     return write(s, render(s))
 
 
@@ -282,6 +299,17 @@ def marker(sid):
     if not re.fullmatch(r"[A-Za-z0-9._-]+", sid or "") or sid.strip(".") == "":
         raise ValueError(f"bad session id: {sid!r}")
     return state_dir() / "marked" / sid
+
+
+def marked_title(m):
+    """A marker holds the harness on line 1 and, after a /learn-save with a title, the title on line 2."""
+    lines = m.read_text(errors="replace").splitlines() if m.is_file() else []
+    return lines[1].strip() if len(lines) > 1 else None
+
+
+def write_marker(m, harness, title=None):
+    m.parent.mkdir(parents=True, exist_ok=True)
+    m.write_text(harness + "\n" + (title + "\n" if title else ""))
 
 
 def cmd_save(a):
@@ -297,8 +325,7 @@ def cmd_save(a):
 
 def cmd_mark(a):
     m = marker(a.session)
-    m.parent.mkdir(parents=True, exist_ok=True)
-    m.write_text(a.harness + "\n")
+    write_marker(m, a.harness, marked_title(m))
     print("marked")
     return 0
 

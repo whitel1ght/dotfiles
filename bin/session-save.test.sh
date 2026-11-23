@@ -97,6 +97,54 @@ check "pi: an abandoned branch is left out" '! has "Abandoned branch answer"'
 "$SCRIPT" save --harness pi --session "$PSID" >/dev/null 2>&1; rc=$?
 check "pi: --transcript is required" '[ "$rc" -eq 1 ]'
 
+echo "review fixes: real record shapes"
+R=44444444-0000-0000-0000-000000000000
+RL="$CLAUDE_PROJECTS_DIR/-Users-x-projects-rust/$R.jsonl"
+u() { jq -cn --arg c "$1" --arg ts "$2" --arg sid "$R" '{type:"user",sessionId:$sid,cwd:"/x",isSidechain:false,timestamp:$ts,message:{role:"user",content:$c}}'; }
+key="$(printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ\n-----END OPENSSH PRIVATE KEY-----')"
+{
+  jq -cn --arg sid "$R" '{type:"ai-title",aiTitle:"Ownership basics",sessionId:$sid}'
+  u "<command-name>/learn-mark</command-name>
+<command-message>learn-mark</command-message>
+<command-args></command-args>" 2026-11-22T09:00:00Z
+  u "<bash-input>cat ~/.npmrc</bash-input>" 2026-11-22T09:00:10Z
+  u "<bash-stdout>//registry/:_authToken=npm_SECRETSECRETSECRET</bash-stdout><bash-stderr>warn zzz</bash-stderr>" 2026-11-22T09:00:11Z
+  u "<task-notification><task-id>t1</task-id><status>completed</status></task-notification>" 2026-11-22T09:00:12Z
+  jq -cn --arg sid "$R" '{type:"user",sessionId:$sid,cwd:"/x",isSidechain:false,isVisibleInTranscriptOnly:true,isCompactSummary:true,timestamp:"2026-11-22T09:01:00Z",message:{role:"user",content:"This session is being continued from a previous conversation ZZSUMMARY"}}'
+  u "MY_PRIVATE_KEY=$key and B_TOKEN=\"glpat abc def\" ok" 2026-11-22T09:02:00Z
+} >"$RL"
+rm -rf "$SESSION_SAVE_DIR"
+out="$("$SCRIPT" save --harness claude --session "$R")"
+body="$(cat "$out" 2>/dev/null)"
+check "ai-title is the title when there is no custom title" 'has "title: Ownership basics"'
+check "a slash command is not the title" '[ "$(basename "$out")" = "2026-11-22-ownership-basics-44444444.md" ]'
+check "a ! command shows as typed" 'grep -qx "! cat ~/.npmrc" "$out"'
+check "! command output left out" '! has "npm_SECRET" && ! has "warn zzz"'
+check "task notifications left out" '! has "task-notification" && ! has "t1"'
+check "compaction summaries left out" '! has "ZZSUMMARY"'
+check "a private key behind NAME= is redacted whole" '! has "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ" && ! has "PRIVATE KEY-----"'
+check "a quoted NAME=\"…\" value is redacted whole" 'has "B_TOKEN=[redacted] ok"'
+jq -c 'select(.type != "user" or (.message.content | test("^<command-name>")))' "$RL" >"$RL.tmp" && mv "$RL.tmp" "$RL"
+rm -rf "$SESSION_SAVE_DIR"
+out="$("$SCRIPT" save --harness claude --session "$R")"; rc=$?
+check "a session holding only a slash command writes nothing" '[ "$rc" -eq 0 ] && [ -z "$out" ] && [ ! -d "$SESSION_SAVE_DIR" ]'
+
+echo "review fixes: a /learn-save title survives the close"
+T=55555555-0000-0000-0000-000000000000
+sed "s/$SID/$T/g" "$DATA/claude.jsonl" | grep -v custom-title >"$CLAUDE_PROJECTS_DIR/-Users-x-projects-rust/$T.jsonl"
+rm -rf "$SESSION_SAVE_DIR"
+"$SCRIPT" mark --harness claude "$T" >/dev/null
+"$SCRIPT" save --harness claude --session "$T" --title "Lifetimes deep dive" >/dev/null
+"$SCRIPT" mark --harness claude "$T" >/dev/null
+printf '{"session_id":"%s","transcript_path":"%s"}' "$T" "$CLAUDE_PROJECTS_DIR/-Users-x-projects-rust/$T.jsonl" | "$SCRIPT" hook
+check "the hook re-save keeps the /learn-save title" '[ "$(ls "$SESSION_SAVE_DIR")" = "2026-11-20-lifetimes-deep-dive-55555555.md" ]'
+
+echo "review fixes: pi session name"
+sed 's/"type": "custom", "customType": "pi-recap:state", "data": {}/"type": "session_info", "name": "Go scheduler notes"/' "$DATA/pi.jsonl" >"$TMP/pi-named.jsonl"
+rm -rf "$SESSION_SAVE_DIR"
+out="$("$SCRIPT" save --harness pi --session "$PSID" --transcript "$TMP/pi-named.jsonl")"
+check "pi: session_info name is the title" '[ "$(basename "$out")" = "2026-11-21-go-scheduler-notes-aaaaaaaa.md" ]'
+
 echo "marking and the Claude hook"
 rm -rf "$SESSION_SAVE_DIR"
 cp "$DATA/claude.jsonl" "$LOG"
