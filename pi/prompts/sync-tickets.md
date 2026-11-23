@@ -1,5 +1,5 @@
 ---
-description: Move my Jira tickets to match my GitLab MRs (since the last run)
+description: Verify my Jira tickets against my GitLab MRs and worktrees, and fix the drift (since the last run)
 argument-hint: "[--since 3d] [-n] [-v]"
 ---
 
@@ -14,9 +14,14 @@ Don't re-run it, don't call Jira or GitLab yourself, and don't try to fix anythi
 A ticket whose MRs are all merged goes to Ready for QA, never In QA: QA has not started,
 and they move it on themselves.
 
+During the day tickets move as their work does (`ticket-move`, from `wt add`, `mr-ship` and
+run-day's merge handling), so this run is the check on that: a ticket it still has to move is
+drift the day missed.
+
 Reply with a short summary of its output:
 
-- **Moved** tickets, as `KEY: from → to`.
+- **Drift**: the `drift:` line, and each moved ticket as `KEY: from → to`. None means the day
+  kept every ticket in step; say so.
 - **Linked** MRs, as a count per ticket.
 - **Behind** tickets, verbatim, since they need a human decision.
 - **Needs summary** keys (the `needs summary:` line), verbatim: merged Bugs left in place

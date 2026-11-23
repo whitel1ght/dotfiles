@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# Move my Jira tickets to match the state of my GitLab MRs.
+# Verify my Jira tickets against my GitLab MRs and worktrees, and move the ones behind.
+#
+# The day session moves each ticket itself as its work starts (wt add), its MR goes ready
+# (mr-ship) and merges (run-day), all through bin/ticket-move. This runs at start-day and
+# end-day as the check on that: whatever it still has to move is printed as drift.
 #
 #   sync-tickets              MRs updated since the last run (since midnight on the first)
 #   sync-tickets --since 3d   override the window: Nd, Nh, or an ISO-8601 timestamp
@@ -110,60 +114,36 @@ plan=$(jq -rn --argjson recent "$recent" --argjson open "$open" --arg p "$JIRA_P
      else "Ready for QA" end) as $target
   | [$k, $target, ($m | map({url: .web_url, ref: .references.full, title}) | tojson | @base64)] | @tsv')
 
-rank() {
-  case "$1" in
-    To-Do) echo 0 ;; "In Progress") echo 1 ;; "In MR") echo 2 ;; "Ready for QA") echo 3 ;; "In QA") echo 4 ;; *) echo -1 ;;
+TICKET_MOVE="${TICKET_MOVE:-$(dirname "$0")/ticket-move}"
+WORKTREES_DIR="${WORKTREES_DIR:-${PROJECTS_DIR:-$HOME/projects}/worktrees}"
+export JIRA_EMAIL JIRA_API_TOKEN
+
+moved=0 linked=0 behind=0 skipped=0 needs_summary=0 failed=0
+needs_keys=() drift_keys=() seen=" "
+
+# One ticket through ticket-move, where the rules live (the day's own moves use it too),
+# counting what it says. Whatever it moves now is a move the day missed.
+move() { # key target [refs the target was judged from]
+  local out rc=0 args=("$1" "$2" -v --by sync-tickets)
+  [ -z "${3:-}" ] || args+=(--judged "$3")
+  [ "$dry" -eq 0 ] || args+=(-n)
+  out=$("$TICKET_MOVE" "${args[@]}") || rc=$?
+  case "$rc:$out" in
+    3:*) needs_summary=$((needs_summary + 1)); needs_keys+=("$1"); [ "$verbose" -eq 0 ] || echo "$out" ;;
+    "0:  moved"*|"0:  would"*) echo "$out"; moved=$((moved + 1)); drift_keys+=("$1") ;;
+    "0:  behind"*) echo "$out"; behind=$((behind + 1)) ;;
+    "0:  skip"*) skipped=$((skipped + 1)); [ "$verbose" -eq 0 ] || echo "$out" ;;
+    0:*) [ "$verbose" -eq 0 ] || [ -z "$out" ] || echo "$out" ;;
+    *) failed=$((failed + 1)); [ -z "$out" ] || echo "$out" ;;
   esac
 }
 
-# Without a direct transition it steps to the nearest status below the target that Jira
-# offers (Ready for QA: In MR, else In Progress), so a To-Do ticket may take several steps.
-transition_to() {
-  local key="$1" target="$2" step id
-  for step in 1 2 3 4; do
-    [ "$(jira GET "/rest/api/3/issue/$key?fields=status" | jq -r .fields.status.name)" = "$target" ] && return 0
-    id=$(jira GET "/rest/api/3/issue/$key/transitions" \
-      | jq -r --arg t "$target" '.transitions as $all
-          | (($all | map(select(.to.name == $t)) | first)
-             // (if $t == "Ready for QA" then ($all | map(select(.to.name == "In MR")) | first) else null end)
-             // ($all | map(select(.to.name == "In Progress")) | first))
-          | .id // empty')
-    [ -n "$id" ] || { echo "sync-tickets: no transition from $key towards $target" >&2; return 1; }
-    jira POST "/rest/api/3/issue/$key/transitions" "{\"transition\":{\"id\":\"$id\"}}" >/dev/null || return 1
-  done
-  return 1
-}
-
-moved=0 linked=0 behind=0 skipped=0 needs_summary=0 failed=0
-needs_keys=()
 while IFS=$'\t' read -r key target mrs_b64; do
   [ -n "${key:-}" ] || continue
+  seen="$seen$key "
   mrs=$(base64 -d <<<"$mrs_b64")
   refs=$(jq -r 'map(.ref | sub("^.*/"; "")) | join(", ")' <<<"$mrs")
-  issue=$(jira GET "/rest/api/3/issue/$key?fields=status,assignee,issuetype,customfield_10604") || { failed=$((failed + 1)); continue; }
-  status=$(jq -r .fields.status.name <<<"$issue")
-  assignee=$(jq -r '.fields.assignee.accountId // ""' <<<"$issue")
-
-  if [ "$assignee" != "$me" ]; then
-    skipped=$((skipped + 1)); [ "$verbose" -eq 1 ] && echo "  skip   $key — assigned to $(jq -r '.fields.assignee.displayName // "nobody"' <<<"$issue")"
-    continue
-  fi
-  if [ "$(rank "$status")" -lt 0 ]; then
-    skipped=$((skipped + 1)); [ "$verbose" -eq 1 ] && echo "  skip   $key — $status is left alone"
-    continue
-  fi
-
-  if [ "$(rank "$target")" -gt "$(rank "$status")" ]; then
-    if [ "$target" = "Ready for QA" ] && jq -e '.fields.issuetype.name == "Bug" and .fields.customfield_10604 == null' <<<"$issue" >/dev/null; then
-      needs_summary=$((needs_summary + 1)); needs_keys+=("$key")
-      [ "$verbose" -eq 1 ] && echo "  wait   $key — Bug needs a Resolution Summary; move it with jira-write --resolution-summary"
-    elif [ "$dry" -eq 1 ]; then echo "  would  $key $status → $target ($refs)"; moved=$((moved + 1))
-    elif transition_to "$key" "$target"; then echo "  moved  $key $status → $target ($refs)"; moved=$((moved + 1))
-    else failed=$((failed + 1)); fi
-  elif [ "$status" = "In QA" ] && [ "$target" = "Ready for QA" ]; then :  # QA picked it up: in step
-  elif [ "$(rank "$target")" -lt "$(rank "$status")" ]; then
-    echo "  behind $key is $status, MRs say $target ($refs) — left alone"; behind=$((behind + 1))
-  fi
+  move "$key" "$target" "$refs"
 
   existing=$(jira GET "/rest/api/3/issue/$key/remotelink" | jq -c '[.[].object.url]') || { failed=$((failed + 1)); continue; }
   while IFS= read -r mr; do
@@ -183,7 +163,27 @@ while IFS=$'\t' read -r key target mrs_b64; do
   done < <(jq -c '.[]' <<<"$mrs")
 done <<<"$plan"
 
-echo "since $since: $moved moved, $linked linked, $behind behind, $skipped skipped, $needs_summary needs_summary, $failed failed$([ "$dry" -eq 1 ] && echo ' (dry run)')"
+# Work with no MR yet: a ticket-named worktree with a commit or checkout in the window was
+# taken into work, so its ticket is at least In Progress.
+since_epoch=$(date -j -u -f %Y-%m-%dT%H:%M:%SZ "$since" +%s 2>/dev/null || date -u -d "$since" +%s 2>/dev/null) \
+  || echo "sync-tickets: cannot read --since $since as a time; worktrees not checked" >&2
+for wt in "$WORKTREES_DIR"/*/"$JIRA_PROJECT"-*; do
+  [ -n "$since_epoch" ] && [ -f "$wt/.git" ] || continue
+  key=$(basename "$wt")
+  case "$key" in *[!A-Z0-9-]*) continue ;; esac
+  case "$seen" in *" $key "*) continue ;; esac
+  admin=$(sed -n 's/^gitdir: //p' "$wt/.git")
+  touched="$admin/logs/HEAD"; [ -f "$touched" ] || touched="$admin/HEAD"
+  [ -f "$touched" ] || continue
+  [ "$(stat -f %m "$touched" 2>/dev/null || stat -c %Y "$touched")" -ge "$since_epoch" ] || continue
+  seen="$seen$key "
+  move "$key" "In Progress"
+done
+
+# The day moves tickets as work starts, goes ready and merges (ticket-move); this run only
+# verifies, so each move it had to make is one the day missed.
+[ "$moved" -eq 0 ] || echo "drift: the day missed $(IFS=,; echo "${drift_keys[*]}" | sed 's/,/, /g')"
+echo "since $since: $moved moved (drift), $linked linked, $behind behind, $skipped skipped, $needs_summary needs_summary, $failed failed$([ "$dry" -eq 1 ] && echo ' (dry run)')"
 [ "$needs_summary" -eq 0 ] || echo "needs summary: $(IFS=,; echo "${needs_keys[*]}" | sed 's/,/, /g')"
 
 if [ "$dry" -eq 0 ] && [ "$failed" -eq 0 ]; then

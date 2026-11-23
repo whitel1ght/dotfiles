@@ -101,4 +101,13 @@ if [ "$dry" -eq 1 ]; then
     echo "${cmd[*]}"
     exit 0
 fi
-"${cmd[@]}"
+"${cmd[@]}" || exit
+
+# The MR is ready, so its ticket is In MR (ticket-move: only my own, only forward). Jira
+# failing does not fail the ship; sync-tickets catches the miss at end of day.
+key="$(jq -r '[.source_branch, .title] | map(scan("ECFX-[0-9]+")) | first // empty' <<<"$view")"
+tm="${MR_SHIP_TICKET_MOVE:-$(command -v ticket-move || echo "$HOME/.local/bin/ticket-move")}"
+if [ -n "$key" ] && [ "$tm" != 0 ] && [ -x "$tm" ]; then
+    "$tm" "$key" "In MR" --by mr-ship || echo "mr-ship: $key not moved to In MR; sync-tickets will retry" >&2
+fi
+exit 0

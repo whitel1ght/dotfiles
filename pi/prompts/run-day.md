@@ -38,9 +38,12 @@ the user edits the diary too. `day-plan` opens today's diary in a tmux popup whe
   `decisions/NNNN-<slug>.md` (create; on an existing one only `status: superseded`). Never `state.md` mid-day (step 8).
 - Never edit project code yourself.
 - Never merge, mark ready, transition Jira, post to Slack or comment on an MR without the user's
-  yes. Asking means a decision (step 9); a review round is one decision per round (step 5). Two
+  yes. Asking means a decision (step 9); a review round is one decision per round (step 5). Three
   exceptions: the ship step (step 3), where a finished MR of the user's goes ready without asking
-  (D-447), and #flyway: a post in #flyway goes out without asking when it claims, moves or answers
+  (D-447); the user's own tickets moving forward with their work (D-1124), which `ticket-move`
+  does without a card: `wt add <repo> <KEY>` puts the ticket In Progress, `mr-ship` puts it In MR,
+  and a merge runs it from step 6 (Ready for QA once every MR merged); never transition a ticket
+  any other way or backwards without a yes; and #flyway: a post in #flyway goes out without asking when it claims, moves or answers
   for a migration on the user's own ticket (`flyway-migration-preflight`, which also says never to
   post about someone else's).
 - Questions for the user go into the decision queue (step 9): never ask the question in the thread,
@@ -158,7 +161,8 @@ At most 3 agents at once, review-round and fix agents included (pi's background 
 For each `auto` item:
 
 1. `wt add <repo> <KEY> <branch>` with the branch from `glab mr view` when the item already has an
-   MR or branch, else `wt add <repo> <KEY>` (KEY uppercase, e.g. `ECFX-18169`) → worktree at
+   MR or branch, else `wt add <repo> <KEY>` (KEY uppercase, e.g. `ECFX-18169`; it also moves the
+   user's To-Do ticket to In Progress through `ticket-move`, so don't transition it) → worktree at
    `~/projects/worktrees/<repo>/<KEY>`.
 2. Fill `templates/ticket-brief.md` into `~/.local/state/run-day/scratch/brief-<key>.md`, replacing
    every `{{TOKEN}}`; `grep -c '{{' <file>` must print 0.
@@ -441,6 +445,10 @@ Then:
   open (every MR in its `mr=` merged, no other open child), run `day-agent note <key> done "merged
   <sha> (<repo>!<iid>)"`, tick the top-level line `[X]` and set `needs_you=no`; otherwise keep it
   `[/]` with its few words naming what is next. A line already `[X]` or `[-]` stays as it is.
+  Move the ticket with `ticket-move <KEY> --from-mrs --by run-day` (the key from the MR's branch or
+  title; Ready for QA only once all its MRs merged, only if it is the user's): exit 3 is a Bug Jira
+  won't move without a Resolution Summary, so run `day-agent note <key> progress "merged; Jira waits
+  on a Resolution Summary"` and leave it for end-day's sync-tickets; exit 1 is left to sync-tickets too.
   Withdraw and close any open decision about merging that MR (step 9). Then Keep busy (step 11): a
   merge often clears another item's blocker.
 - `[daily-event] assigned | ...` → file a decision `Add <KEY> to today's plan?` (options `Add it`
@@ -697,7 +705,9 @@ jt --list -u
      `Take <KEY> from the sprint?` with options `Take it` (assigns it to you in Jira; the agent
      pushes and opens the Draft MR) and `Leave it`. On `Take it`:
      `jira-api GET myself | jq -r .accountId`, then
-     `jira-api PUT "issue/<KEY>/assignee" '{"accountId":"<id>"}'`, and start a fresh `worker` in its
+     `jira-api PUT "issue/<KEY>/assignee" '{"accountId":"<id>"}'`, then
+     `ticket-move <KEY> "In Progress" --by run-day` (`wt add` skipped it: it was not the user's yet),
+     and start a fresh `worker` in its
      worktree to push and open the Draft MR. On `Leave it` (the user's word, so a dismissal): stop
      the agent, run `day-agent note <key> dismissed "the user chose Leave it: left in the sprint"`
      and mark the line `[-]` (old format: `[>]` with a `· note: left in the sprint` suffix).

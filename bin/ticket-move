@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# Move one of my Jira tickets forward to where its work is.
+#
+#   ticket-move <KEY> "In Progress"   work started on it (wt add calls this)
+#   ticket-move <KEY> "In MR"         its MR went ready (mr-ship calls this)
+#   ticket-move <KEY> --from-mrs      judge it on all its MRs, as sync-tickets does
+#                                     (run-day calls this when an MR merges)
+#   -n  dry run · -v  also say when nothing moved · --by NAME  who asked, for the log
+#
+# Statuses only go forward (To-Do → In Progress → In MR → Ready for QA), and only on a
+# ticket assigned to me in one of those statuses, so it is safe to call unattended and
+# more than once. A ticket ahead of the target is reported "behind" and left alone; a
+# merged ticket already In QA is in step. A Bug is not moved to Ready for QA while its
+# Resolution Summary is empty (Jira refuses with HTTP 400): it prints "wait" and exits 3.
+#
+# --from-mrs reads every MR of mine with the key in its branch or title: any open ready
+# MR → In MR, else any open draft → In Progress, else merged → Ready for QA. Closed MRs
+# don't count, and a ticket with no MR is left alone.
+#
+# Prints one line per ticket (moved/would/behind/skip/wait; "in step" with -v) and logs
+# every move to $TICKET_MOVE_LOG. Exits 0 when the ticket is where it should be or was
+# left alone on purpose, 3 for a Bug waiting on its summary, 1 on a failure.
+set -euo pipefail
+
+JIRA_BASE="${JIRA_BASE:-https://ecfxdev.atlassian.net}"
+LOG="${TICKET_MOVE_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/ticket-move/moves.log}"
+MERGED_DAYS="${TICKET_MOVE_MERGED_DAYS:-90}"
+
+dry=0 verbose=0 by="${TICKET_MOVE_BY:-cli}" key="" target="" from_mrs=0 judged_refs=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -n|--dry-run) dry=1 ;;
+    -v|--verbose) verbose=1 ;;
+    --by) shift; by="${1:?ticket-move: --by needs a name}" ;;
+    --from-mrs) from_mrs=1 ;;
+    # the caller already judged the target from the MRs it names (sync-tickets)
+    --judged) shift; judged_refs="${1:?ticket-move: --judged needs the MR refs}" ;;
+    -h|--help) sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) echo "ticket-move: unknown option $1" >&2; exit 2 ;;
+    *) if [ -z "$key" ]; then key="$1"; elif [ -z "$target" ]; then target="$1"; else
+         echo "ticket-move: too many arguments" >&2; exit 2; fi ;;
+  esac
+  shift
+done
+key=$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')
+case "$key" in
+  [A-Z]*-[0-9]*) ;;
+  *) echo "usage: ticket-move <KEY> \"In Progress\"|\"In MR\"|\"Ready for QA\"|--from-mrs [-n] [-v] [--by NAME]" >&2; exit 2 ;;
+esac
+[ "$from_mrs" -eq 1 ] || [ -n "$target" ] || { echo "ticket-move: name a status or pass --from-mrs" >&2; exit 2; }
+
+rank() {
+  case "$1" in
+    To-Do) echo 0 ;; "In Progress") echo 1 ;; "In MR") echo 2 ;; "Ready for QA") echo 3 ;; "In QA") echo 4 ;; *) echo -1 ;;
+  esac
+}
+if [ "$from_mrs" -eq 0 ]; then
+  case "$(rank "$target")" in
+    1|2|3) ;;
+    *) echo "ticket-move: unknown target \"$target\" (In Progress, In MR or Ready for QA)" >&2; exit 2 ;;
+  esac
+fi
+
+: "${JIRA_EMAIL:=$(secret JIRA_USER 2>/dev/null)}" "${JIRA_API_TOKEN:=$(secret JIRA_TOKEN 2>/dev/null)}"
+: "${JIRA_EMAIL:?ticket-move: JIRA_USER missing — add it with \`secrets\`}"
+: "${JIRA_API_TOKEN:?ticket-move: JIRA_TOKEN missing — add it with \`secrets\`}"
+
+# Prints the body; fails with the HTTP status so an expired token reads as one.
+jira() {
+  local method="$1" path="$2" out code
+  local data=()
+  [ -z "${3:-}" ] || data=(--data "$3")
+  out=$(curl -sS -X "$method" -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+    -H 'Accept: application/json' -H 'Content-Type: application/json' \
+    ${data[@]+"${data[@]}"} -w '\n%{http_code}' "$JIRA_BASE$path")
+  code="${out##*$'\n'}"
+  case "$code" in
+    2*) printf '%s' "${out%$'\n'*}" ;;
+    401|403) echo "ticket-move: Jira returned $code — JIRA_TOKEN has likely expired" >&2; return 1 ;;
+    *) echo "ticket-move: Jira $method $path returned $code" >&2; return 1 ;;
+  esac
+}
+
+# The target its MRs point at, and their refs; nothing when it has no open or merged MR.
+mrs_target() {
+  local since project="${key%%-*}" open merged
+  since=$(date -u -v-"${MERGED_DAYS}"d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "-$MERGED_DAYS days" +%Y-%m-%dT%H:%M:%SZ)
+  open=$(glab api --paginate "merge_requests?scope=created_by_me&state=opened&per_page=100" | jq -s 'add // []')
+  merged=$(glab api --paginate "merge_requests?scope=created_by_me&state=merged&updated_after=$since&per_page=100" | jq -s 'add // []')
+  jq -rn --argjson mrs "$(jq -s 'add | unique_by(.id)' <<<"$open$merged")" --arg k "$key" --arg p "$project" '
+    [$mrs[] | select(first((.source_branch, .title) | scan("\($p)-[0-9]+")) // "" | . == $k)] as $m
+    | select($m | length > 0)
+    | (if any($m[]; .state == "opened" and (.draft | not)) then "In MR"
+       elif any($m[]; .state == "opened") then "In Progress"
+       else "Ready for QA" end) + "\t" + ($m | map(.references.full | sub("^.*/"; "")) | join(", "))'
+}
+
+# Without a direct transition it steps to the nearest status below the target that Jira
+# offers (Ready for QA: In MR, else In Progress), so a To-Do ticket may take several steps.
+transition_to() {
+  local step id
+  for step in 1 2 3 4; do
+    [ "$(jira GET "/rest/api/3/issue/$key?fields=status" | jq -r .fields.status.name)" = "$target" ] && return 0
+    id=$(jira GET "/rest/api/3/issue/$key/transitions" \
+      | jq -r --arg t "$target" '.transitions as $all
+          | (($all | map(select(.to.name == $t)) | first)
+             // (if $t == "Ready for QA" then ($all | map(select(.to.name == "In MR")) | first) else null end)
+             // ($all | map(select(.to.name == "In Progress")) | first))
+          | .id // empty')
+    [ -n "$id" ] || { echo "ticket-move: no transition from $key towards $target" >&2; return 1; }
+    jira POST "/rest/api/3/issue/$key/transitions" "{\"transition\":{\"id\":\"$id\"}}" >/dev/null || return 1
+  done
+  return 1
+}
+
+refs=""
+if [ "$from_mrs" -eq 1 ]; then
+  judged=$(mrs_target) || { echo "ticket-move: cannot read the MRs of $key" >&2; exit 1; }
+  if [ -z "$judged" ]; then
+    [ "$verbose" -eq 0 ] || echo "  skip   $key — no open or merged MR"
+    exit 0
+  fi
+  target="${judged%%$'\t'*}"; refs=" (${judged#*$'\t'})"
+elif [ -n "$judged_refs" ]; then
+  from_mrs=1; refs=" ($judged_refs)"
+fi
+
+me=$(jira GET /rest/api/3/myself | jq -r .accountId)
+issue=$(jira GET "/rest/api/3/issue/$key?fields=status,assignee,issuetype,customfield_10604")
+status=$(jq -r .fields.status.name <<<"$issue")
+assignee=$(jq -r '.fields.assignee.accountId // ""' <<<"$issue")
+
+if [ "$assignee" != "$me" ]; then
+  [ "$verbose" -eq 0 ] || echo "  skip   $key — assigned to $(jq -r '.fields.assignee.displayName // "nobody"' <<<"$issue")"
+  exit 0
+fi
+if [ "$(rank "$status")" -lt 0 ]; then
+  [ "$verbose" -eq 0 ] || echo "  skip   $key — $status is left alone"
+  exit 0
+fi
+
+if [ "$(rank "$target")" -gt "$(rank "$status")" ]; then
+  if [ "$target" = "Ready for QA" ] && jq -e '.fields.issuetype.name == "Bug" and .fields.customfield_10604 == null' <<<"$issue" >/dev/null; then
+    echo "  wait   $key — Bug needs a Resolution Summary; move it with jira-write --resolution-summary"
+    exit 3
+  fi
+  if [ "$dry" -eq 1 ]; then echo "  would  $key $status → $target$refs"; exit 0; fi
+  transition_to || exit 1
+  echo "  moved  $key $status → $target$refs"
+  mkdir -p "$(dirname "$LOG")"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$key" "$status" "$target" "$by" >> "$LOG"
+elif [ "$status" = "In QA" ] && [ "$target" = "Ready for QA" ]; then
+  [ "$verbose" -eq 0 ] || echo "  ok     $key — In QA, QA has it"
+elif [ "$from_mrs" -eq 1 ] && [ "$(rank "$target")" -lt "$(rank "$status")" ]; then
+  # Only MRs can say a ticket ran ahead; work starting on an In MR ticket is a new round.
+  echo "  behind $key is $status, MRs say $target$refs — left alone"
+else
+  [ "$verbose" -eq 0 ] || echo "  ok     $key — already $status"
+fi

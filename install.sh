@@ -465,10 +465,13 @@ if [ -f "$DOTFILES_DIR/bin/ecfx-daily-commits" ]; then
     create_symlink "$DOTFILES_DIR/bin/ecfx-daily-commits" "$HOME/.local/bin/ecfx-daily-commits"
 fi
 
-# sync-tickets moves my Jira tickets to match my MRs; driven by /sync-tickets.
-if [ -f "$DOTFILES_DIR/bin/sync-tickets" ]; then
-    create_symlink "$DOTFILES_DIR/bin/sync-tickets" "$HOME/.local/bin/sync-tickets"
-fi
+# ticket-move moves one of my Jira tickets forward as its work moves (wt add, mr-ship,
+# run-day); sync-tickets, driven by /sync-tickets at start-day and end-day, verifies.
+for tool in ticket-move sync-tickets; do
+    if [ -f "$DOTFILES_DIR/bin/$tool" ]; then
+        create_symlink "$DOTFILES_DIR/bin/$tool" "$HOME/.local/bin/$tool"
+    fi
+done
 
 # clean-worktrees removes merged worktrees; driven by /clean-worktrees.
 if [ -f "$DOTFILES_DIR/bin/clean-worktrees" ]; then

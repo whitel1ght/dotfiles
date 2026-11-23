@@ -31,7 +31,14 @@ g clone -q --bare "$SANDBOX/seed" "$SANDBOX/remote.git"
 g clone -q "$SANDBOX/remote.git" "$PROJ/app" 2>/dev/null
 g -C "$PROJ/app" remote set-head origin -a >/dev/null
 
-run() { PROJECTS_DIR="$PROJ" WORKTREES_DIR="$WT" CLAUDE_PROJECTS="$HIST" "$SCRIPT" "$@" 2>&1; }
+# ticket-move is a stub that records its arguments; the real one would reach Jira.
+TM_LOG="$SANDBOX/ticket-move.log"
+printf '#!/bin/bash\necho "$*" >> "%s"\n' "$TM_LOG" > "$SANDBOX/ticket-move"
+chmod +x "$SANDBOX/ticket-move"
+run() {
+    PROJECTS_DIR="$PROJ" WORKTREES_DIR="$WT" CLAUDE_PROJECTS="$HIST" WT_TICKET_MOVE="$SANDBOX/ticket-move" \
+    XDG_STATE_HOME="$SANDBOX/state" "$SCRIPT" "$@" 2>&1
+}
 
 echo "wt add"
 out="$(run add app ABC-1 dmitry/ABC-1_new)"
@@ -47,6 +54,11 @@ g -C "$PROJ/app" commit -q --allow-empty -m "local only, never pushed"
 run add app ABC-7 dmitry/ABC-7 >/dev/null
 assert_eq "$(git -C "$PROJ/app" rev-parse main)" "$(git -C "$WT/app/ABC-7" rev-parse HEAD)" "a local default branch with commits origin lacks is the base (dotfiles, never pushed)"
 g -C "$PROJ/app" reset -q --hard origin/main
+out="$(run add app ECFX-9)"
+assert_eq "$WT/app/ECFX-9" "$out" "a ticket worktree still prints only its path"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$TM_LOG" ] && break; sleep 0.2; done
+assert_eq "ECFX-9 In Progress --by wt" "$(cat "$TM_LOG" 2>/dev/null)" \
+    "a worktree named for a ticket puts it In Progress, and no other name does"
 g -C "$SANDBOX/seed" commit -q --allow-empty -m "upstream" && g -C "$SANDBOX/seed" push -q "$SANDBOX/remote.git" main
 run add app ABC-8 dmitry/ABC-8 >/dev/null
 assert_eq "$(git -C "$PROJ/app" rev-parse origin/main)" "$(git -C "$WT/app/ABC-8" rev-parse HEAD)" "a local default branch only behind origin: origin's, just fetched"

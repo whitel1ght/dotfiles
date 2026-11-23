@@ -8,7 +8,9 @@
 #                                   (default: name). A repo with a
 #                                   package-lock.json gets node_modules as a
 #                                   clone of the install cached for that
-#                                   lockfile (nm-clone), when there is one
+#                                   lockfile (nm-clone), when there is one.
+#                                   A name like ECFX-123 also puts that
+#                                   ticket In Progress (ticket-move)
 #   wt move <worktree> [name]       move an existing worktree into the layout
 #   wt ls                           every worktree of every repo in ~/projects,
 #                                   out-of-place ones marked
@@ -65,7 +67,22 @@ add_at() { # clone name branch
   fi
   [ ! -f "$dest/.gitmodules" ] || git -C "$dest" submodule update -q --init --recursive
   [ ! -f "$dest/package-lock.json" ] || node_modules_for "$dest"
+  ticket_started "$name"
   echo "$dest"
+}
+
+# A worktree named for a Jira ticket means its work started: ticket-move puts it In
+# Progress (only my own ticket, only forward). In the background, so a slow or
+# unreachable Jira never holds up the add; sync-tickets catches a miss. WT_TICKET_MOVE=0
+# turns it off.
+ticket_started() {
+  local tm log
+  [[ "$1" =~ ^${JIRA_PROJECT:-ECFX}-[0-9]+$ ]] || return 0
+  tm="${WT_TICKET_MOVE:-$(command -v ticket-move || echo "$HOME/.local/bin/ticket-move")}"
+  [ "$tm" != 0 ] && [ -x "$tm" ] || return 0
+  log="${XDG_STATE_HOME:-$HOME/.local/state}/ticket-move/wt.log"
+  mkdir -p "$(dirname "$log")"
+  ("$tm" "$1" "In Progress" --by wt >>"$log" 2>&1 &)
 }
 
 # A clone of the cached install for the worktree's lockfile (nm-clone); a miss leaves

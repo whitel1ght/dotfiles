@@ -20,7 +20,7 @@ cat > "$STUBS/glab" <<'STUB'
 #!/bin/bash
 case "$1 $2" in
     "api user") echo '{"username":"whitel1ght"}' ;;
-    "mr view") printf '{"state":"%s","draft":true,"author":{"username":"%s"}}\n' "${MR_STATE:-opened}" "${MR_AUTHOR:-whitel1ght}" ;;
+    "mr view") printf '{"state":"%s","draft":true,"source_branch":"dmitry/ECFX-77_fix","title":"Fix","author":{"username":"%s"}}\n' "${MR_STATE:-opened}" "${MR_AUTHOR:-whitel1ght}" ;;
     "api projects/"*)
         printf '%s\n' "$2" >> "$MR_COMMITS_LOG"
         [ -z "${MR_COMMITS_FAIL:-}" ] || exit 1
@@ -34,6 +34,11 @@ chmod +x "$STUBS/glab"
 SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 FIX=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 export MR_LOG="$LOG" MR_COMMITS_LOG="$SANDBOX/commits.log" MR_SHIP_STATE="$SANDBOX/state" MR_COMMITS="$FIX $SHA"
+# ticket-move is a stub that records its arguments; the real one would reach Jira.
+TM_LOG="$SANDBOX/ticket-move.log"
+printf '#!/bin/bash\necho "$*" >> "%s"\n' "$TM_LOG" > "$STUBS/ticket-move"
+chmod +x "$STUBS/ticket-move"
+export MR_SHIP_TICKET_MOVE="$STUBS/ticket-move"
 ship() { : > "$LOG"; PATH="$STUBS:$PATH" "$SCRIPT" "$@" 2>"$SANDBOX/err"; }
 EXPECT="mr update 7 -R ecfx/ecfx-dashboard --ready --assignee +whitel1ght --reviewer +adam.warbington,+bkeeling,+smtsuchi,+ejjung,+levisiebensecfx"
 REVIEW="$SANDBOX/review.md"
@@ -88,8 +93,10 @@ ship --reviewed ecfx/ecfx-dashboard 7 "$FIX" "$SANDBOX/second.md"
 MR_COMMITS="$FIX" ship ecfx/ecfx-dashboard 7; assert_eq 0 "$?" "a new review replaces the old one"
 
 echo "mr-ship"
+: > "$TM_LOG"
 ship ecfx/ecfx-dashboard 7; assert_eq 0 "$?" "an open draft of the user's: exits 0"
 assert_eq "$EXPECT" "$(cat "$LOG")" "marks ready, assigns the user, requests the D-008 reviewers"
+assert_eq "ECFX-77 In MR --by mr-ship" "$(cat "$TM_LOG")" "and puts the ticket from its branch In MR"
 ship ecfx/ecfx-dashboard 7
 call="$(cat "$LOG")"
 for n in adam.warbington bkeeling smtsuchi ejjung levisiebensecfx; do
@@ -98,6 +105,7 @@ done
 case "$call" in *"--assignee +whitel1ght "*) pass "the assignee is added with +" ;; *) fail "the assignee is added with +" "$call" ;; esac
 ship dashboard 7; assert_eq "$EXPECT" "$(cat "$LOG")" "a short name maps to ecfx/ecfx-<name>"
 ship ecfx-dashboard 7; assert_eq "$EXPECT" "$(cat "$LOG")" "so does ecfx-<name>"
+: > "$TM_LOG"
 for s in merged closed; do
     MR_STATE=$s ship ecfx/ecfx-dashboard 7; assert_eq 1 "$?" "a $s MR is refused"
     assert_eq 0 "$(wc -c < "$LOG" | tr -d ' ')" "and no update call is made"
@@ -109,6 +117,7 @@ out="$(ship ecfx/ecfx-dashboard 7 -n)"; assert_eq 0 "$?" "-n exits 0"
 assert_eq 0 "$(wc -c < "$LOG" | tr -d ' ')" "-n makes no update call"
 case "$out" in *"--ready"*"--assignee +whitel1ght"*"--reviewer +adam.warbington,"*) pass "-n prints the calls" ;; *) fail "-n prints the calls" "$out" ;; esac
 MR_STATE=merged ship ecfx/ecfx-dashboard 7 -n; assert_eq 1 "$?" "-n still refuses a merged MR"
+assert_eq "" "$(cat "$TM_LOG")" "a refused or -n ship never moves the ticket"
 ship ecfx/ecfx-dashboard; assert_eq 2 "$?" "a missing MR number is a usage error"
 
 echo

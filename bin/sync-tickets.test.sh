@@ -124,8 +124,25 @@ printf '\n%s' "$([ "$method" = POST ] && [ "${path##*/}" = transitions ] && echo
 EOF
 chmod +x "$STUBS/glab" "$STUBS/curl"
 
+# Worktrees: ECFX-20 had a commit today and no MR (work started: In Progress), ECFX-21 was
+# last touched long ago, ECFX-1 is judged on its MRs instead.
+WT="$SANDBOX/worktrees"
+worktree() { # key age(touch -t stamp or "now")
+    mkdir -p "$WT/ecfx-backend/$1" "$SANDBOX/admin/$1/logs"
+    printf 'gitdir: %s\n' "$SANDBOX/admin/$1" > "$WT/ecfx-backend/$1/.git"
+    echo x > "$SANDBOX/admin/$1/logs/HEAD"
+    [ "$2" = now ] || touch -t "$2" "$SANDBOX/admin/$1/logs/HEAD"
+}
+worktree ECFX-20 now
+worktree ECFX-21 202001010000
+worktree ECFX-1 now
+mkdir -p "$WT/ecfx-backend/review-55"
+issue ECFX-20 "To-Do" me
+issue ECFX-21 "To-Do" me
+
 run() {
-    PATH="$STUBS:$PATH" FIX="$FIX" JIRA_EMAIL=e JIRA_API_TOKEN=t \
+    PATH="$STUBS:$PATH" FIX="$FIX" JIRA_EMAIL=e JIRA_API_TOKEN=t WORKTREES_DIR="$WT" \
+    TICKET_MOVE_LOG="$SANDBOX/state/moves.log" \
     SYNC_TICKETS_STATE="$SANDBOX/state/last-run" "$SCRIPT" "$@" 2>&1
 }
 status_of() { jq -r .fields.status.name "$FIX/issue/$1"; }
@@ -185,6 +202,18 @@ links="$(grep -c 'remotelink' "$FIX/writes.log")"
 [ "$links" -gt 0 ] && pass "posts remote links" || fail "posts remote links" "none"
 assert_contains "$(cat "$FIX/writes.log")" '"globalId":"gitlab-mr-backend-10"' "uses GitLab's globalId so links upsert"
 [ -s "$SANDBOX/state/last-run" ] && pass "records the run for next time" || fail "records the run for next time" "no state file"
+[ "$(status_of ECFX-20)" = "In Progress" ] && pass "a worktree worked in the window puts its To-Do ticket In Progress" \
+    || fail "a worktree worked in the window puts its To-Do ticket In Progress" "$(status_of ECFX-20)"
+[ "$(status_of ECFX-21)" = "To-Do" ] && pass "a worktree untouched in the window moves nothing" \
+    || fail "a worktree untouched in the window moves nothing" "$(status_of ECFX-21)"
+[ "$(status_of ECFX-1)" = "In MR" ] && pass "a worktree never pulls a ticket its MRs judged back to In Progress" \
+    || fail "a worktree never pulls a ticket its MRs judged back" "$(status_of ECFX-1)"
+assert_contains "$out" "drift: the day missed ECFX-1, " "each move here is reported as drift the day missed"
+assert_contains "$(cat "$SANDBOX/state/moves.log")" "ECFX-20	To-Do	In Progress	sync-tickets" "moves are logged with who made them"
+
+echo "sync-tickets — a second run finds nothing to fix"
+out="$(run --since 1d)"
+assert_lacks "$out" "drift:" "no drift once everything is in step"
 
 echo "sync-tickets — expired token"
 out="$(JIRA_FAIL=1 run --since 1d)"; rc=$?
