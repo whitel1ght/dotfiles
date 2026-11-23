@@ -1,0 +1,252 @@
+#!/usr/bin/env python3
+r"""Save a Claude Code or pi session as Markdown in ~/wiki/learning/sessions/ (D-1288).
+
+  session-save save --harness claude|pi --session SID [--transcript PATH] [--title T]
+      Convert the session log and write YYYY-MM-DD-<slug>-<sid8>.md; prints the path.
+      A re-save rewrites the same session's file (the old name goes if the title changed).
+      A log with no typed user message writes nothing. Exit 1: no log found.
+
+The file keeps the user's and the assistant's text in full. A tool call is one line
+(`> ran <Tool>: <its input, cut to 200 chars>`); tool output is left out except a subagent's
+report, kept in a <details> block. Thinking, system reminders, meta and sidechain records
+are dropped. Secrets (token shapes from coach-mine, NAME=value for *TOKEN/SECRET/KEY/PASSWORD)
+become [redacted] before anything is written. No model runs.
+
+Env: SESSION_SAVE_DIR (output, default ~/wiki/learning/sessions), SESSION_SAVE_STATE
+(default ~/.local/state/learning-sessions), CLAUDE_PROJECTS_DIR (default ~/.claude/projects).
+"""
+
+import argparse
+import datetime as dt
+import glob
+import json
+import os
+import re
+import sys
+import tempfile
+from pathlib import Path
+
+SECRET_PATTERNS = [
+    re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]{20,}"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"\bgl(soat|dt|ptt|rt|cbt)-[A-Za-z0-9_-]{16,}"),
+    re.compile(r"\bATATT[A-Za-z0-9_\-=]{20,}"),
+    re.compile(r"\bxox[abpr]-[A-Za-z0-9-]{10,}"),
+    re.compile(r"\bghp_[A-Za-z0-9]{30,}"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----|$)"),
+]
+ENV_SECRET = re.compile(r"\b([A-Z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD))=\S+")
+SUBAGENT_TOOLS = {"Agent", "Task", "subagent"}
+TOOL_KEYS = ("command", "file_path", "path", "pattern", "url", "query", "description", "prompt")
+SUMMARY_LEN = 200
+
+
+def out_dir():
+    return Path(os.environ.get("SESSION_SAVE_DIR") or Path.home() / "wiki/learning/sessions")
+
+
+def state_dir():
+    return Path(os.environ.get("SESSION_SAVE_STATE") or Path.home() / ".local/state/learning-sessions")
+
+
+def claude_dir():
+    return Path(os.environ.get("CLAUDE_PROJECTS_DIR") or Path.home() / ".claude/projects")
+
+
+def redact(text):
+    text = ENV_SECRET.sub(lambda m: m.group(1) + "=[redacted]", text)
+    for rx in SECRET_PATTERNS:
+        text = rx.sub("[redacted]", text)
+    return text
+
+
+def when(ts):
+    try:
+        return dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00")).astimezone()
+    except ValueError:
+        return None
+
+
+def clean_user_text(text):
+    text = re.sub(r"<system-reminder>.*?</system-reminder>", "", text, flags=re.S)
+    text = re.sub(r"<local-command-(caveat|stdout|stderr)>.*?</local-command-\1>", "", text, flags=re.S)
+    m = re.search(r"<command-name>(.*?)</command-name>", text, flags=re.S)
+    if m:
+        args = re.search(r"<command-args>(.*?)</command-args>", text, flags=re.S)
+        text = f"{m.group(1).strip()} {args.group(1).strip() if args else ''}"
+    return text.strip()
+
+
+def tool_line(name, args):
+    if isinstance(args, dict):
+        summary = next((str(args[k]) for k in TOOL_KEYS if args.get(k)), None)
+        if summary is None:
+            summary = json.dumps(args, ensure_ascii=False)
+    else:
+        summary = str(args)
+    summary = " ".join(redact(summary).split())
+    if len(summary) > SUMMARY_LEN:
+        summary = summary[: SUMMARY_LEN - 1] + "…"
+    return f"> ran {name}: {summary}"
+
+
+def result_text(content):
+    if isinstance(content, str):
+        return content
+    return "\n".join(p.get("text", "") for p in content or [] if isinstance(p, dict) and p.get("type") == "text")
+
+
+def details(text):
+    return f"<details><summary>Subagent report</summary>\n\n{text.strip()}\n\n</details>"
+
+
+class Session:
+    def __init__(self, sid, harness):
+        self.id, self.harness = sid, harness
+        self.cwd, self.title, self.turns = "", None, []
+
+    def add(self, role, at, part):
+        part = part.strip()
+        if not part:
+            return
+        if self.turns and self.turns[-1]["role"] == role:
+            self.turns[-1]["parts"].append(part)
+        else:
+            self.turns.append({"role": role, "at": at, "parts": [part]})
+
+    def typed(self):
+        return [t for t in self.turns if t["role"] == "you"]
+
+    def started(self):
+        return next((t["at"] for t in self.turns if t["at"]), None) or dt.datetime.now().astimezone()
+
+
+def records(path):
+    with open(path, errors="replace") as fh:
+        for line in fh:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict):
+                yield rec
+
+
+def load_claude(path, sid):
+    s = Session(sid, "claude")
+    tools = {}
+    for rec in records(path):
+        kind = rec.get("type")
+        if kind == "custom-title" and rec.get("customTitle"):
+            s.title = rec["customTitle"]
+            continue
+        if kind not in ("user", "assistant") or rec.get("isSidechain"):
+            continue
+        s.cwd = rec.get("cwd") or s.cwd
+        at = when(rec.get("timestamp"))
+        content = (rec.get("message") or {}).get("content")
+        if kind == "user":
+            if rec.get("isMeta"):
+                continue
+            if isinstance(content, str):
+                s.add("you", at, redact(clean_user_text(content)))
+                continue
+            for part in content or []:
+                if part.get("type") == "text":
+                    s.add("you", at, redact(clean_user_text(part.get("text", ""))))
+                elif part.get("type") == "tool_result" and tools.get(part.get("tool_use_id")) in SUBAGENT_TOOLS:
+                    s.add("claude", at, details(redact(result_text(part.get("content")))))
+        else:
+            for part in content or []:
+                if part.get("type") == "text":
+                    s.add("claude", at, redact(part.get("text", "")))
+                elif part.get("type") == "tool_use":
+                    tools[part.get("id")] = part.get("name")
+                    s.add("claude", at, tool_line(part.get("name"), part.get("input")))
+    return s
+
+
+def slug(title):
+    words = re.findall(r"[a-z0-9]+", title.lower())
+    return "-".join(words)[:50].rstrip("-") or "session"
+
+
+def yaml_str(value):
+    value = " ".join(str(value).split())
+    return json.dumps(value, ensure_ascii=False) if re.search(r"[:#\[\]{}\"'`]|^[-?!&*|>%@]", value) else value
+
+
+def render(s):
+    started = s.started()
+    lines = [
+        "---",
+        f"title: {yaml_str(s.title)}",
+        f"date: {started:%Y-%m-%d}",
+        f"harness: {s.harness}",
+        f"session_id: {s.id}",
+        f"cwd: {yaml_str(s.cwd)}",
+        f"saved: {dt.datetime.now().astimezone().isoformat(timespec='seconds')}",
+        "---",
+        "",
+        f"# {s.title}",
+        "",
+    ]
+    for t in s.turns:
+        who = "You" if t["role"] == "you" else ("Claude" if s.harness == "claude" else "pi")
+        stamp = f" · {t['at']:%H:%M}" if t["at"] else ""
+        lines += [f"## {who}{stamp}", "", "\n\n".join(t["parts"]), ""]
+    return "\n".join(lines)
+
+
+def write(s, text):
+    d = out_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    target = d / f"{s.started():%Y-%m-%d}-{slug(s.title)}-{s.id[:8]}.md"
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".session-save-", suffix=".tmp")
+    with os.fdopen(fd, "w") as fh:
+        fh.write(text)
+    os.replace(tmp, target)
+    for old in d.glob(f"*-{s.id[:8]}.md"):
+        if old != target and f"\nsession_id: {s.id}\n" in old.read_text(errors="replace"):
+            old.unlink()
+    return target
+
+
+def find_log(harness, sid, transcript):
+    if transcript:
+        return Path(transcript) if Path(transcript).is_file() else None
+    if harness == "claude":
+        hits = glob.glob(str(claude_dir() / "*" / f"{glob.escape(sid)}.jsonl"))
+        return Path(hits[0]) if hits else None
+    return None
+
+
+def cmd_save(a):
+    log = find_log(a.harness, a.session, a.transcript)
+    if not log:
+        print(f"session-save: no {a.harness} log for session {a.session}", file=sys.stderr)
+        return 1
+    s = load_claude(log, a.session)
+    if not s.typed():
+        return 0
+    s.title = a.title or s.title or s.typed()[0]["parts"][0].splitlines()[0][:60]
+    print(write(s, render(s)))
+    return 0
+
+
+def main(argv):
+    p = argparse.ArgumentParser(prog="session-save")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sv = sub.add_parser("save")
+    sv.add_argument("--harness", choices=["claude", "pi"], required=True)
+    sv.add_argument("--session", required=True)
+    sv.add_argument("--transcript")
+    sv.add_argument("--title")
+    a = p.parse_args(argv)
+    return {"save": cmd_save}[a.cmd](a)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
