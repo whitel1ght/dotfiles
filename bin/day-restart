@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# Restart the running day session so it picks up what changed in the setup.
+#
+#   day-restart [SESSION] [--in-place] [--now] [--detach] [-n]
+#
+# SESSION is a session id (full, or the short one `claude agents` shows) or its name. Default:
+# today's day session, the owner in <state>/<date>.owner, else the running session that ran
+# /start-day or /daily:run-day today (most recent first).
+#
+# A background session is respawned once its turn ends (`claude respawn`): a new process with the
+# same conversation, so settings, CLAUDE.md, plugins, skills and MCP servers load afresh. Its
+# background agents stop with it; the resume's Wake check re-dispatches them into their
+# worktrees. --in-place, and any interactive session (it cannot be respawned), only resumes the
+# day where it runs: the daily mod already reloads itself on every merge, and the resume re-reads
+# the playbook.
+#
+# Either way it records the session as the day's owner and writes <date>.restart naming it; the
+# daily mod in that session takes the marker (at its start, or on its 30 s inbox tick in place)
+# and runs `/daily:run-day resume restarted`.
+#
+#   --now       do not wait for the session's turn to end
+#   --detach    wait and restart in the background, logging to <state>/day-restart.log (what
+#               /daily:restart-day uses, so a session can restart itself)
+#   -n          say what it would do, change nothing
+#
+# Exit: 0 restarted (or queued, --detach); 1 refused or failed; 2 usage or no day session found.
+set -euo pipefail
+
+STATE_DIR="${RUN_DAY_STATE_DIR:-$HOME/.local/state/run-day}"
+CLAUDE="${DAY_RESTART_CLAUDE:-claude}"
+PROJECTS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
+WAIT_S="${DAY_RESTART_WAIT:-900}"
+POLL_S="${DAY_RESTART_POLL:-5}"
+
+die() { echo "day-restart: $1" >&2; exit "${2:-1}"; }
+
+target="" in_place=0 now=0 detach=0 dry=0
+for a in "$@"; do
+  case "$a" in
+    --in-place) in_place=1 ;;
+    --now) now=1 ;;
+    --detach) detach=1 ;;
+    -n|--dry-run) dry=1 ;;
+    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) die "unknown option $a" 2 ;;
+    *) [ -z "$target" ] || die "one session at a time" 2; target="$a" ;;
+  esac
+done
+
+T="$(date +%F)"
+[ -f "$STATE_DIR/$T.md" ] || die "no day is running: $STATE_DIR/$T.md is missing (run /start-day, then /daily:run-day)"
+
+if [ "$detach" -eq 1 ] && [ "$dry" -eq 0 ]; then
+  args=()
+  [ -z "$target" ] || args+=("$target")
+  [ "$in_place" -eq 0 ] || args+=(--in-place)
+  [ "$now" -eq 0 ] || args+=(--now)
+  log="$STATE_DIR/day-restart.log"
+  nohup "$0" ${args[@]+"${args[@]}"} >>"$log" 2>&1 </dev/null &
+  echo "day-restart: queued; it restarts the day session once its turn ends (log: $log)"
+  exit 0
+fi
+
+sessions() { "$CLAUDE" agents --json 2>/dev/null || echo '[]'; }
+
+# The session's row from `claude agents --json`, by full id, short id or name.
+row_of() {
+  sessions | jq -c --arg s "$1" 'first(.[] | select(.sessionId == $s or .id == $s or .name == $s)) // empty'
+}
+
+# The running session that started or resumed today's day most recently: its transcript has a
+# typed /start-day or /daily:run-day since local midnight (tool output that only mentions them
+# does not count: that is a string inside an array, not the message itself).
+find_day_session() {
+  local since midnight now best="" best_at="" id f at
+  now=$(date +%s)
+  midnight=$((now - 10#$(date +%H) * 3600 - 10#$(date +%M) * 60 - 10#$(date +%S)))
+  since=$(date -u -r "$midnight" +%FT%T 2>/dev/null || date -u -d "@$midnight" +%FT%T)
+  while IFS= read -r id; do
+    f=$(ls -1 "$PROJECTS"/*/"$id.jsonl" 2>/dev/null | head -1)
+    [ -n "$f" ] || continue
+    at=$(jq -r --arg since "$since" '
+      select(.type == "user" and (.message.content | type) == "string"
+             and (.message.content | test("<command-name>/(start-day|daily:run-day|run-day)</command-name>"))
+             and .timestamp >= $since) | .timestamp' "$f" 2>/dev/null | tail -1)
+    [ -n "$at" ] || continue
+    if [ -z "$best_at" ] || [[ "$at" > "$best_at" ]]; then best="$id" best_at="$at"; fi
+  done < <(sessions | jq -r '.[].sessionId')
+  echo "$best"
+}
+
+if [ -z "$target" ]; then
+  owner=$(head -1 "$STATE_DIR/$T.owner" 2>/dev/null | tr -d '[:space:]' || true)
+  if [ -n "$owner" ] && [ -n "$(row_of "$owner")" ]; then target="$owner"
+  else
+    target=$(find_day_session)
+    [ -n "$target" ] || die "no running day session found: name one (claude agents lists them)" 2
+  fi
+fi
+row=$(row_of "$target")
+[ -n "$row" ] || die "no running session $target (claude agents --json lists the running ones)" 2
+sid=$(jq -r .sessionId <<<"$row"); short=$(jq -r .id <<<"$row"); name=$(jq -r '.name // ""' <<<"$row")
+kind=$(jq -r '.kind // "interactive"' <<<"$row")
+label="${name:-$short} ($sid)"
+mode=respawn
+[ "$kind" = background ] && [ "$in_place" -eq 0 ] || mode=in-place
+
+agents=$(awk -F' [|] ' '/^- / { for (i = 2; i <= NF; i++) if ($i ~ /^(agent|round)=/ && $i !~ /=-$/) { sub(/^- /, "", $1); print $1; break } }' "$STATE_DIR/$T.md" | paste -sd, - | sed 's/,/, /g')
+
+if [ "$dry" -eq 1 ]; then
+  echo "would restart $label: $mode$([ "$now" -eq 1 ] || echo ', once its turn ends')"
+  [ "$mode" != respawn ] || [ -z "$agents" ] || echo "its agents on $agents would stop; the Wake check re-dispatches them"
+  exit 0
+fi
+
+busy() { jq -e '(.state // .status // "") as $s | $s == "working" or $s == "busy"' <<<"$(row_of "$sid")" >/dev/null 2>&1; }
+if [ "$now" -eq 0 ] && [ "$mode" = respawn ]; then
+  waited=0
+  while busy; do
+    [ "$waited" -lt "$WAIT_S" ] || die "$label is still working after ${WAIT_S}s; --now restarts it mid-turn"
+    sleep "$POLL_S"; waited=$((waited + POLL_S))
+  done
+fi
+
+mark() { printf '%s\n' "$1" > "$STATE_DIR/$T.owner"; printf '%s\n' "$1" > "$STATE_DIR/$T.restart"; }
+mark "$sid"
+
+if [ "$mode" = in-place ]; then
+  echo "day-restart: $label resumes the day in place within 30 s ($([ "$kind" = background ] && echo '--in-place' || echo 'an interactive session cannot be respawned'))"
+  exit 0
+fi
+
+"$CLAUDE" respawn "$short" >/dev/null || die "claude respawn $short failed; the marker stays, so /daily:run-day resume in that session picks it up"
+# A respawn keeps the conversation; should the session come back under a new id, follow it.
+for _ in $(seq 1 12); do
+  new=$(sessions | jq -r --arg s "$short" --arg n "$name" 'first(.[] | select(.id == $s or ($n != "" and .name == $n)) | .sessionId) // empty')
+  if [ -n "$new" ]; then
+    [ "$new" = "$sid" ] || mark "$new"
+    break
+  fi
+  sleep "$POLL_S"
+done
+echo "day-restart: respawned $label; it resumes the day with the current setup$([ -z "$agents" ] || echo "; agents on $agents are re-dispatched by its Wake check")"

@@ -525,6 +525,10 @@ fi
 if [ -f "$DOTFILES_DIR/bin/day-agent" ]; then
     create_symlink "$DOTFILES_DIR/bin/day-agent" "$HOME/.local/bin/day-agent"
 fi
+# day-restart respawns the running day session (or resumes it in place); /daily:restart-day runs it.
+if [ -f "$DOTFILES_DIR/bin/day-restart" ]; then
+    create_symlink "$DOTFILES_DIR/bin/day-restart" "$HOME/.local/bin/day-restart"
+fi
 if [ -f "$DOTFILES_DIR/bin/plan-pick" ]; then
     create_symlink "$DOTFILES_DIR/bin/plan-pick" "$HOME/.local/bin/plan-pick"
 fi

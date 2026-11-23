@@ -19,6 +19,7 @@ import { BUSY_PROMPT, nextAgentAt, nextNudged, shouldNudgeBusy } from '../mod/bu
 import { nextPlanLines, planPrompt, untracked } from '../mod/planlines.ts'
 import { formatSlot, parseClock, parseSlot, slackDue, slackPath, slackPrompt } from '../mod/slack.ts'
 import { CLAUDE_PLAYBOOK, UPDATE_ARGS, fingerprint, parsePrint, playbookPath, shouldResume } from '../mod/update.ts'
+import { RESTART_ARGS, restartFor, restartPath } from '../mod/restart.ts'
 import { ASK_NUDGE, BUSY_NOTE, FORM_DENY, FORM_TOOLS, isBusyPrompt, nextAsk, shouldNudgeAsk } from '../mod/ask.ts'
 import { FOLLOWUP_MS, followupPrompt, parseCards, pendingFollowups } from '../mod/followup.ts'
 
@@ -135,6 +136,27 @@ async function resumeIfUpdated($: EngineInterface) {
     $.clock.after(0, () => void $.command.run({ command: 'daily:run-day', args: UPDATE_ARGS }).catch(() => $.ui.toast('daily: resuming the day after a playbook change failed: run /daily:run-day')))
   } catch (err) {
     $.ui.log(`daily: playbook check failed: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+// `day-restart` names this session in `<date>.restart` (mod/restart.ts): after a respawn
+// (session.start) or in place (the inbox tick), it claims the day, which records the owner and the
+// playbook print, and resumes the day with the playbook read afresh. The marker goes first, so it
+// restarts once. True when it restarted.
+async function restartIfAsked($: EngineInterface): Promise<boolean> {
+  try {
+    const day = await today($)
+    if (!day) return false
+    const path = restartPath(day.statePath.replace(/\/[^/]+$/, ''), day.today)
+    if (!restartFor(await readOr($, path), await $.session.id())) return false
+    await $.process.run(['rm', '-f', path])
+    await claimDay($)
+    $.ui.log('daily: day-restart asked for a restart; resuming the day')
+    $.clock.after(0, () => void $.command.run({ command: 'daily:run-day', args: RESTART_ARGS }).catch(() => $.ui.toast('daily: resuming the day after day-restart failed: run /daily:run-day resume')))
+    return true
+  } catch (err) {
+    $.ui.log(`daily: restart check failed: ${err instanceof Error ? err.message : String(err)}`)
+    return false
   }
 }
 
@@ -613,6 +635,8 @@ async function watchInbox($: EngineInterface) {
   if (flags.isListing) return
   flags.isListing = true
   try {
+    // An in-place restart (`day-restart --in-place`, or an interactive day session).
+    if (await restartIfAsked($)) return
     const ctx = await load($)
     if (!ctx || !ctx.active) return
     // Every session counts the inbox for its status line; only the owner is told.
@@ -667,7 +691,9 @@ export const register: Register = on => {
     $.clock.every(FOLLOWUP_MS, () => {
       void deliverFollowups($)
     })
-    void resumeIfUpdated($)
+    void (async () => {
+      if (!(await restartIfAsked($))) await resumeIfUpdated($)
+    })()
     return next(e)
   })
 

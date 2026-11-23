@@ -98,6 +98,10 @@ the resume above restarts the watcher; after it, run Keep busy (step 11).
 From now on follow this text, not the copy you read earlier in this session, wherever the two
 differ. Agents already running keep their briefs.
 
+`day-restart` (Claude's restart of a running day session) has no pi path: in pi, `/daily-update`
+reloads the extension and resumes the day in place, and a `resume restarted` argument is handled
+like `resume updated`.
+
 `--dry`: stop after printing the triage table (step 1). A merge-class `me` row says it is merged in
 the UI by the user, with the MR link, because the API merge returns 405. Then print, for each auto
 item, the `wt add` command and the filled-in brief (step 2), and a closing line

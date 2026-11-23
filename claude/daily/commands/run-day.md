@@ -43,6 +43,8 @@ awk '/<!-- start-day:start -->/{f=1;next} /<!-- start-day:end -->/{f=0} f' ~/wik
 
    When the argument is `resume updated`, the plugin started this resume itself: a merge into dotfiles main changed this playbook or a brief template, the plugin folder reloaded, and the mod ran `/daily:run-day resume updated`. In that case, before the Wake check, say in one line what changed (`git -C ~/projects/dotfiles log --oneline -3 -- claude/daily`); after the resume, run Keep busy (section 11). From now on follow this text, not the copy you read earlier in this session, wherever the two differ. Agents already running keep their briefs.
 
+   When the argument is `resume restarted`, the user asked for a restart with `day-restart` (or `/daily:restart-day`): the session was respawned, which reloads settings, CLAUDE.md, skills and MCP servers too, or, with `--in-place`, only resumed. Handle it like `resume updated`: before the Wake check say in one line that the day restarted and what changed in the setup today (`git -C ~/projects/dotfiles log --oneline --since=midnight -- claude bin | head -5`, or "nothing new"); background agents of a respawned session are gone, and the Wake check re-dispatches them into their worktrees; then Keep busy (section 11), following this text from now on.
+
 ## 1. Triage (the one planned pause)
 
 Classify every open item (`[ ]`, `[/]`, `[!]`; skip `[X]` and `[>]`):
