@@ -16,6 +16,10 @@ http://learn.localhost {
 	reverse_proxy 127.0.0.1:8767
 }
 
+http://artifacts.localhost {
+	reverse_proxy 127.0.0.1:8768
+}
+
 http://chat.localhost {
 	reverse_proxy 127.0.0.1:8080
 }

@@ -101,7 +101,7 @@ assert_eq "none" "$(ls "$SANDBOX/etc" "$SANDBOX/libexec" "$SANDBOX/local.localsi
 
 echo "Caddyfile routing (real caddy, spare ports)"
 free_port() { python3 -I -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
-P80="$(free_port)"; PA="$(free_port)"; PC="$(free_port)"; PL8="$(free_port)"
+P80="$(free_port)"; PA="$(free_port)"; PC="$(free_port)"; PL8="$(free_port)"; PAR="$(free_port)"
 stub() { python3 -I -c '
 import http.server, sys
 name = sys.argv[2]
@@ -111,8 +111,8 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_response(200); self.end_headers(); self.wfile.write(body)
     def log_message(self, *a): pass
 http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()' "$1" "$2" & PIDS+=($!); }
-stub "$PA" articles; stub "$PC" chat; stub "$PL8" learn
-sed -e "s/http_port 80/http_port $P80/" -e "s/127.0.0.1:8765/127.0.0.1:$PA/" -e "s/127.0.0.1:8080/127.0.0.1:$PC/" -e "s/127.0.0.1:8767/127.0.0.1:$PL8/" \
+stub "$PA" articles; stub "$PC" chat; stub "$PL8" learn; stub "$PAR" artifacts
+sed -e "s/http_port 80/http_port $P80/" -e "s/127.0.0.1:8765/127.0.0.1:$PA/" -e "s/127.0.0.1:8080/127.0.0.1:$PC/" -e "s/127.0.0.1:8767/127.0.0.1:$PL8/" -e "s/127.0.0.1:8768/127.0.0.1:$PAR/" \
     "$CADDYFILE" >"$SANDBOX/test.Caddyfile"
 HOME="$SANDBOX" XDG_DATA_HOME="$SANDBOX" XDG_CONFIG_HOME="$SANDBOX" \
     caddy run --adapter caddyfile --config "$SANDBOX/test.Caddyfile" >"$SANDBOX/caddy.log" 2>&1 & PIDS+=($!)
@@ -120,6 +120,7 @@ for _ in $(seq 50); do curl -s -o /dev/null "http://127.0.0.1:$P80/" && break; s
 get() { curl -s --max-time 3 -H "Host: $1:$P80" "http://127.0.0.1:$P80/"; }
 assert_eq "articles host=articles.localhost:$P80" "$(get articles.localhost)" "articles.localhost reaches articles with its Host kept"
 assert_eq "learn host=learn.localhost:$P80" "$(get learn.localhost)" "learn.localhost reaches learn"
+assert_eq "artifacts host=artifacts.localhost:$P80" "$(get artifacts.localhost)" "artifacts.localhost reaches the artifacts site"
 assert_eq "chat host=chat.localhost:$P80" "$(get chat.localhost)" "chat.localhost reaches Open WebUI"
 assert_eq "No local site with that name." "$(get evil.example)" "any other host gets the 404 page"
 assert_eq "404" "$(curl -s -o /dev/null -w '%{http_code}' -H "Host: x.localhost:$P80" "http://127.0.0.1:$P80/")" "with status 404"

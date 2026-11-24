@@ -727,7 +727,7 @@ fi
 [ -f "$DOTFILES_DIR/bin/articles-picks-daily" ] && \
     create_symlink "$DOTFILES_DIR/bin/articles-picks-daily" "$HOME/.local/bin/articles-picks-daily"
 
-# localsites: http://articles.localhost, http://learn.localhost and http://chat.localhost through a loopback-only Caddy
+# localsites: http://articles.localhost, http://learn.localhost, http://artifacts.localhost and http://chat.localhost through a loopback-only Caddy
 # LaunchDaemon. Binding port 80 needs root, so install.sh only links the command and says how to
 # load the daemon: `sudo localsites install`.
 if [ -f "$DOTFILES_DIR/bin/localsites" ]; then
@@ -854,6 +854,37 @@ fi
 # learn (learn.localhost) lives in its own repo too (~/projects/learn); link its wrapper when cloned.
 if [ -x "$HOME/projects/learn/bin/learn" ]; then
     create_symlink "$HOME/projects/learn/bin/learn" "$HOME/.local/bin/learn"
+fi
+
+# artifacts-site (artifacts.localhost) lives in its own repo (~/projects/artifacts-site): link its
+# wrapper when cloned, and once `artifacts-site install` has built the venv, load the always-on
+# LaunchAgent (launchd/artifacts-site.plist). ARTIFACTS_SITE_AGENT=0 skips the agent.
+setup_artifacts_site() {
+    local label="local.artifacts-site" agent
+    agent="$HOME/Library/LaunchAgents/$label.plist"
+    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+    sed -e "s#__LABEL__#$label#g" -e "s#__HOME__#$HOME#g" \
+        "$DOTFILES_DIR/launchd/artifacts-site.plist" > "$agent.new"
+    if ! cmp -s "$agent.new" "$agent"; then
+        mv "$agent.new" "$agent"
+        launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+        launchctl bootstrap "gui/$(id -u)" "$agent" \
+            && log_info "Loaded the artifacts site agent (http://artifacts.localhost)" \
+            || log_warn "Could not load $agent"
+    else
+        rm -f "$agent.new"
+    fi
+}
+
+if [ -x "$HOME/projects/artifacts-site/bin/artifacts-site" ]; then
+    create_symlink "$HOME/projects/artifacts-site/bin/artifacts-site" "$HOME/.local/bin/artifacts-site"
+    if [ "${ARTIFACTS_SITE_AGENT:-1}" != "0" ]; then
+        if [ -x "$HOME/projects/artifacts-site/.venv/bin/python" ]; then
+            setup_artifacts_site || log_warn "could not set up the artifacts site agent"
+        else
+            log_info "artifacts-site is not installed; run: artifacts-site install, then install.sh again"
+        fi
+    fi
 fi
 
 # tmux-prune closes idle tmux windows; bound to prefix+X in tmux/.tmux.conf.

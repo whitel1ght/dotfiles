@@ -11,6 +11,8 @@ later `/daily:system` in another session moves the mark there.
 
 When this session has been idle for about 15 minutes (no message from the user, no agents
 running), the plugin sends `[ideas] idle review: run /daily:ideas`, once per idle stretch, and
-only when `ideas due` has something. Run `/daily:ideas` then.
+only when `ideas due` has something. Run `/daily:ideas` then. With no ideas due but pages queued
+on the artifacts site, it sends `[artifacts] unpublish queue: run /daily:unpublish` instead; run
+`/daily:unpublish` then.
 
 Reply with one line: "This is the system session; I'll review ideas from IDEA.md when idle."

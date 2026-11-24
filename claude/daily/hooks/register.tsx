@@ -15,6 +15,7 @@ import type { AgentRow } from '../mod/wake.ts'
 import type { InboxState, RunItem, ViewState } from '../mod/types.ts'
 import { joinRows, newlyNeedsYou, panelGroups, statusLine } from '../mod/view.ts'
 import { NUDGE_TEXT, claimsSystem, claimsSystemPrompt, shouldNudge, systemMarkerPath } from '../mod/ideas.ts'
+import { ARTIFACTS_QUEUE, pickNudge } from '../mod/unpublish.ts'
 import { BUSY_PROMPT, nextAgentAt, nextNudged, shouldNudgeBusy } from '../mod/busy.ts'
 import { nextPlanLines, planPrompt, untracked } from '../mod/planlines.ts'
 import { formatSlot, parseClock, parseSlot, slackDue, slackPath, slackPrompt } from '../mod/slack.ts'
@@ -200,11 +201,18 @@ async function nudgeIdeas($: EngineInterface) {
     if (!shouldNudge({ isSystem, now, lastUserAt: idle.lastUserAt, lastTurnEndAt: idle.lastTurnEndAt, agentsRunning: running, waiting: idle.waiting })) return
     const userAt = idle.lastUserAt
     const ran = await $.process.run(['/bin/sh', '-c', IDEAS_DUE], { timeoutMs: 30_000 })
-    if (ran.exitCode !== 0 || !/^\s*\[\s*\{/.test(ran.stdout)) return
-    // the user may have written while `ideas due` ran
+    const ideas = ran.exitCode === 0 ? ran.stdout : ''
+    let pages: string | null = null
+    if (pickNudge(ideas, null, NUDGE_TEXT) === null) {
+      const q = await $.process.run(['/bin/sh', '-c', ARTIFACTS_QUEUE], { timeoutMs: 30_000 })
+      pages = q.exitCode === 0 ? q.stdout : null
+    }
+    const text = pickNudge(ideas, pages, NUDGE_TEXT)
+    if (text === null) return
+    // the user may have written while `ideas due` or `artifacts-site queue` ran
     if (idle.waiting || idle.lastUserAt !== userAt) return
     idle.waiting = true
-    void $.prompt.submit({ text: NUDGE_TEXT }).catch(() => $.ui.toast('daily ideas: prompt submit failed'))
+    void $.prompt.submit({ text }).catch(() => $.ui.toast('daily ideas: prompt submit failed'))
   } catch (err) {
     $.ui.log(`daily ideas: idle check failed: ${err instanceof Error ? err.message : String(err)}`)
   } finally {
