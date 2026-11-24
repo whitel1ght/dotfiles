@@ -142,6 +142,16 @@ issue ECFX-31 "In MR" me
 GLAB_FAIL=1 move ECFX-31 --from-mrs >/dev/null; assert_eq 1 "$?" "a GitLab failure fails the move, not 'no MRs'"
 assert_eq "In MR" "$(status_of ECFX-31)" "and nothing moves"
 
+echo "ticket-move — a long MR list"
+# The merged list as jq args would exceed ARG_MAX (macOS 1 MB); it must go through stdin.
+cp "$FIX/open.json" "$FIX/open.small"
+pad="$(head -c 4000 /dev/zero | tr '\0' x)"
+big="$(for i in $(seq 1 400); do printf '{"id":%s,"iid":%s,"state":"opened","draft":false,"source_branch":"other_%s","title":"t","description":"%s","references":{"full":"ecfx/ecfx-backend!%s"}},' "$((1000 + i))" "$((1000 + i))" "$i" "$pad" "$((1000 + i))"; done)"
+echo "[${big}$(mr ECFX-30 opened false 2)]" > "$FIX/open.json"
+issue ECFX-30 "In Progress" me
+assert_contains "$(move ECFX-30 --from-mrs)" "moved  ECFX-30 In Progress → In MR (ecfx-backend!2)" "a list over ARG_MAX is still judged"
+mv "$FIX/open.small" "$FIX/open.json"
+
 echo "ticket-move — usage"
 move ECFX-123-2 "In Progress" >/dev/null; assert_eq 2 "$?" "a worktree name that is not exactly a key is refused"
 move ECFX-1 "In QA" >/dev/null; assert_eq 2 "$?" "In QA is never a target (QA moves it)"

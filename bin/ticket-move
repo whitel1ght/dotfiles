@@ -88,8 +88,9 @@ mrs_target() {
   open=$(glab api --paginate "merge_requests?scope=created_by_me&state=opened&per_page=100") || return 1
   merged=$(glab api --paginate "merge_requests?scope=created_by_me&state=merged&updated_after=$since&per_page=100") || return 1
   open=$(jq -s 'add // []' <<<"$open") && merged=$(jq -s 'add // []' <<<"$merged") || return 1
-  jq -rn --argjson mrs "$(jq -s 'add | unique_by(.id)' <<<"$open$merged")" --arg k "$key" --arg p "$project" '
-    [$mrs[] | select(first((.source_branch, .title) | scan("\($p)-[0-9]+")) // "" | . == $k)] as $m
+  # Through stdin: the merged list can exceed ARG_MAX as a jq argument.
+  jq -s 'add | unique_by(.id)' <<<"$open$merged" | jq -r --arg k "$key" --arg p "$project" '
+    [.[] | select(first((.source_branch, .title) | scan("\($p)-[0-9]+")) // "" | . == $k)] as $m
     | select($m | length > 0)
     | (if any($m[]; .state == "opened" and (.draft | not)) then "In MR"
        elif any($m[]; .state == "opened") then "In Progress"
