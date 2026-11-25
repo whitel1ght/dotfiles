@@ -12,7 +12,7 @@
 #   exit 0  valid session (ExecCredential expires in the future)
 #   exit 2  duploctl failed for another reason (network, bad output), no kubectl, no exec
 #           credential: message on stderr, no card
-#   exit 3  expired or hung: prints the login line, files one decision card (not one per call)
+#   exit 3  expired, hung, or the Duplo API answered 401/403: prints the login line, files one decision card (not one per call)
 # Overrides: PROD_KUBE_PREFLIGHT_LIMIT (seconds, default 15), DECIDE_BIN (default decide),
 # PROD_KUBE_PREFLIGHT_CACHE (duploctl cache dir, default --cachedir arg or ~/.duplo/cache).
 set -uo pipefail
@@ -104,6 +104,8 @@ rc=$?
 
 if [ "$rc" -eq 124 ]; then
   expired="no answer within ${LIMIT}s, the interactive login is waiting"
+elif [ "$rc" -ne 0 ] && code="$(cat "$OUT" "$ERR" | grep -ioE -m1 '\b(401|403|unauthorized|forbidden)\b')"; then
+  expired="the Duplo API rejected the credential ($code)"
 elif [ "$rc" -ne 0 ]; then
   echo "prod-kube-preflight: duploctl exited $rc: $(head -c 400 "$ERR")" >&2
   exit 2

@@ -30,6 +30,8 @@ cat >"$SANDBOX/duploctl" <<EOF2
 echo "\$\$" >"$SANDBOX/duplo.pid"
 echo x >>"$SANDBOX/duplo.calls"
 case "\$STUB_DUPLO" in
+  reject) echo "Error: 401 Unauthorized" >&2; exit 1 ;;
+  forbid) echo "request failed: forbidden (HTTP 403)" >&2; exit 1 ;;
   hang) sleep 300 & echo \$! >"$SANDBOX/sleep.pid"; wait ;;
   fail) echo "connection refused" >&2; exit 1 ;;
   *) printf '{"status":{"token":"%s","expirationTimestamp":"%s"}}\n' "\${STUB_TOKEN:-t}" "\$STUB_EXP" ;;
@@ -199,6 +201,16 @@ run fail "" 2
 assert_eq "2" "$RC" "exits 2"
 assert_has "connection refused" "$OUT" "shows the error"
 assert_eq "0" "$CALLS" "files no card"
+
+echo "API rejects the credential"
+setcache 3600 3600
+for m in reject forbid; do
+  run "$m" "" 2
+  assert_eq "3" "$RC" "exits 3 ($m)"
+  assert_has "Run in a terminal" "$OUT" "prints the login line ($m)"
+  assert_has "rejected the credential" "$OUT" "names the rejection ($m)"
+  assert_eq "1" "$CALLS" "files one card ($m)"
+done
 
 echo "kubectl missing"
 OUT="$(PATH="/usr/bin:/bin" HOME="$SANDBOX/nohome" bash "$SCRIPT" 2>&1 </dev/null)"; RC=$?
