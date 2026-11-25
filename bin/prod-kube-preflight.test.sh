@@ -32,12 +32,13 @@ echo x >>"$SANDBOX/duplo.calls"
 case "\$STUB_DUPLO" in
   hang) sleep 300 & echo \$! >"$SANDBOX/sleep.pid"; wait ;;
   fail) echo "connection refused" >&2; exit 1 ;;
-  *) printf '{"status":{"token":"t","expirationTimestamp":"%s"}}\n' "\$STUB_EXP" ;;
+  *) printf '{"status":{"token":"%s","expirationTimestamp":"%s"}}\n' "\${STUB_TOKEN:-t}" "\$STUB_EXP" ;;
 esac
 EOF2
 cat >"$SANDBOX/decide" <<EOF2
 #!/bin/sh
 echo "\$*" >>"$SANDBOX/decide.calls"
+[ "\$1" = add ] && cat >>"$SANDBOX/decide.calls"
 if [ "\$1" = list ]; then
   cat "$SANDBOX/open.json"
   if [ -f "$SANDBOX/big" ]; then head -c 300000 /dev/zero | tr '\\0' 'x'; fi
@@ -52,6 +53,19 @@ setcache() {
   [ -n "${2:-}" ] && printf '{"status":{"token":"x","expirationTimestamp":"%s"}}\n' "$(iso "$2")" >"$CACHE/duplo.example,plan,prod01,k8s-creds.json"
   return 0
 }
+# unsigned JWT with exp = now + $1 seconds, base64url payload without padding
+jwt() {
+  local p; p="$(printf '{"exp":%s,"sub":"u"}' "$(( $(date -u +%s) + $1 ))" | base64 | tr -d '=\n' | tr '+/' '-_')"
+  echo "eyJhbGciOiJub25lIn0.$p.sig"
+}
+# portal expiry offset (empty: no file), k8s JWT offset, k8s stamp offset: stamp mislabelled like duploctl's
+setjwtcache() {
+  rm -f "$CACHE"/*
+  [ -n "${1:-}" ] && printf '{"Version":"v1","DuploToken":"x","Expiration":"%s"}\n' "$(iso "$1")" >"$CACHE/duplo.example,duplo-creds.json"
+  printf '{"status":{"token":"%s","expirationTimestamp":"%s"}}\n' "$(jwt "$2")" "$(iso "$3")" >"$CACHE/duplo.example,plan,prod01,k8s-creds.json"
+  return 0
+}
+K8S_FILE="$CACHE/duplo.example,plan,prod01,k8s-creds.json"
 chmod +x "$SANDBOX/kubectl" "$SANDBOX/duploctl" "$SANDBOX/decide"
 
 # mode, expiry, limit → runs the script; sets RC, OUT, CALLS (decide add calls), SECS
@@ -59,7 +73,7 @@ run() {
   : >"$SANDBOX/decide.calls"; rm -f "$SANDBOX/duplo.pid" "$SANDBOX/duplo.calls" "$SANDBOX/sleep.pid"
   [ -f "$SANDBOX/open.json" ] || echo '[]' >"$SANDBOX/open.json"
   local start=$SECONDS
-  OUT="$(STUB_DUPLO="$1" STUB_EXP="$2" PROD_KUBE_PREFLIGHT_LIMIT="$3" DECIDE_BIN="$SANDBOX/decide" PROD_KUBE_PREFLIGHT_CACHE="$CACHE" \
+  OUT="$(STUB_DUPLO="$1" STUB_EXP="$2" STUB_TOKEN="${STUB_TOKEN:-t}" PROD_KUBE_PREFLIGHT_LIMIT="$3" DECIDE_BIN="$SANDBOX/decide" PROD_KUBE_PREFLIGHT_CACHE="$CACHE" \
     PATH="$SANDBOX:$PATH" bash "$SCRIPT" 2>&1 </dev/null)"
   RC=$?
   SECS=$((SECONDS - start))
@@ -120,6 +134,42 @@ run ok "2020-01-01T00:00:00Z" 2
 assert_eq "3" "$RC" "exits 3"
 assert_has "Run in a terminal" "$OUT" "prints the login line"
 assert_eq "1" "$CALLS" "files one card"
+
+echo "stale k8s JWT under a stamp that looks valid (local time labelled UTC), portal expired"
+setjwtcache -60 -1020 10800
+run ok "2099-01-01T00:00:00Z" 2
+assert_eq "3" "$RC" "exits 3"
+[ ! -f "$SANDBOX/duplo.calls" ] && pass "duploctl never started" || fail "duploctl never started" "it ran"
+assert_has "$K8S_FILE" "$OUT" "names the k8s cache file to remove"
+assert_has "keeps serving" "$OUT" "says duploctl serves the stale cache"
+assert_eq "1" "$CALLS" "files one card"
+assert_has "remove $K8S_FILE" "$(cat "$SANDBOX/decide.calls")" "the card names the file too"
+[ -f "$K8S_FILE" ] && pass "the cache file is left in place" || fail "the cache file is left in place" "it is gone"
+
+echo "stale k8s JWT, portal valid, duploctl serves the stale token with a future stamp"
+setjwtcache 3600 -1020 10800
+STUB_TOKEN="$(jwt -1020)" run ok "$(date -u -r "$(( $(date -u +%s) + 10800 ))" +%Y-%m-%dT%H:%M:%SZ)" 2
+assert_eq "3" "$RC" "exits 3"
+assert_has "$K8S_FILE" "$OUT" "names the k8s cache file to remove"
+assert_eq "1" "$CALLS" "files one card"
+
+echo "k8s JWT in the future"
+setjwtcache -60 3600 3600
+STUB_TOKEN="$(jwt 3600)" run ok "2099-01-01T00:00:00Z" 2
+assert_eq "0" "$RC" "exits 0"
+assert_eq "0" "$CALLS" "files no card"
+
+echo "k8s JWT in the future, stamp wrongly in the past"
+setjwtcache -60 3600 -3600
+STUB_TOKEN="$(jwt 3600)" run ok "2020-01-01T00:00:00Z" 2
+assert_eq "0" "$RC" "exits 0 (the JWT wins over the stamp)"
+
+echo "non-JWT token keeps using the stamp"
+setcache -60 -60
+run ok "2099-01-01T00:00:00Z" 2
+assert_eq "3" "$RC" "expired stamp: exits 3"
+assert_has "Run in a terminal" "$OUT" "prints the login line"
+case "$OUT" in *"keeps serving"*) fail "no stale note" "note printed" ;; *) pass "no stale note" ;; esac
 
 echo "other failure"
 setcache 3600 3600

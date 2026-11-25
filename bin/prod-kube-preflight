@@ -5,7 +5,10 @@
 # say). duploctl has no non-interactive probe, so this reads its cache first (portal token and the
 # tenant's k8s credential, each with an expiry) and starts duploctl only when one is still valid;
 # that run is bounded to 15 s with stdin closed. An expired cache never starts duploctl, so no
-# browser tab is opened and killed.
+# browser tab is opened and killed. The k8s credential's expiry is the JWT `exp` of its token, not
+# duploctl's stamp (it writes local time labelled UTC); the stamp is used only for a non-JWT token.
+# An expired JWT under a stamp that looks valid is reported with the cache file to remove, since
+# duploctl keeps serving it; the script never deletes anything.
 #   exit 0  valid session (ExecCredential expires in the future)
 #   exit 2  duploctl failed for another reason (network, bad output), no kubectl, no exec
 #           credential: message on stderr, no card
@@ -50,10 +53,27 @@ expiry() {
   [ -f "$1" ] || { echo 0; return; }
   jq -r "$2 // empty | sub(\"\\\\.[0-9]+\"; \"\") | sub(\"\\\\+00:00\$\"; \"Z\") | fromdateiso8601" "$1" 2>/dev/null || echo 0
 }
+# `exp` (epoch seconds) of the JWT in the .status.token of an ExecCredential file; empty when the
+# token is not a decodable JWT with a numeric exp
+jwt_exp() {
+  jq -r '(.status.token // "") | split(".") | if length == 3 then .[1] else empty end
+    | gsub("-"; "+") | gsub("_"; "/")
+    | if length % 4 == 2 then . + "==" elif length % 4 == 3 then . + "=" else . end
+    | try (@base64d | fromjson | .exp | select(type == "number") | floor) catch empty' "$1" 2>/dev/null
+}
 now_s="$(date -u +%s)"
+k8s_file="$cache/$host,plan,$tenant,k8s-creds.json"
 portal="$(expiry "$cache/$host,duplo-creds.json" .Expiration)"
-k8s="$(expiry "$cache/$host,plan,$tenant,k8s-creds.json" .status.expirationTimestamp)"
+k8s_stamp="$(expiry "$k8s_file" .status.expirationTimestamp)"
+k8s_jwt=""
+[ -f "$k8s_file" ] && k8s_jwt="$(jwt_exp "$k8s_file")"
+k8s="${k8s_jwt:-$k8s_stamp}"
 : "${portal:=0}" "${k8s:=0}"
+stale=""
+stale_note() {
+  stale=" duploctl keeps serving this stale cache while its stamp looks valid (it writes local time labelled UTC); remove $k8s_file before signing in."
+}
+[ -n "$k8s_jwt" ] && [ "$k8s_jwt" -le "$now_s" ] && [ "$k8s_stamp" -gt "$now_s" ] && stale_note
 
 expired=""
 if [ "$portal" -le "$now_s" ] && [ "$k8s" -le "$now_s" ]; then
@@ -89,7 +109,13 @@ elif ! jq -e '.status.token' "$OUT" >/dev/null 2>&1; then
   exit 2
 else
   exp="$(jq -r '.status.expirationTimestamp // empty' "$OUT")"
-  if [ -n "$exp" ]; then
+  out_jwt="$(jwt_exp "$OUT")"
+  if [ -n "$out_jwt" ]; then
+    if [ "$out_jwt" -le "$now_s" ]; then
+      expired="the session token expired at $(date -u -r "$out_jwt" +%Y-%m-%dT%H:%M:%SZ)"
+      [ -f "$k8s_file" ] && stale_note
+    fi
+  elif [ -n "$exp" ]; then
     now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     # ISO-8601 UTC strings compare in order
     [[ "${exp%%.*}Z" > "$now" ]] || expired="the session expired at $exp"
@@ -99,7 +125,7 @@ fi
 
 [ -z "$expired" ] && exit 0
 
-echo "Duplo sign-in expired for $CTX ($expired). Run in a terminal: $login"
+echo "Duplo sign-in expired for $CTX ($expired). Run in a terminal: $login$stale"
 
 open="$("$DECIDE" list --json 2>/dev/null)"
 if ! grep -qF -- "$TITLE" <<<"$open"; then
@@ -107,7 +133,7 @@ if ! grep -qF -- "$TITLE" <<<"$open"; then
     --question "$TITLE: sign in again?" \
     --option "You run \`$login\` in a terminal and sign in; the agent then retries the kubectl step" \
     --option "The agent drops the kubectl step and reports it blocked" <<EOT >/dev/null
-$TITLE. $expired. kubectl calls on $CTX hang on the interactive login until it is renewed.
+$TITLE. $expired. kubectl calls on $CTX hang on the interactive login until it is renewed.${stale}
 EOT
 fi
 exit 3
