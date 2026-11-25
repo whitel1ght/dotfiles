@@ -159,10 +159,24 @@ STUB_TOKEN="$(jwt 3600)" run ok "2099-01-01T00:00:00Z" 2
 assert_eq "0" "$RC" "exits 0"
 assert_eq "0" "$CALLS" "files no card"
 
-echo "k8s JWT in the future, stamp wrongly in the past"
+echo "k8s JWT in the future, stamp wrongly in the past, portal expired"
 setjwtcache -60 3600 -3600
 STUB_TOKEN="$(jwt 3600)" run ok "2020-01-01T00:00:00Z" 2
-assert_eq "0" "$RC" "exits 0 (the JWT wins over the stamp)"
+assert_eq "3" "$RC" "exits 3 (duploctl would not serve the cache and would open the login)"
+[ ! -f "$SANDBOX/duplo.calls" ] && pass "duploctl never started" || fail "duploctl never started" "it ran"
+
+echo "k8s JWT in the future, stamp wrongly in the past, portal valid"
+setjwtcache 3600 3600 -3600
+STUB_TOKEN="$(jwt 3600)" run ok "2099-01-01T00:00:00Z" 2
+assert_eq "0" "$RC" "exits 0"
+assert_eq "0" "$CALLS" "files no card"
+
+echo "k8s cache with an expired JWT and no expirationTimestamp"
+rm -f "$CACHE"/*
+printf '{"status":{"token":"%s"}}\n' "$(jwt -60)" >"$K8S_FILE"
+run ok "2099-01-01T00:00:00Z" 2
+assert_eq "3" "$RC" "exits 3"
+case "$OUT" in *"integer expression expected"*|*"integer expected"*) fail "no integer expression error" "$OUT" ;; *) pass "no integer expression error" ;; esac
 
 echo "non-JWT token keeps using the stamp"
 setcache -60 -60

@@ -67,8 +67,13 @@ portal="$(expiry "$cache/$host,duplo-creds.json" .Expiration)"
 k8s_stamp="$(expiry "$k8s_file" .status.expirationTimestamp)"
 k8s_jwt=""
 [ -f "$k8s_file" ] && k8s_jwt="$(jwt_exp "$k8s_file")"
-k8s="${k8s_jwt:-$k8s_stamp}"
-: "${portal:=0}" "${k8s:=0}"
+: "${portal:=0}" "${k8s_stamp:=0}"
+# duploctl serves the cache only while its own stamp is valid too, so gate on the earlier of the two
+k8s="$k8s_stamp"
+if [ -n "$k8s_jwt" ]; then
+  k8s="$k8s_jwt"
+  [ "$k8s_stamp" -gt 0 ] && [ "$k8s_stamp" -lt "$k8s_jwt" ] && k8s="$k8s_stamp"
+fi
 stale=""
 stale_note() {
   stale=" duploctl keeps serving this stale cache while its stamp looks valid (it writes local time labelled UTC); remove $k8s_file before signing in."
