@@ -178,6 +178,14 @@ run ok "2099-01-01T00:00:00Z" 2
 assert_eq "3" "$RC" "exits 3"
 case "$OUT" in *"integer expression expected"*|*"integer expected"*) fail "no integer expression error" "$OUT" ;; *) pass "no integer expression error" ;; esac
 
+echo "k8s cache with a valid JWT and no expirationTimestamp, portal expired"
+rm -f "$CACHE"/*
+printf '{"Version":"v1","DuploToken":"x","Expiration":"%s"}\n' "$(iso -60)" >"$CACHE/duplo.example,duplo-creds.json"
+printf '{"status":{"token":"%s"}}\n' "$(jwt 3600)" >"$K8S_FILE"
+run ok "2099-01-01T00:00:00Z" 2
+assert_eq "3" "$RC" "exits 3 (duploctl treats a missing stamp as expired and would open the login)"
+[ ! -f "$SANDBOX/duplo.calls" ] && pass "duploctl never started" || fail "duploctl never started" "it ran"
+
 echo "non-JWT token keeps using the stamp"
 setcache -60 -60
 run ok "2099-01-01T00:00:00Z" 2
