@@ -58,6 +58,10 @@ cat > "$STUBS/glab" <<'EOF'
 echo "$*" >> "$FIX/glab.log"
 [ -n "${GLAB_DOWN:-}" ] && exit 1
 [ -n "${GLAB_FAIL:-}" ] && case "$*" in *"$GLAB_FAIL"*) exit 1 ;; esac
+# GLAB_FLAKY: the first call matching it fails with EOF, as gitlab.com drops about 1 in 30.
+if [ -n "${GLAB_FLAKY:-}" ] && [ ! -e "$FIX/flaked" ]; then
+    case "$*" in *"$GLAB_FLAKY"*) touch "$FIX/flaked"; echo 'Get "https://gitlab.com/api/v4/user": EOF' >&2; exit 1 ;; esac
+fi
 if [ "$2" = --method ]; then
     body="${6#body=@}"; [ "$body" = - ] && body=/dev/stdin
     printf '%s %s\n' "$4" "$(tr '\n' ' ' < "$body")" >> "$FIX/posts.log"; echo '{}'; exit 0
@@ -80,7 +84,7 @@ git init -q -b main "$PROJ/web" && git -C "$PROJ/web" commit -q --allow-empty -m
 
 run() {
     PATH="$STUBS:$PATH" FIX="$FIX" MR_WATCH_STATE="$STATE" PROJECTS_DIR="$PROJ" \
-    MR_WATCH_IGNORE="renovate" "$SCRIPT" "$@" 2>&1
+    MR_WATCH_IGNORE="renovate" MR_WATCH_RETRY_SLEEP=0 "$SCRIPT" "$@" 2>&1
 }
 
 echo "mr-watch — check"
@@ -196,7 +200,7 @@ assert_eq "--source mr-watch service_down GitLab unavailable" "$(cat "$FIX/frict
 GLAB_DOWN=1 run check >/dev/null; rc=$?
 assert_eq 2 "$rc" "a second down poll still exits 2"
 assert_eq 1 "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "two consecutive down polls record one friction line"
-assert_eq 1 "$(wc -l < "$FIX/glab.log" | tr -d ' ')" "inside the 15-minute window the second poll makes no glab call"
+assert_eq 2 "$(wc -l < "$FIX/glab.log" | tr -d ' ')" "the first down poll tries once more; inside the 15-minute window the second makes no glab call"
 out=$(run check); rc=$?
 assert_eq "2|" "$rc|$out" "a poll inside the window exits 2 even when GitLab is back, silently"
 printf '%s\n' "$(($(date +%s) - 901))" > "$FRICTION_DIR/gitlab-down"
@@ -222,6 +226,20 @@ rm -f "$FIX/sleeps"
 assert_eq 3 "$(cat "$FIX/sleeps")" "wait slept three times, so polled twice"
 assert_eq 1 "$(wc -l < "$FIX/friction.log" | tr -d ' ')" "wait records one friction line over two down polls"
 [ -e "$FRICTION_DIR/gitlab-down" ]; assert_eq 0 "$?" "wait keeps the outage marker between down polls"
+echo "mr-watch — one dropped call is retried, not an outage"
+OLD_STATE_FLAKY="$STATE"
+for what in "api user" "merge_requests?scope" "merge_requests/10/approvals" "merge_requests/10/discussions"; do
+    STATE="$SANDBOX/state-flaky"
+    rm -rf "$STATE" "$FIX/friction.log" "$FIX/flaked" "$FRICTION_DIR"
+    out=$(GLAB_FLAKY="$what" run check --since 2026-09-20T00:00:00Z); rc=$?
+    [ -e "$FIX/flaked" ]; assert_eq 0 "$?" "the stub dropped one call ($what)"
+    assert_eq 0 "$rc" "exits 0 after one dropped call ($what)"
+    assert_contains "$out" "grp/api!10: 2 new note(s)" "the round is still found ($what)"
+    [ ! -e "$FRICTION_DIR/gitlab-down" ]; assert_eq 0 "$?" "no outage marker ($what)"
+    [ ! -s "$FIX/friction.log" ]; assert_eq 0 "$?" "no friction line ($what)"
+done
+STATE="$OLD_STATE_FLAKY"
+rm -f "$FIX/flaked"
 echo "mr-watch — one MR failing is not an outage"
 OLD_STATE="$STATE"
 for what in approvals discussions; do

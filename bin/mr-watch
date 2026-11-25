@@ -42,6 +42,17 @@ friction_log() { command -v friction >/dev/null 2>&1 && friction "$@" >/dev/null
 down() { "$HERE/glab-gate" down --source mr-watch "GitLab unavailable" || true; return 2; }
 lookup_failed() { friction_log --source mr-watch tool_error "$1 lookup failed for $2"; }
 glab_held() { local rc=0; "$HERE/glab-gate" check || rc=$?; [ "$rc" -eq 1 ]; }
+# glab_retry <glab args>: gitlab.com drops about 1 call in 30 (F-021, F-117), so a failed call is
+# tried once more after MR_WATCH_RETRY_SLEEP seconds (default 1) before it counts as an outage or
+# a failed lookup. Only the successful attempt's output is printed, so a --paginate page cut off
+# mid-body is never joined to the retry.
+glab_retry() {
+  local out s="${MR_WATCH_RETRY_SLEEP:-1}"
+  if out=$(glab "$@"); then printf '%s\n' "$out"; return 0; fi
+  [ "$s" = 0 ] || sleep "$s"
+  out=$(glab "$@") || return 1
+  printf '%s\n' "$out"
+}
 iso() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 ignore_re() {
   local re="$BOT_RE" u
@@ -88,8 +99,8 @@ check() {
   [ "${1:-}" = --since ] && [ -n "${2:-}" ] && default_floor="$2"
   local me mrs
   glab_held && return 2
-  me=$(glab api user | jq -r .username) || { down; return 2; }
-  mrs=$(glab api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { down; return 2; }
+  me=$(glab_retry api user | jq -r .username) || { down; return 2; }
+  mrs=$(glab_retry api "merge_requests?scope=created_by_me&state=opened&per_page=100") || { down; return 2; }
   "$HERE/glab-gate" up || true
   mkdir -p "$STATE_DIR/seen" "$STATE_DIR/rounds"
   local found=0 re stamp
@@ -100,9 +111,9 @@ check() {
     floor=$(cat "$STATE_DIR/seen/$key" 2>/dev/null || echo "$default_floor")
     [[ "$updated" > "$floor" ]] || continue
     local approvals disc picked
-    approvals=$(glab api "projects/$pid/merge_requests/$iid/approvals") || { lookup_failed approvals "$ref"; continue; }
+    approvals=$(glab_retry api "projects/$pid/merge_requests/$iid/approvals") || { lookup_failed approvals "$ref"; continue; }
     jq -e '.approved and (.approved_by | length > 0)' <<<"$approvals" >/dev/null && continue
-    disc=$(glab api --paginate "projects/$pid/merge_requests/$iid/discussions?per_page=100" | jq -s 'add') || { lookup_failed discussions "$ref"; continue; }
+    disc=$(glab_retry api --paginate "projects/$pid/merge_requests/$iid/discussions?per_page=100" | jq -s 'add') || { lookup_failed discussions "$ref"; continue; }
     picked=$(jq --arg me "$me" --arg re "$re" --arg floor "$floor" '
       def human: (.system | not) and .author.username != $me and (.author.username | test($re) | not);
       ([.[].notes[] | select(.system | not) | select(.author.username == $me) | .created_at] | max // "") as $mine
