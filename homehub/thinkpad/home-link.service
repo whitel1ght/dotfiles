@@ -1,0 +1,14 @@
+[Unit]
+Description=Reverse SSH tunnel to VPS (SSH-only home link)
+Requires=sing-box.service
+After=sing-box.service
+
+[Service]
+User=dmitry
+ExecStart=/usr/bin/ssh -N -R 127.0.0.1:12222:127.0.0.1:22 -i /home/dmitry/.ssh/id_homelink -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/home/dmitry/.ssh/known_hosts_homelink -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -p 10001 whitelight@38.180.151.160
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target
