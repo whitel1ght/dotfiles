@@ -104,8 +104,16 @@ rc=$?
 
 if [ "$rc" -eq 124 ]; then
   expired="no answer within ${LIMIT}s, the interactive login is waiting"
-elif [ "$rc" -ne 0 ] && code="$(cat "$OUT" "$ERR" | grep -ioE -m1 '\b(401|403|unauthorized|forbidden)\b')"; then
-  expired="the Duplo API rejected the credential ($code)"
+elif [ "$rc" -ne 0 ] && {
+  # duploctl exit(401)/exit(403) reaches the shell as 145/147, the response body on stdout
+  case "$rc" in
+    145) code="HTTP 401" ;;
+    147) code="HTTP 403" ;;
+    *) code="$(cat "$OUT" "$ERR" | grep -ioE '\b(401|403|unauthorized|forbidden)\b' | head -n1)" ;;
+  esac
+  [ -n "$code" ]
+}; then
+  expired="the Duplo API rejected the credential ($code); duploctl keeps reusing the rejected token until $cache/$host,duplo-creds.json is removed"
 elif [ "$rc" -ne 0 ]; then
   echo "prod-kube-preflight: duploctl exited $rc: $(head -c 400 "$ERR")" >&2
   exit 2
