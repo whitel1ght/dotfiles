@@ -60,6 +60,11 @@ the user edits the diary too. `day-plan` opens today's diary in a tmux popup whe
   `ecfx/claude-components`.
 - The GitLab API returns 405 on merge: the user merges in the UI; for a merge item, give the MR
   link.
+- A feature never merges in parts: offer a merge (a merge decision, a merge child, the item
+  turning `me`) only when every open MR of the user's on that ticket, and every MR they depend
+  on, is mergeable (approved, green, no conflict, not a draft). Until then the item names what
+  the rest waits on. The one exception is an MR whose description has a `Merge ahead: <why>`
+  line (a preparation step, a check on dev01): it is offered alone, with the reason.
 - When the user says they want to work a tracked item themselves ("I'll take it", "hand off 18384"),
   run the `/handoff` template yourself (read `~/.pi/agent/prompts/handoff.md` and follow it with the
   item's key) instead of asking them to type it.
@@ -689,7 +694,8 @@ While fewer than 3 agents run (ticket, review and round agents all count), fill 
    with the text drafted when it is a message to a teammate.
 3. Open `wait` and `me` items whose state moved: a `wait` item whose blocker cleared is dispatched (a `review` item only after `review-gate <project path> <iid>` exits 0; 1: class `me`, `already approved`; 3: leave it);
    for a merge item with a green pipeline and approvals and no decision open, file the merge
-   decision with the MR link.
+   decision with the MR link, but only once every other open MR of its ticket is mergeable
+   too, or the MR has a `Merge ahead:` line (a feature never merges in parts).
 4. The sprint: the user's tickets first, then the team's unassigned To-Do tickets, highest rank
    first. Each line is `KEY<TAB>status<TAB>summary`:
 

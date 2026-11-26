@@ -144,6 +144,9 @@ Global instructions applied across all projects. Keep this short — project-lev
   release is not unfinished: the MR ships, with `Depends on: backend!6888, merge after it` in
   its description. A finished MR ships without asking, through `/ship-mr`, which reviews and
   fixes it first.
+- A feature's MRs merge together, never in parts: the plan offers no merge until every MR of the
+  ticket is ready. An MR that must merge before the rest (a preparation step, a check on dev01)
+  says so with a `Merge ahead: <why>` line in its description; nothing else lets it go alone.
 - When an API merge fails, report it and leave the merge to me; no retries with other flags.
 - Never move a Jira ticket backwards (e.g. Done → In QA) without asking.
 

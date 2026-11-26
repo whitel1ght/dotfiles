@@ -141,8 +141,8 @@ collect_my_mrs() {
 
 # Tags each MR with its upstream repo and ticket key, computes open-dependency
 # edges (stacked branch, declared /blocks — including someone else's open MR,
-# same-ticket contract order across repos) and groups them into upstream-first
-# merge chains. Input: the enriched MR array built in collect_ready_to_merge.
+# same-ticket contract order across repos). Input: the enriched MR array built in
+# collect_ready_to_merge.
 # $order: lowercase repo names, earlier = more upstream.
 READY_JQ=$(cat <<'JQ'
 def repo_of(r): (r | capture("^(?<p>.+)!(?<n>[0-9]+)$").p) | split("/") | last;
@@ -158,23 +158,6 @@ def ticket_of(x):
 # A declared blocker still counts unless GitLab already merged or closed it —
 # includes someone else's MR, which we can't rank/status like our own.
 def open_blocker(b): (b.state // "") as $s | $s != "merged" and $s != "closed";
-
-# Kahn's algorithm, restricted to one weakly-connected component; ties broken
-# by upstream rank then id, so the order is deterministic.
-def topo($compids; $byid):
-  reduce range(0; ($compids|length)) as $i (
-    {emitted: [], remaining: ($compids | map({(.): ($byid[.].deps | map(select(. as $d | $compids | index($d) != null)))}) | add)};
-    . as $state
-    | ($compids - $state.emitted) as $left
-    | ($left | map(select(($state.remaining[.] // []) | length == 0))) as $ready
-    | ($ready | sort_by([$byid[.].rank, .]) | .[0]) as $pick
-    | if $pick == null then $state
-      else
-        $state
-        | .emitted += [$pick]
-        | .remaining = ($state.remaining | with_entries(.value |= map(select(. != $pick))))
-      end
-  ) | .emitted;
 
 . as $raw
 | ($raw | map(. as $r | $r + {id: "\($r.project_id):\($r.iid)", repo: (repo_of($r.ref) | ascii_downcase), mine: true})) as $tagged
@@ -204,10 +187,42 @@ def topo($compids; $byid):
   )) as $full
 | (reduce $full[] as $x ({}; reduce $x.deps[] as $d (.; .[$d] = ((.[$d] // []) + [$x.id])))) as $dependents
 | ($full | map(. + {has_dependents: (($dependents[.id] // []) | length) > 0})) as $full
-| ($full | map({(.id): .id}) | add) as $init_comp
-| ([$full[] | . as $x | $x.deps[] | {a: $x.id, b: .}]) as $edges
-| (reduce range(0; ($full|length)+1) as $i (
-     $init_comp;
+| {nodes: $full}
+JQ
+)
+
+# Groups the nodes into features (one ticket's MRs plus whatever they depend on or
+# what depends on them) and lists a feature for merging only when every MR in it is
+# mergeable: part of a feature never merges alone. The one exception is an MR whose
+# description has a "Merge ahead: <why>" line (a preparation step, a check on dev01),
+# listed on its own once it and its own dependencies are mergeable.
+FEATURE_JQ=$(cat <<'JQ'
+# Kahn's algorithm, restricted to one weakly-connected component; ties broken
+# by upstream rank then id, so the order is deterministic.
+def topo($compids; $byid):
+  reduce range(0; ($compids|length)) as $i (
+    {emitted: [], remaining: ($compids | map({(.): ($byid[.].deps | map(select(. as $d | $compids | index($d) != null)))}) | add)};
+    . as $state
+    | ($compids - $state.emitted) as $left
+    | ($left | map(select(($state.remaining[.] // []) | length == 0))) as $ready
+    | ($ready | sort_by([$byid[.].rank, .]) | .[0]) as $pick
+    | if $pick == null then $state
+      else
+        $state
+        | .emitted += [$pick]
+        | .remaining = ($state.remaining | with_entries(.value |= map(select(. != $pick))))
+      end
+  ) | .emitted;
+
+def ready(x): x.mine and (x.draft | not) and x.status == "mergeable";
+def state(x): if (x.mine | not) then "someone else's MR, \(x.ext_state)" elif x.draft then "draft" else x.status end;
+
+.nodes as $n
+| ($n | map({(.id): .}) | add // {}) as $byid
+| ( [$n[] | . as $x | $x.deps[] | {a: $x.id, b: .}]
+    + ([$n[] | select(.mine and .ticket != null)] | group_by(.ticket) | map(.[0].id as $h | .[1:][] | {a: $h, b: .id})) ) as $edges
+| (reduce range(0; ($n|length)+1) as $i (
+     ($n | map({(.id): .id}) | add // {});
      reduce $edges[] as $e (
        .;
        . as $comp
@@ -219,10 +234,30 @@ def topo($compids; $byid):
            | ($comp | with_entries(if (.value == $ca or .value == $cb) then .value = $new else . end))
          end
      )
-   )) as $comp_of
-| ([$full[] | select((.deps|length) > 0 or .has_dependents) | .id]) as $graphids
-| ($full | map({(.id): .}) | add) as $byid2
-| {nodes: $full, chains: ($graphids | group_by($comp_of[.]) | map(topo(.; $byid2)))}
+   )) as $comp
+| [ $n | map(.id) | group_by($comp[.])[]
+    | topo(.; $byid) as $t | ($t + (. - $t)) | map($byid[.]) as $u
+    | ($u | map(select(.mine) | .ticket) | unique) as $tix
+    | (if ($tix|length) == 1 and $tix[0] != null then $tix[0] + ": " else "" end) as $prefix
+    | if ($u | all(ready(.))) then
+        if ($u|length) == 1 then {kind: "now", line: "- \($u[0].ref) \($u[0].title) — \($u[0].web_url)"}
+        else {kind: "order", line: ("- " + $prefix + ($u | map("\(.ref) [\(.status)]") | join(" → ")))} end
+      elif ($u | any(ready(.)) | not) then empty
+      else
+        (reduce range(0; ($u|length)) as $_ ([];
+           . as $acc | [$u[] | select(ready(.) and .ahead != null and all(.deps[]; . as $d | $acc | index($d) != null)) | .id])) as $aheadids
+        | ($u | map(select(.id as $i | $aheadids | index($i) == null))) as $rest
+        | ($u | map(select(.id as $i | $aheadids | index($i) != null))[]
+           | {kind: "ahead", line: "- \($prefix)\(.ref) \(.title) — \(.web_url) (merge ahead: \(.ahead); the rest waits: \($rest | map(.ref) | join(", ")))"}),
+          {kind: "held", line: ("- " + $prefix
+             + (($rest | map(select(ready(.)) | .ref)) as $r | if ($r|length) > 0 then "ready " + ($r | join(", ")) + "; " else "" end)
+             + "not ready " + ($rest | map(select(ready(.) | not) | "\(.ref) (\(state(.)))") | join(", ")))}
+      end ] as $items
+| [ ["now", "Merge now:"], ["order", "Merge in order:"],
+    ["ahead", "Merge ahead of the rest of its feature (its description says why):"],
+    ["held", "Held until the whole feature is ready:"] ]
+| map(.[0] as $k | .[1] as $h | [$items[] | select(.kind == $k) | .line] | select(length > 0) | ([$h] + .) | join("\n"))
+| join("\n\n")
 JQ
 )
 
@@ -254,8 +289,13 @@ collect_ready_to_merge() {
   # are excluded from output but kept as graph nodes since an open dependant
   # still needs to know it's waiting on a draft.
   enriched="[]"
-  rows=$(jq -r '.[] | [.project_id, .iid, .references.full, .title, .web_url, .source_branch, .target_branch, .draft] | @tsv' <<<"$mrs")
-  while IFS=$'\t' read -r pid iid ref title web_url src tgt draft; do
+  # ahead: the reason from a "Merge ahead: <why>" line in the description, the one way an
+  # MR merges before the rest of its feature (a preparation step, a check on dev01).
+  rows=$(jq -r '.[] | [.project_id, .iid, .references.full, .title, .web_url, .source_branch, .target_branch, .draft,
+      ((.description // "") | split("\n") | map(select(test("^[\\s>*_-]*merge ahead[*_]*\\s*:"; "i"))) | first // null
+        | if . == null then "" else (sub("^[^:]*:[*_\\s]*"; "") | gsub("[\t*]"; " ") | gsub("^\\s+|\\s+$"; "") | if . == "" then "yes" else . end) end)
+    ] | @tsv' <<<"$mrs")
+  while IFS=$'\t' read -r pid iid ref title web_url src tgt draft ahead; do
     [ -n "$pid" ] || continue
     local status blocks detail tries
     if [ "$draft" = "true" ]; then
@@ -276,93 +316,17 @@ collect_ready_to_merge() {
       blocks=$(glab api "projects/$pid/merge_requests/$iid/blocks" 2>/dev/null || echo '[]')
     fi
     enriched=$(jq -c --arg pid "$pid" --arg iid "$iid" --arg ref "$ref" --arg title "$title" --arg web_url "$web_url" \
-      --arg src "$src" --arg tgt "$tgt" --arg draft "$draft" --arg status "$status" --argjson blocks "$blocks" \
+      --arg src "$src" --arg tgt "$tgt" --arg draft "$draft" --arg status "$status" --argjson blocks "$blocks" --arg ahead "$ahead" \
       '. + [{project_id: ($pid|tonumber), iid: ($iid|tonumber), ref: $ref, title: $title, web_url: $web_url,
-             source_branch: $src, target_branch: $tgt, draft: ($draft == "true"), status: $status, blocks: $blocks}]' \
+             source_branch: $src, target_branch: $tgt, draft: ($draft == "true"), status: $status, blocks: $blocks,
+             ahead: (if $ahead == "" then null else $ahead end)}]' \
       <<<"$enriched")
   done <<<"$rows"
 
-  local graph full chains
+  local graph out
   graph=$(jq -c --argjson order "$order_json" "$READY_JQ" <<<"$enriched") || { echo "(ready-to-merge computation failed)"; return; }
-  full=$(jq -c '.nodes' <<<"$graph")
-  chains=$(jq -c '.chains' <<<"$graph")
-
-  local merge_now order_lines waiting_lines
-  # Merge now: no open dependencies of my own, and nothing of mine depends on
-  # it either — an MR with a dependant only ever appears as a chain head.
-  merge_now=$(jq -r '.[] | select(.mine) | select(.draft | not) | select(.status == "mergeable")
-    | select((.deps|length) == 0) | select(.has_dependents | not)
-    | "- \(.ref) \(.title) — \(.web_url)"' <<<"$full")
-
-  order_lines=""
-  waiting_lines=""
-  while IFS= read -r chain; do
-    [ -n "$chain" ] || continue
-    local headid head_status
-    headid=$(jq -r '.[0]' <<<"$chain")
-    head_status=$(jq -r --arg id "$headid" '.[] | select(.id == $id) | .status' <<<"$full")
-    if [ "$head_status" = "mergeable" ]; then
-      local line
-      # Show the chain up to (and including) the first not-yet-mergeable MR;
-      # anything further downstream is just named, since its current status
-      # can't be trusted until what's ahead of it actually merges.
-      line=$(jq -r --argjson chain "$chain" '
-        . as $full
-        | ($full | map({(.id): .}) | add) as $byid
-        | (reduce range(1; ($chain|length)) as $i (
-             {included: [$chain[0]], broke: false, rest: []};
-             if .broke then .
-             else
-               ($chain[$i]) as $nid
-               | ($byid[$nid]) as $n
-               | (.included += [$nid])
-               | if $n.status != "mergeable" then (.broke = true | .rest = ($chain[($i+1):])) else . end
-             end
-           )) as $walk
-        | ($walk.included | map($byid[.])) as $inc
-        | ($inc | map(.ticket) | unique) as $tix
-        | (if ($tix|length) == 1 and $tix[0] != null then ($tix[0] + ": ") else "" end) as $prefix
-        | ($inc | map("\(.ref) [\(.status)]") | join(" → ")) as $arrow
-        | ($walk.rest | map($byid[.].ref) | join(", ")) as $restrefs
-        | $prefix + $arrow + (if ($walk.rest|length) > 0 then "; after that: " + $restrefs else "" end)
-      ' <<<"$full")
-      order_lines="$order_lines- $line
-"
-    else
-      local w
-      w=$(jq -r --argjson chain "$chain" '
-        . as $full
-        | ($full | map({(.id): .}) | add) as $byid
-        | $chain[] as $nid
-        | ($byid[$nid]) as $n
-        | select($n.mine)
-        | select($n.draft | not)
-        | select($n.status == "mergeable")
-        | select(($n.deps|length) > 0)
-        | ($n.deps | map($byid[.]) | sort_by([.rank, .id]) | .[0]) as $pred
-        | "- \($n.ref) waits on \($pred.ref) (\(
-            if ($pred.mine | not) then "someone else'"'"'s MR, \($pred.ext_state)"
-            elif $pred.draft then "draft"
-            else $pred.status end))"
-      ' <<<"$full")
-      [ -n "$w" ] && waiting_lines="$waiting_lines$w
-"
-    fi
-  done < <(jq -c '.[]' <<<"$chains")
-
-  local printed=0
-  if [ -n "$merge_now" ]; then
-    echo "Merge now:"; echo "$merge_now"; printed=1
-  fi
-  if [ -n "$order_lines" ]; then
-    [ "$printed" -eq 1 ] && echo
-    echo "Merge in order:"; printf '%s' "$order_lines"; printed=1
-  fi
-  if [ -n "$waiting_lines" ]; then
-    [ "$printed" -eq 1 ] && echo
-    echo "Waiting on dependencies:"; printf '%s' "$waiting_lines"; printed=1
-  fi
-  [ "$printed" -eq 1 ] || echo "(none)"
+  out=$(jq -r "$FEATURE_JQ" <<<"$graph") || { echo "(ready-to-merge computation failed)"; return; }
+  if [ -n "$out" ]; then printf '%s\n' "$out"; else echo "(none)"; fi
 }
 
 collect_review_queue() {

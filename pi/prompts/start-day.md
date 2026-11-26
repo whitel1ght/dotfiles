@@ -146,11 +146,16 @@ in the closing message.
   how many were in Ready for QA. Then new pickups from the To-Do backlog, highest priority
   first, at most three.
 
-Separately, **Merge**: one item per ticket whose MRs are ready to merge now, naming each
-MR in merge order ("merge backend!6390, then admin!273"). A ticket that still has review
-notes to answer goes in First instead, with the merge as its last step ("reply to Bob on
-backend!870, then merge it"). Leave out "Waiting on dependencies" unless one of those MRs unblocks something
-already in First or Today, in which case say so in one short line.
+Separately, **Merge**: one item per ticket whose MRs are all ready to merge now ("Merge
+now" and "Merge in order"), naming each MR in merge order ("merge backend!6390, then
+admin!273"). A feature never merges in parts: a ticket under "Held until the whole feature
+is ready" gets no merge item and no merge step anywhere on the plan, even for its MRs that
+are ready; its line in First or Today names what the rest waits on ("backend!7144 needs
+approval"). The one exception is "Merge ahead of the rest of its feature": an MR whose
+description says it goes first (a preparation step, a check on dev01); it gets a Merge item
+with the reason in a few words ("merge backend!7143 ahead, for the dev01 check"). A ticket
+that still has review notes to answer goes in First instead, with the merge as its last
+step ("reply to Bob on backend!870, then merge it") only when the rest of its MRs are ready.
 
 Before writing, check that every one of these made it in or was dropped on purpose: each
 review note on my MRs that needs a reply, each review_now or re_review MR, each newly

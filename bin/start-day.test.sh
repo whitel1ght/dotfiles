@@ -107,10 +107,16 @@ EOF
 detail mergeable 6419
 detail not_approved 6455
 out=$(ready "$(run collect --since 2026-09-20T00:00:00Z)")
-assert_contains "$out" "ecfx/ecfx-backend!6419 [mergeable] → ecfx/ecfx-backend!6455 [not_approved]" "orders the base before the MR stacked on it"
-assert_lacks "$out" "Merge now:" "the chain head isn't also double-listed under Merge now"
+assert_contains "$out" "Held until the whole feature is ready:" "a feature with an unapproved MR is held"
+assert_contains "$out" "- ECFX-1: ready ecfx/ecfx-backend!6419; not ready ecfx/ecfx-backend!6455 (not_approved)" "names what is ready and what is not"
+assert_lacks "$out" "Merge now:" "the mergeable base is not offered on its own"
+assert_lacks "$out" "Merge in order:" "nor as the head of a partial chain"
+detail mergeable 6455
+out=$(ready "$(run collect --since 2026-09-20T00:00:00Z)")
+assert_contains "$out" "- ECFX-1: ecfx/ecfx-backend!6419 [mergeable] → ecfx/ecfx-backend!6455 [mergeable]" "once all are mergeable, the base comes before the MR stacked on it"
+assert_lacks "$out" "Held until" "and nothing is held"
 
-echo "start-day — Ready to merge: same-ticket cross-repo ordering (admin waits on backend, not dashboard)"
+echo "start-day — Ready to merge: same-ticket MRs in three repos are one feature"
 reset
 cat > "$FIX/mrs.json" <<EOF
 [$(mr 1 6390 "ecfx/ecfx-backend!6390" "ECFX-14576 backend" "dmitry/ECFX-14576_a" "master" false "u6390"),
@@ -121,9 +127,12 @@ detail conflict 6390
 detail conflict 2183
 detail mergeable 273
 out=$(ready "$(run collect --since 2026-09-20T00:00:00Z)")
-assert_contains "$out" "ecfx/ecfx-admin!273 waits on ecfx/ecfx-backend!6390 (conflict)" "admin waits on the upstream backend MR"
-assert_lacks "$out" "waits on ecfx/ecfx-dashboard!2183" "same-rank dashboard MR doesn't block admin"
-assert_lacks "$out" "ecfx/ecfx-dashboard!2183 waits on" "dashboard has no dependency of its own either"
+assert_contains "$out" "- ECFX-14576: ready ecfx/ecfx-admin!273; not ready ecfx/ecfx-backend!6390 (conflict), ecfx/ecfx-dashboard!2183 (conflict)" "the mergeable admin MR waits for both others of its ticket"
+assert_lacks "$out" "Merge now:" "no part of the ticket is offered"
+detail mergeable 6390
+detail mergeable 2183
+out=$(ready "$(run collect --since 2026-09-20T00:00:00Z)")
+assert_contains "$out" "- ECFX-14576: ecfx/ecfx-backend!6390 [mergeable] → ecfx/ecfx-dashboard!2183 [mergeable] → ecfx/ecfx-admin!273 [mergeable]" "all ready: one item, upstream repo first"
 
 echo "start-day — Ready to merge: declared /blocks dependency"
 reset
@@ -135,7 +144,7 @@ detail not_approved 9000
 detail mergeable 9001
 blocks 9001 '[{"blocking_merge_request":{"project_id":1,"iid":9000,"state":"opened"}}]'
 out=$(ready "$(run collect --since 2026-09-20T00:00:00Z)")
-assert_contains "$out" "ecfx/ecfx-backend!9001 waits on ecfx/ecfx-backend!9000 (not_approved)" "a declared /blocks dependency is honored"
+assert_contains "$out" "- ready ecfx/ecfx-backend!9001; not ready ecfx/ecfx-backend!9000 (not_approved)" "a declared /blocks dependency joins the feature"
 
 echo "start-day — Ready to merge: declared /blocks dependency, blocker authored by someone else"
 reset
@@ -148,7 +157,7 @@ detail mergeable 9003
 blocks 9002 '[{"blocking_merge_request":{"project_id":9,"iid":555,"state":"opened","references":{"full":"other/repo!555"},"title":"not mine","draft":false}}]'
 blocks 9003 '[{"blocking_merge_request":{"project_id":9,"iid":556,"state":"merged","references":{"full":"other/repo!556"},"title":"already landed","draft":false}}]'
 out=$(ready "$(run collect --since 2026-09-20T00:00:00Z)")
-assert_contains "$out" "ecfx/ecfx-dashboard!9002 waits on other/repo!555 (someone else's MR, opened)" "an open blocker owned by someone else still counts, with a distinct label"
+assert_contains "$out" "- ready ecfx/ecfx-dashboard!9002; not ready other/repo!555 (someone else's MR, opened)" "an open blocker owned by someone else still counts, with a distinct label"
 merge_now_part=$(printf '%s\n' "$out" | awk '/^Merge now:/{f=1;next} /^$/{f=0} f')
 assert_lacks "$merge_now_part" "!9002" "and it's excluded from Merge now while blocked"
 assert_contains "$out" "Merge now:" "the MR with a merged (ignored) blocker has no open dependency left"
@@ -162,9 +171,54 @@ cat > "$FIX/mrs.json" <<EOF
 EOF
 detail mergeable 8001
 out=$(ready "$(run collect --since 2026-09-20T00:00:00Z)")
-assert_contains "$out" "ecfx/ecfx-backend!8001 waits on ecfx/ecfx-backend!8000 (draft)" "a draft upstream still blocks its dependant, shown as (draft)"
+assert_contains "$out" "- ready ecfx/ecfx-backend!8001; not ready ecfx/ecfx-backend!8000 (draft)" "a draft upstream still blocks its dependant, shown as (draft)"
 assert_lacks "$out" "- ecfx/ecfx-backend!8000 " "the draft MR itself is never listed as its own line"
 assert_lacks "$out" "u8000" "the draft MR's own line never appears"
+
+echo "start-day — Ready to merge: a ticket's later MR not approved holds the whole ticket (ECFX-19287 shape)"
+reset
+cat > "$FIX/mrs.json" <<EOF
+[$(mr 1 7142 "ecfx/ecfx-backend!7142" "feat(ECFX-19287): part 1" "dmitry/ECFX-19287_1" "master" false "u7142"),
+ $(mr 1 7144 "ecfx/ecfx-backend!7144" "feat(ECFX-19287): part 2" "dmitry/ECFX-19287_2" "dmitry/ECFX-19287_1" false "u7144"),
+ $(mr 1 7145 "ecfx/ecfx-backend!7145" "feat(ECFX-19287): part 3" "dmitry/ECFX-19287_3" "dmitry/ECFX-19287_2" false "u7145")]
+EOF
+detail mergeable 7142
+detail not_approved 7144
+detail mergeable 7145
+out=$(ready "$(run collect --since 2026-09-20T00:00:00Z)")
+assert_contains "$out" "- ECFX-19287: ready ecfx/ecfx-backend!7142, ecfx/ecfx-backend!7145; not ready ecfx/ecfx-backend!7144 (not_approved)" "one MR not approved holds all three"
+assert_lacks "$out" "Merge now:" "nothing of it is offered for merging"
+assert_lacks "$out" "Merge in order:" "not even the chain head"
+
+echo "start-day — Ready to merge: a Merge ahead line lets a preparation MR go first (ECFX-19466 shape)"
+reset
+cat > "$FIX/mrs.json" <<EOF
+[{"project_id":1,"iid":7143,"references":{"full":"ecfx/ecfx-backend!7143"},"title":"feat(ECFX-19466): api","source_branch":"dmitry/ECFX-19466","target_branch":"master","draft":false,"web_url":"u7143","description":"## Summary\nadds the api\n\n**Merge ahead:** the dashboard MR is checked on dev01 against this api\n"},
+ $(mr 2 2315 "ecfx/ecfx-dashboard!2315" "feat(ECFX-19466): ui" "dmitry/ECFX-19466" "master" false "u2315")]
+EOF
+detail mergeable 7143
+detail not_approved 2315
+out=$(ready "$(run collect --since 2026-09-20T00:00:00Z)")
+assert_contains "$out" "Merge ahead of the rest of its feature (its description says why):" "the exception has its own heading"
+assert_contains "$out" "- ECFX-19466: ecfx/ecfx-backend!7143 feat(ECFX-19466): api — u7143 (merge ahead: the dashboard MR is checked on dev01 against this api; the rest waits: ecfx/ecfx-dashboard!2315)" "the backend MR goes ahead with its reason"
+assert_contains "$out" "- ECFX-19466: not ready ecfx/ecfx-dashboard!2315 (not_approved)" "the rest stays held"
+assert_lacks "$out" "Merge now:" "the ahead MR is not a plain merge-now item"
+sed -i.bak 's/Merge ahead:/Merge order:/' "$FIX/mrs.json"
+out=$(ready "$(run collect --since 2026-09-20T00:00:00Z)")
+assert_lacks "$out" "Merge ahead of" "without the line, no exception"
+assert_contains "$out" "- ECFX-19466: ready ecfx/ecfx-backend!7143; not ready ecfx/ecfx-dashboard!2315 (not_approved)" "and the backend MR is held with the rest"
+
+echo "start-day — Ready to merge: a Merge ahead MR still waits for its own dependency"
+reset
+cat > "$FIX/mrs.json" <<EOF
+[$(mr 1 9100 "ecfx/ecfx-backend!9100" "ECFX-9100 base" "dmitry/ECFX-9100_a" "master" false "u9100"),
+ {"project_id":1,"iid":9101,"references":{"full":"ecfx/ecfx-backend!9101"},"title":"ECFX-9100 prep","source_branch":"dmitry/ECFX-9100_b","target_branch":"dmitry/ECFX-9100_a","draft":false,"web_url":"u9101","description":"Merge ahead: migration first"}]
+EOF
+detail not_approved 9100
+detail mergeable 9101
+out=$(ready "$(run collect --since 2026-09-20T00:00:00Z)")
+assert_lacks "$out" "Merge ahead of" "stacked on an unready MR, it cannot go ahead"
+assert_contains "$out" "- ECFX-9100: ready ecfx/ecfx-backend!9101; not ready ecfx/ecfx-backend!9100 (not_approved)" "so it is held"
 
 echo "start-day — My draft MRs: every open draft, however old"
 drafts() { printf '%s\n' "$1" | awk '/^## My draft MRs/{f=1;next} /^## /{if(f)exit} f'; }
@@ -208,13 +262,12 @@ cat > "$FIX/mrs.json" <<EOF
  $(mr 3 800 "ecfx/ecfx-admin!800" "ECFX-8000 adm" "dmitry/ECFX-8000_a" "master" false "u800")]
 EOF
 detail mergeable 700
-detail conflict 800
+detail mergeable 800
 out=$(ready "$(run collect --since 2026-09-20T00:00:00Z)")
-assert_contains "$out" "Merge now:" "same-rank repos: dashboard has no dependency by default"
-assert_contains "$out" "!700" "and it's listed as merge now"
+assert_contains "$out" "- ECFX-8000: ecfx/ecfx-dashboard!700 [mergeable] → ecfx/ecfx-admin!800 [mergeable]" "same-rank repos keep a stable order by default"
 TEST_REPO_ORDER="ecfx-protobufs ecfx-admin ecfx-backend"
 out=$(ready "$(run collect --since 2026-09-20T00:00:00Z)")
-assert_contains "$out" "ecfx/ecfx-dashboard!700 waits on ecfx/ecfx-admin!800 (conflict)" "override makes admin upstream of dashboard"
+assert_contains "$out" "- ECFX-8000: ecfx/ecfx-admin!800 [mergeable] → ecfx/ecfx-dashboard!700 [mergeable]" "override makes admin upstream of dashboard"
 TEST_REPO_ORDER=
 
 echo "start-day — GitLab failure doesn't abort collect"
