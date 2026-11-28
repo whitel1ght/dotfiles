@@ -30,4 +30,25 @@ sudo systemctl daemon-reload && sudo systemctl enable --now home-link`.
 no, fail2ban active), so there is no dedicated tunnel user. Instead the
 homelink key gets one restricted `authorized_keys` line under whitelight:
 forced `/bin/false`, `restrict`, and `permitlisten` limited to
-127.0.0.1:12222 — the key can open the tunnel port and nothing else.
+127.0.0.1:12222 — the key can open the tunnel port and nothing else. The
+Mac's own key is a separate, unrestricted line, which is what lets it ask the
+laptop's sshd for `-L` forwards through the same link.
+
+## Forwarding a laptop service to the Mac
+
+The link carries any `-L` forward, not just shells. `bin/qbit-tunnel`
+(LaunchAgent `local.qbit-tunnel`) holds 127.0.0.1:8090 open to the ThinkPad's
+qBittorrent Web UI, and `localsites/Caddyfile` serves it as
+http://qbit.localhost. It picks `thinkpad` on the LAN and `thinkpad-away`
+otherwise once per start, and launchd restarts it either way. Copy that shape
+for another service: a free local port, a `*.localhost` name, and a
+`bin/<name>-tunnel` + `launchd/<name>-tunnel.plist` pair wired into install.sh.
+
+Two gotchas found building it: a service that validates the `Host` header
+(qBittorrent does, the port included) accepts the name only because Caddy sits
+on :80 and the browser then sends no port — a raw `curl 127.0.0.1:8090` gets
+401; and the link exists only while the ThinkPad is awake, since WiFi WoL does
+not wake it.
+
+Full walkthrough — every hop, the restricted-key fields, the failure-mode
+table and the checks that were actually run: `~/wiki/work/system/home-link.md`.
