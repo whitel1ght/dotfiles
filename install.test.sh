@@ -27,6 +27,7 @@ run_install() {
     DECISIONS_TELEGRAM_AGENT="${DECISIONS_TELEGRAM_AGENT:-0}" \
     FRICTIONS_TICK_AGENT="${FRICTIONS_TICK_AGENT:-0}" \
     ARTICLES_PICKS_AGENT="${ARTICLES_PICKS_AGENT:-0}" \
+    QBIT_TUNNEL_AGENT="${QBIT_TUNNEL_AGENT:-0}" \
     ECFX_TOOLING=0 ZSH_SETUP=0 KEYBOARD_SETUP=0 TMUX_SETUP=0 PROXY_SETUP=0 WIKI_SYNC_AGENT=0 \
     CLAUDE_COMPONENTS_DIR=/nonexistent \
         bash "$SCRIPT" 2>&1
@@ -309,6 +310,23 @@ assert_contains "$(cat "$SANDBOX/launchctl.log" 2>/dev/null)" "bootstrap gui/$(i
 n=$(grep -c "bootstrap.*articles-picks" "$SANDBOX/launchctl.log" 2>/dev/null)
 run_ap >/dev/null
 [ "$(grep -c "bootstrap.*articles-picks" "$SANDBOX/launchctl.log" 2>/dev/null)" = "$n" ] && pass "an unchanged picks agent is not reloaded" || fail "an unchanged picks agent is not reloaded" "$(cat "$SANDBOX/launchctl.log")"
+
+# --- qbit tunnel agent ------------------------------------------------------------
+echo "qbit tunnel agent"
+QAGENT="$SANDBOX/Library/LaunchAgents/local.qbit-tunnel.plist"
+run_qt() { PATH="$STUB:$PATH" QBIT_TUNNEL_AGENT=1 run_install; }
+run_qt >/dev/null
+[ "$(readlink "$SANDBOX/.local/bin/qbit-tunnel")" = "$TEST_DIR/bin/qbit-tunnel" ] \
+    && pass "qbit-tunnel is linked into ~/.local/bin" \
+    || fail "qbit-tunnel is linked into ~/.local/bin" "$(ls -l "$SANDBOX/.local/bin/qbit-tunnel" 2>&1)"
+qtxt="$(cat "$QAGENT" 2>/dev/null)"
+assert_contains "$qtxt" "<string>local.qbit-tunnel</string>" "the tunnel agent has its label"
+assert_contains "$qtxt" "<string>$SANDBOX/.local/bin/qbit-tunnel</string>" "the tunnel agent runs qbit-tunnel"
+assert_contains "$qtxt" "$SANDBOX/Library/Logs/qbit-tunnel.log" "and logs to ~/Library/Logs"
+assert_contains "$(cat "$SANDBOX/launchctl.log" 2>/dev/null)" "bootstrap gui/$(id -u) $QAGENT" "and loads it"
+n=$(grep -c "bootstrap.*qbit-tunnel" "$SANDBOX/launchctl.log" 2>/dev/null)
+run_qt >/dev/null
+[ "$(grep -c "bootstrap.*qbit-tunnel" "$SANDBOX/launchctl.log" 2>/dev/null)" = "$n" ] && pass "an unchanged tunnel agent is not reloaded" || fail "an unchanged tunnel agent is not reloaded" "$(cat "$SANDBOX/launchctl.log")"
 
 # --- the sibling system repos get the same commit hook --------------------
 echo "commit hooks for the decisions and articles repos"

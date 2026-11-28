@@ -24,6 +24,11 @@ http://chat.localhost {
 	reverse_proxy 127.0.0.1:8080
 }
 
+# qBittorrent Web UI on the ThinkPad, through the local.qbit-tunnel agent (bin/qbit-tunnel).
+http://qbit.localhost {
+	reverse_proxy 127.0.0.1:8090
+}
+
 http:// {
 	respond "No local site with that name." 404
 }

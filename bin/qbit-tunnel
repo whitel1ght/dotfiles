@@ -1,0 +1,15 @@
+#!/bin/bash
+# qbit-tunnel: hold 127.0.0.1:8090 open to the ThinkPad's qBittorrent Web UI (port 8080 there) —
+# the upstream for http://qbit.localhost (localsites/Caddyfile). Runs under the local.qbit-tunnel
+# LaunchAgent, which restarts it when the ssh dies, so the LAN-or-home-link choice is made again
+# then. QBIT_TUNNEL_PORT picks another local port.
+set -uo pipefail
+
+port="${QBIT_TUNNEL_PORT:-8090}"
+# LAN if the laptop answers there, otherwise out through the VPS home link.
+host=thinkpad-away
+nc -z -G 1 dmitry-thinkpad-t480.local 22 2>/dev/null && host=thinkpad
+
+exec ssh -N \
+    -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -L "127.0.0.1:${port}:127.0.0.1:8080" "$host"

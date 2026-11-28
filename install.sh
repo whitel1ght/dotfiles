@@ -736,6 +736,33 @@ if [ -f "$DOTFILES_DIR/bin/localsites" ]; then
         || log_info "Local site names are off; turn them on with: sudo ~/.local/bin/localsites install"
 fi
 
+# qbit-tunnel (launchd/qbit-tunnel.plist) holds 127.0.0.1:8090 open to the ThinkPad's qBittorrent
+# Web UI, the upstream for http://qbit.localhost. It is the only local site whose app runs on
+# another machine; QBIT_TUNNEL_AGENT=0 skips it.
+setup_qbit_tunnel() {
+    local label="local.qbit-tunnel" agent
+    agent="$HOME/Library/LaunchAgents/$label.plist"
+    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+    sed -e "s#__LABEL__#$label#g" -e "s#__HOME__#$HOME#g" \
+        "$DOTFILES_DIR/launchd/qbit-tunnel.plist" > "$agent.new"
+    if ! cmp -s "$agent.new" "$agent"; then
+        mv "$agent.new" "$agent"
+        launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+        launchctl bootstrap "gui/$(id -u)" "$agent" \
+            && log_info "Loaded the qbit tunnel agent (http://qbit.localhost)" \
+            || log_warn "Could not load $agent"
+    else
+        rm -f "$agent.new"
+    fi
+}
+
+if [ -f "$DOTFILES_DIR/bin/qbit-tunnel" ]; then
+    create_symlink "$DOTFILES_DIR/bin/qbit-tunnel" "$HOME/.local/bin/qbit-tunnel"
+    if [ "${QBIT_TUNNEL_AGENT:-1}" != "0" ]; then
+        setup_qbit_tunnel || log_warn "could not set up the qbit tunnel agent"
+    fi
+fi
+
 setup_articles_picks() {
     local label="local.articles-picks" agent
     agent="$HOME/Library/LaunchAgents/$label.plist"

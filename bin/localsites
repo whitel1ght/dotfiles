@@ -4,6 +4,7 @@
 #   http://learn.localhost     → learn (127.0.0.1:8767)
 #   http://artifacts.localhost → artifacts-site (127.0.0.1:8768)
 #   http://chat.localhost      → Open WebUI (127.0.0.1:8080)
+#   http://qbit.localhost      → qBittorrent Web UI on the ThinkPad (127.0.0.1:8090, ssh tunnel)
 #
 #   localsites status      is the proxy running, and what each name answers
 #   localsites check       validate the Caddyfile in dotfiles
@@ -113,7 +114,7 @@ case "${1:-status}" in
         done
         ;;
     -h|--help|help)
-        sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
         ;;
     *)
         echo "localsites: unknown command $1 (status|check|install|start|stop|uninstall)" >&2
