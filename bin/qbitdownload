@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Add a torrent to qBittorrent from the console.
+#
+#   qbitdownload <magnet|url|.torrent> [save-path]
+#
+# Talks to the qBittorrent Web UI on this machine (see ~/.config/qbitweb.env), so
+# qBittorrent has to be running. Without save-path the app's own default path is
+# used; save-path is created if missing. Prints what the API accepted and exits
+# non-zero when nothing was added.
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/qbit-web.sh"
+
+if (( $# < 1 || $# > 2 )); then
+    echo "usage: qbitdownload <magnet|url|.torrent> [save-path]" >&2
+    exit 2
+fi
+
+case $1 in
+    magnet:*|*://*) args=(--data-urlencode "urls=$1") ;;
+    *)
+        if [ ! -f "$1" ]; then
+            echo "qbitdownload: no such file: $1" >&2
+            exit 1
+        fi
+        args=(-F "torrents=@$(realpath -- "$1")")
+        ;;
+esac
+
+if [ -n "${2:-}" ]; then
+    mkdir -p -- "$2"
+    save_path=$(realpath -- "$2")
+    if [ "${args[0]}" = -F ]; then
+        args+=(-F "savepath=$save_path")
+    else
+        args+=(--data-urlencode "savepath=$save_path")
+    fi
+fi
+
+qbit_login
+response=$(qbit_api torrents/add "${args[@]}" -w '\n%{http_code}')
+status=${response##*$'\n'}
+body=${response%$'\n'*}
+
+counts=$(jq -r '[(.success_count // 0) + (.pending_count // 0), (.failure_count // 0)] | @tsv' <<<"$body" 2>/dev/null) || counts=
+read -r added failed <<<"$counts" || true
+
+if [ "$status" != 200 ] || [ "${failed:-1}" != 0 ] || [ "${added:-0}" -eq 0 ]; then
+    echo "qbitdownload: add failed (HTTP $status): $body" >&2
+    exit 1
+fi
+
+jq -r '"added \(.success_count), pending \(.pending_count), failed \(.failure_count): \(.added_torrent_ids | join(" "))"' <<<"$body"

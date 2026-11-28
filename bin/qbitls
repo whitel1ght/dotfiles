@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# List qBittorrent torrents from the console.
+#
+#   qbitls [all]
+#
+# Without `all`, hides the finished-and-stopped and missing-files entries, which
+# are most of the list. Tab-separated: hash prefix, state, progress, save path,
+# name — so it pipes into cut/awk/column -t.
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/qbit-web.sh"
+
+qbit_login
+qbit_api torrents/info | jq -r --arg all "${1:-}" '
+    (if $all == "all" then .
+     else map(select(.state | IN("stoppedUP", "pausedUP", "missingFiles") | not))
+     end)
+    | sort_by(.state, .name)
+    | .[]
+    | [.hash[0:8], .state, "\(.progress * 100 | floor)%", .save_path, .name]
+    | @tsv'

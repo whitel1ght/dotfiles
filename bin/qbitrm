@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Remove a torrent from qBittorrent's list. Downloaded files are kept.
+#
+#   qbitrm <hash-prefix|name-substring>
+#
+# The name match is case-insensitive. Refuses when the argument matches more
+# than one torrent rather than guessing which one you meant.
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/qbit-web.sh"
+
+if [ $# -ne 1 ] || [ -z "$1" ]; then
+    echo "usage: qbitrm <hash-prefix|name-substring>" >&2
+    exit 2
+fi
+
+qbit_login
+matches=$(qbit_api torrents/info | jq -c --arg q "$1" '
+    [.[] | select((.hash | startswith($q))
+        or (.name | ascii_downcase | contains($q | ascii_downcase)))
+     | {hash, name}]')
+
+case $(jq 'length' <<<"$matches") in
+    0)
+        echo "qbitrm: no torrent matches '$1'" >&2
+        exit 1
+        ;;
+    1) ;;
+    *)
+        echo "qbitrm: '$1' matches $(jq 'length' <<<"$matches") torrents, be more specific:" >&2
+        jq -r '.[] | "  \(.hash[0:8])  \(.name)"' >&2 <<<"$matches"
+        exit 1
+        ;;
+esac
+
+hash=$(jq -r '.[0].hash' <<<"$matches")
+name=$(jq -r '.[0].name' <<<"$matches")
+status=$(qbit_api torrents/delete -w '%{http_code}' -o /dev/null \
+    --data-urlencode "hashes=$hash" -d "deleteFiles=false")
+
+if [ "$status" != 200 ]; then
+    echo "qbitrm: delete failed (HTTP $status): $name" >&2
+    exit 1
+fi
+echo "removed: $name"
