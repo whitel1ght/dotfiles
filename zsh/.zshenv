@@ -2,6 +2,10 @@
 # non-interactive `zsh -c`). Put env vars that non-interactive tools need here,
 # not in .zshrc (which is skipped for non-interactive shells).
 
+# ~/.local/bin holds the symlinks to this repo's bin/. .zshrc adds it too, but
+# non-interactive callers (`ssh host cmd`, fzf previews) never read .zshrc.
+[[ -d "$HOME/.local/bin" ]] && path=("$HOME/.local/bin" $path)
+
 # Source machine-local secrets (NOT in this repo) if present — e.g. JIRA_EMAIL /
 # JIRA_API_TOKEN for mrglass. Keeps tokens out of version control.
 [ -f "$HOME/.config/mrglass/secrets.env" ] && source "$HOME/.config/mrglass/secrets.env"
